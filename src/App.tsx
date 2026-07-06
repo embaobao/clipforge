@@ -9,17 +9,20 @@ import {
   Eye,
   FileCode,
   FileText,
+  Filter,
+  FunnelPlus,
   Heart,
   History,
   Image,
   Inbox,
   Layers3,
+  Link as LinkIcon,
   Paperclip,
   Plus,
+  RotateCcw,
   Search,
   Settings,
   Square,
-  Star,
   Tag,
   Terminal,
   Trash2,
@@ -44,7 +47,7 @@ import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment";
 type ClipBucket = "history" | "archive" | "snippet";
-type ViewKey = "quick" | "history" | "favorites" | "archive" | "snippets" | "folders" | "settings";
+type ViewKey = "quick" | "history" | "favorites" | "archive" | "snippets" | "folders" | "trash" | "settings";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
@@ -94,6 +97,7 @@ type ClipItem = {
   tags: string[];
   copyCount: number;
   analysis: ClipAnalysis;
+  deletedAt?: number | null;
 };
 
 type PanelUiState = {
@@ -109,9 +113,25 @@ const usePanelUiStore = create<PanelUiState>()((set) => ({
   previewClip: null,
   isPreviewOpen: false,
   isClosing: false,
-  setPreviewClip: (previewClip) => set({ previewClip }),
-  setPreviewOpen: (isPreviewOpen) => set({ isPreviewOpen }),
-  setClosing: (isClosing) => set({ isClosing }),
+  setPreviewClip: (previewClip) =>
+    set((state) => {
+      const current = state.previewClip;
+      if (!current && !previewClip) return state;
+      if (
+        current &&
+        previewClip &&
+        current.id === previewClip.id &&
+        current.updatedAt === previewClip.updatedAt &&
+        current.favorite === previewClip.favorite &&
+        current.bucket === previewClip.bucket
+      ) {
+        return state;
+      }
+      return { previewClip };
+    }),
+  setPreviewOpen: (isPreviewOpen) =>
+    set((state) => (state.isPreviewOpen === isPreviewOpen ? state : { isPreviewOpen })),
+  setClosing: (isClosing) => set((state) => (state.isClosing === isClosing ? state : { isClosing })),
 }));
 
 type NativeClipboard = {
@@ -212,6 +232,8 @@ const displayModeLabels: Record<ContentDisplayMode, string> = {
 const navItems: Array<{ key: ViewKey; label: string; icon: typeof History }> = [
   { key: "history", label: "历史", icon: History },
   { key: "favorites", label: "收藏", icon: Heart },
+  { key: "archive", label: "归档", icon: Archive },
+  { key: "trash", label: "垃圾箱", icon: Trash2 },
 ];
 
 function makeId() {
@@ -382,6 +404,7 @@ function parseUrlSummary(urlValue: string) {
 
 function analyzeContent(content: string): ClipAnalysis {
   const normalized = content.replace(/\s+/g, " ").trim();
+  const firstLine = content.trim().split(/\r?\n/)[0]?.trim() || "";
   const attachment = detectAttachment(content);
   if (attachment) {
     return {
@@ -417,31 +440,41 @@ function analyzeContent(content: string): ClipAnalysis {
     };
   }
   if (isMarkdownLike(content)) {
+    const titleMatch = content.match(/^#{1,6}\s+(.+)$/m);
+    const title = titleMatch ? titleMatch[1].trim().slice(0, 60) : firstLine.slice(0, 60) || "Markdown";
     return {
       source: "markdown",
       sourceName: "Markdown",
       badge: "MD",
-      title: normalized.replace(/^#{1,6}\s*/, "").slice(0, 48) || "Markdown",
+      title,
       summary: middleEllipsis(normalized, 56, 12),
       isMarkdown: true,
     };
   }
   if (isCodeLike(content)) {
+    const funcMatch = firstLine.match(/^(?:export\s+)?(?:async\s+)?(?:function|const|let|var)\s+(\w+)/);
+    const classNameMatch = firstLine.match(/^(?:export\s+)?class\s+(\w+)/);
+    const title = funcMatch 
+      ? `${funcMatch[1]}()` 
+      : classNameMatch 
+        ? `${classNameMatch[1]}` 
+        : firstLine.slice(0, 50) || "Code";
     return {
       source: "code",
       sourceName: "Code",
       badge: "{}",
-      title: normalized.slice(0, 48) || "Code",
+      title,
       summary: middleEllipsis(normalized, 56, 12),
       isMarkdown: false,
     };
   }
+  const textTitle = firstLine.length > 0 ? firstLine.slice(0, 60) : "空内容";
   return {
     source: "text",
     sourceName: "Text",
     badge: "T",
-    title: normalized.slice(0, 48) || "Text",
-    summary: middleEllipsis(normalized, 56, 12),
+    title: textTitle,
+    summary: content.length > firstLine.length ? middleEllipsis(content, 56, 12) : "",
     isMarkdown: false,
   };
 }
@@ -542,6 +575,10 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
   };
 }
 
+function settingsEqual(a: AppSettings, b: AppSettings) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 function clampNumber(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.round(value)));
@@ -586,7 +623,6 @@ function retagClips(clips: ClipItem[], settings: AppSettings) {
       source: analysis.sourceName,
       kind: detectKind(clip.content),
       tags: generateTags(clip.content, settings),
-      updatedAt: Date.now(),
     };
   });
 }
@@ -605,12 +641,17 @@ function formatTime(timestamp: number) {
   }).format(timestamp);
 }
 
-function getBucketForView(view: ViewKey): ClipBucket | null {
+function getBucketForView(view: ViewKey): ClipBucket | "trash" | null {
   if (view === "archive") return "archive";
   if (view === "snippets") return "snippet";
   if (view === "history") return "history";
+  if (view === "trash") return "trash";
   if (view === "favorites") return null;
   return null;
+}
+
+function isFavoriteView(view: ViewKey): boolean {
+  return view === "favorites";
 }
 
 function getDisplayText(item: ClipItem, settings: AppSettings) {
@@ -667,11 +708,11 @@ function logAppError(level: "info" | "warn" | "error", message: string, context?
   });
 }
 
-class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
-  state = { hasError: false };
+class AppErrorBoundary extends Component<{ children: ReactNode }, { errorMessage: string | null; resetKey: number }> {
+  state = { errorMessage: null, resetKey: 0 };
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { errorMessage: error.message };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -679,15 +720,54 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: bo
   }
 
   render() {
+    return (
+      <>
+        <div key={this.state.resetKey}>{this.props.children}</div>
+        {this.state.errorMessage ? (
+          <div className="runtime-error-toast" role="status">
+            <Clipboard size={16} />
+            <span>界面异常已记录，剪贴板服务仍在运行。</span>
+            <button
+              className="text-button"
+              onClick={() => this.setState((state) => ({ errorMessage: null, resetKey: state.resetKey + 1 }))}
+              type="button"
+            >
+              恢复界面
+            </button>
+          </div>
+        ) : null}
+      </>
+    );
+  }
+}
+
+class PanelContentBoundary extends Component<
+  { children: ReactNode; resetKey: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidUpdate(previous: { resetKey: string }) {
+    if (previous.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    logAppError("error", `Panel content failed: ${error.message}`, info.componentStack);
+  }
+
+  render() {
     if (this.state.hasError) {
       return (
-        <div className="app-fallback">
-          <Clipboard size={28} />
-          <h1>ClipForge 界面已进入兜底模式</h1>
-          <p>错误已写入本地日志文件。可以重启应用继续使用剪贴板采集。</p>
-          <button className="primary-button" onClick={() => window.location.reload()} type="button">
-            重新加载
-          </button>
+        <div className="panel-fallback">
+          <Clipboard size={22} />
+          <strong>当前内容渲染失败</strong>
+          <span>错误已写入日志，切换列表或重新触发面板可恢复。</span>
         </div>
       );
     }
@@ -705,10 +785,9 @@ function ClipForgeApp() {
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [query, setQuery] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<ViewKey>(() => {
-    const stored = localStorage.getItem(ACTIVE_VIEW_KEY) as ViewKey | null;
-    return stored && (stored === "history" || stored === "favorites") ? stored : "history";
-  });
+  const [activeTypeFilter, setActiveTypeFilter] = useState<"all" | ClipKind>("all");
+  const [filterFavorite, setFilterFavorite] = useState(false);
+  const [activeView, setActiveView] = useState<ViewKey>("history");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -727,12 +806,16 @@ function ClipForgeApp() {
   const clipsRef = useRef<ClipItem[]>(clips);
   const settingsRef = useRef<AppSettings>(settings);
   const configReadyRef = useRef(false);
+  const configWriteTimerRef = useRef<number | null>(null);
+  const captureInFlightRef = useRef(false);
   const lastSeenClipboard = useRef("");
   const searchRef = useRef<HTMLInputElement | null>(null);
   const isPanelClosing = usePanelUiStore((state) => state.isClosing);
   const setPanelClosing = usePanelUiStore((state) => state.setClosing);
   const previewClip = usePanelUiStore((state) => state.previewClip);
   const setPreviewClip = usePanelUiStore((state) => state.setPreviewClip);
+  const isPreviewOpen = usePanelUiStore((state) => state.isPreviewOpen);
+  const setPreviewOpen = usePanelUiStore((state) => state.setPreviewOpen);
 
   useEffect(() => {
     clipsRef.current = clips;
@@ -781,10 +864,16 @@ function ClipForgeApp() {
   useEffect(() => {
     settingsRef.current = settings;
     if (configReadyRef.current) {
-      invoke("write_user_settings", { settings })
-        .then(() => setConfigStatus("配置已同步到 JSON5"))
-        .catch(() => setConfigStatus("浏览器预览模式：配置文件在 Tauri 中同步"));
+      if (configWriteTimerRef.current) window.clearTimeout(configWriteTimerRef.current);
+      configWriteTimerRef.current = window.setTimeout(() => {
+        invoke("write_user_settings", { settings })
+          .then(() => setConfigStatus("配置已同步到 JSON5"))
+          .catch(() => setConfigStatus("浏览器预览模式：配置文件在 Tauri 中同步"));
+      }, 220);
     }
+    return () => {
+      if (configWriteTimerRef.current) window.clearTimeout(configWriteTimerRef.current);
+    };
   }, [settings]);
 
   useEffect(() => {
@@ -869,6 +958,7 @@ function ClipForgeApp() {
       .then((payload) => {
         if (cancelled) return;
         setDatabasePath(payload.path);
+        if (isSettingsWindow) return null;
         return invoke<QueryClipPayload>("query_clip_records", {
           text: "",
           bucket: "all",
@@ -876,7 +966,7 @@ function ClipForgeApp() {
         });
       })
       .then((payload) => {
-        if (!payload || cancelled) return;
+        if (!payload || cancelled || isSettingsWindow) return;
         const items = payload.items
           .map((item) => normalizeClip(item, settingsRef.current))
           .filter((item): item is ClipItem => Boolean(item));
@@ -896,8 +986,11 @@ function ClipForgeApp() {
         setConfigPath(payload.path);
         setConfigStatus("已加载用户目录 JSON5 配置");
         configReadyRef.current = true;
+        settingsRef.current = merged;
         setSettings(merged);
-        setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
+        if (!isSettingsWindow) {
+          setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
+        }
       })
       .catch(() => {
         if (cancelled) return;
@@ -906,7 +999,7 @@ function ClipForgeApp() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isSettingsWindow]);
 
   const promoteClipboardText = useCallback(async (text: string) => {
     const now = Date.now();
@@ -927,6 +1020,8 @@ function ClipForgeApp() {
 
   const captureClipboard = useCallback(
     async (reason: "startup" | "manual" | "poll" | "shortcut") => {
+      if (captureInFlightRef.current) return;
+      captureInFlightRef.current = true;
       if (reason === "manual") {
         setIsReadingClipboard(true);
         setNativeStatus("正在读取系统剪贴板");
@@ -935,11 +1030,10 @@ function ClipForgeApp() {
         const response = await invoke<NativeClipboard>("read_clipboard_text");
         const text = response.text?.trim();
         if (!text) {
-          setNativeStatus("剪贴板为空或不是文本");
+          if (reason !== "poll") setNativeStatus("剪贴板为空或不是文本");
           return;
         }
         if (reason === "poll" && text === lastSeenClipboard.current) {
-          setNativeStatus("正在监听剪贴板");
           return;
         }
         lastSeenClipboard.current = text;
@@ -950,8 +1044,9 @@ function ClipForgeApp() {
           setNativeStatus("当前系统剪贴板已置顶");
         }
       } catch {
-        setNativeStatus("浏览器预览模式：原生剪贴板在 Tauri 中启用");
+        if (reason !== "poll") setNativeStatus("浏览器预览模式：原生剪贴板在 Tauri 中启用");
       } finally {
+        captureInFlightRef.current = false;
         if (reason === "manual") setIsReadingClipboard(false);
       }
     },
@@ -964,6 +1059,8 @@ function ClipForgeApp() {
       setSelectedIds(new Set());
       setMultiSelectMode(false);
       setActiveTag(null);
+      setActiveTypeFilter("all");
+      setFilterFavorite(false);
       setIsPanelEntering(true);
       window.setTimeout(() => setIsPanelEntering(false), 180);
       window.setTimeout(() => searchRef.current?.focus(), 20);
@@ -982,6 +1079,7 @@ function ClipForgeApp() {
   }, []);
 
   useEffect(() => {
+    if (isSettingsWindow) return;
     let cancelled = false;
     captureClipboard("startup");
     const timer = window.setInterval(() => {
@@ -991,9 +1089,10 @@ function ClipForgeApp() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [captureClipboard, settings.clipboardPollMs]);
+  }, [captureClipboard, isSettingsWindow, settings.clipboardPollMs]);
 
   useEffect(() => {
+    if (isSettingsWindow) return;
     if (!settings.cleanupEnabled) return;
     const runCleanup = () => {
       invoke("cleanup_clip_records", { retentionDays: settings.softDeletedRetentionDays })
@@ -1003,9 +1102,10 @@ function ClipForgeApp() {
     const timer = window.setInterval(runCleanup, settings.cleanupIntervalHours * 60 * 60 * 1000);
     runCleanup();
     return () => window.clearInterval(timer);
-  }, [settings.cleanupEnabled, settings.cleanupIntervalHours, settings.softDeletedRetentionDays]);
+  }, [isSettingsWindow, settings.cleanupEnabled, settings.cleanupIntervalHours, settings.softDeletedRetentionDays]);
 
   useEffect(() => {
+    if (isSettingsWindow) return;
     const appWindow = getCurrentWindow();
     const unlisteners: Array<() => void> = [];
     appWindow
@@ -1014,20 +1114,41 @@ function ClipForgeApp() {
       })
       .then((unlisten) => unlisteners.push(unlisten))
       .catch((error) => logAppError("warn", "Register tray listener failed", String(error)));
+    appWindow
+      .listen<string>("clipforge://hide-quick-panel", () => {
+        setPanelClosing(true);
+        window.setTimeout(() => {
+          appWindow.hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
+          setPanelClosing(false);
+        }, 160);
+      })
+      .then((unlisten) => unlisteners.push(unlisten))
+      .catch((error) => logAppError("warn", "Register quick panel hide listener failed", String(error)));
     return () => {
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [showQuickPanel]);
+  }, [isSettingsWindow, setPanelClosing, showQuickPanel]);
 
   const filteredClips = useMemo(() => {
     const normalized = normalizeSearch(debouncedQuery);
     const bucket = getBucketForView(activeView);
-    const bucketSource = bucket ? clips.filter((item) => item.bucket === bucket) : clips;
-    const source = activeView === "favorites" ? bucketSource.filter((item) => item.favorite) : bucketSource;
+    let bucketSource = clips;
+    if (activeView === "trash") {
+      bucketSource = clips.filter((item) => item.deletedAt);
+    } else {
+      bucketSource = clips.filter((item) => !item.deletedAt);
+      if (isFavoriteView(activeView)) {
+        bucketSource = bucketSource.filter((item) => item.favorite);
+      } else if (bucket) {
+        bucketSource = bucketSource.filter((item) => item.bucket === bucket);
+      }
+    }
     const activeSavedSearch = activeTag
       ? settings.tagRules.find((rule) => rule.label.trim() === activeTag)
       : undefined;
-    return source.filter((item) => {
+    return bucketSource.filter((item) => {
+      if (activeTypeFilter !== "all" && item.kind !== activeTypeFilter) return false;
+      if (filterFavorite && !item.favorite && !isFavoriteView(activeView)) return false;
       const haystack = getSearchHaystack(item);
       const matchesQuery = normalized ? haystack.includes(normalized) : true;
       const matchesTag = activeTag
@@ -1035,22 +1156,93 @@ function ClipForgeApp() {
         : true;
       return matchesQuery && matchesTag;
     });
-  }, [activeTag, activeView, clips, debouncedQuery, settings.tagRules]);
+  }, [activeTag, activeTypeFilter, activeView, clips, debouncedQuery, filterFavorite, settings.tagRules]);
 
-  const quickTags = useMemo(() => {
-    const counts = new Map<string, number>();
-    clips.forEach((item) => {
-      item.tags.forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1));
+  // 固定内容类型顺序：始终显示在主页面（用于快速内容筛选）
+  const TYPE_FILTER_ORDER: Array<"all" | ClipKind> = [
+    "all",
+    "link",
+    "markdown",
+    "code",
+    "command",
+    "attachment",
+    "text",
+  ];
+
+  function kindLabel(kind: "all" | ClipKind): string {
+    switch (kind) {
+      case "all":
+        return "全部";
+      case "link":
+        return "链接";
+      case "markdown":
+        return "Markdown";
+      case "code":
+        return "代码";
+      case "command":
+        return "命令";
+      case "attachment":
+        return "资源";
+      case "text":
+      default:
+        return "文本";
+    }
+  }
+
+  function kindIcon(kind: "all" | ClipKind) {
+    switch (kind) {
+      case "link":
+        return LinkIcon;
+      case "markdown":
+        return FileText;
+      case "code":
+        return FileCode;
+      case "command":
+        return Terminal;
+      case "attachment":
+        return Paperclip;
+      case "text":
+      default:
+        return FileText;
+    }
+  }
+
+  // 当前视图（按桶/收藏过滤后）的剪贴板，用于统计与筛选
+  const scopedClips = useMemo(() => {
+    if (activeView === "trash") {
+      return clips.filter((item) => item.deletedAt);
+    }
+    const visible = clips.filter((item) => !item.deletedAt);
+    if (isFavoriteView(activeView)) {
+      return visible.filter((item) => item.favorite);
+    }
+    const bucket = getBucketForView(activeView);
+    if (bucket) {
+      return visible.filter((item) => item.bucket === bucket);
+    }
+    return visible;
+  }, [activeView, clips]);
+
+  // 固定的内容类型计数（始终显示）
+  const typeTagCounts = useMemo(() => {
+    const counts = new Map<ClipKind, number>();
+    scopedClips.forEach((item) => {
+      counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
     });
-    const typeTags = Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))
-      .slice(0, 4);
-    const savedSearches = settings.tagRules
-      .map((rule) => [rule.label.trim(), clips.filter((item) => matchesSavedSearch(item, rule)).length] as [string, number])
+    return TYPE_FILTER_ORDER.map((kind) =>
+      kind === "all"
+        ? (["all", scopedClips.length] as const)
+        : ([kind, counts.get(kind) ?? 0] as const),
+    );
+  }, [TYPE_FILTER_ORDER, scopedClips]);
+
+  // 用户自定义的 saved search 规则 + 收藏筛选
+  const savedSearchTags = useMemo(() => {
+    return settings.tagRules
+      .map((rule) => [rule.label.trim(), scopedClips.filter((item) => matchesSavedSearch(item, rule)).length] as [string, number])
       .filter(([label, count]) => label && count > 0)
-      .slice(0, 3);
-    return [...typeTags, ...savedSearches].slice(0, 6);
-  }, [clips, settings.tagRules]);
+      .slice(0, 4);
+  }, [scopedClips, settings.tagRules]);
 
   const selectedClip = useMemo(() => {
     if (selectedId) {
@@ -1064,11 +1256,11 @@ function ClipForgeApp() {
 
   useEffect(() => {
     if (!selectedClip) {
-      setSelectedId(null);
-      setPreviewClip(null);
+      setSelectedId((current) => (current === null ? current : null));
+      if (previewClip) setPreviewClip(null);
       return;
     }
-    setSelectedId(selectedClip.id);
+    setSelectedId((current) => (current === selectedClip.id ? current : selectedClip.id));
     if (!previewClip || !clips.some((item) => item.id === previewClip.id)) {
       setPreviewClip(selectedClip);
     }
@@ -1078,17 +1270,10 @@ function ClipForgeApp() {
     return filteredClips.filter((item) => selectedIds.has(item.id));
   }, [filteredClips, selectedIds]);
 
-  async function copyClip(item: ClipItem) {
-    try {
-      await invoke("write_clipboard_text", { text: item.content });
-      lastSeenClipboard.current = item.content.trim();
-      setNativeStatus("已复制到系统剪贴板");
-    } catch {
-      await navigator.clipboard.writeText(item.content);
-      setNativeStatus("已复制到浏览器剪贴板");
-    }
+  function markClipCopied(item: ClipItem, status: string) {
     const now = Date.now();
     setLastCopiedId(item.id);
+    setNativeStatus(status);
     invoke("update_clip_record", { input: { id: item.id, copied: true } }).catch((error) =>
       logAppError("warn", "Update copied state failed", String(error)),
     );
@@ -1108,6 +1293,29 @@ function ClipForgeApp() {
       return next;
     });
     window.setTimeout(() => setLastCopiedId(null), 1000);
+  }
+
+  async function copyClip(item: ClipItem) {
+    try {
+      await invoke("write_clipboard_text", { text: item.content });
+      lastSeenClipboard.current = item.content.trim();
+      markClipCopied(item, "已复制到系统剪贴板");
+    } catch {
+      await navigator.clipboard.writeText(item.content);
+      markClipCopied(item, "已复制到浏览器剪贴板");
+    }
+  }
+
+  async function pasteClip(item: ClipItem) {
+    try {
+      await invoke("paste_clipboard_text", { text: item.content });
+      lastSeenClipboard.current = item.content.trim();
+      markClipCopied(item, "已粘贴到当前应用");
+    } catch (error) {
+      logAppError("warn", "Paste clip failed", String(error));
+      await copyClip(item);
+      setNativeStatus("粘贴失败，已复制到剪贴板");
+    }
   }
 
   async function copySelectedClips(items: ClipItem[]) {
@@ -1150,22 +1358,51 @@ function ClipForgeApp() {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       if (event.isComposing || multiSelectMode || activeView === "settings") return;
-      if (!/^[1-9]$/.test(event.key)) return;
 
       const target = event.target as HTMLElement | null;
       const editable = target?.closest("input, textarea, select, [contenteditable='true']");
+      const quickItems = filteredClips;
+
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        if (editable && editable !== searchRef.current) return;
+        event.preventDefault();
+        const currentIndex = Math.max(
+          0,
+          quickItems.findIndex((item) => item.id === selectedId),
+        );
+        const offset = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex = Math.min(Math.max(currentIndex + offset, 0), quickItems.length - 1);
+        const nextItem = quickItems[nextIndex];
+        if (nextItem) {
+          setSelectedId(nextItem.id);
+          setPreviewClip(nextItem);
+        }
+        return;
+      }
+
+      if (event.key === "Enter") {
+        if (editable && editable !== searchRef.current) return;
+        const item = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
+        if (!item) return;
+        event.preventDefault();
+        void pasteClip(item);
+        return;
+      }
+
+      if (!/^[1-9]$/.test(event.key)) return;
       if (editable && !(editable === searchRef.current && query.trim() === "")) return;
 
       const index = Number(event.key) - 1;
-      const item = filteredClips.slice(0, settingsRef.current.quickItemLimit)[index];
+      const item = quickItems.slice(0, settingsRef.current.quickItemLimit)[index];
       if (!item) return;
       event.preventDefault();
       setSelectedId(item.id);
-      void copyClip(item);
+      setPreviewClip(item);
+      void pasteClip(item);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeView, filteredClips, multiSelectMode, query]);
+  }, [activeView, filteredClips, multiSelectMode, query, selectedId, setPreviewClip]);
 
   async function openClipTarget(item: ClipItem) {
     const attachment = item.analysis.attachment;
@@ -1192,6 +1429,7 @@ function ClipForgeApp() {
   }
 
   function updateClip(id: string, next: Partial<ClipItem>) {
+    const updatedAt = Date.now();
     invoke("update_clip_record", {
       input: {
         id,
@@ -1199,32 +1437,75 @@ function ClipForgeApp() {
         favorite: typeof next.favorite === "boolean" ? next.favorite : undefined,
       },
     }).catch((error) => logAppError("warn", "Update clip failed", String(error)));
-    setClips((current) =>
-      current.map((item) => (item.id === id ? { ...item, ...next, updatedAt: Date.now() } : item)),
-    );
-  }
-
-  async function deleteClips(ids: string[]) {
-    try {
-      await invoke("soft_delete_clip_records", { ids });
-      setNativeStatus(`已软删除 ${ids.length} 条`);
-    } catch (error) {
-      logAppError("warn", "Soft delete failed", String(error));
-      setNativeStatus("软删除失败，查看日志");
-    } finally {
-      setClips((current) => current.filter((item) => !ids.includes(item.id)));
-      setSelectedIds(new Set());
-      setMultiSelectMode(false);
-      if (selectedId && ids.includes(selectedId)) setSelectedId(null);
+    setClips((current) => {
+      const updated = current.map((item) =>
+        item.id === id ? { ...item, ...next, updatedAt } : item,
+      );
+      clipsRef.current = updated;
+      return updated;
+    });
+    if (previewClip?.id === id) {
+      setPreviewClip({ ...previewClip, ...next, updatedAt });
     }
   }
 
+  async function deleteClips(ids: string[]) {
+    const now = Date.now();
+    try {
+      await invoke("soft_delete_clip_records", { ids });
+      setNativeStatus(`已移入垃圾箱 ${ids.length} 条`);
+    } catch (error) {
+      logAppError("warn", "Soft delete failed", String(error));
+      setNativeStatus("软删除失败，查看日志");
+      return;
+    }
+    // 软删除后保留在 clips 中以支持垃圾箱视图，仅设置 deletedAt 标记
+    setClips((current) =>
+      current.map((item) => (ids.includes(item.id) ? { ...item, deletedAt: now } : item)),
+    );
+    setSelectedIds(new Set());
+    setMultiSelectMode(false);
+    if (selectedId && ids.includes(selectedId)) setSelectedId(null);
+  }
+
+  async function restoreClips(ids: string[]) {
+    try {
+      await invoke("restore_clip_records", { ids });
+      setNativeStatus(`已恢复 ${ids.length} 条`);
+    } catch (error) {
+      logAppError("warn", "Restore failed", String(error));
+      setNativeStatus("恢复失败，查看日志");
+      return;
+    }
+    setClips((current) =>
+      current.map((item) =>
+        ids.includes(item.id) ? { ...item, deletedAt: null, bucket: "history" } : item,
+      ),
+    );
+    setSelectedIds(new Set());
+    setMultiSelectMode(false);
+  }
+
+  async function hardDeleteClips(ids: string[]) {
+    try {
+      await invoke("hard_delete_clip_records", { ids });
+      setNativeStatus(`已彻底删除 ${ids.length} 条`);
+    } catch (error) {
+      logAppError("warn", "Hard delete failed", String(error));
+      setNativeStatus("彻底删除失败，查看日志");
+      return;
+    }
+    setClips((current) => current.filter((item) => !ids.includes(item.id)));
+    setSelectedIds(new Set());
+    setMultiSelectMode(false);
+  }
+
   function updateSettings(next: Partial<AppSettings>) {
-    setSettings((current) => {
-      const merged = mergeSettings({ ...current, ...next });
-      setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
-      return merged;
-    });
+    const merged = mergeSettings({ ...settingsRef.current, ...next });
+    if (settingsEqual(settingsRef.current, merged)) return;
+    settingsRef.current = merged;
+    setSettings(merged);
+    setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
   }
 
   function updateTagRule(id: string, next: Partial<TagRule>) {
@@ -1248,6 +1529,7 @@ function ClipForgeApp() {
         : [...settings.tagRules, { id: makeId(), label, query: query.trim() || seed }],
     });
     setActiveTag(label);
+    setFilterFavorite(false);
     setNativeStatus(`已保存自定义搜索：${label}`);
   }
 
@@ -1262,9 +1544,14 @@ function ClipForgeApp() {
           configStatus={configStatus}
           databasePath={databasePath}
           onOpenAccessibilitySettings={() => {
-            invoke("open_accessibility_settings").catch((error) =>
-              logAppError("warn", "Open accessibility settings failed", String(error)),
-            );
+            invoke<AccessibilityPermissionPayload>("request_accessibility_permission")
+              .then((payload) => setAccessibility(payload))
+              .catch((error) => logAppError("warn", "Request accessibility permission failed", String(error)))
+              .finally(() => {
+                invoke("open_accessibility_settings").catch((error) =>
+                  logAppError("warn", "Open accessibility settings failed", String(error)),
+                );
+              });
           }}
           onAddTagRule={() =>
             updateSettings({
@@ -1276,6 +1563,11 @@ function ClipForgeApp() {
           }
           onSettingsChange={updateSettings}
           onTagRuleChange={updateTagRule}
+          onClose={() => {
+            getCurrentWindow()
+              .close()
+              .catch((error) => logAppError("warn", "Close settings window failed", String(error)));
+          }}
           settings={settings}
         />
       </main>
@@ -1285,6 +1577,7 @@ function ClipForgeApp() {
   return (
     <main className={`app-shell view-${activeView} density-${settings.panelDensity}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}`}>
       <div aria-hidden="true" className="drag-strip" data-tauri-drag-region onPointerDown={handleWindowDrag} />
+      <PanelContentBoundary resetKey={`rail:${total}`}>
       <aside className="side-rail" aria-label="主导航" data-tauri-drag-region onPointerDown={handleWindowDrag}>
         <div className="brand">
           <div className="brand-mark">
@@ -1310,6 +1603,8 @@ function ClipForgeApp() {
                   setSelectedIds(new Set());
                   setMultiSelectMode(false);
                   setActiveTag(null);
+                  setActiveTypeFilter("all");
+                  setFilterFavorite(false);
                   searchRef.current?.focus();
                 }}
                 title={item.label}
@@ -1320,23 +1615,6 @@ function ClipForgeApp() {
               </button>
             );
           })}
-          <button
-            aria-label="设置管理"
-            className="nav-item"
-            onClick={() => {
-              invoke("open_settings_window").catch((error) =>
-                logAppError("warn", "Open settings window failed", String(error)),
-              );
-              setSelectedIds(new Set());
-              setMultiSelectMode(false);
-              setActiveTag(null);
-            }}
-            title="设置管理"
-            type="button"
-          >
-            <Settings size={17} />
-            <span>设置</span>
-          </button>
         </nav>
 
         <div className="rail-stats">
@@ -1344,12 +1622,39 @@ function ClipForgeApp() {
             <span>历史</span>
             <strong>{total}</strong>
           </div>
-          <div>
+          <div
+            onClick={() => {
+              setActiveView("favorites");
+              searchRef.current?.focus();
+            }}
+            style={{ cursor: "pointer" }}
+            title="查看收藏"
+          >
             <span>收藏</span>
             <strong>{clips.filter((item) => item.favorite).length}</strong>
           </div>
         </div>
+
+        <div className="rail-footer">
+          <button
+            aria-label="设置与账户"
+            className="avatar-button"
+            onClick={() => {
+              invoke("open_settings_window").catch((error) =>
+                logAppError("warn", "Open settings window failed", String(error)),
+              );
+            }}
+            title="设置与账户"
+            type="button"
+          >
+            <div className="avatar">
+              <Settings size={14} />
+            </div>
+            <span>设置</span>
+          </button>
+        </div>
       </aside>
+      </PanelContentBoundary>
 
       <section className="content-column">
         <header className="toolbar">
@@ -1367,13 +1672,13 @@ function ClipForgeApp() {
               value={query}
             />
             <button
-              aria-label="保存当前搜索"
+              aria-label="保存为筛选规则"
               className={activeTag ? "icon-button subtle active" : "icon-button subtle"}
               onClick={createQuickTag}
-              title="保存当前搜索"
+              title="保存当前搜索为筛选规则"
               type="button"
             >
-              <Star size={15} />
+              <FunnelPlus size={15} />
             </button>
             {query ? (
               <button
@@ -1382,6 +1687,8 @@ function ClipForgeApp() {
                 onClick={() => {
                   setQuery("");
                   setActiveTag(null);
+                  setFilterFavorite(false);
+                  setActiveTypeFilter("all");
                   searchRef.current?.focus();
                 }}
                 type="button"
@@ -1420,15 +1727,114 @@ function ClipForgeApp() {
 
         <div className="status-row">
           <span>{nativeStatus}</span>
-          <span>{query || activeTag ? `筛选 ${filteredClips.length}` : `列表 ${filteredClips.length}`}</span>
+          <div className="status-actions">
+            {previewClip ? (
+              <button
+                className={isPreviewOpen ? "icon-button active" : "icon-button"}
+                onClick={() => setPreviewOpen(!isPreviewOpen)}
+                title="快速预览"
+                type="button"
+              >
+                <Eye size={15} />
+              </button>
+            ) : null}
+            <span>{query || activeTag ? `筛选 ${filteredClips.length}` : `列表 ${filteredClips.length}`}</span>
+          </div>
         </div>
+        {activeView !== "folders" && activeView !== "trash" ? (
+          <div className="tag-filter-bar">
+            <div className="tag-filter-row" aria-label="快速筛选">
+              <span className="tag-filter-icon">
+                <Filter size={12} />
+              </span>
+              {typeTagCounts.map(([kind, count]) => {
+                const Icon = kind === "all" ? null : kindIcon(kind);
+                return (
+                  <button
+                    aria-pressed={activeTypeFilter === kind}
+                    className={
+                      count === 0
+                        ? "tag-filter is-empty"
+                        : activeTypeFilter === kind
+                          ? "tag-filter active"
+                          : "tag-filter"
+                    }
+                    disabled={count === 0 && kind !== "all"}
+                    key={kind}
+                    onClick={() => setActiveTypeFilter(kind)}
+                    type="button"
+                  >
+                    {Icon ? <Icon size={12} /> : null}
+                    {kindLabel(kind)}
+                    <span>{count}</span>
+                  </button>
+                );
+              })}
+              {savedSearchTags.length ? (
+                savedSearchTags.map(([label, count]) => (
+                  <button
+                    className={activeTag === label ? "tag-filter active" : "tag-filter"}
+                    key={label}
+                    onClick={() => setActiveTag((current) => (current === label ? null : label))}
+                    type="button"
+                  >
+                    {label}
+                    <span>{count}</span>
+                  </button>
+                ))
+              ) : null}
+              {clips.some((item) => item.favorite) && !isFavoriteView(activeView) ? (
+                <button
+                  className={filterFavorite ? "tag-filter active" : "tag-filter"}
+                  onClick={() => setFilterFavorite((v) => !v)}
+                  type="button"
+                >
+                  <Heart size={12} />
+                  收藏
+                  <span>{scopedClips.filter((item) => item.favorite).length}</span>
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
-        {activeView === "folders" ? (
-          <FolderPanel clips={clips} onView={setActiveView} />
-        ) : activeView === "quick" || compactPanel ? (
-          <QuickPastePanel
+        <PanelContentBoundary resetKey={`list:${activeView}:${selectedId ?? "none"}:${filteredClips.length}`}>
+          {activeView === "folders" ? (
+            <FolderPanel clips={clips} onView={setActiveView} />
+          ) : activeView === "trash" ? (
+            <TrashPanel
+              activeId={selectedClip?.id ?? null}
+              clips={filteredClips}
+              hasMore={Boolean(nextCursor)}
+              isLoadingMore={isLoadingMore}
+              multiSelectMode={multiSelectMode}
+              onDeleteSelected={() => hardDeleteClips(selectedInList.map((item) => item.id))}
+              onHardDelete={(item) => hardDeleteClips([item.id])}
+              onLoadMore={loadMoreClips}
+              onRestore={(item) => restoreClips([item.id])}
+              onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
+              onSelect={(item) => setSelectedId(item.id)}
+              onToggleMultiSelect={() => {
+                setMultiSelectMode((current) => {
+                  if (current) setSelectedIds(new Set());
+                  return !current;
+                });
+              }}
+              onToggleSelected={(id) =>
+                setSelectedIds((current) => {
+                  const next = new Set(current);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                })
+              }
+              onCopy={copyClip}
+              selectedIds={selectedIds}
+              settings={settings}
+            />
+          ) : activeView === "quick" || (compactPanel && activeView !== "favorites") ? (
+            <QuickPastePanel
             activeId={selectedClip?.id ?? null}
-            activeTag={activeTag}
             hasMore={Boolean(nextCursor)}
             clips={filteredClips}
             copiedId={lastCopiedId}
@@ -1437,10 +1843,11 @@ function ClipForgeApp() {
             multiSelectMode={multiSelectMode}
             selectedIds={selectedIds}
             settings={settings}
-            tags={quickTags}
             onAggregateCopy={() => copySelectedClips(selectedInList)}
             onCopy={copyClip}
+            onDelete={(item) => deleteClips([item.id])}
             onDeleteSelected={() => deleteClips(selectedInList.map((item) => item.id))}
+            onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
             onLoadMore={loadMoreClips}
             onOpen={openClipTarget}
             onSelect={(item) => setSelectedId(item.id)}
@@ -1459,10 +1866,9 @@ function ClipForgeApp() {
                 return next;
               })
             }
-            onTagSelect={(tag) => setActiveTag((current) => (current === tag ? null : tag))}
-          />
-        ) : (
-          <ClipList
+            />
+          ) : (
+            <ClipList
             activeId={selectedClip?.id ?? null}
             clips={filteredClips}
             copiedId={lastCopiedId}
@@ -1489,13 +1895,39 @@ function ClipForgeApp() {
             }
             selectedIds={selectedIds}
             settings={settings}
-          />
-        )}
+            />
+          )}
+        </PanelContentBoundary>
       </section>
 
+      {/* Compact mode: floating preview overlay (hidden when detail-pane visible) */}
+      {compactPanel && previewClip ? (
+        <aside
+          className={isPreviewOpen ? "quick-preview-pane open" : "quick-preview-pane"}
+          aria-label="剪贴板详情预览"
+        >
+          {previewClip ? (
+            <>
+              <button
+                aria-label="关闭详情"
+                className="icon-button subtle preview-close"
+                onClick={() => setPreviewOpen(false)}
+                type="button"
+              >
+                <X size={13} />
+              </button>
+              <ClipPreviewCard item={previewClip} onCopy={copyClip} onOpen={openClipTarget} settings={settings} />
+            </>
+          ) : (
+            <span>暂无详情</span>
+          )}
+        </aside>
+      ) : null}
+
       <aside className="detail-pane" aria-label="剪贴板详情">
-        {detailClip ? (
-          <ClipDetail
+        <PanelContentBoundary resetKey={`detail:${detailClip?.id ?? "none"}:${detailClip?.updatedAt ?? 0}`}>
+          {detailClip ? (
+            <ClipDetail
             copiedId={lastCopiedId}
             item={detailClip}
             onArchive={() =>
@@ -1505,17 +1937,19 @@ function ClipForgeApp() {
             }
             onCopy={() => copyClip(detailClip)}
             onDelete={() => deleteClips([detailClip.id])}
+            onFavorite={() => updateClip(detailClip.id, { favorite: !detailClip.favorite })}
             onOpen={() => openClipTarget(detailClip)}
             onSaveSnippet={() => updateClip(detailClip.id, { bucket: "snippet" })}
             settings={settings}
-          />
-        ) : (
-          <div className="empty-detail">
-            <Inbox size={32} />
-            <h1>没有剪贴板内容</h1>
-            <p>复制文本后会自动出现在快速面板。</p>
-          </div>
-        )}
+            />
+          ) : (
+            <div className="empty-detail">
+              <Inbox size={32} />
+              <h1>没有剪贴板内容</h1>
+              <p>复制文本后会自动出现在快速面板。</p>
+            </div>
+          )}
+        </PanelContentBoundary>
       </aside>
     </main>
   );
@@ -1622,8 +2056,6 @@ function ClipList({
   selectedIds: Set<string>;
   settings: AppSettings;
 }) {
-  const setPreviewClip = usePanelUiStore((state) => state.setPreviewClip);
-
   if (!clips.length) {
     return (
       <div className="empty-list">
@@ -1646,11 +2078,14 @@ function ClipList({
         <article
           className={activeId === item.id ? "clip-row active" : "clip-row"}
           onClick={() => {
-            setPreviewClip(item);
             onSelect(item);
           }}
-          onFocus={() => setPreviewClip(item)}
-          onMouseEnter={() => setPreviewClip(item)}
+          onFocus={() => {
+            onSelect(item);
+          }}
+          onMouseEnter={() => {
+            if (activeId !== item.id) onSelect(item);
+          }}
           tabIndex={0}
         >
           <label className="check-cell" onClick={(event) => event.stopPropagation()}>
@@ -1703,6 +2138,182 @@ function ClipList({
         </article>
       )}
     />
+  );
+}
+
+function TrashPanel({
+  activeId,
+  clips,
+  hasMore,
+  isLoadingMore,
+  multiSelectMode,
+  onCopy,
+  onDeleteSelected,
+  onHardDelete,
+  onLoadMore,
+  onRestore,
+  onRestoreSelected,
+  onSelect,
+  onToggleMultiSelect,
+  onToggleSelected,
+  selectedIds,
+  settings,
+}: {
+  activeId: string | null;
+  clips: ClipItem[];
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  multiSelectMode: boolean;
+  onCopy: (item: ClipItem) => void;
+  onDeleteSelected: () => void;
+  onHardDelete: (item: ClipItem) => void;
+  onLoadMore: () => void;
+  onRestore: (item: ClipItem) => void;
+  onRestoreSelected: () => void;
+  onSelect: (item: ClipItem) => void;
+  onToggleMultiSelect: () => void;
+  onToggleSelected: (id: string) => void;
+  selectedIds: Set<string>;
+  settings: AppSettings;
+}) {
+  const selectedCount = clips.filter((item) => selectedIds.has(item.id)).length;
+  if (!clips.length) {
+    return (
+      <div className="empty-list">
+        <Trash2 size={30} />
+        <h2>垃圾箱为空</h2>
+        <p>软删除的内容会在这里显示，可恢复或彻底删除。</p>
+      </div>
+    );
+  }
+  return (
+    <section className="quick-panel">
+      <div className="quick-control-row">
+        <div />
+        <div className="quick-bulk-actions" aria-label="垃圾箱批量操作">
+          {multiSelectMode ? (
+            <>
+              <button
+                aria-label="恢复选中"
+                className="icon-button"
+                disabled={selectedCount === 0}
+                onClick={onRestoreSelected}
+                title="恢复选中"
+                type="button"
+              >
+                <RotateCcw size={14} />
+              </button>
+              <button
+                aria-label="彻底删除选中"
+                className="icon-button danger-icon"
+                disabled={selectedCount === 0}
+                onClick={onDeleteSelected}
+                title="彻底删除选中"
+                type="button"
+              >
+                <Trash2 size={14} />
+              </button>
+              <span>{selectedCount}</span>
+            </>
+          ) : null}
+          <button
+            aria-label={multiSelectMode ? "退出多选" : "进入多选"}
+            className={multiSelectMode ? "icon-button active" : "icon-button"}
+            onClick={onToggleMultiSelect}
+            title={multiSelectMode ? "退出多选" : "多选"}
+            type="button"
+          >
+            {multiSelectMode ? <CheckSquare size={14} /> : <Square size={14} />}
+          </button>
+        </div>
+      </div>
+      <div className="quick-workspace">
+        <VirtualList
+          className="quick-menu"
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          itemHeight={56}
+          items={clips}
+          onEndReached={onLoadMore}
+          renderItem={(item) => (
+            <article
+              className={[
+                "quick-row",
+                activeId === item.id ? "active" : "",
+                selectedIds.has(item.id) ? "selected" : "",
+                multiSelectMode ? "selecting" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              key={item.id}
+              onClick={() => {
+                if (multiSelectMode) {
+                  onToggleSelected(item.id);
+                  return;
+                }
+                onSelect(item);
+              }}
+              onFocus={() => onSelect(item)}
+              onMouseEnter={() => {
+                if (activeId !== item.id) onSelect(item);
+              }}
+              tabIndex={0}
+            >
+              {multiSelectMode ? (
+                <button
+                  aria-label={selectedIds.has(item.id) ? "取消选择" : "选择"}
+                  className="quick-check"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleSelected(item.id);
+                  }}
+                  type="button"
+                >
+                  {selectedIds.has(item.id) ? <CheckSquare size={14} /> : <Square size={14} />}
+                </button>
+              ) : (
+                <kbd>
+                  <Trash2 size={12} />
+                </kbd>
+              )}
+              <div>
+                <strong>
+                  {item.analysis.title}
+                  <span>{formatTime(item.lastSeenAt)}</span>
+                </strong>
+                <p title={item.content}>{getDisplayText(item, settings)}</p>
+              </div>
+              <div className="row-actions" onClick={(event) => event.stopPropagation()}>
+                <button
+                  className="icon-button"
+                  onClick={() => onRestore(item)}
+                  title="恢复"
+                  type="button"
+                >
+                  <RotateCcw size={14} />
+                </button>
+                <button
+                  className="icon-button"
+                  onClick={() => onCopy(item)}
+                  title="复制"
+                  type="button"
+                >
+                  <Copy size={14} />
+                </button>
+                <button
+                  className="icon-button danger-icon"
+                  onClick={() => onHardDelete(item)}
+                  title="彻底删除"
+                  type="button"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </article>
+          )}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -1772,58 +2383,45 @@ function QuickPastePanel({
   clips,
   copiedId,
   hasMore,
-  activeTag,
   isLoadingMore,
   multiSelectMode,
   selectedIds,
   settings,
-  tags,
   onAggregateCopy,
   onCopy,
+  onDelete,
   onDeleteSelected,
+  onFavorite,
   onLoadMore,
   onOpen,
   onSelect,
   onSelectAll,
   onToggleMultiSelect,
   onToggleSelected,
-  onTagSelect,
 }: {
   activeId: string | null;
   clips: ClipItem[];
   copiedId: string | null;
   hasMore: boolean;
-  activeTag: string | null;
   isLoadingMore: boolean;
   limit: number;
   multiSelectMode: boolean;
   selectedIds: Set<string>;
   settings: AppSettings;
-  tags: Array<[string, number]>;
   onAggregateCopy: () => void;
   onCopy: (item: ClipItem) => void;
+  onDelete: (item: ClipItem) => void;
   onDeleteSelected: () => void;
+  onFavorite: (item: ClipItem) => void;
   onLoadMore: () => void;
   onOpen: (item: ClipItem) => void;
   onSelect: (item: ClipItem) => void;
   onSelectAll: () => void;
   onToggleMultiSelect: () => void;
   onToggleSelected: (id: string) => void;
-  onTagSelect: (tag: string) => void;
 }) {
-  const previewItem = usePanelUiStore((state) => state.previewClip);
-  const isPreviewOpen = usePanelUiStore((state) => state.isPreviewOpen);
-  const setPreviewClip = usePanelUiStore((state) => state.setPreviewClip);
-  const setPreviewOpen = usePanelUiStore((state) => state.setPreviewOpen);
   const snippetClips = clips.filter((item) => item.bucket === "snippet").slice(0, 4);
   const selectedCount = clips.filter((item) => selectedIds.has(item.id)).length;
-
-  useEffect(() => {
-    if (!previewItem || !clips.some((item) => item.id === previewItem.id)) {
-      setPreviewClip(clips[0] ?? null);
-      setPreviewOpen(false);
-    }
-  }, [clips, previewItem, setPreviewClip, setPreviewOpen]);
 
   if (!clips.length) {
     return (
@@ -1838,23 +2436,7 @@ function QuickPastePanel({
   return (
     <section className="quick-panel">
       <div className="quick-control-row">
-        <div className="tag-filter-row" aria-label="标签筛选">
-          {tags.length ? (
-            tags.map(([tag, count]) => (
-              <button
-                className={activeTag === tag ? "tag-filter active" : "tag-filter"}
-                key={tag}
-                onClick={() => onTagSelect(tag)}
-                type="button"
-              >
-                {tag}
-                <span>{count}</span>
-              </button>
-            ))
-          ) : (
-            <span className="empty-note">暂无标签</span>
-          )}
-        </div>
+        <div />
         <div className="quick-bulk-actions" aria-label="快速批量操作">
           {multiSelectMode ? (
             <>
@@ -1921,12 +2503,13 @@ function QuickPastePanel({
                 onToggleSelected(item.id);
                 return;
               }
-              setPreviewClip(item);
               onSelect(item);
               onCopy(item);
             }}
-            onFocus={() => setPreviewClip(item)}
-            onMouseEnter={() => setPreviewClip(item)}
+            onFocus={() => onSelect(item)}
+            onMouseEnter={() => {
+              if (activeId !== item.id) onSelect(item);
+            }}
             tabIndex={0}
           >
             {multiSelectMode ? (
@@ -1958,40 +2541,31 @@ function QuickPastePanel({
                 </button>
               ) : null}
               <button
-                className={isPreviewOpen && previewItem?.id === item.id ? "icon-button active" : "icon-button"}
-                onClick={() => {
-                  setPreviewClip(item);
-                  setPreviewOpen(!(isPreviewOpen && previewItem?.id === item.id));
+                className="icon-button quick-delete"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDelete(item);
                 }}
-                title="查看详情"
+                title="删除"
                 type="button"
               >
-                <Eye size={14} />
+                <Trash2 size={13} />
               </button>
             </div>
+            <button
+              className={item.favorite ? "quick-fav faved" : "quick-fav"}
+              onClick={(event) => {
+                event.stopPropagation();
+                onFavorite(item);
+              }}
+              title={item.favorite ? "取消收藏" : "收藏"}
+              type="button"
+            >
+              <Heart size={13} />
+            </button>
           </article>
           )}
         />
-        <aside
-          className={isPreviewOpen && previewItem ? "quick-preview-pane open" : "quick-preview-pane"}
-          aria-label="剪贴板详情预览"
-        >
-          {previewItem ? (
-            <>
-              <button
-                aria-label="关闭详情"
-                className="icon-button subtle preview-close"
-                onClick={() => setPreviewOpen(false)}
-                type="button"
-              >
-                <X size={13} />
-              </button>
-              <ClipPreviewCard item={previewItem} onCopy={onCopy} onOpen={onOpen} settings={settings} />
-            </>
-          ) : (
-            <span>暂无详情</span>
-          )}
-        </aside>
       </div>
 
       {snippetClips.length ? (
@@ -2014,6 +2588,7 @@ function ClipDetail({
   onArchive,
   onCopy,
   onDelete,
+  onFavorite,
   onOpen,
   onSaveSnippet,
   settings,
@@ -2023,6 +2598,7 @@ function ClipDetail({
   onArchive: () => void;
   onCopy: () => void;
   onDelete: () => void;
+  onFavorite: () => void;
   onOpen: () => void;
   onSaveSnippet: () => void;
   settings: AppSettings;
@@ -2038,10 +2614,20 @@ function ClipDetail({
             <p>{item.analysis.summary}</p>
           </div>
         </div>
-        <button className="primary-button" onClick={onCopy} type="button">
-          {copiedId === item.id ? <Check size={16} /> : <Copy size={16} />}
-          复制
-        </button>
+        <div className="detail-header-actions">
+          <button
+            className={item.favorite ? "icon-button favorite on" : "icon-button"}
+            onClick={onFavorite}
+            title={item.favorite ? "取消收藏" : "收藏"}
+            type="button"
+          >
+            <Heart size={15} />
+          </button>
+          <button className="primary-button" onClick={onCopy} type="button">
+            {copiedId === item.id ? <Check size={16} /> : <Copy size={16} />}
+            复制
+          </button>
+        </div>
       </div>
 
       {item.analysis.attachment ? (
@@ -2252,6 +2838,7 @@ function SettingsPanel({
   onDeleteTagRule,
   onSettingsChange,
   onTagRuleChange,
+  onClose,
   settings,
 }: {
   accessibility: AccessibilityPermissionPayload | null;
@@ -2263,6 +2850,7 @@ function SettingsPanel({
   onDeleteTagRule: (id: string) => void;
   onSettingsChange: (next: Partial<AppSettings>) => void;
   onTagRuleChange: (id: string, next: Partial<TagRule>) => void;
+  onClose: () => void;
   settings: AppSettings;
 }) {
   const [section, setSection] = useState("shortcut");
@@ -2283,6 +2871,9 @@ function SettingsPanel({
           <h2>设置</h2>
           <p>{configStatus}</p>
         </div>
+        <button aria-label="关闭设置" className="icon-button subtle settings-close" onClick={onClose} type="button">
+          <X size={14} />
+        </button>
       </div>
       <div className="settings-shell">
         <aside className="settings-sidebar" aria-label="设置分类">
