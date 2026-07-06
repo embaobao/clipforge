@@ -4,7 +4,6 @@ import {
   CheckSquare,
   Clipboard,
   Copy,
-  Database,
   ExternalLink,
   Eye,
   FileCode,
@@ -18,7 +17,6 @@ import {
   Layers3,
   Link as LinkIcon,
   Paperclip,
-  Plus,
   RotateCcw,
   Search,
   Settings,
@@ -29,12 +27,12 @@ import {
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
-import type { ErrorInfo, PointerEvent } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { ErrorInfo, PointerEvent, ReactNode } from "react";
 import {
   Attachment,
   AttachmentContent,
@@ -42,12 +40,11 @@ import {
   AttachmentMedia,
   AttachmentTitle,
 } from "@/components/ui/attachment";
-import { Kbd } from "@/components/ui/kbd";
 import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment";
 type ClipBucket = "history" | "archive" | "snippet";
-type ViewKey = "quick" | "history" | "favorites" | "archive" | "snippets" | "folders" | "trash" | "settings";
+type ViewKey = "quick" | "history" | "favorites" | "archive" | "snippets" | "folders" | "trash";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
@@ -198,7 +195,7 @@ const defaultSettings: AppSettings = {
   panelDensity: "dense",
   quickItemLimit: 10,
   maxStoredItems: 500,
-  clipboardPollMs: 900,
+  clipboardPollMs: 200,
   tagMode: "similar",
   tagRules: [],
   contentDisplayMode: "summary",
@@ -209,24 +206,6 @@ const defaultSettings: AppSettings = {
   cleanupEnabled: true,
   cleanupIntervalHours: 24,
   softDeletedRetentionDays: 30,
-};
-
-const tagModeLabels: Record<TagMode, string> = {
-  similar: "仅类型",
-  rules: "类型 + 自定义搜索",
-  off: "关闭",
-};
-
-const densityLabels: Record<PanelDensity, string> = {
-  dense: "紧凑",
-  normal: "标准",
-  comfortable: "舒展",
-};
-
-const displayModeLabels: Record<ContentDisplayMode, string> = {
-  summary: "智能摘要",
-  middle: "中间省略",
-  raw: "原文优先",
 };
 
 const navItems: Array<{ key: ViewKey; label: string; icon: typeof History }> = [
@@ -669,26 +648,6 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   return debounced;
 }
 
-function formatShortcutParts(shortcut: string) {
-  return shortcut
-    .replace(/CommandOrControl/gi, "⌘/Ctrl")
-    .replace(/CmdOrControl/gi, "⌘/Ctrl")
-    .split("+")
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function shortcutFromKeyboardEvent(event: KeyboardEvent<HTMLElement>) {
-  const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
-  if (["Meta", "Control", "Alt", "Shift"].includes(key)) return "";
-  const parts: string[] = [];
-  if (event.metaKey || event.ctrlKey) parts.push("CommandOrControl");
-  if (event.altKey) parts.push("Alt");
-  if (event.shiftKey) parts.push("Shift");
-  parts.push(key.replace(" ", "Space"));
-  return parts.join("+");
-}
-
 function makeRuleLabel(value: string) {
   return value
     .replace(/^https?:\/\//i, "")
@@ -794,10 +753,6 @@ function ClipForgeApp() {
   const [nativeStatus, setNativeStatus] = useState("准备监听剪贴板");
   const [lastCopiedId, setLastCopiedId] = useState<string | null>(null);
   const [, setIsReadingClipboard] = useState(false);
-  const [configPath, setConfigPath] = useState("");
-  const [configStatus, setConfigStatus] = useState("配置文件待连接");
-  const [databasePath, setDatabasePath] = useState("");
-  const [accessibility, setAccessibility] = useState<AccessibilityPermissionPayload | null>(null);
   const [compactPanel, setCompactPanel] = useState(() => window.innerWidth <= 900);
   const [isPanelEntering, setIsPanelEntering] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -866,9 +821,9 @@ function ClipForgeApp() {
     if (configReadyRef.current) {
       if (configWriteTimerRef.current) window.clearTimeout(configWriteTimerRef.current);
       configWriteTimerRef.current = window.setTimeout(() => {
-        invoke("write_user_settings", { settings })
-          .then(() => setConfigStatus("配置已同步到 JSON5"))
-          .catch(() => setConfigStatus("浏览器预览模式：配置文件在 Tauri 中同步"));
+        invoke("write_user_settings", { settings }).catch((error) =>
+          logAppError("warn", "Sync user settings failed", String(error)),
+        );
       }, 220);
     }
     return () => {
@@ -948,7 +903,6 @@ function ClipForgeApp() {
     invoke<AccessibilityPermissionPayload>("check_accessibility_permission")
       .then((payload) => {
         if (cancelled) return;
-        setAccessibility(payload);
         if (!payload.canReadFocusedInput) {
           setNativeStatus("辅助功能未授权，面板会贴到鼠标所在屏幕右侧");
         }
@@ -957,7 +911,7 @@ function ClipForgeApp() {
     invoke<DbInitPayload>("init_clip_database")
       .then((payload) => {
         if (cancelled) return;
-        setDatabasePath(payload.path);
+        logAppError("info", `Clip database ready at ${payload.path}`);
         if (isSettingsWindow) return null;
         return invoke<QueryClipPayload>("query_clip_records", {
           text: "",
@@ -983,8 +937,6 @@ function ClipForgeApp() {
       .then((payload) => {
         if (cancelled) return;
         const merged = mergeSettings(payload.settings);
-        setConfigPath(payload.path);
-        setConfigStatus("已加载用户目录 JSON5 配置");
         configReadyRef.current = true;
         settingsRef.current = merged;
         setSettings(merged);
@@ -994,7 +946,7 @@ function ClipForgeApp() {
       })
       .catch(() => {
         if (cancelled) return;
-        setConfigStatus("浏览器预览模式：配置文件在 Tauri 中启用");
+        configReadyRef.current = true;
       });
     return () => {
       cancelled = true;
@@ -1020,8 +972,9 @@ function ClipForgeApp() {
 
   const captureClipboard = useCallback(
     async (reason: "startup" | "manual" | "poll" | "shortcut") => {
-      if (captureInFlightRef.current) return;
-      captureInFlightRef.current = true;
+      // poll 之间允许并发：去重由 lastSeenClipboard + changeCount 负责
+      if (reason !== "poll" && captureInFlightRef.current) return;
+      if (reason !== "poll") captureInFlightRef.current = true;
       if (reason === "manual") {
         setIsReadingClipboard(true);
         setNativeStatus("正在读取系统剪贴板");
@@ -1033,20 +986,29 @@ function ClipForgeApp() {
           if (reason !== "poll") setNativeStatus("剪贴板为空或不是文本");
           return;
         }
-        if (reason === "poll" && text === lastSeenClipboard.current) {
+        // 任何来源都需要做一次去重，避免 startup 阶段把同一个文本再写一遍
+        if (text === lastSeenClipboard.current) {
           return;
         }
         lastSeenClipboard.current = text;
         const result = await promoteClipboardText(text);
         if (result === "created") {
-          setNativeStatus(reason === "startup" ? "启动已捕获系统剪贴板" : "已记录当前系统剪贴板");
+          setNativeStatus(
+            reason === "startup"
+              ? "启动已捕获系统剪贴板"
+              : reason === "manual"
+                ? "已记录当前系统剪贴板"
+                : reason === "shortcut"
+                  ? "已通过快捷键记录新复制"
+                  : "已捕获新复制",
+          );
         } else {
           setNativeStatus("当前系统剪贴板已置顶");
         }
       } catch {
         if (reason !== "poll") setNativeStatus("浏览器预览模式：原生剪贴板在 Tauri 中启用");
       } finally {
-        captureInFlightRef.current = false;
+        if (reason !== "poll") captureInFlightRef.current = false;
         if (reason === "manual") setIsReadingClipboard(false);
       }
     },
@@ -1062,11 +1024,15 @@ function ClipForgeApp() {
       setActiveTypeFilter("all");
       setFilterFavorite(false);
       setIsPanelEntering(true);
+      // 唤起面板时强制拉一次最新剪贴板，避免用户在别的 app 复制后到唤起之间漏掉记录
       window.setTimeout(() => setIsPanelEntering(false), 180);
       window.setTimeout(() => searchRef.current?.focus(), 20);
+      window.setTimeout(() => {
+        void captureClipboard("manual");
+      }, 40);
       setNativeStatus(reason === "tray" ? "已从系统状态栏打开快捷面板" : "已打开快捷面板");
     },
-    [],
+    [captureClipboard],
   );
 
   const handleWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
@@ -1078,18 +1044,31 @@ function ClipForgeApp() {
       .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
   }, []);
 
+  // 后台剪贴板监听：Rust 线程每 100ms 读 pbpaste，变化时推 event
+  // 前端只需 listen，不依赖 WebView timer，隐藏时也能工作
   useEffect(() => {
     if (isSettingsWindow) return;
-    let cancelled = false;
-    captureClipboard("startup");
-    const timer = window.setInterval(() => {
-      if (!cancelled) captureClipboard("poll");
-    }, settings.clipboardPollMs);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
+    let unlisten: (() => void) | null = null;
+    const setup = async () => {
+      unlisten = await listen<{ text: string }>("clipboard-changed", (event) => {
+        const text = event.payload.text;
+        console.log("[CLIPBOARD] frontend received:", text?.slice(0, 40));
+        if (!text || text.trim() === lastSeenClipboard.current) return;
+        lastSeenClipboard.current = text.trim();
+        void promoteClipboardText(text.trim()).then((result) => {
+          setNativeStatus(result === "created" ? "已捕获新复制" : "当前系统剪贴板已置顶");
+        });
+      });
+      console.log("[CLIPBOARD] frontend listener registered");
+      setNativeStatus("后台剪贴板监听已启动");
     };
-  }, [captureClipboard, isSettingsWindow, settings.clipboardPollMs]);
+    void setup();
+    // 启动时拉一次，避免 Rust 线程启动前漏掉
+    void captureClipboard("startup");
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [captureClipboard, isSettingsWindow, promoteClipboardText]);
 
   useEffect(() => {
     if (isSettingsWindow) return;
@@ -1256,12 +1235,10 @@ function ClipForgeApp() {
 
   useEffect(() => {
     if (!selectedClip) {
-      setSelectedId((current) => (current === null ? current : null));
       if (previewClip) setPreviewClip(null);
       return;
     }
-    setSelectedId((current) => (current === selectedClip.id ? current : selectedClip.id));
-    if (!previewClip || !clips.some((item) => item.id === previewClip.id)) {
+    if (!previewClip || previewClip.id !== selectedClip.id) {
       setPreviewClip(selectedClip);
     }
   }, [clips, previewClip, selectedClip, setPreviewClip]);
@@ -1352,12 +1329,14 @@ function ClipForgeApp() {
       ),
     );
     window.setTimeout(() => setLastCopiedId(null), 1000);
+    setSelectedIds(new Set());
+    setMultiSelectMode(false);
   }
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-      if (event.isComposing || multiSelectMode || activeView === "settings") return;
+      if (event.isComposing || multiSelectMode) return;
 
       const target = event.target as HTMLElement | null;
       const editable = target?.closest("input, textarea, select, [contenteditable='true']");
@@ -1508,12 +1487,6 @@ function ClipForgeApp() {
     setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
   }
 
-  function updateTagRule(id: string, next: Partial<TagRule>) {
-    updateSettings({
-      tagRules: settings.tagRules.map((rule) => (rule.id === id ? { ...rule, ...next } : rule)),
-    });
-  }
-
   function createQuickTag() {
     const seed = query.trim() || selectedClip?.analysis.title || selectedClip?.analysis.sourceName || "";
     const label = makeRuleLabel(seed);
@@ -1534,45 +1507,6 @@ function ClipForgeApp() {
   }
 
   const total = clips.length;
-
-  if (isSettingsWindow) {
-    return (
-      <main className="app-shell settings-window-shell density-normal">
-        <SettingsPanel
-          accessibility={accessibility}
-          configPath={configPath}
-          configStatus={configStatus}
-          databasePath={databasePath}
-          onOpenAccessibilitySettings={() => {
-            invoke<AccessibilityPermissionPayload>("request_accessibility_permission")
-              .then((payload) => setAccessibility(payload))
-              .catch((error) => logAppError("warn", "Request accessibility permission failed", String(error)))
-              .finally(() => {
-                invoke("open_accessibility_settings").catch((error) =>
-                  logAppError("warn", "Open accessibility settings failed", String(error)),
-                );
-              });
-          }}
-          onAddTagRule={() =>
-            updateSettings({
-              tagRules: [...settings.tagRules, { id: makeId(), label: "新规则", query: "关键词" }],
-            })
-          }
-          onDeleteTagRule={(id) =>
-            updateSettings({ tagRules: settings.tagRules.filter((rule) => rule.id !== id) })
-          }
-          onSettingsChange={updateSettings}
-          onTagRuleChange={updateTagRule}
-          onClose={() => {
-            getCurrentWindow()
-              .close()
-              .catch((error) => logAppError("warn", "Close settings window failed", String(error)));
-          }}
-          settings={settings}
-        />
-      </main>
-    );
-  }
 
   return (
     <main className={`app-shell view-${activeView} density-${settings.panelDensity}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}`}>
@@ -1738,7 +1672,6 @@ function ClipForgeApp() {
                 <Eye size={15} />
               </button>
             ) : null}
-            <span>{query || activeTag ? `筛选 ${filteredClips.length}` : `列表 ${filteredClips.length}`}</span>
           </div>
         </div>
         {activeView !== "folders" && activeView !== "trash" ? (
@@ -1813,7 +1746,10 @@ function ClipForgeApp() {
               onLoadMore={loadMoreClips}
               onRestore={(item) => restoreClips([item.id])}
               onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
-              onSelect={(item) => setSelectedId(item.id)}
+              onSelect={(item) => {
+                setSelectedId(item.id);
+                setPreviewOpen(true);
+              }}
               onToggleMultiSelect={() => {
                 setMultiSelectMode((current) => {
                   if (current) setSelectedIds(new Set());
@@ -1850,7 +1786,10 @@ function ClipForgeApp() {
             onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
             onLoadMore={loadMoreClips}
             onOpen={openClipTarget}
-            onSelect={(item) => setSelectedId(item.id)}
+            onSelect={(item) => {
+              setSelectedId(item.id);
+              setPreviewOpen(true);
+            }}
             onSelectAll={() => setSelectedIds(new Set(filteredClips.slice(0, settings.quickItemLimit).map((item) => item.id)))}
             onToggleMultiSelect={() => {
               setMultiSelectMode((current) => {
@@ -1884,7 +1823,10 @@ function ClipForgeApp() {
             onDelete={(item) => deleteClips([item.id])}
             onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
             onOpen={openClipTarget}
-            onSelect={(item) => setSelectedId(item.id)}
+            onSelect={(item) => {
+              setSelectedId(item.id);
+              setPreviewOpen(true);
+            }}
             onToggleSelected={(id) =>
               setSelectedIds((current) => {
                 const next = new Set(current);
@@ -1900,27 +1842,79 @@ function ClipForgeApp() {
         </PanelContentBoundary>
       </section>
 
-      {/* Compact mode: floating preview overlay (hidden when detail-pane visible) */}
+      <footer className="list-footer" data-tauri-drag-region onPointerDown={handleWindowDrag}>
+        <span className="footer-count">
+          {query || activeTag
+            ? `筛选 ${filteredClips.length} / ${scopedClips.length}`
+            : `${activeView === "trash" ? "垃圾箱" : activeView === "favorites" ? "收藏" : "列表"} ${filteredClips.length}`}
+        </span>
+        <div className="footer-actions">
+          <button
+            aria-label="刷新剪贴板"
+            className="icon-button subtle"
+            onClick={() => {
+              void captureClipboard("manual");
+              setNativeStatus("已刷新剪贴板列表");
+            }}
+            type="button"
+          >
+            <RotateCcw size={13} />
+          </button>
+        </div>
+      </footer>
+
       {compactPanel && previewClip ? (
         <aside
           className={isPreviewOpen ? "quick-preview-pane open" : "quick-preview-pane"}
           aria-label="剪贴板详情预览"
         >
-          {previewClip ? (
-            <>
-              <button
-                aria-label="关闭详情"
-                className="icon-button subtle preview-close"
-                onClick={() => setPreviewOpen(false)}
-                type="button"
-              >
-                <X size={13} />
+          <div className="preview-header">
+            <span className={`kind-pill ${previewClip.kind}`}>{previewClip.kind}</span>
+            <strong className="preview-title">{previewClip.analysis.title}</strong>
+            <button
+              aria-label="关闭详情"
+              className="icon-button subtle preview-close"
+              onClick={() => setPreviewOpen(false)}
+              type="button"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div className="preview-body">
+            {previewClip.analysis.attachment ? (
+              <AttachmentPreview item={previewClip} compact />
+            ) : settings.enableMarkdownPreview && previewClip.analysis.isMarkdown ? (
+              <div className="inline-markdown-preview">
+                <MarkdownPreview content={previewClip.content} />
+              </div>
+            ) : (
+              <p className="preview-summary">{previewClip.analysis.summary}</p>
+            )}
+          </div>
+          <div className="preview-footer">
+            <div className="preview-meta">
+              <span>来源 {previewClip.analysis.sourceName}</span>
+              <span>创建 {formatTime(previewClip.createdAt)}</span>
+              <span>最近 {formatTime(previewClip.lastSeenAt)}</span>
+            </div>
+            <div className="inline-tags">
+              {previewClip.tags.map((tag) => (
+                <span key={tag}>{tag}</span>
+              ))}
+            </div>
+            <div className="preview-actions">
+              {Boolean(previewClip.analysis.url || previewClip.analysis.attachment) ? (
+                <button className="text-button" onClick={() => openClipTarget(previewClip)} type="button">
+                  <ExternalLink size={14} />
+                  打开
+                </button>
+              ) : null}
+              <button className="text-button" onClick={() => copyClip(previewClip)} type="button">
+                <Copy size={14} />
+                复制
               </button>
-              <ClipPreviewCard item={previewClip} onCopy={copyClip} onOpen={openClipTarget} settings={settings} />
-            </>
-          ) : (
-            <span>暂无详情</span>
-          )}
+            </div>
+          </div>
         </aside>
       ) : null}
 
@@ -1952,60 +1946,6 @@ function ClipForgeApp() {
         </PanelContentBoundary>
       </aside>
     </main>
-  );
-}
-
-function ClipPreviewCard({
-  item,
-  onCopy,
-  onOpen,
-  settings,
-}: {
-  item: ClipItem;
-  onCopy: (item: ClipItem) => void;
-  onOpen: (item: ClipItem) => void;
-  settings: AppSettings;
-}) {
-  const canOpen = Boolean(item.analysis.url || item.analysis.attachment);
-  const showMarkdown = settings.enableMarkdownPreview && item.analysis.isMarkdown;
-  return (
-    <div className="preview-card">
-      <div className="preview-card-head">
-        <span className={`kind-pill ${item.kind}`}>{item.kind}</span>
-        <strong>{item.analysis.title}</strong>
-      </div>
-      {item.analysis.attachment ? (
-        <AttachmentPreview item={item} compact />
-      ) : showMarkdown ? (
-        <div className="inline-markdown-preview">
-          <MarkdownPreview content={item.content} />
-        </div>
-      ) : (
-        <p>{item.analysis.summary}</p>
-      )}
-      <div className="preview-meta">
-        <span>来源 {item.analysis.sourceName}</span>
-        <span>创建 {formatTime(item.createdAt)}</span>
-        <span>最近 {formatTime(item.lastSeenAt)}</span>
-      </div>
-      <div className="inline-tags">
-        {item.tags.map((tag) => (
-          <span key={tag}>{tag}</span>
-        ))}
-      </div>
-      <div className="preview-actions" onClick={(event) => event.stopPropagation()}>
-        {canOpen ? (
-          <button className="text-button" onClick={() => onOpen(item)} type="button">
-            <ExternalLink size={14} />
-            打开
-          </button>
-        ) : null}
-        <button className="text-button" onClick={() => onCopy(item)} type="button">
-          <Copy size={14} />
-          复制
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -2059,7 +1999,7 @@ function ClipList({
   if (!clips.length) {
     return (
       <div className="empty-list">
-        <Database size={30} />
+        <Inbox size={30} />
         <h2>没有匹配内容</h2>
         <p>搜索会直接跨历史、归档、片段展示结果。</p>
       </div>
@@ -2426,7 +2366,7 @@ function QuickPastePanel({
   if (!clips.length) {
     return (
       <div className="empty-list">
-        <Database size={30} />
+        <Inbox size={30} />
         <h2>还没有剪贴板内容</h2>
         <p>复制文本后，这里会显示最近项目。</p>
       </div>
@@ -2693,6 +2633,26 @@ function ClipDetail({
   );
 }
 
+function CodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+    }
+  };
+  return (
+    <pre className="code-block">
+      <button className="code-copy-btn" onClick={handleCopy} title="复制代码">
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+      <code>{code}</code>
+    </pre>
+  );
+}
+
 function MarkdownPreview({ content }: { content: string }) {
   const lines = content.split("\n");
   const blocks: ReactNode[] = [];
@@ -2714,11 +2674,8 @@ function MarkdownPreview({ content }: { content: string }) {
 
   function flushCode(key: string) {
     if (!codeLines.length) return;
-    blocks.push(
-      <pre key={key}>
-        <code>{codeLines.join("\n")}</code>
-      </pre>,
-    );
+    const codeText = codeLines.join("\n");
+    blocks.push(<CodeBlock key={key} code={codeText} />);
     codeLines = [];
   }
 
@@ -2828,354 +2785,6 @@ function FolderPanel({ clips, onView }: { clips: ClipItem[]; onView: (view: View
   );
 }
 
-function SettingsPanel({
-  accessibility,
-  configPath,
-  configStatus,
-  databasePath,
-  onOpenAccessibilitySettings,
-  onAddTagRule,
-  onDeleteTagRule,
-  onSettingsChange,
-  onTagRuleChange,
-  onClose,
-  settings,
-}: {
-  accessibility: AccessibilityPermissionPayload | null;
-  configPath: string;
-  configStatus: string;
-  databasePath: string;
-  onOpenAccessibilitySettings: () => void;
-  onAddTagRule: () => void;
-  onDeleteTagRule: (id: string) => void;
-  onSettingsChange: (next: Partial<AppSettings>) => void;
-  onTagRuleChange: (id: string, next: Partial<TagRule>) => void;
-  onClose: () => void;
-  settings: AppSettings;
-}) {
-  const [section, setSection] = useState("shortcut");
-  const [recording, setRecording] = useState(false);
-  const sections = [
-    { key: "shortcut", label: "快捷键", icon: Terminal },
-    { key: "display", label: "面板显示", icon: Eye },
-    { key: "content", label: "内容识别", icon: FileCode },
-    { key: "storage", label: "数据存储", icon: Database },
-    { key: "tags", label: "Tag 规则", icon: Tag },
-  ];
-
-  return (
-    <section className="extension-panel">
-      <div className="panel-heading">
-        <Settings size={20} />
-        <div>
-          <h2>设置</h2>
-          <p>{configStatus}</p>
-        </div>
-        <button aria-label="关闭设置" className="icon-button subtle settings-close" onClick={onClose} type="button">
-          <X size={14} />
-        </button>
-      </div>
-      <div className="settings-shell">
-        <aside className="settings-sidebar" aria-label="设置分类">
-          {sections.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                className={section === item.key ? "active" : ""}
-                key={item.key}
-                onClick={() => setSection(item.key)}
-                type="button"
-              >
-                <Icon size={15} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </aside>
-
-        <div className="settings-list config-list">
-          {section === "shortcut" ? (
-            <SettingGroup title="快捷键">
-              <div className="setting-card full">
-                <span>快速唤起</span>
-                <div className="kbd-row">
-                  {formatShortcutParts(settings.globalShortcut).map((part) => (
-                    <Kbd key={part}>{part}</Kbd>
-                  ))}
-                </div>
-                <button
-                  className={recording ? "primary-button" : "text-button"}
-                  onClick={() => setRecording((value) => !value)}
-                  onKeyDown={(event) => {
-                    if (!recording) return;
-                    event.preventDefault();
-                    const shortcut = shortcutFromKeyboardEvent(event);
-                    if (!shortcut) return;
-                    onSettingsChange({ globalShortcut: shortcut });
-                    setRecording(false);
-                  }}
-                  type="button"
-                >
-                  {recording ? "按下组合键" : "录入快捷键"}
-                </button>
-                <input
-                  aria-label="全局快捷键"
-                  onChange={(event) => onSettingsChange({ globalShortcut: event.currentTarget.value })}
-                  value={settings.globalShortcut}
-                />
-              </div>
-              <div className="setting-card full permission-card">
-                <span>macOS 辅助功能权限</span>
-                <strong>{accessibility?.canReadFocusedInput ? "已授权：可贴近输入位置" : "未授权：使用屏幕右侧兜底"}</strong>
-                <p>{accessibility?.message ?? "启动时自动检查，用于读取当前输入控件位置。"}</p>
-                {accessibility?.status === "missing" ? (
-                  <button className="text-button" onClick={onOpenAccessibilitySettings} type="button">
-                    <Settings size={14} />
-                    打开系统设置
-                  </button>
-                ) : null}
-              </div>
-            </SettingGroup>
-          ) : null}
-
-          {section === "display" ? (
-            <SettingGroup title="面板显示">
-              <SegmentSetting
-                label="面板密度 / Zoom"
-                value={densityLabels[settings.panelDensity]}
-                options={(["dense", "normal", "comfortable"] as PanelDensity[]).map((value) => ({
-                  value,
-                  label: densityLabels[value],
-                }))}
-                selected={settings.panelDensity}
-                onChange={(panelDensity) => onSettingsChange({ panelDensity })}
-              />
-              <SegmentSetting
-                label="内容显示"
-                value={displayModeLabels[settings.contentDisplayMode]}
-                options={(["summary", "middle", "raw"] as ContentDisplayMode[]).map((value) => ({
-                  value,
-                  label: displayModeLabels[value],
-                }))}
-                selected={settings.contentDisplayMode}
-                onChange={(contentDisplayMode) => onSettingsChange({ contentDisplayMode })}
-              />
-              <NumberSetting
-                label="快捷列表条数"
-                value={settings.quickItemLimit}
-                min={4}
-                max={30}
-                onChange={(quickItemLimit) => onSettingsChange({ quickItemLimit })}
-              />
-            </SettingGroup>
-          ) : null}
-
-          {section === "content" ? (
-            <SettingGroup title="内容识别">
-              <div className="setting-card toggle-card full">
-                <label>
-                  <input
-                    checked={settings.enableMarkdownPreview}
-                    onChange={(event) => onSettingsChange({ enableMarkdownPreview: event.currentTarget.checked })}
-                    type="checkbox"
-                  />
-                  Markdown 详情预览
-                </label>
-              </div>
-              <div className="setting-card full">
-                <span>智能内容检查</span>
-                <div className="content-check-grid">
-                  <CheckItem icon={<ExternalLink size={15} />} title="链接" body="识别 GitHub / GitLab / 普通链接。" />
-                  <CheckItem icon={<Terminal size={15} />} title="命令" body="识别 pnpm、cargo、git、curl 等命令。" />
-                  <CheckItem icon={<Eye size={15} />} title="Markdown" body="详情面板预览，原文仍可复制。" />
-                  <CheckItem icon={<FileCode size={15} />} title="代码" body="识别代码片段，保留等宽查看。" />
-                </div>
-              </div>
-            </SettingGroup>
-          ) : null}
-
-          {section === "storage" ? (
-            <SettingGroup title="数据存储">
-              <div className="setting-card full">
-                <span>JSON5 配置文件</span>
-                <strong>{configPath || "Tauri 启动后生成"}</strong>
-              </div>
-              <div className="setting-card full">
-                <span>SQLite 永久数据库</span>
-                <strong>{databasePath || "Tauri 启动后生成"}</strong>
-              </div>
-              <NumberSetting
-                label="最大存储条数"
-                value={settings.maxStoredItems}
-                min={50}
-                max={5000}
-                onChange={(maxStoredItems) => onSettingsChange({ maxStoredItems })}
-              />
-              <NumberSetting
-                label="剪贴板检查间隔 ms"
-                value={settings.clipboardPollMs}
-                min={500}
-                max={5000}
-                onChange={(clipboardPollMs) => onSettingsChange({ clipboardPollMs })}
-              />
-              <div className="setting-card toggle-card full">
-                <label>
-                  <input
-                    checked={settings.cleanupEnabled}
-                    onChange={(event) => onSettingsChange({ cleanupEnabled: event.currentTarget.checked })}
-                    type="checkbox"
-                  />
-                  启用定期清理
-                </label>
-              </div>
-              <NumberSetting
-                label="清理间隔小时"
-                value={settings.cleanupIntervalHours}
-                min={1}
-                max={720}
-                onChange={(cleanupIntervalHours) => onSettingsChange({ cleanupIntervalHours })}
-              />
-              <NumberSetting
-                label="软删除保留天数"
-                value={settings.softDeletedRetentionDays}
-                min={1}
-                max={365}
-                onChange={(softDeletedRetentionDays) => onSettingsChange({ softDeletedRetentionDays })}
-              />
-            </SettingGroup>
-          ) : null}
-
-          {section === "tags" ? (
-            <SettingGroup title="Tag 规则">
-              <SegmentSetting
-                label="Tag 生成"
-                value={tagModeLabels[settings.tagMode]}
-                options={(["similar", "rules", "off"] as TagMode[]).map((value) => ({
-                  value,
-                  label: tagModeLabels[value],
-                }))}
-                selected={settings.tagMode}
-                onChange={(tagMode) => onSettingsChange({ tagMode })}
-              />
-              <div className="setting-card full">
-                <span>规则配置</span>
-                <strong>默认相似内容；规则模式会叠加这些关键词</strong>
-                <div className="tag-rule-list">
-                  {settings.tagRules.map((rule) => (
-                    <div className="tag-rule" key={rule.id}>
-                      <input
-                        aria-label="Tag 名称"
-                        onChange={(event) => onTagRuleChange(rule.id, { label: event.currentTarget.value })}
-                        value={rule.label}
-                      />
-                      <input
-                        aria-label="Tag 关键词"
-                        onChange={(event) => onTagRuleChange(rule.id, { query: event.currentTarget.value })}
-                        value={rule.query}
-                      />
-                      <button
-                        aria-label="删除 Tag 规则"
-                        className="icon-button subtle"
-                        onClick={() => onDeleteTagRule(rule.id)}
-                        type="button"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <button className="text-button" onClick={onAddTagRule} type="button">
-                  <Plus size={14} />
-                  添加规则
-                </button>
-              </div>
-            </SettingGroup>
-          ) : null}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function SettingGroup({ children, title }: { children: ReactNode; title: string }) {
-  return (
-    <div className="setting-group">
-      <h3>{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function SegmentSetting<T extends string>({
-  label,
-  onChange,
-  options,
-  selected,
-  value,
-}: {
-  label: string;
-  value: string;
-  options: Array<{ value: T; label: string }>;
-  selected: T;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="setting-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <div className="segmented-control">
-        {options.map((option) => (
-          <button
-            className={selected === option.value ? "active" : ""}
-            key={option.value}
-            onClick={() => onChange(option.value)}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function NumberSetting({
-  label,
-  max,
-  min,
-  onChange,
-  value,
-}: {
-  label: string;
-  max: number;
-  min: number;
-  onChange: (value: number) => void;
-  value: number;
-}) {
-  return (
-    <div className="setting-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <input
-        max={max}
-        min={min}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-        type="number"
-        value={value}
-      />
-    </div>
-  );
-}
-
-function CheckItem({ body, icon, title }: { body: string; icon: ReactNode; title: string }) {
-  return (
-    <div>
-      {icon}
-      <strong>{title}</strong>
-      <span>{body}</span>
-    </div>
-  );
-}
 
 function App() {
   return (

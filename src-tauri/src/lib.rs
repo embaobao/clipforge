@@ -201,6 +201,17 @@ struct QueryAppLogPayload {
     limit: i64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardChangePayload {
+    change_count: i64,
+    has_change: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview_len: Option<i64>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateClipInput {
@@ -555,21 +566,23 @@ fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
     let window = WebviewWindowBuilder::new(
         &app,
         "settings",
-        WebviewUrl::App("index.html?window=settings".into()),
+        WebviewUrl::App("settings.html".into()),
     )
     .title("ClipForge 设置")
-    .inner_size(MANAGEMENT_PANEL_WIDTH, QUICK_PANEL_FALLBACK_HEIGHT)
-    .min_inner_size(620.0, 520.0)
-    .decorations(false)
-    .transparent(true)
+    .inner_size(720.0, 600.0)
+    .min_inner_size(640.0, 480.0)
+    .resizable(true)
+    .decorations(true)
+    .transparent(false)
     .always_on_top(false)
     .visible_on_all_workspaces(false)
     .build()
     .map_err(|error| error.to_string())?;
 
-    let _ = window.set_size(LogicalSize::new(MANAGEMENT_PANEL_WIDTH, QUICK_PANEL_FALLBACK_HEIGHT));
+    let _ = window.set_size(LogicalSize::new(720.0, 600.0));
     let _ = window.set_always_on_top(false);
     let _ = window.set_visible_on_all_workspaces(false);
+    let _ = window.center();
     let _ = window.show();
     let _ = window.set_focus();
     Ok(())
@@ -1215,7 +1228,14 @@ fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
 fn read_platform_clipboard() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        return read_command("pbpaste", &[]);
+        // pbpaste 比 osascript 快 5-10 倍；优先用 pbpaste，失败再回退
+        if let Ok(text) = read_command("pbpaste", &[]) {
+            return Ok(text);
+        }
+        return read_command(
+            "osascript",
+            &["-e", "the clipboard as «class utf8»"],
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -1238,6 +1258,52 @@ fn read_platform_clipboard() -> Result<String, String> {
             }
         }
         Err("No supported clipboard reader found. Install wl-clipboard, xclip, or xsel.".into())
+    }
+}
+
+#[tauri::command]
+fn poll_clipboard_change(last_change_count: i64) -> Result<ClipboardChangePayload, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // 用 AppleScript 取 change count，比每次 pbpaste 节省 30-50ms
+        // NSPasteboard changeCount 在复制/粘贴时严格递增
+        let raw = read_command(
+            "osascript",
+            &[
+                "-e",
+                "use framework \"AppKit\"\nuse scripting additions\nset pb to current application's NSPasteboard's generalPasteboard()\nset theCount to pb's changeCount() as integer\nreturn theCount as string",
+            ],
+        );
+        if let Ok(text) = raw {
+            if let Ok(current) = text.trim().parse::<i64>() {
+                return Ok(ClipboardChangePayload {
+                    change_count: current,
+                    has_change: current != last_change_count,
+                    preview: None,
+                    preview_len: None,
+                });
+            }
+        }
+        // 失败时回退到直接读剪贴板文本（兼容旧路径）
+        let text = read_platform_clipboard().unwrap_or_default();
+        let len = text.chars().count() as i64;
+        Ok(ClipboardChangePayload {
+            change_count: last_change_count + 1,
+            has_change: true,
+            preview: Some(text.chars().take(40).collect()),
+            preview_len: Some(len),
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = last_change_count;
+        Ok(ClipboardChangePayload {
+            change_count: 0,
+            has_change: true,
+            preview: None,
+            preview_len: None,
+        })
     }
 }
 
@@ -1421,6 +1487,34 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         tray_builder = tray_builder.icon(icon.clone());
     }
     tray_builder.build(app)?;
+
+    // 启动后台剪贴板监听线程：脱离 WebView，隐藏时也能工作
+    let app_handle = app.handle().clone();
+    std::thread::spawn(move || {
+        let mut last_text = String::new();
+        println!("[CLIPBOARD] background monitor started");
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            match read_platform_clipboard() {
+                Ok(text) => {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() && trimmed != last_text {
+                        println!("[CLIPBOARD] detected change: {} chars", trimmed.chars().count());
+                        last_text = trimmed.to_string();
+                        if let Err(e) = app_handle.emit_to("main", "clipboard-changed", serde_json::json!({
+                            "text": trimmed
+                        })) {
+                            println!("[CLIPBOARD] emit error: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("[CLIPBOARD] read error: {}", e);
+                }
+            }
+        }
+    });
+
     Ok(())
 }
 
@@ -1477,7 +1571,8 @@ pub fn run() {
             focused_input_bounds,
             check_accessibility_permission,
             open_accessibility_settings,
-            request_accessibility_permission
+            request_accessibility_permission,
+            poll_clipboard_change
         ])
         .run(tauri::generate_context!())
         .expect("error while running ClipForge");

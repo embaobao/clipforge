@@ -13,6 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "ClipForge",
         "width": 360,
         "height": 640,
@@ -25,6 +26,22 @@
         "hiddenTitle": true,
         "alwaysOnTop": true,
         "visibleOnAllWorkspaces": true
+      },
+      {
+        "label": "settings",
+        "title": "ClipForge 设置",
+        "url": "settings.html",
+        "width": 720,
+        "height": 600,
+        "minWidth": 640,
+        "minHeight": 480,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "shadow": true,
+        "hiddenTitle": false,
+        "alwaysOnTop": false,
+        "visibleOnAllWorkspaces": false
       }
     ],
     "security": {

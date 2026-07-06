@@ -96,3 +96,48 @@ await repository.import({
 - `clipboard.import`
 
 MCP 只负责标准调用入口，不应该引入复杂 AI 配置流程。
+
+## Agent 快速访问边界
+
+Agent、CLI、MCP server、同步服务都只能通过同一套服务契约访问剪贴板数据：
+
+```mermaid
+flowchart LR
+  Agent["Agent / MCP / CLI"] --> Bridge["ExternalToolBridge"]
+  Bridge --> Repo["ClipboardRepository"]
+  Bridge --> Search["SearchIndex"]
+  Repo --> DB["SQLite + FTS5"]
+  Search --> DB
+```
+
+最低可用能力：
+
+```ts
+await bridge.call({
+  tool: "clipboard.capture",
+  input: {
+    content: "hello from agent",
+    source: "external",
+    sourceLabel: "MCP",
+    observedAt: Date.now(),
+  },
+});
+
+await bridge.call({
+  tool: "clipboard.search",
+  input: {
+    text: "hello",
+    bucket: "all",
+    limit: 20,
+    sort: "recent",
+  },
+});
+```
+
+约束：
+
+- 外部工具不得直接写 UI state、localStorage 或内存列表。
+- 外部工具不得绕过 SQLite/FTS5 主存储。
+- 搜索必须有 `limit`，默认不返回全量历史。
+- 删除默认软删除，硬清理由配置驱动。
+- AI 能力如果接入，只能作为 MCP 工具调用这些接口，不在快捷面板里增加复杂配置。
