@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="96" alt="ClipForge icon" />
+  <img src="assets/brand/clipforge-banner.png" width="760" alt="ClipForge banner" />
 </p>
 
 <h1 align="center">ClipForge</h1>

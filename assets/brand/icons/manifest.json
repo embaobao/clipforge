@@ -1,0 +1,786 @@
+{
+  "generatedAt": "2026-07-03T11:36:10.626Z",
+  "source": "icons.png",
+  "icons": [
+    {
+      "slug": "clipboard-history",
+      "label": "剪贴板历史",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 1,
+        "col": 1
+      },
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 66,
+        "top": 44,
+        "width": 129,
+        "height": 144
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/clipboard-history.png",
+        "512": "assets/brand/icons/512/clipboard-history.png",
+        "trimmed": "assets/brand/icons/trimmed/clipboard-history.png"
+      }
+    },
+    {
+      "slug": "text",
+      "label": "文本",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 1,
+        "col": 2
+      },
+      "crop": {
+        "left": 234,
+        "top": 0,
+        "width": 233,
+        "height": 188
+      },
+      "trim": {
+        "left": 51,
+        "top": 61,
+        "width": 124,
+        "height": 127
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/text.png",
+        "512": "assets/brand/icons/512/text.png",
+        "trimmed": "assets/brand/icons/trimmed/text.png"
+      }
+    },
+    {
+      "slug": "image",
+      "label": "图片",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 1,
+        "col": 3
+      },
+      "crop": {
+        "left": 467,
+        "top": 0,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 26,
+        "top": 66,
+        "width": 152,
+        "height": 122
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/image.png",
+        "512": "assets/brand/icons/512/image.png",
+        "trimmed": "assets/brand/icons/trimmed/image.png"
+      }
+    },
+    {
+      "slug": "code",
+      "label": "代码",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 1,
+        "col": 4
+      },
+      "crop": {
+        "left": 701,
+        "top": 0,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 21,
+        "top": 62,
+        "width": 162,
+        "height": 126
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/code.png",
+        "512": "assets/brand/icons/512/code.png",
+        "trimmed": "assets/brand/icons/trimmed/code.png"
+      }
+    },
+    {
+      "slug": "file",
+      "label": "文件",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 1,
+        "col": 5
+      },
+      "crop": {
+        "left": 935,
+        "top": 0,
+        "width": 233,
+        "height": 188
+      },
+      "trim": {
+        "left": 40,
+        "top": 64,
+        "width": 120,
+        "height": 124
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/file.png",
+        "512": "assets/brand/icons/512/file.png",
+        "trimmed": "assets/brand/icons/trimmed/file.png"
+      }
+    },
+    {
+      "slug": "link",
+      "label": "链接",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 1,
+        "col": 6
+      },
+      "crop": {
+        "left": 1168,
+        "top": 0,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 17,
+        "top": 63,
+        "width": 144,
+        "height": 125
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/link.png",
+        "512": "assets/brand/icons/512/link.png",
+        "trimmed": "assets/brand/icons/trimmed/link.png"
+      }
+    },
+    {
+      "slug": "pin",
+      "label": "固定",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 2,
+        "col": 1
+      },
+      "crop": {
+        "left": 0,
+        "top": 224,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 53,
+        "top": 0,
+        "width": 152,
+        "height": 189
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/pin.png",
+        "512": "assets/brand/icons/512/pin.png",
+        "trimmed": "assets/brand/icons/trimmed/pin.png"
+      }
+    },
+    {
+      "slug": "favorite",
+      "label": "收藏",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 2,
+        "col": 2
+      },
+      "crop": {
+        "left": 234,
+        "top": 224,
+        "width": 233,
+        "height": 189
+      },
+      "trim": {
+        "left": 51,
+        "top": 0,
+        "width": 124,
+        "height": 189
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/favorite.png",
+        "512": "assets/brand/icons/512/favorite.png",
+        "trimmed": "assets/brand/icons/trimmed/favorite.png"
+      }
+    },
+    {
+      "slug": "later",
+      "label": "稍后查看",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 2,
+        "col": 3
+      },
+      "crop": {
+        "left": 467,
+        "top": 224,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 36,
+        "top": 0,
+        "width": 132,
+        "height": 189
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/later.png",
+        "512": "assets/brand/icons/512/later.png",
+        "trimmed": "assets/brand/icons/trimmed/later.png"
+      }
+    },
+    {
+      "slug": "delete",
+      "label": "删除",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 2,
+        "col": 4
+      },
+      "crop": {
+        "left": 701,
+        "top": 224,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 44,
+        "top": 0,
+        "width": 113,
+        "height": 189
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/delete.png",
+        "512": "assets/brand/icons/512/delete.png",
+        "trimmed": "assets/brand/icons/trimmed/delete.png"
+      }
+    },
+    {
+      "slug": "search",
+      "label": "搜索",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 2,
+        "col": 5
+      },
+      "crop": {
+        "left": 935,
+        "top": 224,
+        "width": 233,
+        "height": 189
+      },
+      "trim": {
+        "left": 32,
+        "top": 0,
+        "width": 134,
+        "height": 189
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/search.png",
+        "512": "assets/brand/icons/512/search.png",
+        "trimmed": "assets/brand/icons/trimmed/search.png"
+      }
+    },
+    {
+      "slug": "filter",
+      "label": "筛选",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 2,
+        "col": 6
+      },
+      "crop": {
+        "left": 1168,
+        "top": 224,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 23,
+        "top": 0,
+        "width": 128,
+        "height": 189
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/filter.png",
+        "512": "assets/brand/icons/512/filter.png",
+        "trimmed": "assets/brand/icons/trimmed/filter.png"
+      }
+    },
+    {
+      "slug": "sync",
+      "label": "同步",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 3,
+        "col": 1
+      },
+      "crop": {
+        "left": 0,
+        "top": 449,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 48,
+        "top": 0,
+        "width": 163,
+        "height": 188
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/sync.png",
+        "512": "assets/brand/icons/512/sync.png",
+        "trimmed": "assets/brand/icons/trimmed/sync.png"
+      }
+    },
+    {
+      "slug": "devices",
+      "label": "多端设备",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 3,
+        "col": 2
+      },
+      "crop": {
+        "left": 234,
+        "top": 449,
+        "width": 233,
+        "height": 188
+      },
+      "trim": {
+        "left": 44,
+        "top": 0,
+        "width": 147,
+        "height": 188
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/devices.png",
+        "512": "assets/brand/icons/512/devices.png",
+        "trimmed": "assets/brand/icons/trimmed/devices.png"
+      }
+    },
+    {
+      "slug": "cross-platform",
+      "label": "跨平台",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 3,
+        "col": 3
+      },
+      "crop": {
+        "left": 467,
+        "top": 449,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 36,
+        "top": 0,
+        "width": 132,
+        "height": 188
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/cross-platform.png",
+        "512": "assets/brand/icons/512/cross-platform.png",
+        "trimmed": "assets/brand/icons/trimmed/cross-platform.png"
+      }
+    },
+    {
+      "slug": "import",
+      "label": "导入",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 3,
+        "col": 4
+      },
+      "crop": {
+        "left": 701,
+        "top": 449,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 32,
+        "top": 0,
+        "width": 135,
+        "height": 188
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/import.png",
+        "512": "assets/brand/icons/512/import.png",
+        "trimmed": "assets/brand/icons/trimmed/import.png"
+      }
+    },
+    {
+      "slug": "export",
+      "label": "导出",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 3,
+        "col": 5
+      },
+      "crop": {
+        "left": 935,
+        "top": 449,
+        "width": 233,
+        "height": 188
+      },
+      "trim": {
+        "left": 29,
+        "top": 0,
+        "width": 130,
+        "height": 188
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/export.png",
+        "512": "assets/brand/icons/512/export.png",
+        "trimmed": "assets/brand/icons/trimmed/export.png"
+      }
+    },
+    {
+      "slug": "copy",
+      "label": "复制",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 3,
+        "col": 6
+      },
+      "crop": {
+        "left": 1168,
+        "top": 449,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 27,
+        "top": 0,
+        "width": 128,
+        "height": 188
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/copy.png",
+        "512": "assets/brand/icons/512/copy.png",
+        "trimmed": "assets/brand/icons/trimmed/copy.png"
+      }
+    },
+    {
+      "slug": "success",
+      "label": "成功",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 4,
+        "col": 1
+      },
+      "crop": {
+        "left": 0,
+        "top": 673,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 66,
+        "top": 23,
+        "width": 126,
+        "height": 166
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/success.png",
+        "512": "assets/brand/icons/512/success.png",
+        "trimmed": "assets/brand/icons/trimmed/success.png"
+      }
+    },
+    {
+      "slug": "info",
+      "label": "信息",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 4,
+        "col": 2
+      },
+      "crop": {
+        "left": 234,
+        "top": 673,
+        "width": 233,
+        "height": 189
+      },
+      "trim": {
+        "left": 50,
+        "top": 23,
+        "width": 127,
+        "height": 166
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/info.png",
+        "512": "assets/brand/icons/512/info.png",
+        "trimmed": "assets/brand/icons/trimmed/info.png"
+      }
+    },
+    {
+      "slug": "warning",
+      "label": "警告",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 4,
+        "col": 3
+      },
+      "crop": {
+        "left": 467,
+        "top": 673,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 31,
+        "top": 20,
+        "width": 142,
+        "height": 169
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/warning.png",
+        "512": "assets/brand/icons/512/warning.png",
+        "trimmed": "assets/brand/icons/trimmed/warning.png"
+      }
+    },
+    {
+      "slug": "error",
+      "label": "错误",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 4,
+        "col": 4
+      },
+      "crop": {
+        "left": 701,
+        "top": 673,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 35,
+        "top": 20,
+        "width": 127,
+        "height": 169
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/error.png",
+        "512": "assets/brand/icons/512/error.png",
+        "trimmed": "assets/brand/icons/trimmed/error.png"
+      }
+    },
+    {
+      "slug": "lock",
+      "label": "加密",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 4,
+        "col": 5
+      },
+      "crop": {
+        "left": 935,
+        "top": 673,
+        "width": 233,
+        "height": 189
+      },
+      "trim": {
+        "left": 38,
+        "top": 16,
+        "width": 112,
+        "height": 173
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/lock.png",
+        "512": "assets/brand/icons/512/lock.png",
+        "trimmed": "assets/brand/icons/trimmed/lock.png"
+      }
+    },
+    {
+      "slug": "security",
+      "label": "安全",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 4,
+        "col": 6
+      },
+      "crop": {
+        "left": 1168,
+        "top": 673,
+        "width": 234,
+        "height": 189
+      },
+      "trim": {
+        "left": 28,
+        "top": 15,
+        "width": 124,
+        "height": 174
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/security.png",
+        "512": "assets/brand/icons/512/security.png",
+        "trimmed": "assets/brand/icons/trimmed/security.png"
+      }
+    },
+    {
+      "slug": "agent-access",
+      "label": "Agent 访问",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 5,
+        "col": 1
+      },
+      "crop": {
+        "left": 0,
+        "top": 898,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 54,
+        "top": 0,
+        "width": 150,
+        "height": 188
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/agent-access.png",
+        "512": "assets/brand/icons/512/agent-access.png",
+        "trimmed": "assets/brand/icons/trimmed/agent-access.png"
+      }
+    },
+    {
+      "slug": "chat",
+      "label": "对话",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 5,
+        "col": 2
+      },
+      "crop": {
+        "left": 234,
+        "top": 898,
+        "width": 233,
+        "height": 188
+      },
+      "trim": {
+        "left": 50,
+        "top": 19,
+        "width": 125,
+        "height": 158
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/chat.png",
+        "512": "assets/brand/icons/512/chat.png",
+        "trimmed": "assets/brand/icons/trimmed/chat.png"
+      }
+    },
+    {
+      "slug": "integration",
+      "label": "集成",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 5,
+        "col": 3
+      },
+      "crop": {
+        "left": 467,
+        "top": 898,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 42,
+        "top": 8,
+        "width": 120,
+        "height": 169
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/integration.png",
+        "512": "assets/brand/icons/512/integration.png",
+        "trimmed": "assets/brand/icons/trimmed/integration.png"
+      }
+    },
+    {
+      "slug": "api",
+      "label": "API",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 5,
+        "col": 4
+      },
+      "crop": {
+        "left": 701,
+        "top": 898,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 35,
+        "top": 1,
+        "width": 129,
+        "height": 173
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/api.png",
+        "512": "assets/brand/icons/512/api.png",
+        "trimmed": "assets/brand/icons/trimmed/api.png"
+      }
+    },
+    {
+      "slug": "database",
+      "label": "数据",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 5,
+        "col": 5
+      },
+      "crop": {
+        "left": 935,
+        "top": 898,
+        "width": 233,
+        "height": 188
+      },
+      "trim": {
+        "left": 37,
+        "top": 1,
+        "width": 120,
+        "height": 177
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/database.png",
+        "512": "assets/brand/icons/512/database.png",
+        "trimmed": "assets/brand/icons/trimmed/database.png"
+      }
+    },
+    {
+      "slug": "settings",
+      "label": "设置",
+      "source": "assets/brand/source/icons-sheet.png",
+      "sourceCell": {
+        "row": 5,
+        "col": 6
+      },
+      "crop": {
+        "left": 1168,
+        "top": 898,
+        "width": 234,
+        "height": 188
+      },
+      "trim": {
+        "left": 27,
+        "top": 4,
+        "width": 127,
+        "height": 174
+      },
+      "outputs": {
+        "256": "assets/brand/icons/256/settings.png",
+        "512": "assets/brand/icons/512/settings.png",
+        "trimmed": "assets/brand/icons/trimmed/settings.png"
+      }
+    }
+  ]
+}
