@@ -1991,6 +1991,21 @@ function ClipForgeApp() {
         </PanelContentBoundary>
       </section>
 
+      <button
+        aria-label={settings.panelPinned ? "取消固定窗体" : "固定窗体"}
+        className={`panel-pin-fab${settings.panelPinned ? " active" : ""}`}
+        onClick={() => {
+          const nextPinned = !settings.panelPinned;
+          setSettings((prev) => ({ ...prev, panelPinned: nextPinned }));
+          invoke("set_panel_pinned_command", { pinned: nextPinned }).catch((error) =>
+            logAppError("warn", "Toggle panel pin failed", String(error)),
+          );
+        }}
+        title="固定窗体"
+        type="button"
+      >
+        <Pin size={12} />
+      </button>
       <BottomDock
         activeView={activeView}
         onDrag={handleWindowDrag}
@@ -2005,14 +2020,6 @@ function ClipForgeApp() {
           setMultiSelectMode(false);
           setPreviewOpen(false);
           void navigateWorkspaceList();
-        }}
-        panelPinned={settings.panelPinned}
-        onTogglePin={() => {
-          const nextPinned = !settings.panelPinned;
-          setSettings((prev) => ({ ...prev, panelPinned: nextPinned }));
-          invoke("set_panel_pinned_command", { pinned: nextPinned }).catch((error) =>
-            logAppError("warn", "Toggle panel pin failed", String(error)),
-          );
         }}
         status={nativeStatus}
       />
@@ -2243,17 +2250,13 @@ function BottomDock({
   activeView,
   onDrag,
   onOpenSettings,
-  onTogglePin,
   onViewChange,
-  panelPinned,
   status,
 }: {
   activeView: ViewKey;
   onDrag: (event: PointerEvent<HTMLElement>) => void;
   onOpenSettings: () => void;
-  onTogglePin: () => void;
   onViewChange: (view: ViewKey) => void;
-  panelPinned: boolean;
   status: string;
 }) {
   return (
@@ -2289,15 +2292,6 @@ function BottomDock({
         </button>
         <button aria-label="设置" className="icon-button subtle" onClick={onOpenSettings} title="设置" type="button">
           <Settings size={13} />
-        </button>
-        <button
-          aria-label={panelPinned ? "取消固定" : "固定面板"}
-          className={panelPinned ? "icon-button active" : "icon-button subtle"}
-          onClick={onTogglePin}
-          title={panelPinned ? "取消固定" : "固定面板（置顶常驻）"}
-          type="button"
-        >
-          <Pin size={13} />
         </button>
       </div>
     </footer>

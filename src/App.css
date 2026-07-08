@@ -6627,6 +6627,36 @@ body,
   height: 14px !important;
 }
 
+/* === 右上角悬浮 pin 按钮：液态模糊玻璃圆按钮，激活黑 / 未激活灰 === */
+.panel-pin-fab {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: oklch(0.5 0 0 / 0.9);
+  background: oklch(1 0 0 / 0.35);
+  backdrop-filter: blur(18px) saturate(1.6);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.12);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.panel-pin-fab:hover {
+  transform: scale(1.08);
+}
+.panel-pin-fab.active {
+  color: oklch(0.98 0 0);
+  background: oklch(0.12 0 0 / 0.85);
+}
+
 /* === 列表序号 1-9 作为快捷键提示：始终可见（用户反馈：要能看到序号对应快捷键），hover/active 更亮 === */
 .quick-index-num {
   opacity: 0.55;
