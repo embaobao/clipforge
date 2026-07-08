@@ -169,6 +169,57 @@ body,
   text-align: left;
 }
 
+.slider-setting {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.slider-setting input[type="range"] {
+  width: 120px;
+  accent-color: var(--accent);
+}
+
+.slider-setting span {
+  min-width: 40px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.toggle-button {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  padding: 0;
+  background: var(--line-strong);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.toggle-button span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s ease;
+}
+
+.toggle-button.active {
+  background: var(--accent);
+}
+
+.toggle-button.active span {
+  transform: translateX(18px);
+}
+
 .setting-row .path {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 11px;
@@ -243,6 +294,17 @@ body,
   font-size: 11px;
   color: var(--text-muted);
   line-height: 1.5;
+}
+
+.permission-card .path {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  word-break: break-all;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .secondary-button,

@@ -1,28 +1,16 @@
 import {
-  Archive,
   Check,
   CheckSquare,
   Clipboard,
   Copy,
   ExternalLink,
-  Eye,
-  FileCode,
-  FileText,
-  Filter,
-  FunnelPlus,
   Heart,
   History,
-  Image,
   Inbox,
-  Layers3,
-  Link as LinkIcon,
-  Paperclip,
   RotateCcw,
   Search,
   Settings,
   Square,
-  Tag,
-  Terminal,
   Trash2,
   X,
 } from "lucide-react";
@@ -31,23 +19,47 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
-import type { ErrorInfo, PointerEvent, ReactNode } from "react";
+import type { CSSProperties, ErrorInfo, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
 import {
-  Attachment,
-  AttachmentContent,
-  AttachmentDescription,
-  AttachmentMedia,
-  AttachmentTitle,
-} from "@/components/ui/attachment";
+  WorkspaceRouterProvider,
+  navigateWorkspaceDetail,
+  navigateWorkspaceList,
+} from "./routes/workspace-router";
+import { useWorkspaceStore } from "./stores/workspace-store";
+import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
 import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment";
+type ClipboardContentKind = "text" | "link" | "image" | "file" | "table" | "chart" | "richText" | "unknown";
+export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "file" | "image" | "json" | "chart" | "table";
 type ClipBucket = "history" | "archive" | "snippet";
-type ViewKey = "quick" | "history" | "favorites" | "archive" | "snippets" | "folders" | "trash";
+
+type SourceAppInfo = {
+  name: string;
+  bundleId: string;
+  executablePath: string;
+  iconBase64?: string;
+};
+type ViewKey = "history" | "favorites" | "trash";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
+type SearchSuggestion =
+  | { id: string; label: string; hint: string; kind: "all"; typeFilter: "all" }
+  | { id: string; label: string; hint: string; kind: "favorite" }
+  | { id: string; label: string; hint: string; kind: "type"; typeFilter: ClipKind }
+  | { id: string; label: string; hint: string; kind: "saved"; tag: string };
+
+type ParsedSearchCommand = {
+  handled: boolean;
+  queryText: string;
+  typeFilter: "all" | ClipKind;
+  filterFavorite: boolean;
+  tag: string | null;
+  label: string | null;
+};
 
 type ContentSource =
   | "github"
@@ -80,7 +92,7 @@ type ClipAnalysis = {
   attachment?: AttachmentInfo;
 };
 
-type ClipItem = {
+export type ClipItem = {
   id: string;
   content: string;
   createdAt: number;
@@ -94,6 +106,8 @@ type ClipItem = {
   tags: string[];
   copyCount: number;
   analysis: ClipAnalysis;
+  payloadKind: ClipPayloadKind;
+  sourceApp?: SourceAppInfo;
   deletedAt?: number | null;
 };
 
@@ -151,11 +165,15 @@ type AppSettings = {
   contentDisplayMode: ContentDisplayMode;
   showSourceBadges: boolean;
   enableMarkdownPreview: boolean;
+  fuzzySearchEnabled: boolean;
+  pinyinSearchEnabled: boolean;
   globalShortcut: string;
   copyPreviewEnabled: boolean;
   cleanupEnabled: boolean;
   cleanupIntervalHours: number;
   softDeletedRetentionDays: number;
+  panelBackgroundOpacity: number;
+  enableScrollCollapse: boolean;
 };
 
 type UserSettingsPayload = {
@@ -190,7 +208,6 @@ const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 const DEFAULT_SHORTCUT = "Control+V";
 const ROW_HEIGHT = 88;
 const OVERSCAN = 5;
-
 const defaultSettings: AppSettings = {
   panelDensity: "dense",
   quickItemLimit: 10,
@@ -201,19 +218,16 @@ const defaultSettings: AppSettings = {
   contentDisplayMode: "summary",
   showSourceBadges: false,
   enableMarkdownPreview: true,
+  fuzzySearchEnabled: true,
+  pinyinSearchEnabled: true,
   globalShortcut: DEFAULT_SHORTCUT,
   copyPreviewEnabled: true,
   cleanupEnabled: true,
   cleanupIntervalHours: 24,
   softDeletedRetentionDays: 30,
+  panelBackgroundOpacity: 0.72,
+  enableScrollCollapse: true,
 };
-
-const navItems: Array<{ key: ViewKey; label: string; icon: typeof History }> = [
-  { key: "history", label: "历史", icon: History },
-  { key: "favorites", label: "收藏", icon: Heart },
-  { key: "archive", label: "归档", icon: Archive },
-  { key: "trash", label: "垃圾箱", icon: Trash2 },
-];
 
 function makeId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -232,6 +246,22 @@ function middleEllipsis(value: string, head = 34, tail = 14) {
 function extractFirstUrl(content: string) {
   const match = content.match(/https?:\/\/[^\s<>"')\]]+/i);
   return match?.[0];
+}
+
+function extractUrls(content: string) {
+  return Array.from(new Set(content.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? []));
+}
+
+function getClipboardContentKind(item: ClipItem): ClipboardContentKind {
+  const payload = item.payloadKind;
+  if (payload === "image" || item.analysis.attachment?.isImage) return "image";
+  if (payload === "file" || item.analysis.attachment) return "file";
+  if (payload === "link" || item.kind === "link") return "link";
+  if (payload === "table") return "table";
+  if (payload === "chart") return "chart";
+  if (payload === "markdown" || item.kind === "markdown") return "richText";
+  if (payload === "text" || item.kind === "text" || item.kind === "code" || item.kind === "command") return "text";
+  return "unknown";
 }
 
 const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"]);
@@ -500,19 +530,130 @@ function getSearchHaystack(item: ClipItem) {
     .toLowerCase();
 }
 
-function matchesSavedSearch(item: ClipItem, rule: TagRule) {
+function fuzzyIncludes(haystack: string, needle: string) {
+  if (!needle) return true;
+  let offset = 0;
+  for (const char of needle) {
+    const found = haystack.indexOf(char, offset);
+    if (found < 0) return false;
+    offset = found + 1;
+  }
+  return true;
+}
+
+function matchesSearchTerm(item: ClipItem, rawTerm: string, settings: AppSettings) {
+  const term = normalizeSearch(rawTerm);
+  if (!term) return true;
+  const haystack = getSearchHaystack(item);
+  if (haystack.includes(term)) return true;
+  if (settings.pinyinSearchEnabled && /[a-z]/i.test(term)) {
+    const textFields = [
+      item.content,
+      item.analysis.title,
+      item.analysis.summary,
+      item.tags.join(" "),
+    ].filter(Boolean);
+    if (textFields.some((text) => matchPinyin(text, term, { precision: "any", space: "ignore" }) !== null)) {
+      return true;
+    }
+  }
+  return settings.fuzzySearchEnabled ? fuzzyIncludes(haystack, term) : false;
+}
+
+function matchesSavedSearch(item: ClipItem, rule: TagRule, settings: AppSettings) {
   const terms = rule.query
     .split(/[\s,，]+/)
-    .map((term) => term.trim().toLowerCase())
+    .map((term) => term.trim())
     .filter(Boolean);
   if (!rule.label.trim() || !terms.length) return false;
-  const haystack = getSearchHaystack(item);
-  return terms.some((term) => haystack.includes(term));
+  return terms.some((term) => matchesSearchTerm(item, term, settings));
+}
+
+function getSearchSuggestionToken(suggestion: SearchSuggestion) {
+  if (suggestion.kind === "all") return "@全部";
+  if (suggestion.kind === "favorite") return "@收藏";
+  if (suggestion.kind === "saved") return `@${suggestion.label}`;
+  const tokenMap: Record<ClipKind, string> = {
+    text: "@文本",
+    code: "@代码",
+    link: "@链接",
+    markdown: "@Markdown",
+    command: "@命令",
+    attachment: "@文件",
+  };
+  return tokenMap[suggestion.typeFilter];
+}
+
+function getSearchSuggestionAliases(suggestion: SearchSuggestion) {
+  const label = suggestion.label.toLowerCase();
+  if (suggestion.kind === "all") return [label, "all", "全部", "全部内容"];
+  if (suggestion.kind === "favorite") return [label, "fav", "favorite", "favorites", "star", "收藏"];
+  if (suggestion.kind === "saved") return [label, suggestion.tag.toLowerCase()];
+  const aliasMap: Record<ClipKind, string[]> = {
+    text: ["text", "txt", "文本"],
+    code: ["code", "代码"],
+    link: ["link", "url", "links", "链接"],
+    markdown: ["md", "markdown"],
+    command: ["cmd", "command", "shell", "命令"],
+    attachment: ["file", "files", "attachment", "image", "img", "文件", "图片", "资源"],
+  };
+  return [label, ...aliasMap[suggestion.typeFilter]];
+}
+
+function matchesSearchSuggestionToken(suggestion: SearchSuggestion, rawToken: string) {
+  const term = normalizeSearch(rawToken.replace(/^@/, ""));
+  if (!term) return true;
+  const aliases = getSearchSuggestionAliases(suggestion);
+  return (
+    aliases.some((alias) => alias.includes(term)) ||
+    matchPinyin(suggestion.label, term, { precision: "any", space: "ignore" }) !== null
+  );
+}
+
+function parseSearchCommand(rawQuery: string, suggestions: SearchSuggestion[]): ParsedSearchCommand {
+  const fallback: ParsedSearchCommand = {
+    handled: false,
+    queryText: rawQuery,
+    typeFilter: "all",
+    filterFavorite: false,
+    tag: null,
+    label: null,
+  };
+  const trimmedStart = rawQuery.trimStart();
+  if (!trimmedStart.startsWith("@")) return fallback;
+
+  const body = trimmedStart.slice(1);
+  const [, token = "", rest = ""] = body.match(/^([^\s]*)\s*(.*)$/) ?? [];
+  const normalizedToken = normalizeSearch(token);
+  const matched = suggestions.find((suggestion) =>
+    getSearchSuggestionAliases(suggestion).some((alias) => alias === normalizedToken),
+  );
+
+  if (!matched) {
+    return {
+      handled: true,
+      queryText: rest,
+      typeFilter: "all",
+      filterFavorite: false,
+      tag: null,
+      label: normalizedToken ? `@${token}` : null,
+    };
+  }
+
+  return {
+    handled: true,
+    queryText: rest,
+    typeFilter: matched.kind === "type" ? matched.typeFilter : "all",
+    filterFavorite: matched.kind === "favorite",
+    tag: matched.kind === "saved" ? matched.tag : null,
+    label: getSearchSuggestionToken(matched),
+  };
 }
 
 function createClip(content: string, settings: AppSettings): ClipItem {
   const now = Date.now();
   const analysis = analyzeContent(content);
+  const kind = detectKind(content);
   return {
     id: makeId(),
     content,
@@ -520,12 +661,13 @@ function createClip(content: string, settings: AppSettings): ClipItem {
     updatedAt: now,
     lastSeenAt: now,
     source: analysis.sourceName,
-    kind: detectKind(content),
+    kind,
     bucket: "history",
     favorite: false,
     tags: generateTags(content, settings),
     copyCount: 0,
     analysis,
+    payloadKind: kind === "attachment" ? (analysis.attachment?.isImage ? "image" : "file") : (kind as ClipPayloadKind),
   };
 }
 
@@ -549,13 +691,27 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
       365,
       defaultSettings.softDeletedRetentionDays,
     ),
+    panelBackgroundOpacity: clampNumber(
+      next.panelBackgroundOpacity,
+      0.2,
+      1,
+      defaultSettings.panelBackgroundOpacity,
+    ),
+    enableScrollCollapse:
+      typeof next.enableScrollCollapse === "boolean"
+        ? next.enableScrollCollapse
+        : defaultSettings.enableScrollCollapse,
     tagRules: Array.isArray(next.tagRules) ? next.tagRules : defaultSettings.tagRules,
+    fuzzySearchEnabled:
+      typeof next.fuzzySearchEnabled === "boolean"
+        ? next.fuzzySearchEnabled
+        : defaultSettings.fuzzySearchEnabled,
+    pinyinSearchEnabled:
+      typeof next.pinyinSearchEnabled === "boolean"
+        ? next.pinyinSearchEnabled
+        : defaultSettings.pinyinSearchEnabled,
     globalShortcut: !globalShortcut || globalShortcut === LEGACY_DEFAULT_SHORTCUT ? DEFAULT_SHORTCUT : globalShortcut,
   };
-}
-
-function settingsEqual(a: AppSettings, b: AppSettings) {
-  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function clampNumber(value: number, min: number, max: number, fallback: number) {
@@ -569,6 +725,13 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
   const updatedAt = typeof raw.updatedAt === "number" ? raw.updatedAt : createdAt;
   const lastSeenAt = typeof raw.lastSeenAt === "number" ? raw.lastSeenAt : updatedAt;
   const analysis = analyzeContent(raw.content);
+  const kind = detectKind(raw.content);
+  const payloadKind =
+    typeof raw.payloadKind === "string"
+      ? (raw.payloadKind as ClipPayloadKind)
+      : kind === "attachment"
+        ? (analysis.attachment?.isImage ? "image" : "file")
+        : (kind as ClipPayloadKind);
   return {
     id: typeof raw.id === "string" ? raw.id : makeId(),
     content: raw.content,
@@ -577,7 +740,7 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
     lastSeenAt,
     lastCopiedAt: typeof raw.lastCopiedAt === "number" ? raw.lastCopiedAt : undefined,
     source: analysis.sourceName,
-    kind: detectKind(raw.content),
+    kind,
     bucket:
       raw.bucket === "archive" || raw.bucket === "snippet" || raw.bucket === "history"
         ? raw.bucket
@@ -586,6 +749,8 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
     tags: generateTags(raw.content, settings),
     copyCount: typeof raw.copyCount === "number" ? raw.copyCount : 0,
     analysis,
+    payloadKind,
+    sourceApp: raw.sourceApp,
   };
 }
 
@@ -621,8 +786,6 @@ function formatTime(timestamp: number) {
 }
 
 function getBucketForView(view: ViewKey): ClipBucket | "trash" | null {
-  if (view === "archive") return "archive";
-  if (view === "snippets") return "snippet";
   if (view === "history") return "history";
   if (view === "trash") return "trash";
   if (view === "favorites") return null;
@@ -639,6 +802,10 @@ function getDisplayText(item: ClipItem, settings: AppSettings) {
   return item.analysis.summary || middleEllipsis(item.content);
 }
 
+function getClipboardLine(item: ClipItem) {
+  return middleEllipsis(item.content, 44, 18) || item.analysis.title;
+}
+
 function useDebouncedValue<T>(value: T, delayMs: number) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -646,17 +813,6 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
     return () => window.clearTimeout(timer);
   }, [delayMs, value]);
   return debounced;
-}
-
-function makeRuleLabel(value: string) {
-  return value
-    .replace(/^https?:\/\//i, "")
-    .replace(/[^\p{L}\p{N}_-]+/gu, " ")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .join(" ")
-    .slice(0, 18);
 }
 
 function logAppError(level: "info" | "warn" | "error", message: string, context?: unknown) {
@@ -750,27 +906,36 @@ function ClipForgeApp() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
+  const [isSearchActive, setSearchActive] = useState(false);
   const [nativeStatus, setNativeStatus] = useState("准备监听剪贴板");
   const [lastCopiedId, setLastCopiedId] = useState<string | null>(null);
+  const [keyboardNavigating, setKeyboardNavigating] = useState(false);
   const [, setIsReadingClipboard] = useState(false);
-  const [compactPanel, setCompactPanel] = useState(() => window.innerWidth <= 900);
   const [isPanelEntering, setIsPanelEntering] = useState(false);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [isFooterHidden, setFooterHidden] = useState(false);
+  const [isSearchCompact, setSearchCompact] = useState(false);
+  const lastScrollRef = useRef(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 120);
   const clipsRef = useRef<ClipItem[]>(clips);
+  const shellRef = useRef<HTMLElement | null>(null);
   const settingsRef = useRef<AppSettings>(settings);
   const configReadyRef = useRef(false);
   const configWriteTimerRef = useRef<number | null>(null);
   const captureInFlightRef = useRef(false);
   const lastSeenClipboard = useRef("");
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const scrollAccelRef = useRef<number | null>(null);
   const isPanelClosing = usePanelUiStore((state) => state.isClosing);
   const setPanelClosing = usePanelUiStore((state) => state.setClosing);
   const previewClip = usePanelUiStore((state) => state.previewClip);
   const setPreviewClip = usePanelUiStore((state) => state.setPreviewClip);
   const isPreviewOpen = usePanelUiStore((state) => state.isPreviewOpen);
   const setPreviewOpen = usePanelUiStore((state) => state.setPreviewOpen);
+  const workspaceRoute = useWorkspaceStore((state) => state.route);
 
   useEffect(() => {
     clipsRef.current = clips;
@@ -816,6 +981,24 @@ function ClipForgeApp() {
     }
   }, [activeTag, appendLoadedClips, debouncedQuery, isLoadingMore, nextCursor]);
 
+  const handleScroll = useCallback(
+    (event: UIEvent<HTMLElement>) => {
+      if (!settings.enableScrollCollapse) return;
+      const node = event.currentTarget;
+      const top = node.scrollTop;
+      const delta = top - lastScrollRef.current;
+      lastScrollRef.current = top;
+      setScrollOffset(top);
+      setSearchCompact(top > 18);
+      if (delta > 6 && top > 40) {
+        setFooterHidden(true);
+      } else if (delta < -6 || top <= 10) {
+        setFooterHidden(false);
+      }
+    },
+    [settings.enableScrollCollapse],
+  );
+
   useEffect(() => {
     settingsRef.current = settings;
     if (configReadyRef.current) {
@@ -837,6 +1020,12 @@ function ClipForgeApp() {
 
   useEffect(() => {
     searchRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollAccelRef.current) window.clearInterval(scrollAccelRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -869,14 +1058,6 @@ function ClipForgeApp() {
       .catch((error) => logAppError("warn", "Register focus listener failed", String(error)));
     return cancelHide;
   }, [isSettingsWindow, setPanelClosing]);
-
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 900px)");
-    const syncCompactPanel = () => setCompactPanel(media.matches);
-    syncCompactPanel();
-    media.addEventListener("change", syncCompactPanel);
-    return () => media.removeEventListener("change", syncCompactPanel);
-  }, []);
 
   useEffect(() => {
     const onError = (event: ErrorEvent) => {
@@ -1023,16 +1204,20 @@ function ClipForgeApp() {
       setActiveTag(null);
       setActiveTypeFilter("all");
       setFilterFavorite(false);
+      setSearchActive(true);
+      setPreviewOpen(false);
       setIsPanelEntering(true);
       // 唤起面板时强制拉一次最新剪贴板，避免用户在别的 app 复制后到唤起之间漏掉记录
       window.setTimeout(() => setIsPanelEntering(false), 180);
-      window.setTimeout(() => searchRef.current?.focus(), 20);
+      window.setTimeout(() => {
+        searchRef.current?.focus();
+        setNativeStatus(reason === "tray" ? "面板已聚焦，可搜索或方向键选择" : "快捷面板已聚焦");
+      }, 20);
       window.setTimeout(() => {
         void captureClipboard("manual");
       }, 40);
-      setNativeStatus(reason === "tray" ? "已从系统状态栏打开快捷面板" : "已打开快捷面板");
     },
-    [captureClipboard],
+    [captureClipboard, setPreviewOpen],
   );
 
   const handleWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
@@ -1050,25 +1235,44 @@ function ClipForgeApp() {
     if (isSettingsWindow) return;
     let unlisten: (() => void) | null = null;
     const setup = async () => {
-      unlisten = await listen<{ text: string }>("clipboard-changed", (event) => {
-        const text = event.payload.text;
-        console.log("[CLIPBOARD] frontend received:", text?.slice(0, 40));
-        if (!text || text.trim() === lastSeenClipboard.current) return;
-        lastSeenClipboard.current = text.trim();
-        void promoteClipboardText(text.trim()).then((result) => {
-          setNativeStatus(result === "created" ? "已捕获新复制" : "当前系统剪贴板已置顶");
-        });
+      unlisten = await listen<{ changeCount: number; hasChange: boolean; preview?: string; previewLen?: number }>("clipboard-changed", async (event) => {
+        const payload = event.payload;
+        console.log("[CLIPBOARD] frontend received change:", payload);
+        if (!payload.hasChange) return;
+        // 后端已入库，前端直接从数据库刷新列表
+        try {
+          const result = await invoke<QueryClipPayload>("query_clip_records", {
+            text: "",
+            bucket: "all",
+            limit: 200,
+          });
+          const items = result.items
+            .map((item) => normalizeClip(item, settingsRef.current))
+            .filter((item): item is ClipItem => Boolean(item));
+          clipsRef.current = items;
+          setClips(items);
+          setNextCursor(result.nextCursor ?? null);
+          if (items.length > 0) {
+            setSelectedId(items[0].id);
+            setActiveView("history");
+          }
+          if (payload.preview) {
+            lastSeenClipboard.current = payload.preview.trim();
+          }
+          setNativeStatus("已捕获新复制");
+        } catch (error) {
+          console.error("[CLIPBOARD] refresh failed:", error);
+        }
       });
       console.log("[CLIPBOARD] frontend listener registered");
       setNativeStatus("后台剪贴板监听已启动");
     };
     void setup();
-    // 启动时拉一次，避免 Rust 线程启动前漏掉
     void captureClipboard("startup");
     return () => {
       if (unlisten) unlisten();
     };
-  }, [captureClipboard, isSettingsWindow, promoteClipboardText]);
+  }, [captureClipboard, isSettingsWindow]);
 
   useEffect(() => {
     if (isSettingsWindow) return;
@@ -1108,8 +1312,38 @@ function ClipForgeApp() {
     };
   }, [isSettingsWindow, setPanelClosing, showQuickPanel]);
 
+  const baseSearchSuggestions = useMemo<SearchSuggestion[]>(() => {
+    const visible = clips.filter((item) => !item.deletedAt);
+    const countKind = (kind: ClipKind) => visible.filter((item) => item.kind === kind).length;
+    const base: SearchSuggestion[] = [
+      { id: "all", label: "全部内容", hint: `${visible.length}`, kind: "all", typeFilter: "all" },
+      { id: "favorite", label: "收藏", hint: `${visible.filter((item) => item.favorite).length}`, kind: "favorite" },
+      { id: "link", label: "链接", hint: `${countKind("link")}`, kind: "type", typeFilter: "link" },
+      { id: "attachment", label: "文件", hint: `${countKind("attachment")}`, kind: "type", typeFilter: "attachment" },
+      { id: "code", label: "代码", hint: `${countKind("code")}`, kind: "type", typeFilter: "code" },
+      { id: "command", label: "命令", hint: `${countKind("command")}`, kind: "type", typeFilter: "command" },
+      { id: "markdown", label: "Markdown", hint: `${countKind("markdown")}`, kind: "type", typeFilter: "markdown" },
+    ];
+    const saved = settings.tagRules
+      .map((rule) => rule.label.trim())
+      .filter(Boolean)
+      .slice(0, 4)
+      .map<SearchSuggestion>((tag) => ({ id: `saved:${tag}`, label: tag, hint: "规则", kind: "saved", tag }));
+    return [...base, ...saved].filter((item) => item.kind === "all" || item.hint !== "0");
+  }, [clips, settings.tagRules]);
+
+  const parsedSearchCommand = useMemo(
+    () => parseSearchCommand(debouncedQuery, baseSearchSuggestions),
+    [baseSearchSuggestions, debouncedQuery],
+  );
+
+  const effectiveQuery = parsedSearchCommand.handled ? parsedSearchCommand.queryText : debouncedQuery;
+  const effectiveTypeFilter =
+    activeTypeFilter !== "all" ? activeTypeFilter : parsedSearchCommand.typeFilter;
+  const effectiveFilterFavorite = filterFavorite || parsedSearchCommand.filterFavorite;
+  const effectiveActiveTag = activeTag ?? parsedSearchCommand.tag;
+
   const filteredClips = useMemo(() => {
-    const normalized = normalizeSearch(debouncedQuery);
     const bucket = getBucketForView(activeView);
     let bucketSource = clips;
     if (activeView === "trash") {
@@ -1122,106 +1356,27 @@ function ClipForgeApp() {
         bucketSource = bucketSource.filter((item) => item.bucket === bucket);
       }
     }
-    const activeSavedSearch = activeTag
-      ? settings.tagRules.find((rule) => rule.label.trim() === activeTag)
+    const activeSavedSearch = effectiveActiveTag
+      ? settings.tagRules.find((rule) => rule.label.trim() === effectiveActiveTag)
       : undefined;
     return bucketSource.filter((item) => {
-      if (activeTypeFilter !== "all" && item.kind !== activeTypeFilter) return false;
-      if (filterFavorite && !item.favorite && !isFavoriteView(activeView)) return false;
-      const haystack = getSearchHaystack(item);
-      const matchesQuery = normalized ? haystack.includes(normalized) : true;
-      const matchesTag = activeTag
-        ? item.tags.includes(activeTag) || Boolean(activeSavedSearch && matchesSavedSearch(item, activeSavedSearch))
+      if (effectiveTypeFilter !== "all" && item.kind !== effectiveTypeFilter) return false;
+      if (effectiveFilterFavorite && !item.favorite && !isFavoriteView(activeView)) return false;
+      const matchesQuery = effectiveQuery.trim() ? matchesSearchTerm(item, effectiveQuery, settings) : true;
+      const matchesTag = effectiveActiveTag
+        ? item.tags.includes(effectiveActiveTag) || Boolean(activeSavedSearch && matchesSavedSearch(item, activeSavedSearch, settings))
         : true;
       return matchesQuery && matchesTag;
     });
-  }, [activeTag, activeTypeFilter, activeView, clips, debouncedQuery, filterFavorite, settings.tagRules]);
-
-  // 固定内容类型顺序：始终显示在主页面（用于快速内容筛选）
-  const TYPE_FILTER_ORDER: Array<"all" | ClipKind> = [
-    "all",
-    "link",
-    "markdown",
-    "code",
-    "command",
-    "attachment",
-    "text",
-  ];
-
-  function kindLabel(kind: "all" | ClipKind): string {
-    switch (kind) {
-      case "all":
-        return "全部";
-      case "link":
-        return "链接";
-      case "markdown":
-        return "Markdown";
-      case "code":
-        return "代码";
-      case "command":
-        return "命令";
-      case "attachment":
-        return "资源";
-      case "text":
-      default:
-        return "文本";
-    }
-  }
-
-  function kindIcon(kind: "all" | ClipKind) {
-    switch (kind) {
-      case "link":
-        return LinkIcon;
-      case "markdown":
-        return FileText;
-      case "code":
-        return FileCode;
-      case "command":
-        return Terminal;
-      case "attachment":
-        return Paperclip;
-      case "text":
-      default:
-        return FileText;
-    }
-  }
-
-  // 当前视图（按桶/收藏过滤后）的剪贴板，用于统计与筛选
-  const scopedClips = useMemo(() => {
-    if (activeView === "trash") {
-      return clips.filter((item) => item.deletedAt);
-    }
-    const visible = clips.filter((item) => !item.deletedAt);
-    if (isFavoriteView(activeView)) {
-      return visible.filter((item) => item.favorite);
-    }
-    const bucket = getBucketForView(activeView);
-    if (bucket) {
-      return visible.filter((item) => item.bucket === bucket);
-    }
-    return visible;
-  }, [activeView, clips]);
-
-  // 固定的内容类型计数（始终显示）
-  const typeTagCounts = useMemo(() => {
-    const counts = new Map<ClipKind, number>();
-    scopedClips.forEach((item) => {
-      counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
-    });
-    return TYPE_FILTER_ORDER.map((kind) =>
-      kind === "all"
-        ? (["all", scopedClips.length] as const)
-        : ([kind, counts.get(kind) ?? 0] as const),
-    );
-  }, [TYPE_FILTER_ORDER, scopedClips]);
-
-  // 用户自定义的 saved search 规则 + 收藏筛选
-  const savedSearchTags = useMemo(() => {
-    return settings.tagRules
-      .map((rule) => [rule.label.trim(), scopedClips.filter((item) => matchesSavedSearch(item, rule)).length] as [string, number])
-      .filter(([label, count]) => label && count > 0)
-      .slice(0, 4);
-  }, [scopedClips, settings.tagRules]);
+  }, [
+    activeView,
+    clips,
+    effectiveActiveTag,
+    effectiveFilterFavorite,
+    effectiveQuery,
+    effectiveTypeFilter,
+    settings,
+  ]);
 
   const selectedClip = useMemo(() => {
     if (selectedId) {
@@ -1230,8 +1385,6 @@ function ClipForgeApp() {
     }
     return filteredClips[0] ?? null;
   }, [clips, filteredClips, selectedId]);
-
-  const detailClip = previewClip && clips.some((item) => item.id === previewClip.id) ? previewClip : selectedClip;
 
   useEffect(() => {
     if (!selectedClip) {
@@ -1246,6 +1399,53 @@ function ClipForgeApp() {
   const selectedInList = useMemo(() => {
     return filteredClips.filter((item) => selectedIds.has(item.id));
   }, [filteredClips, selectedIds]);
+
+  const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
+    const token = query.trim();
+    if (!isSearchActive) return [];
+    if (!token || !token.startsWith("@")) return baseSearchSuggestions.slice(0, 6);
+    const commandToken = token.slice(0, token.search(/\s/) > -1 ? token.search(/\s/) : token.length);
+    return baseSearchSuggestions
+      .filter((item) => matchesSearchSuggestionToken(item, commandToken))
+      .slice(0, 8);
+  }, [baseSearchSuggestions, isSearchActive, query]);
+
+  const aggregatePreview = useMemo(() => {
+    return selectedInList.map((item) => item.content.trim()).filter(Boolean).join("\n\n");
+  }, [selectedInList]);
+
+  const previewLinks = useMemo(() => (previewClip ? extractUrls(previewClip.content) : []), [previewClip]);
+
+  const focusSearch = useCallback(() => {
+    setSearchActive(true);
+    window.setTimeout(() => searchRef.current?.focus(), 0);
+  }, []);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setQuery(value);
+    if (!value.trimStart().startsWith("@")) {
+      setActiveTag(null);
+      setFilterFavorite(false);
+      setActiveTypeFilter("all");
+    }
+  }, []);
+
+  const closeSearchIfEmpty = useCallback(() => {
+    if (!query.trim()) setSearchActive(false);
+  }, [query]);
+
+  function applySearchSuggestion(suggestion: SearchSuggestion) {
+    setActiveTag(null);
+    setFilterFavorite(false);
+    setActiveTypeFilter("all");
+    if (suggestion.kind === "all") {
+      setQuery("");
+    } else {
+      setQuery(`${getSearchSuggestionToken(suggestion)} `);
+    }
+    setSearchActive(true);
+    window.setTimeout(() => searchRef.current?.focus(), 0);
+  }
 
   function markClipCopied(item: ClipItem, status: string) {
     const now = Date.now();
@@ -1331,25 +1531,131 @@ function ClipForgeApp() {
     window.setTimeout(() => setLastCopiedId(null), 1000);
     setSelectedIds(new Set());
     setMultiSelectMode(false);
+    setMultiPreviewOpen(false);
   }
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-      if (event.isComposing || multiSelectMode) return;
+      if (event.defaultPrevented) return;
+      if (event.isComposing) return;
 
       const target = event.target as HTMLElement | null;
       const editable = target?.closest("input, textarea, select, [contenteditable='true']");
       const quickItems = filteredClips;
 
+      // 删除选中项：Ctrl+X 或 Delete（不处于编辑态时）
+      if ((event.ctrlKey && event.key.toLowerCase() === "x") || event.key === "Delete") {
+        if (editable) return;
+        event.preventDefault();
+        if (multiSelectMode && selectedInList.length > 0) {
+          void deleteClips(selectedInList.map((item) => item.id));
+        } else if (selectedClip) {
+          void deleteClips([selectedClip.id]);
+        }
+        return;
+      }
+
+      if (event.ctrlKey || event.altKey) return;
+
+      // 普通数字键必须保留给搜索输入；只有 Cmd+数字才作用于列表条目。
+      if (event.metaKey && /^[1-9]$/.test(event.key)) {
+        const index = Number(event.key) - 1;
+        const item = quickItems.slice(0, settingsRef.current.quickItemLimit)[index];
+        if (!item) return;
+        event.preventDefault();
+        setSelectedId(item.id);
+        setPreviewClip(item);
+        if (multiSelectMode) {
+          setPreviewOpen(false);
+          setSelectedIds((current) => {
+            const next = new Set(current);
+            if (next.has(item.id)) next.delete(item.id);
+            else next.add(item.id);
+            return next;
+          });
+          return;
+        }
+        void pasteClip(item);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (workspaceRoute.name !== "list") {
+          setPreviewOpen(false);
+          setMultiPreviewOpen(false);
+          void navigateWorkspaceList();
+          return;
+        }
+        if (isMultiPreviewOpen) {
+          setMultiPreviewOpen(false);
+          void navigateWorkspaceList();
+          return;
+        }
+        if (multiSelectMode) {
+          setSelectedIds(new Set());
+          setMultiSelectMode(false);
+          void navigateWorkspaceList();
+          return;
+        }
+        if (isPreviewOpen) {
+          setPreviewOpen(false);
+          void navigateWorkspaceList();
+          return;
+        }
+        if (query.trim()) {
+          setQuery("");
+          setActiveTag(null);
+          setFilterFavorite(false);
+          setActiveTypeFilter("all");
+          focusSearch();
+          return;
+        }
+        if (isSearchActive) {
+          setSearchActive(false);
+          searchRef.current?.blur();
+          return;
+        }
+        getCurrentWindow().hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
+        return;
+      }
+
+      if (event.metaKey) return;
+
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        if (editable && editable !== searchRef.current) return;
+        event.preventDefault();
+        if (event.key === "ArrowRight") {
+          if (!multiSelectMode && selectedClip) {
+            void navigateWorkspaceDetail(selectedClip.id);
+          }
+        } else if (workspaceRoute.name !== "list") {
+          setPreviewOpen(false);
+          setMultiPreviewOpen(false);
+          void navigateWorkspaceList();
+        } else if (isMultiPreviewOpen) {
+          setMultiPreviewOpen(false);
+          void navigateWorkspaceList();
+        } else if (isPreviewOpen) {
+          setPreviewOpen(false);
+          void navigateWorkspaceList();
+        } else if (multiSelectMode) {
+          setSelectedIds(new Set());
+          setMultiSelectMode(false);
+        }
+        return;
+      }
+
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         if (editable && editable !== searchRef.current) return;
         event.preventDefault();
+        setKeyboardNavigating(true);
         const currentIndex = Math.max(
           0,
           quickItems.findIndex((item) => item.id === selectedId),
         );
-        const offset = event.key === "ArrowDown" ? 1 : -1;
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        const offset = direction * (event.repeat ? 4 : 1);
         const nextIndex = Math.min(Math.max(currentIndex + offset, 0), quickItems.length - 1);
         const nextItem = quickItems[nextIndex];
         if (nextItem) {
@@ -1360,28 +1666,61 @@ function ClipForgeApp() {
       }
 
       if (event.key === "Enter") {
+        if (editable === searchRef.current && query.trimStart().startsWith("@") && searchSuggestions.length > 0) {
+          event.preventDefault();
+          applySearchSuggestion(searchSuggestions[0]);
+          return;
+        }
         if (editable && editable !== searchRef.current) return;
         const item = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
         if (!item) return;
         event.preventDefault();
-        void pasteClip(item);
+        if (multiSelectMode) void copySelectedClips(selectedInList);
+        else void pasteClip(item);
         return;
       }
 
-      if (!/^[1-9]$/.test(event.key)) return;
-      if (editable && !(editable === searchRef.current && query.trim() === "")) return;
+      if (event.key === " ") {
+        const item = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
+        if (!item || editable) return;
+        event.preventDefault();
+        setKeyboardNavigating(true);
+        setSelectedIds((current) => {
+          const next = new Set(current);
+          if (next.has(item.id)) next.delete(item.id);
+          else next.add(item.id);
+          return next;
+        });
+        if (!multiSelectMode) {
+          setMultiSelectMode(true);
+        }
+        setPreviewClip(item);
+        setPreviewOpen(true);
+        return;
+      }
 
-      const index = Number(event.key) - 1;
-      const item = quickItems.slice(0, settingsRef.current.quickItemLimit)[index];
-      if (!item) return;
-      event.preventDefault();
-      setSelectedId(item.id);
-      setPreviewClip(item);
-      void pasteClip(item);
+      if ((event.key === "/" || event.key.length === 1) && !editable && !multiSelectMode) {
+        focusSearch();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeView, filteredClips, multiSelectMode, query, selectedId, setPreviewClip]);
+  }, [
+    filteredClips,
+    focusSearch,
+    isPreviewOpen,
+    isMultiPreviewOpen,
+    isSearchActive,
+    multiSelectMode,
+    previewClip,
+    query,
+    selectedId,
+    selectedInList,
+    searchSuggestions,
+    setPreviewClip,
+    setPreviewOpen,
+    workspaceRoute.name,
+  ]);
 
   async function openClipTarget(item: ClipItem) {
     const attachment = item.analysis.attachment;
@@ -1479,610 +1818,476 @@ function ClipForgeApp() {
     setMultiSelectMode(false);
   }
 
-  function updateSettings(next: Partial<AppSettings>) {
-    const merged = mergeSettings({ ...settingsRef.current, ...next });
-    if (settingsEqual(settingsRef.current, merged)) return;
-    settingsRef.current = merged;
-    setSettings(merged);
-    setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
-  }
-
-  function createQuickTag() {
-    const seed = query.trim() || selectedClip?.analysis.title || selectedClip?.analysis.sourceName || "";
-    const label = makeRuleLabel(seed);
-    if (!label) {
-      setNativeStatus("先输入搜索词或选择一条剪贴板内容");
-      return;
-    }
-    const exists = settings.tagRules.some((rule) => rule.label === label);
-    updateSettings({
-      tagMode: "rules",
-      tagRules: exists
-        ? settings.tagRules
-        : [...settings.tagRules, { id: makeId(), label, query: query.trim() || seed }],
-    });
-    setActiveTag(label);
-    setFilterFavorite(false);
-    setNativeStatus(`已保存自定义搜索：${label}`);
-  }
-
-  const total = clips.length;
-
   return (
-    <main className={`app-shell view-${activeView} density-${settings.panelDensity}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}`}>
+    <main
+      className={`app-shell view-${activeView} density-${settings.panelDensity}${isSearchActive || query ? " search-active" : ""}${isPreviewOpen && previewClip && !multiSelectMode ? " preview-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isFooterHidden ? " footer-hidden" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
+      ref={shellRef}
+      style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
+    >
       <div aria-hidden="true" className="drag-strip" data-tauri-drag-region onPointerDown={handleWindowDrag} />
-      <PanelContentBoundary resetKey={`rail:${total}`}>
-      <aside className="side-rail" aria-label="主导航" data-tauri-drag-region onPointerDown={handleWindowDrag}>
-        <div className="brand">
-          <div className="brand-mark">
-            <Clipboard size={16} />
-          </div>
-          <div>
-            <strong>ClipForge</strong>
-            <span>跨平台剪贴板</span>
-          </div>
-        </div>
 
-        <nav className="nav-list">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                aria-label={item.label}
-                className={activeView === item.key ? "nav-item active" : "nav-item"}
-                key={item.key}
-                onClick={() => {
-                  if (activeView === item.key) return;
-                  setActiveView(item.key);
-                  setSelectedIds(new Set());
-                  setMultiSelectMode(false);
-                  setActiveTag(null);
-                  setActiveTypeFilter("all");
-                  setFilterFavorite(false);
-                  searchRef.current?.focus();
-                }}
-                title={item.label}
-                type="button"
-              >
-                <Icon size={17} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+      <section className="content-column" onScroll={handleScroll}>
+        <GlassSearchBar
+          inputRef={searchRef}
+          isActive={isSearchActive || query.length > 0}
+          onApplySuggestion={applySearchSuggestion}
+          onBlur={closeSearchIfEmpty}
+          onChange={handleSearchChange}
+          onClear={() => {
+            setQuery("");
+            setActiveTag(null);
+            setFilterFavorite(false);
+            setActiveTypeFilter("all");
+            searchRef.current?.focus();
+          }}
+          onFocus={() => setSearchActive(true)}
+          parsedSearchCommand={parsedSearchCommand}
+          query={query}
+          suggestions={searchSuggestions}
+        />
 
-        <div className="rail-stats">
-          <div>
-            <span>历史</span>
-            <strong>{total}</strong>
-          </div>
-          <div
-            onClick={() => {
-              setActiveView("favorites");
-              searchRef.current?.focus();
+        {multiSelectMode ? (
+          <MultiSelectToolbar
+            allSelected={selectedInList.length > 0 && selectedInList.length === filteredClips.length}
+            count={selectedInList.length}
+            onClose={() => {
+              setSelectedIds(new Set());
+              setMultiPreviewOpen(false);
+              setMultiSelectMode(false);
+              void navigateWorkspaceList();
             }}
-            style={{ cursor: "pointer" }}
-            title="查看收藏"
-          >
-            <span>收藏</span>
-            <strong>{clips.filter((item) => item.favorite).length}</strong>
-          </div>
-        </div>
-
-        <div className="rail-footer">
-          <button
-            aria-label="设置与账户"
-            className="avatar-button"
-            onClick={() => {
-              invoke("open_settings_window").catch((error) =>
-                logAppError("warn", "Open settings window failed", String(error)),
-              );
+            onCopy={() => copySelectedClips(selectedInList)}
+            onDelete={() => deleteClips(selectedInList.map((item) => item.id))}
+            onToggleAll={(checked) => {
+              setSelectedIds(checked ? new Set(filteredClips.map((item) => item.id)) : new Set());
             }}
-            title="设置与账户"
-            type="button"
-          >
-            <div className="avatar">
-              <Settings size={14} />
-            </div>
-            <span>设置</span>
-          </button>
-        </div>
-      </aside>
-      </PanelContentBoundary>
-
-      <section className="content-column">
-        <header className="toolbar">
-          <div className="search-wrap input-group">
-            <span className="input-addon input-addon-start">
-              <Search size={15} />
-            </span>
-            <input
-              aria-label="搜索剪贴板"
-              autoComplete="off"
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              placeholder="https://  搜索内容、tag、来源"
-              ref={searchRef}
-              spellCheck={false}
-              value={query}
-            />
-            <button
-              aria-label="保存为筛选规则"
-              className={activeTag ? "icon-button subtle active" : "icon-button subtle"}
-              onClick={createQuickTag}
-              title="保存当前搜索为筛选规则"
-              type="button"
-            >
-              <FunnelPlus size={15} />
-            </button>
-            {query ? (
-              <button
-                aria-label="清空搜索"
-                className="icon-button subtle"
-                onClick={() => {
-                  setQuery("");
-                  setActiveTag(null);
-                  setFilterFavorite(false);
-                  setActiveTypeFilter("all");
-                  searchRef.current?.focus();
-                }}
-                type="button"
-              >
-                <X size={15} />
-              </button>
-            ) : null}
-          </div>
-
-          {multiSelectMode ? (
-          <div className="toolbar-actions">
-            <button className="text-button bulk-button" onClick={() => setSelectedIds(new Set(filteredClips.map((item) => item.id)))} type="button">
-              全选
-            </button>
-            <button
-              className="icon-button bulk-button"
-              disabled={selectedInList.length === 0}
-              onClick={() => copySelectedClips(selectedInList)}
-              title="聚合复制选中"
-              type="button"
-            >
-              <Copy size={16} />
-            </button>
-            <button
-              className="icon-button bulk-button"
-              disabled={selectedInList.length === 0}
-              onClick={() => deleteClips(selectedInList.map((item) => item.id))}
-              title="删除选中"
-              type="button"
-            >
-              <Trash2 size={16} />
-            </button>
-          </div>
-          ) : null}
-        </header>
-
-        <div className="status-row">
-          <span>{nativeStatus}</span>
-          <div className="status-actions">
-            {previewClip ? (
-              <button
-                className={isPreviewOpen ? "icon-button active" : "icon-button"}
-                onClick={() => setPreviewOpen(!isPreviewOpen)}
-                title="快速预览"
-                type="button"
-              >
-                <Eye size={15} />
-              </button>
-            ) : null}
-          </div>
-        </div>
-        {activeView !== "folders" && activeView !== "trash" ? (
-          <div className="tag-filter-bar">
-            <div className="tag-filter-row" aria-label="快速筛选">
-              <span className="tag-filter-icon">
-                <Filter size={12} />
-              </span>
-              {typeTagCounts.map(([kind, count]) => {
-                const Icon = kind === "all" ? null : kindIcon(kind);
-                return (
-                  <button
-                    aria-pressed={activeTypeFilter === kind}
-                    className={
-                      count === 0
-                        ? "tag-filter is-empty"
-                        : activeTypeFilter === kind
-                          ? "tag-filter active"
-                          : "tag-filter"
-                    }
-                    disabled={count === 0 && kind !== "all"}
-                    key={kind}
-                    onClick={() => setActiveTypeFilter(kind)}
-                    type="button"
-                  >
-                    {Icon ? <Icon size={12} /> : null}
-                    {kindLabel(kind)}
-                    <span>{count}</span>
-                  </button>
-                );
-              })}
-              {savedSearchTags.length ? (
-                savedSearchTags.map(([label, count]) => (
-                  <button
-                    className={activeTag === label ? "tag-filter active" : "tag-filter"}
-                    key={label}
-                    onClick={() => setActiveTag((current) => (current === label ? null : label))}
-                    type="button"
-                  >
-                    {label}
-                    <span>{count}</span>
-                  </button>
-                ))
-              ) : null}
-              {clips.some((item) => item.favorite) && !isFavoriteView(activeView) ? (
-                <button
-                  className={filterFavorite ? "tag-filter active" : "tag-filter"}
-                  onClick={() => setFilterFavorite((v) => !v)}
-                  type="button"
-                >
-                  <Heart size={12} />
-                  收藏
-                  <span>{scopedClips.filter((item) => item.favorite).length}</span>
-                </button>
-              ) : null}
-            </div>
-          </div>
+          />
         ) : null}
 
-        <PanelContentBoundary resetKey={`list:${activeView}:${selectedId ?? "none"}:${filteredClips.length}`}>
-          {activeView === "folders" ? (
-            <FolderPanel clips={clips} onView={setActiveView} />
-          ) : activeView === "trash" ? (
-            <TrashPanel
-              activeId={selectedClip?.id ?? null}
-              clips={filteredClips}
-              hasMore={Boolean(nextCursor)}
-              isLoadingMore={isLoadingMore}
-              multiSelectMode={multiSelectMode}
-              onDeleteSelected={() => hardDeleteClips(selectedInList.map((item) => item.id))}
-              onHardDelete={(item) => hardDeleteClips([item.id])}
-              onLoadMore={loadMoreClips}
-              onRestore={(item) => restoreClips([item.id])}
-              onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
-              onSelect={(item) => {
-                setSelectedId(item.id);
-                setPreviewOpen(true);
-              }}
-              onToggleMultiSelect={() => {
-                setMultiSelectMode((current) => {
-                  if (current) setSelectedIds(new Set());
-                  return !current;
-                });
-              }}
-              onToggleSelected={(id) =>
-                setSelectedIds((current) => {
-                  const next = new Set(current);
-                  if (next.has(id)) next.delete(id);
-                  else next.add(id);
-                  return next;
-                })
-              }
-              onCopy={copyClip}
-              selectedIds={selectedIds}
-              settings={settings}
-            />
-          ) : activeView === "quick" || (compactPanel && activeView !== "favorites") ? (
-            <QuickPastePanel
-            activeId={selectedClip?.id ?? null}
-            hasMore={Boolean(nextCursor)}
-            clips={filteredClips}
-            copiedId={lastCopiedId}
-            isLoadingMore={isLoadingMore}
-            limit={settings.quickItemLimit}
-            multiSelectMode={multiSelectMode}
-            selectedIds={selectedIds}
-            settings={settings}
-            onAggregateCopy={() => copySelectedClips(selectedInList)}
+        {isPreviewOpen && previewClip && !multiSelectMode ? (
+          <PreviewBand
+            clip={previewClip}
+            links={previewLinks}
+            onClose={() => setPreviewOpen(false)}
             onCopy={copyClip}
-            onDelete={(item) => deleteClips([item.id])}
-            onDeleteSelected={() => deleteClips(selectedInList.map((item) => item.id))}
-            onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
-            onLoadMore={loadMoreClips}
             onOpen={openClipTarget}
-            onSelect={(item) => {
-              setSelectedId(item.id);
-              setPreviewOpen(true);
-            }}
-            onSelectAll={() => setSelectedIds(new Set(filteredClips.slice(0, settings.quickItemLimit).map((item) => item.id)))}
-            onToggleMultiSelect={() => {
-              setMultiSelectMode((current) => {
-                if (current) setSelectedIds(new Set());
-                return !current;
-              });
-            }}
-            onToggleSelected={(id) =>
-              setSelectedIds((current) => {
-                const next = new Set(current);
-                if (next.has(id)) next.delete(id);
-                else next.add(id);
-                return next;
-              })
+          />
+        ) : null}
+
+        <PanelContentBoundary resetKey={`workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}>
+          <WorkspaceRouterProvider
+            renderList={() =>
+              activeView === "trash" ? (
+                <TrashPanel
+                  activeId={selectedClip?.id ?? null}
+                  autoScroll={keyboardNavigating}
+                  clips={filteredClips}
+                  hasMore={Boolean(nextCursor)}
+                  isLoadingMore={isLoadingMore}
+                  multiSelectMode={multiSelectMode}
+                  onCopy={copyClip}
+                  onDeleteSelected={() => hardDeleteClips(selectedInList.map((item) => item.id))}
+                  onHardDelete={(item) => hardDeleteClips([item.id])}
+                  onLoadMore={loadMoreClips}
+                  onPointerActive={() => setKeyboardNavigating(false)}
+                  onRestore={(item) => restoreClips([item.id])}
+                  onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
+                  onSelect={(item) => {
+                    setSelectedId(item.id);
+                  }}
+                  onToggleSelected={(id) =>
+                    setSelectedIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
+                  selectedIds={selectedIds}
+                  settings={settings}
+                />
+              ) : (
+                <QuickPastePanel
+                  activeId={selectedClip?.id ?? null}
+                  autoScroll={keyboardNavigating}
+                  clips={filteredClips}
+                  copiedId={lastCopiedId}
+                  hasMore={Boolean(nextCursor)}
+                  isLoadingMore={isLoadingMore}
+                  limit={settings.quickItemLimit}
+                  multiSelectMode={multiSelectMode}
+                  selectedIds={selectedIds}
+                  onCopy={copyClip}
+                  onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
+                  onLoadMore={loadMoreClips}
+                  onOpen={openClipTarget}
+                  onOpenDetail={(item) => {
+                    setPreviewOpen(true);
+                    void navigateWorkspaceDetail(item.id);
+                  }}
+                  onPointerActive={() => setKeyboardNavigating(false)}
+                  onSelect={(item) => {
+                    setSelectedId(item.id);
+                  }}
+                  onStartMultiSelect={(id) => {
+                    setMultiSelectMode(true);
+                    setPreviewOpen(false);
+                    setMultiPreviewOpen(false);
+                    setSelectedIds(new Set([id]));
+                  }}
+                  onToggleSelected={(id) =>
+                    setSelectedIds((current) => {
+                      const next = new Set(current);
+                      if (next.has(id)) next.delete(id);
+                      else next.add(id);
+                      return next;
+                    })
+                  }
+                />
+              )
             }
-            />
-          ) : (
-            <ClipList
-            activeId={selectedClip?.id ?? null}
-            clips={filteredClips}
-            copiedId={lastCopiedId}
-            hasMore={Boolean(nextCursor)}
-            isLoadingMore={isLoadingMore}
-            onLoadMore={loadMoreClips}
-            onArchive={(item) =>
-              updateClip(item.id, {
-                bucket: item.bucket === "archive" ? "history" : "archive",
-              })
-            }
-            onCopy={copyClip}
-            onDelete={(item) => deleteClips([item.id])}
-            onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
-            onOpen={openClipTarget}
-            onSelect={(item) => {
-              setSelectedId(item.id);
-              setPreviewOpen(true);
+            renderDetail={(clipId) => {
+              const clip = clips.find((item) => item.id === clipId) ?? selectedClip;
+              return (
+                <ClipDetailWorkspace
+                  clip={clip}
+                  links={clip ? extractUrls(clip.content) : []}
+                  onBack={() => {
+                    setPreviewOpen(false);
+                    void navigateWorkspaceList();
+                  }}
+                  onCopy={copyClip}
+                  onOpen={openClipTarget}
+                />
+              );
             }}
-            onToggleSelected={(id) =>
-              setSelectedIds((current) => {
-                const next = new Set(current);
-                if (next.has(id)) next.delete(id);
-                else next.add(id);
-                return next;
-              })
-            }
-            selectedIds={selectedIds}
-            settings={settings}
-            />
-          )}
+            renderAggregate={() => (
+              <MultiAggregateWorkspace
+                aggregatePreview={aggregatePreview}
+                items={selectedInList}
+                onBack={() => {
+                  setMultiPreviewOpen(false);
+                  void navigateWorkspaceList();
+                }}
+                onCopy={() => copySelectedClips(selectedInList)}
+                onExportTable={() => {
+                  const table = selectedInList.map((item) => [item.analysis.title, item.content.replace(/\s+/g, " ")]).map((row) => row.join("\t")).join("\n");
+                  void navigator.clipboard.writeText(table);
+                  setNativeStatus("已导出选中内容为 TSV 表格");
+                }}
+              />
+            )}
+          />
         </PanelContentBoundary>
       </section>
 
-      <footer className="list-footer" data-tauri-drag-region onPointerDown={handleWindowDrag}>
-        <span className="footer-count">
-          {query || activeTag
-            ? `筛选 ${filteredClips.length} / ${scopedClips.length}`
-            : `${activeView === "trash" ? "垃圾箱" : activeView === "favorites" ? "收藏" : "列表"} ${filteredClips.length}`}
-        </span>
-        <div className="footer-actions">
-          <button
-            aria-label="刷新剪贴板"
-            className="icon-button subtle"
-            onClick={() => {
-              void captureClipboard("manual");
-              setNativeStatus("已刷新剪贴板列表");
-            }}
-            type="button"
-          >
-            <RotateCcw size={13} />
-          </button>
-        </div>
-      </footer>
-
-      {compactPanel && previewClip ? (
-        <aside
-          className={isPreviewOpen ? "quick-preview-pane open" : "quick-preview-pane"}
-          aria-label="剪贴板详情预览"
-        >
-          <div className="preview-header">
-            <span className={`kind-pill ${previewClip.kind}`}>{previewClip.kind}</span>
-            <strong className="preview-title">{previewClip.analysis.title}</strong>
-            <button
-              aria-label="关闭详情"
-              className="icon-button subtle preview-close"
-              onClick={() => setPreviewOpen(false)}
-              type="button"
-            >
-              <X size={13} />
-            </button>
-          </div>
-          <div className="preview-body">
-            {previewClip.analysis.attachment ? (
-              <AttachmentPreview item={previewClip} compact />
-            ) : settings.enableMarkdownPreview && previewClip.analysis.isMarkdown ? (
-              <div className="inline-markdown-preview">
-                <MarkdownPreview content={previewClip.content} />
-              </div>
-            ) : (
-              <p className="preview-summary">{previewClip.analysis.summary}</p>
-            )}
-          </div>
-          <div className="preview-footer">
-            <div className="preview-meta">
-              <span>来源 {previewClip.analysis.sourceName}</span>
-              <span>创建 {formatTime(previewClip.createdAt)}</span>
-              <span>最近 {formatTime(previewClip.lastSeenAt)}</span>
-            </div>
-            <div className="inline-tags">
-              {previewClip.tags.map((tag) => (
-                <span key={tag}>{tag}</span>
-              ))}
-            </div>
-            <div className="preview-actions">
-              {Boolean(previewClip.analysis.url || previewClip.analysis.attachment) ? (
-                <button className="text-button" onClick={() => openClipTarget(previewClip)} type="button">
-                  <ExternalLink size={14} />
-                  打开
-                </button>
-              ) : null}
-              <button className="text-button" onClick={() => copyClip(previewClip)} type="button">
-                <Copy size={14} />
-                复制
-              </button>
-            </div>
-          </div>
-        </aside>
-      ) : null}
-
-      <aside className="detail-pane" aria-label="剪贴板详情">
-        <PanelContentBoundary resetKey={`detail:${detailClip?.id ?? "none"}:${detailClip?.updatedAt ?? 0}`}>
-          {detailClip ? (
-            <ClipDetail
-            copiedId={lastCopiedId}
-            item={detailClip}
-            onArchive={() =>
-              updateClip(detailClip.id, {
-                bucket: detailClip.bucket === "archive" ? "history" : "archive",
-              })
-            }
-            onCopy={() => copyClip(detailClip)}
-            onDelete={() => deleteClips([detailClip.id])}
-            onFavorite={() => updateClip(detailClip.id, { favorite: !detailClip.favorite })}
-            onOpen={() => openClipTarget(detailClip)}
-            onSaveSnippet={() => updateClip(detailClip.id, { bucket: "snippet" })}
-            settings={settings}
-            />
-          ) : (
-            <div className="empty-detail">
-              <Inbox size={32} />
-              <h1>没有剪贴板内容</h1>
-              <p>复制文本后会自动出现在快速面板。</p>
-            </div>
-          )}
-        </PanelContentBoundary>
-      </aside>
+      <BottomDock
+        activeView={activeView}
+        onDrag={handleWindowDrag}
+        onOpenSettings={() => {
+          invoke("open_settings_window").catch((error) =>
+            logAppError("warn", "Open settings window failed", String(error)),
+          );
+        }}
+        onViewChange={(view) => {
+          setActiveView(view);
+          setSelectedIds(new Set());
+          setMultiSelectMode(false);
+          setPreviewOpen(false);
+          void navigateWorkspaceList();
+        }}
+        status={nativeStatus}
+      />
     </main>
   );
 }
 
-function AttachmentPreview({ compact = false, item }: { compact?: boolean; item: ClipItem }) {
-  const attachment = item.analysis.attachment;
-  if (!attachment) return null;
-  return (
-    <Attachment className={compact ? "compact" : ""}>
-      <AttachmentMedia>{attachment.isImage ? <Image size={16} /> : <Paperclip size={16} />}</AttachmentMedia>
-      <AttachmentContent>
-        <AttachmentTitle>{attachment.name}</AttachmentTitle>
-        <AttachmentDescription>{attachment.description}</AttachmentDescription>
-      </AttachmentContent>
-    </Attachment>
-  );
-}
-
-function ClipList({
-  activeId,
-  clips,
-  copiedId,
-  hasMore,
-  isLoadingMore,
-  onArchive,
-  onCopy,
-  onDelete,
-  onFavorite,
-  onLoadMore,
-  onOpen,
-  onSelect,
-  onToggleSelected,
-  selectedIds,
-  settings,
+function GlassSearchBar({
+  inputRef,
+  isActive,
+  onApplySuggestion,
+  onBlur,
+  onChange,
+  onClear,
+  onFocus,
+  parsedSearchCommand,
+  query,
+  suggestions,
 }: {
-  activeId: string | null;
-  clips: ClipItem[];
-  copiedId: string | null;
-  hasMore: boolean;
-  isLoadingMore: boolean;
-  onArchive: (item: ClipItem) => void;
-  onCopy: (item: ClipItem) => void;
-  onDelete: (item: ClipItem) => void;
-  onFavorite: (item: ClipItem) => void;
-  onLoadMore: () => void;
-  onOpen: (item: ClipItem) => void;
-  onSelect: (item: ClipItem) => void;
-  onToggleSelected: (id: string) => void;
-  selectedIds: Set<string>;
-  settings: AppSettings;
+  inputRef: RefObject<HTMLInputElement | null>;
+  isActive: boolean;
+  onApplySuggestion: (suggestion: SearchSuggestion) => void;
+  onBlur: () => void;
+  onChange: (value: string) => void;
+  onClear: () => void;
+  onFocus: () => void;
+  parsedSearchCommand: ParsedSearchCommand;
+  query: string;
+  suggestions: SearchSuggestion[];
 }) {
-  if (!clips.length) {
+  if (!isActive) {
     return (
-      <div className="empty-list">
-        <Inbox size={30} />
-        <h2>没有匹配内容</h2>
-        <p>搜索会直接跨历史、归档、片段展示结果。</p>
-      </div>
+      <header className="toolbar">
+        <button
+          aria-label="开始搜索"
+          className="floating-search-pill"
+          onClick={onFocus}
+          onFocus={onFocus}
+          type="button"
+        >
+          <Search size={13} />
+          <span>搜索剪贴板</span>
+          <kbd>/</kbd>
+        </button>
+      </header>
     );
   }
 
   return (
-    <VirtualList
-      className="clip-list"
-      hasMore={hasMore}
-      items={clips}
-      isLoadingMore={isLoadingMore}
-      itemHeight={ROW_HEIGHT}
-      onEndReached={onLoadMore}
-      renderItem={(item) => (
-        <article
-          className={activeId === item.id ? "clip-row active" : "clip-row"}
-          onClick={() => {
-            onSelect(item);
-          }}
-          onFocus={() => {
-            onSelect(item);
-          }}
-          onMouseEnter={() => {
-            if (activeId !== item.id) onSelect(item);
-          }}
-          tabIndex={0}
+    <header className="toolbar">
+      <div className="floating-search-surface">
+        <div className="search-wrap input-group">
+          <span className="input-addon input-addon-start">
+            <Search size={14} />
+          </span>
+          <input
+            aria-label="搜索剪贴板"
+            autoComplete="off"
+            onBlur={onBlur}
+            onFocus={onFocus}
+            onChange={(event) => onChange(event.currentTarget.value)}
+            placeholder="按 / 搜索剪贴板历史"
+            ref={inputRef}
+            spellCheck={false}
+            value={query}
+          />
+          {query ? (
+            <button aria-label="清空搜索" className="icon-button subtle" onClick={onClear} type="button">
+              <X size={14} />
+            </button>
+          ) : null}
+        </div>
+        {suggestions.length ? (
+          <FilterChips
+            onApplySuggestion={onApplySuggestion}
+            parsedSearchCommand={parsedSearchCommand}
+            suggestions={suggestions}
+          />
+        ) : null}
+      </div>
+    </header>
+  );
+}
+
+function FilterChips({
+  onApplySuggestion,
+  parsedSearchCommand,
+  suggestions,
+}: {
+  onApplySuggestion: (suggestion: SearchSuggestion) => void;
+  parsedSearchCommand: ParsedSearchCommand;
+  suggestions: SearchSuggestion[];
+}) {
+  return (
+    <div className="search-suggestions" role="listbox" aria-label="搜索建议">
+      {suggestions.map((suggestion) => (
+        <button
+          className={[
+            "search-suggestion",
+            suggestion.kind === "favorite" && parsedSearchCommand.filterFavorite ? "active" : "",
+            suggestion.kind === "type" && parsedSearchCommand.typeFilter === suggestion.typeFilter ? "active" : "",
+            suggestion.kind === "saved" && parsedSearchCommand.tag === suggestion.tag ? "active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          key={suggestion.id}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onApplySuggestion(suggestion)}
+          role="option"
+          type="button"
         >
-          <label className="check-cell" onClick={(event) => event.stopPropagation()}>
-            <input
-              checked={selectedIds.has(item.id)}
-              onChange={() => onToggleSelected(item.id)}
-              type="checkbox"
-            />
-          </label>
-          <button
-            className={item.favorite ? "icon-button favorite on" : "icon-button favorite"}
-            onClick={(event) => {
-              event.stopPropagation();
-              onFavorite(item);
-            }}
-            title="收藏"
-            type="button"
-          >
-            <Heart size={15} />
+          <span>{getSearchSuggestionToken(suggestion)}</span>
+          <em>{suggestion.hint}</em>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function getPreviewBodyText(clip: ClipItem) {
+  const text = clip.content.trim();
+  if (!text) return clip.analysis.title;
+  return text;
+}
+
+function PreviewBand({
+  clip,
+  links,
+  onClose,
+  onCopy,
+  onOpen,
+}: {
+  clip: ClipItem;
+  links: string[];
+  onClose: () => void;
+  onCopy: (clip: ClipItem) => void;
+  onOpen: (clip: ClipItem) => void;
+}) {
+  return (
+    <section className="inline-preview-band quick-preview-band" aria-label="快速预览">
+      <div className="quick-preview-card">
+        <div className="quick-preview-actions">
+          {clip.analysis.url || clip.analysis.attachment ? (
+            <button className="icon-button subtle" onClick={() => onOpen(clip)} title="打开" type="button">
+              <ExternalLink size={13} />
+            </button>
+          ) : null}
+          <button className="icon-button subtle" onClick={() => onCopy(clip)} title="复制" type="button">
+            <Copy size={13} />
           </button>
-          <div className="clip-main">
-            <div className="clip-row-top">
-              <strong>{item.analysis.title}</strong>
-              <span>{formatTime(item.lastSeenAt)}</span>
-              {item.bucket !== "history" ? <em>{item.bucket}</em> : null}
-            </div>
-            <p title={item.content}>{getDisplayText(item, settings)}</p>
-            <div className="inline-tags">
-              {item.tags.map((tag) => (
-                <span key={tag}>{tag}</span>
+          <button className="icon-button subtle" onClick={onClose} title="关闭预览" type="button">
+            <X size={13} />
+          </button>
+        </div>
+        <div className="quick-preview-body">
+          <p>{getPreviewBodyText(clip)}</p>
+          {links.length ? (
+            <div className="preview-link-row" aria-label="内容链接">
+              {links.slice(0, 4).map((url) => (
+                <button className="preview-link-chip" key={url} onClick={() => openUrl(url)} type="button">
+                  <ExternalLink size={11} />
+                  <span>{new URL(url).hostname.replace(/^www\./, "")}</span>
+                </button>
               ))}
             </div>
-          </div>
-          <div className="row-actions" onClick={(event) => event.stopPropagation()}>
-            {item.analysis.url || item.analysis.attachment ? (
-              <button className="icon-button" onClick={() => onOpen(item)} title="打开链接" type="button">
-                <ExternalLink size={15} />
-              </button>
-            ) : null}
-            <button className="icon-button" onClick={() => onCopy(item)} title="复制" type="button">
-              {copiedId === item.id ? <Check size={15} /> : <Copy size={15} />}
-            </button>
-            <button className="icon-button" onClick={() => onArchive(item)} title="归档" type="button">
-              <Archive size={15} />
-            </button>
-            <button className="icon-button" onClick={() => onDelete(item)} title="删除" type="button">
-              <Trash2 size={15} />
-            </button>
-          </div>
-        </article>
+          ) : null}
+        </div>
+        <div className="quick-preview-footer">
+          <span className={`kind-pill ${clip.kind}`}>{getClipboardContentKind(clip)}</span>
+          <span className="quick-preview-hint">Space 关闭 · → 详情</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MultiSelectToolbar({
+  allSelected,
+  count,
+  onClose,
+  onCopy,
+  onDelete,
+  onToggleAll,
+}: {
+  allSelected: boolean;
+  count: number;
+  onClose: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+  onToggleAll: (checked: boolean) => void;
+}) {
+  return (
+    <section className="multi-select-toolbar" aria-label="多选操作台">
+      <div className="multi-drawer-handle" aria-hidden="true">
+        <span />
+      </div>
+      <div className="multi-toolbar-head">
+        <div className="multi-toolbar-title-group">
+          <span className="multi-toolbar-title">多选</span>
+          <span className="multi-toolbar-count">{count > 0 ? `${count} 项` : "点击项目选择"}</span>
+        </div>
+        <div className="multi-toolbar-actions">
+          <label className="multi-select-all">
+            <input checked={allSelected} onChange={(event) => onToggleAll(event.currentTarget.checked)} type="checkbox" />
+            <span>全选</span>
+          </label>
+          <button className="primary-button" disabled={count === 0} onClick={onCopy} type="button">
+            <Copy size={13} />
+            复制
+          </button>
+          <button className="danger-button" disabled={count === 0} onClick={onDelete} type="button">
+            <Trash2 size={13} />
+            删除
+          </button>
+          <button aria-label="关闭多选" className="icon-button subtle" onClick={onClose} type="button">
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+      <div className="multi-toolbar-hint">
+        <kbd>Space</kbd> 选择 · <kbd>Ctrl</kbd>+<kbd>X</kbd> 删除 · <kbd>Esc</kbd> 退出
+      </div>
+    </section>
+  );
+}
+
+function BottomDock({
+  activeView,
+  onDrag,
+  onOpenSettings,
+  onViewChange,
+  status,
+}: {
+  activeView: ViewKey;
+  onDrag: (event: PointerEvent<HTMLElement>) => void;
+  onOpenSettings: () => void;
+  onViewChange: (view: ViewKey) => void;
+  status: string;
+}) {
+  return (
+    <footer className="list-footer" data-tauri-drag-region onPointerDown={onDrag}>
+      <StatusLine status={status} />
+      <div className="footer-actions" onPointerDown={(event) => event.stopPropagation()}>
+        <button
+          aria-label="历史"
+          className={activeView === "history" ? "icon-button active" : "icon-button subtle"}
+          onClick={() => onViewChange("history")}
+          title="历史"
+          type="button"
+        >
+          <History size={13} />
+        </button>
+        <button
+          aria-label="收藏"
+          className={activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
+          onClick={() => onViewChange("favorites")}
+          title="收藏"
+          type="button"
+        >
+          <Heart size={13} />
+        </button>
+        <button
+          aria-label="垃圾箱"
+          className={activeView === "trash" ? "icon-button active" : "icon-button subtle"}
+          onClick={() => onViewChange("trash")}
+          title="垃圾箱"
+          type="button"
+        >
+          <Trash2 size={13} />
+        </button>
+        <button aria-label="设置" className="icon-button subtle" onClick={onOpenSettings} title="设置" type="button">
+          <Settings size={13} />
+        </button>
+      </div>
+    </footer>
+  );
+}
+
+function StatusLine({ status }: { status: string }) {
+  return (
+    <span className="footer-status">
+      {status || (
+        <>
+          <kbd>Space</kbd> 预览 · <kbd>Enter</kbd> 粘贴 · <kbd>/</kbd> 搜索
+        </>
       )}
-    />
+    </span>
   );
 }
 
 function TrashPanel({
   activeId,
+  autoScroll,
   clips,
   hasMore,
   isLoadingMore,
@@ -2091,15 +2296,16 @@ function TrashPanel({
   onDeleteSelected,
   onHardDelete,
   onLoadMore,
+  onPointerActive,
   onRestore,
   onRestoreSelected,
   onSelect,
-  onToggleMultiSelect,
   onToggleSelected,
   selectedIds,
   settings,
 }: {
   activeId: string | null;
+  autoScroll: boolean;
   clips: ClipItem[];
   hasMore: boolean;
   isLoadingMore: boolean;
@@ -2108,10 +2314,10 @@ function TrashPanel({
   onDeleteSelected: () => void;
   onHardDelete: (item: ClipItem) => void;
   onLoadMore: () => void;
+  onPointerActive: () => void;
   onRestore: (item: ClipItem) => void;
   onRestoreSelected: () => void;
   onSelect: (item: ClipItem) => void;
-  onToggleMultiSelect: () => void;
   onToggleSelected: (id: string) => void;
   selectedIds: Set<string>;
   settings: AppSettings;
@@ -2156,19 +2362,12 @@ function TrashPanel({
               <span>{selectedCount}</span>
             </>
           ) : null}
-          <button
-            aria-label={multiSelectMode ? "退出多选" : "进入多选"}
-            className={multiSelectMode ? "icon-button active" : "icon-button"}
-            onClick={onToggleMultiSelect}
-            title={multiSelectMode ? "退出多选" : "多选"}
-            type="button"
-          >
-            {multiSelectMode ? <CheckSquare size={14} /> : <Square size={14} />}
-          </button>
         </div>
       </div>
-      <div className="quick-workspace">
+      <div className="quick-workspace" onPointerDown={onPointerActive}>
         <VirtualList
+          activeId={activeId}
+          autoScroll={autoScroll}
           className="quick-menu"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
@@ -2221,7 +2420,7 @@ function TrashPanel({
                   {item.analysis.title}
                   <span>{formatTime(item.lastSeenAt)}</span>
                 </strong>
-                <p title={item.content}>{getDisplayText(item, settings)}</p>
+                <p aria-label={getDisplayText(item, settings)}>{getDisplayText(item, settings)}</p>
               </div>
               <div className="row-actions" onClick={(event) => event.stopPropagation()}>
                 <button
@@ -2258,6 +2457,7 @@ function TrashPanel({
 }
 
 function VirtualList<T extends { id: string }>({
+  activeId,
   className,
   hasMore = false,
   items,
@@ -2265,7 +2465,9 @@ function VirtualList<T extends { id: string }>({
   itemHeight = ROW_HEIGHT,
   onEndReached,
   renderItem,
+  autoScroll = true,
 }: {
+  activeId?: string | null;
   className: string;
   hasMore?: boolean;
   items: T[];
@@ -2273,10 +2475,26 @@ function VirtualList<T extends { id: string }>({
   itemHeight?: number;
   onEndReached?: () => void;
   renderItem: (item: T, index: number) => ReactNode;
+  autoScroll?: boolean;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(420);
+  const [isScrollFeedback, setScrollFeedback] = useState(false);
+  const scrollFeedbackTimerRef = useRef<number | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
+
+  const setFeedback = useCallback(
+    (next: boolean) => {
+      setScrollFeedback(next);
+      if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
+      if (next) {
+        scrollFeedbackTimerRef.current = window.setTimeout(() => {
+          setScrollFeedback(false);
+        }, 420);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const node = ref.current;
@@ -2288,16 +2506,42 @@ function VirtualList<T extends { id: string }>({
     return () => resizeObserver.disconnect();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeId || !autoScroll) return;
+    const node = ref.current;
+    if (!node) return;
+    const index = items.findIndex((item) => item.id === activeId);
+    if (index < 0) return;
+    const itemTop = index * itemHeight;
+    const itemBottom = itemTop + itemHeight;
+    const visibleTop = node.scrollTop;
+    const visibleBottom = visibleTop + node.clientHeight;
+    if (itemTop >= visibleTop && itemBottom <= visibleBottom) {
+      return;
+    }
+    const targetTop = Math.max(0, itemTop - node.clientHeight / 2 + itemHeight / 2);
+    setFeedback(true);
+    node.scrollTo({ top: targetTop, behavior: "smooth" });
+  }, [activeId, autoScroll, itemHeight, items, setFeedback]);
+
   const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
   const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
   const visible = items.slice(start, start + visibleCount);
+  const activeIndex = activeId ? items.findIndex((item) => item.id === activeId) : -1;
 
   return (
     <div
-      className={`${className} virtual-list`}
+      className={`${className} virtual-list${isScrollFeedback ? " is-scroll-feedback" : ""}`}
       onScroll={(event) => {
         const node = event.currentTarget;
         setScrollTop(node.scrollTop);
+        setFeedback(true);
         if (hasMore && !isLoadingMore && node.scrollHeight - node.scrollTop - node.clientHeight < itemHeight * 6) {
           onEndReached?.();
         }
@@ -2305,6 +2549,16 @@ function VirtualList<T extends { id: string }>({
       ref={ref}
     >
       <div className="virtual-spacer" style={{ height: items.length * itemHeight }}>
+        {activeIndex >= 0 ? (
+          <div
+            aria-hidden="true"
+            className="target-focus-ring"
+            style={{
+              "--target-row-height": `${itemHeight}px`,
+              transform: `translate3d(0, ${activeIndex * itemHeight}px, 0)`,
+            } as CSSProperties}
+          />
+        ) : null}
         <div className="virtual-window" style={{ transform: `translateY(${start * itemHeight}px)` }}>
           {visible.map((item, index) => (
             <div className="virtual-item" key={item.id}>
@@ -2320,26 +2574,25 @@ function VirtualList<T extends { id: string }>({
 
 function QuickPastePanel({
   activeId,
+  autoScroll,
   clips,
   copiedId,
   hasMore,
   isLoadingMore,
   multiSelectMode,
-  selectedIds,
-  settings,
-  onAggregateCopy,
   onCopy,
-  onDelete,
-  onDeleteSelected,
   onFavorite,
   onLoadMore,
   onOpen,
+  onOpenDetail,
+  onPointerActive,
   onSelect,
-  onSelectAll,
-  onToggleMultiSelect,
+  onStartMultiSelect,
   onToggleSelected,
+  selectedIds,
 }: {
   activeId: string | null;
+  autoScroll: boolean;
   clips: ClipItem[];
   copiedId: string | null;
   hasMore: boolean;
@@ -2347,22 +2600,16 @@ function QuickPastePanel({
   limit: number;
   multiSelectMode: boolean;
   selectedIds: Set<string>;
-  settings: AppSettings;
-  onAggregateCopy: () => void;
   onCopy: (item: ClipItem) => void;
-  onDelete: (item: ClipItem) => void;
-  onDeleteSelected: () => void;
   onFavorite: (item: ClipItem) => void;
   onLoadMore: () => void;
   onOpen: (item: ClipItem) => void;
+  onOpenDetail: (item: ClipItem) => void;
+  onPointerActive: () => void;
   onSelect: (item: ClipItem) => void;
-  onSelectAll: () => void;
-  onToggleMultiSelect: () => void;
+  onStartMultiSelect: (id: string) => void;
   onToggleSelected: (id: string) => void;
 }) {
-  const snippetClips = clips.filter((item) => item.bucket === "snippet").slice(0, 4);
-  const selectedCount = clips.filter((item) => selectedIds.has(item.id)).length;
-
   if (!clips.length) {
     return (
       <div className="empty-list">
@@ -2375,55 +2622,14 @@ function QuickPastePanel({
 
   return (
     <section className="quick-panel">
-      <div className="quick-control-row">
-        <div />
-        <div className="quick-bulk-actions" aria-label="快速批量操作">
-          {multiSelectMode ? (
-            <>
-              <button aria-label="选择当前列表" className="icon-button" onClick={onSelectAll} title="选择当前列表" type="button">
-                <CheckSquare size={14} />
-              </button>
-              <button
-                aria-label="聚合复制"
-                className="icon-button"
-                disabled={selectedCount === 0}
-                onClick={onAggregateCopy}
-                title="聚合复制"
-                type="button"
-              >
-                <Copy size={14} />
-              </button>
-              <button
-                aria-label="删除选中"
-                className="icon-button danger-icon"
-                disabled={selectedCount === 0}
-                onClick={onDeleteSelected}
-                title="删除选中"
-                type="button"
-              >
-                <Trash2 size={14} />
-              </button>
-              <span>{selectedCount}</span>
-            </>
-          ) : null}
-          <button
-            aria-label={multiSelectMode ? "退出多选" : "进入多选"}
-            className={multiSelectMode ? "icon-button active" : "icon-button"}
-            onClick={onToggleMultiSelect}
-            title={multiSelectMode ? "退出多选" : "多选"}
-            type="button"
-          >
-            {multiSelectMode ? <CheckSquare size={14} /> : <Square size={14} />}
-          </button>
-        </div>
-      </div>
-
-      <div className="quick-workspace">
+      <div className="quick-workspace" onPointerDown={onPointerActive}>
         <VirtualList
+          activeId={activeId}
+          autoScroll={autoScroll}
           className="quick-menu"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={50}
+          itemHeight={40}
           items={clips}
           onEndReached={onLoadMore}
           renderItem={(item, index) => (
@@ -2446,345 +2652,60 @@ function QuickPastePanel({
               onSelect(item);
               onCopy(item);
             }}
-            onFocus={() => onSelect(item)}
-            onMouseEnter={() => {
-              if (activeId !== item.id) onSelect(item);
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onSelect(item);
+              if (multiSelectMode) {
+                onOpenDetail(item);
+              } else {
+                onStartMultiSelect(item.id);
+              }
             }}
+            onFocus={() => onSelect(item)}
             tabIndex={0}
           >
-            {multiSelectMode ? (
-              <button
-                aria-label={selectedIds.has(item.id) ? "取消选择" : "选择"}
-                className="quick-check"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onToggleSelected(item.id);
-                }}
-                type="button"
-              >
-                {selectedIds.has(item.id) ? <CheckSquare size={14} /> : <Square size={14} />}
-              </button>
-            ) : (
-              <kbd>{copiedId === item.id ? <Check size={12} /> : index + 1}</kbd>
-            )}
-            <div>
-              <strong>
-                {item.analysis.title}
-                <span>{formatTime(item.lastSeenAt)}</span>
-              </strong>
-              <p title={item.content}>{getDisplayText(item, settings)}</p>
+            <button
+              aria-label={selectedIds.has(item.id) ? "取消选择" : "多选此项"}
+              className={selectedIds.has(item.id) ? "quick-index selected" : "quick-index"}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelect(item);
+                if (multiSelectMode) onToggleSelected(item.id);
+                else onStartMultiSelect(item.id);
+              }}
+              title={multiSelectMode ? "切换选择" : "进入多选"}
+              type="button"
+            >
+              {selectedIds.has(item.id) ? <Check size={12} /> : copiedId === item.id ? <Check size={12} /> : index + 1}
+            </button>
+            <div className="quick-content">
+              <p className="quick-line" aria-label={getClipboardLine(item)}>{getClipboardLine(item)}</p>
             </div>
-            <div className="row-actions" onClick={(event) => event.stopPropagation()}>
+            <div className={item.favorite ? "row-actions has-favorite" : "row-actions"} onClick={(event) => event.stopPropagation()}>
               {item.analysis.url || item.analysis.attachment ? (
                 <button className="icon-button" onClick={() => onOpen(item)} title="打开链接" type="button">
                   <ExternalLink size={14} />
                 </button>
               ) : null}
               <button
-                className="icon-button quick-delete"
+                className={item.favorite ? "quick-fav faved" : "quick-fav"}
                 onClick={(event) => {
                   event.stopPropagation();
-                  onDelete(item);
+                  onFavorite(item);
                 }}
-                title="删除"
+                title={item.favorite ? "取消收藏" : "收藏"}
                 type="button"
               >
-                <Trash2 size={13} />
+                <Heart size={13} />
               </button>
             </div>
-            <button
-              className={item.favorite ? "quick-fav faved" : "quick-fav"}
-              onClick={(event) => {
-                event.stopPropagation();
-                onFavorite(item);
-              }}
-              title={item.favorite ? "取消收藏" : "收藏"}
-              type="button"
-            >
-              <Heart size={13} />
-            </button>
           </article>
           )}
         />
       </div>
-
-      {snippetClips.length ? (
-        <div className="snippet-strip">
-          {snippetClips.map((item) => (
-            <button className="snippet-card" key={item.id} onClick={() => onCopy(item)} type="button">
-              <FileText size={15} />
-              <span>{getDisplayText(item, settings)}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }
-
-function ClipDetail({
-  copiedId,
-  item,
-  onArchive,
-  onCopy,
-  onDelete,
-  onFavorite,
-  onOpen,
-  onSaveSnippet,
-  settings,
-}: {
-  copiedId: string | null;
-  item: ClipItem;
-  onArchive: () => void;
-  onCopy: () => void;
-  onDelete: () => void;
-  onFavorite: () => void;
-  onOpen: () => void;
-  onSaveSnippet: () => void;
-  settings: AppSettings;
-}) {
-  const showMarkdown = settings.enableMarkdownPreview && item.analysis.isMarkdown;
-  return (
-    <>
-      <div className="detail-header">
-        <div className="detail-title">
-          <div>
-            <span className={`kind-pill ${item.kind}`}>{item.kind}</span>
-            <h1>{item.analysis.title}</h1>
-            <p>{item.analysis.summary}</p>
-          </div>
-        </div>
-        <div className="detail-header-actions">
-          <button
-            className={item.favorite ? "icon-button favorite on" : "icon-button"}
-            onClick={onFavorite}
-            title={item.favorite ? "取消收藏" : "收藏"}
-            type="button"
-          >
-            <Heart size={15} />
-          </button>
-          <button className="primary-button" onClick={onCopy} type="button">
-            {copiedId === item.id ? <Check size={16} /> : <Copy size={16} />}
-            复制
-          </button>
-        </div>
-      </div>
-
-      {item.analysis.attachment ? (
-        <div className="attachment-detail">
-          <AttachmentPreview item={item} />
-          <pre className="clip-preview compact-preview">{item.content}</pre>
-        </div>
-      ) : showMarkdown ? (
-        <MarkdownPreview content={item.content} />
-      ) : (
-        <pre className="clip-preview">{item.content}</pre>
-      )}
-
-      <div className="meta-grid">
-        <div>
-          <span>来源</span>
-          <strong>{item.analysis.sourceName}</strong>
-        </div>
-        <div>
-          <span>创建</span>
-          <strong>{formatTime(item.createdAt)}</strong>
-        </div>
-        <div>
-          <span>最近出现</span>
-          <strong>{formatTime(item.lastSeenAt)}</strong>
-        </div>
-        <div>
-          <span>复制</span>
-          <strong>{item.copyCount} 次</strong>
-        </div>
-      </div>
-
-      <div className="tag-row">
-        {item.tags.map((tag) => (
-          <span className="tag-chip" key={tag}>
-            <Tag size={12} />
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      <div className="detail-actions">
-        {item.analysis.url || item.analysis.attachment ? (
-          <button className="text-button" onClick={onOpen} type="button">
-            <ExternalLink size={15} />
-            打开
-          </button>
-        ) : null}
-        <button className="text-button" onClick={onArchive} type="button">
-          <Archive size={15} />
-          {item.bucket === "archive" ? "移回" : "归档"}
-        </button>
-        <button className="text-button" onClick={onSaveSnippet} type="button">
-          <FileText size={15} />
-          片段
-        </button>
-        <button className="danger-button" onClick={onDelete} type="button">
-          <Trash2 size={15} />
-          删除
-        </button>
-      </div>
-    </>
-  );
-}
-
-function CodeBlock({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-    }
-  };
-  return (
-    <pre className="code-block">
-      <button className="code-copy-btn" onClick={handleCopy} title="复制代码">
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </button>
-      <code>{code}</code>
-    </pre>
-  );
-}
-
-function MarkdownPreview({ content }: { content: string }) {
-  const lines = content.split("\n");
-  const blocks: ReactNode[] = [];
-  let listItems: string[] = [];
-  let codeLines: string[] = [];
-  let inCode = false;
-
-  function flushList(key: string) {
-    if (!listItems.length) return;
-    blocks.push(
-      <ul key={key}>
-        {listItems.map((line) => (
-          <li key={line}>{renderInlineMarkdown(line)}</li>
-        ))}
-      </ul>,
-    );
-    listItems = [];
-  }
-
-  function flushCode(key: string) {
-    if (!codeLines.length) return;
-    const codeText = codeLines.join("\n");
-    blocks.push(<CodeBlock key={key} code={codeText} />);
-    codeLines = [];
-  }
-
-  lines.forEach((line, index) => {
-    if (line.trim().startsWith("```")) {
-      if (inCode) flushCode(`code-${index}`);
-      inCode = !inCode;
-      return;
-    }
-    if (inCode) {
-      codeLines.push(line);
-      return;
-    }
-    const heading = line.match(/^(#{1,3})\s+(.*)$/);
-    if (heading) {
-      flushList(`list-${index}`);
-      const level = heading[1].length;
-      const text = heading[2];
-      blocks.push(level === 1 ? <h1 key={index}>{text}</h1> : level === 2 ? <h2 key={index}>{text}</h2> : <h3 key={index}>{text}</h3>);
-      return;
-    }
-    const list = line.match(/^[-*]\s+(.*)$/);
-    if (list) {
-      listItems.push(list[1]);
-      return;
-    }
-    flushList(`list-${index}`);
-    if (!line.trim()) return;
-    if (line.startsWith(">")) {
-      blocks.push(<blockquote key={index}>{renderInlineMarkdown(line.replace(/^>\s?/, ""))}</blockquote>);
-      return;
-    }
-    blocks.push(<p key={index}>{renderInlineMarkdown(line)}</p>);
-  });
-  flushList("list-end");
-  flushCode("code-end");
-
-  return <div className="markdown-preview">{blocks}</div>;
-}
-
-function renderInlineMarkdown(text: string) {
-  const parts: ReactNode[] = [];
-  const pattern = /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text))) {
-    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
-    parts.push(
-      <a href={match[2]} key={`${match[1]}-${match.index}`} rel="noreferrer" target="_blank">
-        {match[1]}
-      </a>,
-    );
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
-  return parts.length ? parts : text;
-}
-
-function FolderPanel({ clips, onView }: { clips: ClipItem[]; onView: (view: ViewKey) => void }) {
-  const folders = [
-    {
-      title: "History",
-      label: "历史",
-      count: clips.filter((item) => item.bucket === "history").length,
-      view: "history" as ViewKey,
-      icon: History,
-    },
-    {
-      title: "Snippets",
-      label: "片段",
-      count: clips.filter((item) => item.bucket === "snippet").length,
-      view: "snippets" as ViewKey,
-      icon: Layers3,
-    },
-    {
-      title: "Archive",
-      label: "归档",
-      count: clips.filter((item) => item.bucket === "archive").length,
-      view: "archive" as ViewKey,
-      icon: Archive,
-    },
-  ];
-
-  return (
-    <section className="extension-panel">
-      <div className="panel-heading">
-        <Archive size={20} />
-        <div>
-          <h2>文件夹</h2>
-          <p>按历史、片段、归档整理。</p>
-        </div>
-      </div>
-      <div className="folder-grid">
-        {folders.map((folder) => {
-          const Icon = folder.icon;
-          return (
-            <button className="folder-card" key={folder.title} onClick={() => onView(folder.view)} type="button">
-              <Icon size={18} />
-              <span>{folder.title}</span>
-              <strong>{folder.count}</strong>
-              <em>{folder.label}</em>
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 
 function App() {
   return (

@@ -23,13 +23,42 @@ interface AppSettings {
   cleanupIntervalHours: number;
   softDeletedRetentionDays: number;
   enableMarkdownPreview: boolean;
+  fuzzySearchEnabled: boolean;
+  pinyinSearchEnabled: boolean;
   tagMode: "similar" | "rules" | "off";
   tagRules: Array<{ id: string; label: string; query: string }>;
+  positionStrategy: "trayCenter" | "followCursor" | "center" | "windowCenter" | "lastPosition" | "focusInput";
+  panelBackgroundOpacity: number;
+  enableScrollCollapse: boolean;
 }
 
 interface AccessibilityPermissionPayload {
   canReadFocusedInput: boolean;
-  status: "granted" | "missing" | "denied";
+  status: "granted" | "missing" | "denied" | "unsupported";
+  message: string;
+}
+
+interface PanelTriggerPayload {
+  visible: boolean;
+  focused: boolean;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  source: string;
+  positionSource: string;
+  focusedInputSource: string;
+  usedFocusedInput: boolean;
+  accessibilityStatus: string;
+  message: string;
+}
+
+interface McpStatusPayload {
+  enabled: boolean;
+  running: boolean;
+  transport: string;
+  command: string;
+  tools: string[];
   message: string;
 }
 
@@ -51,11 +80,15 @@ const tagModeLabels: Record<AppSettings["tagMode"], string> = {
   off: "关闭",
 };
 
+
+
 interface SettingsAppState {
   accessibility: AccessibilityPermissionPayload | null;
   configPath: string;
   configStatus: string;
   databasePath: string;
+  mcp: McpStatusPayload | null;
+  panel: PanelTriggerPayload | null;
   settings: AppSettings;
   status: string;
 }
@@ -71,6 +104,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   cleanupIntervalHours: 24,
   softDeletedRetentionDays: 7,
   enableMarkdownPreview: true,
+  fuzzySearchEnabled: true,
+  pinyinSearchEnabled: true,
   tagMode: "rules",
   tagRules: [
     { id: "r1", label: "GitHub", query: "github.com gh repo pull request" },
@@ -78,6 +113,9 @@ const DEFAULT_SETTINGS: AppSettings = {
     { id: "r3", label: "命令", query: "pnpm npm npx cargo git tauri brew" },
     { id: "r4", label: "文档", query: "readme openspec markdown docs md" },
   ],
+  positionStrategy: "followCursor",
+  panelBackgroundOpacity: 0.72,
+  enableScrollCollapse: true,
 };
 
 function SettingGroup({ children, title }: { children: React.ReactNode; title: string }) {
@@ -144,6 +182,70 @@ function NumberSetting({
   );
 }
 
+function SliderSetting({
+  label,
+  value,
+  min,
+  max,
+  step,
+  suffix,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="setting-row">
+      <span>{label}</span>
+      <div className="slider-setting">
+        <input
+          max={max}
+          min={min}
+          step={step ?? 1}
+          type="range"
+          value={value}
+          onChange={(event) => {
+            const next = Number(event.currentTarget.value);
+            if (Number.isFinite(next)) onChange(next);
+          }}
+        />
+        <span>
+          {value}
+          {suffix}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ToggleSetting({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="setting-row">
+      <span>{label}</span>
+      <button
+        className={checked ? "toggle-button active" : "toggle-button"}
+        onClick={() => onChange(!checked)}
+        type="button"
+      >
+        <span />
+      </button>
+    </div>
+  );
+}
+
 function CheckItem({ body, icon, title }: { body: string; icon: React.ReactNode; title: string }) {
   return (
     <div className="check-item">
@@ -159,6 +261,7 @@ function CheckItem({ body, icon, title }: { body: string; icon: React.ReactNode;
 const SECTIONS = [
   { key: "shortcut", label: "快捷键", icon: Terminal },
   { key: "display", label: "面板显示", icon: Eye },
+  { key: "integration", label: "集成", icon: Terminal },
   { key: "content", label: "内容识别", icon: FileCode },
   { key: "storage", label: "数据存储", icon: Database },
   { key: "tags", label: "Tag 规则", icon: Tag },
@@ -174,6 +277,8 @@ export function SettingsApp() {
     configPath: "",
     configStatus: "加载中…",
     databasePath: "",
+    mcp: null,
+    panel: null,
     settings: DEFAULT_SETTINGS,
     status: "",
   });
@@ -181,17 +286,21 @@ export function SettingsApp() {
   useEffect(() => {
     void (async () => {
       try {
-        const [settings, configPath, databasePath, accessibility] = await Promise.all([
+        const [settings, configPath, databasePath, accessibility, panel, mcp] = await Promise.all([
           invoke<AppSettings>("get_clipforge_settings"),
           invoke<string>("get_clipforge_config_path"),
           invoke<string>("get_clipforge_database_path"),
           invoke<AccessibilityPermissionPayload>("check_accessibility_permission"),
+          invoke<PanelTriggerPayload>("get_panel_trigger_status"),
+          invoke<McpStatusPayload>("get_mcp_status"),
         ]);
         setState({
           accessibility,
           configPath,
           configStatus: "配置已同步到 JSON5",
           databasePath,
+          mcp,
+          panel,
           settings,
           status: "",
         });
@@ -233,6 +342,39 @@ export function SettingsApp() {
   async function openAccessibilitySettings() {
     try {
       await invoke("request_accessibility_permission");
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function refreshPanelStatus() {
+    try {
+      const panel = await invoke<PanelTriggerPayload>("get_panel_trigger_status");
+      setState((prev) => ({ ...prev, panel, status: panel.message }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function testFloatingPanel() {
+    try {
+      const panel = await invoke<PanelTriggerPayload>("show_quick_panel_command", { source: "settings-test" });
+      setState((prev) => ({ ...prev, panel, status: `悬浮检测：${panel.positionSource}` }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function updateMcp(action: "start" | "stop" | "refresh") {
+    try {
+      const command =
+        action === "start"
+          ? "start_mcp_server"
+          : action === "stop"
+            ? "stop_mcp_server"
+            : "get_mcp_status";
+      const mcp = await invoke<McpStatusPayload>(command);
+      setState((prev) => ({ ...prev, mcp, status: mcp.message }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
     }
@@ -351,11 +493,96 @@ export function SettingsApp() {
                 max={30}
                 onChange={(quickItemLimit) => updateSettings({ quickItemLimit })}
               />
+              <SliderSetting
+                label="面板背景透明度"
+                min={20}
+                max={100}
+                step={1}
+                suffix="%"
+                value={Math.round(state.settings.panelBackgroundOpacity * 100)}
+                onChange={(value) => updateSettings({ panelBackgroundOpacity: value / 100 })}
+              />
+              <ToggleSetting
+                label="滚动时自动隐藏底部导航"
+                checked={state.settings.enableScrollCollapse}
+                onChange={(enableScrollCollapse) => updateSettings({ enableScrollCollapse })}
+              />
+            </SettingGroup>
+          )}
+
+          {section === "integration" && (
+            <SettingGroup title="悬浮触发与 MCP">
+              <div className="setting-card permission-card">
+                <span>悬浮窗触发检测</span>
+                <strong>
+                  {state.panel?.visible ? "窗口可见" : "窗口隐藏"} · {state.panel?.focused ? "已聚焦" : "未聚焦"}
+                </strong>
+                <p>
+                  来源 {state.panel?.source ?? "-"}，定位 {state.panel?.positionSource ?? "-"}，
+                  输入控件 {state.panel?.focusedInputSource || "未命中"}。
+                </p>
+                <p>
+                  {state.panel
+                    ? `x=${Math.round(state.panel.x)} y=${Math.round(state.panel.y)} ${Math.round(state.panel.width)}x${Math.round(state.panel.height)}`
+                    : "尚未检测"}
+                </p>
+                <div className="button-row">
+                  <button className="secondary-button" onClick={testFloatingPanel} type="button">
+                    测试唤起
+                  </button>
+                  <button className="secondary-button" onClick={refreshPanelStatus} type="button">
+                    刷新状态
+                  </button>
+                </div>
+              </div>
+              <div className="setting-card permission-card">
+                <span>MCP Server</span>
+                <strong>{state.mcp?.running ? "运行中" : "未运行"} · {state.mcp?.transport ?? "stdio"}</strong>
+                <p className="path">{state.mcp?.command ?? "加载中…"}</p>
+                <p>{state.mcp?.tools.join(" / ")}</p>
+                <div className="button-row">
+                  <button className="secondary-button" onClick={() => updateMcp("start")} type="button">
+                    启动
+                  </button>
+                  <button className="secondary-button" onClick={() => updateMcp("stop")} type="button">
+                    停止
+                  </button>
+                  <button className="secondary-button" onClick={() => updateMcp("refresh")} type="button">
+                    刷新
+                  </button>
+                </div>
+              </div>
             </SettingGroup>
           )}
 
           {section === "content" && (
             <SettingGroup title="内容识别">
+              <div className="setting-row">
+                <span>模糊搜索</span>
+                <label className="switch">
+                  <input
+                    checked={state.settings.fuzzySearchEnabled}
+                    onChange={(event) =>
+                      updateSettings({ fuzzySearchEnabled: event.currentTarget.checked })
+                    }
+                    type="checkbox"
+                  />
+                  <span className="switch-track" />
+                </label>
+              </div>
+              <div className="setting-row">
+                <span>拼音英文搜索</span>
+                <label className="switch">
+                  <input
+                    checked={state.settings.pinyinSearchEnabled}
+                    onChange={(event) =>
+                      updateSettings({ pinyinSearchEnabled: event.currentTarget.checked })
+                    }
+                    type="checkbox"
+                  />
+                  <span className="switch-track" />
+                </label>
+              </div>
               <div className="setting-row">
                 <span>Markdown 详情预览</span>
                 <label className="switch">
