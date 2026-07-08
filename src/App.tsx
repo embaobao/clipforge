@@ -1624,7 +1624,9 @@ function ClipForgeApp() {
           searchRef.current?.blur();
           return;
         }
-        getCurrentWindow().hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
+        if (!settingsRef.current.panelPinned) {
+          getCurrentWindow().hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
+        }
         return;
       }
 

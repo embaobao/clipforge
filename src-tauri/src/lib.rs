@@ -2200,6 +2200,9 @@ fn should_skip_writeback() -> bool {
 
 #[cfg(target_os = "macos")]
 fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if is_panel_pinned() {
+        return;
+    }
     if let Ok(panel) = app.get_webview_panel("main") {
         panel.resign_key_window();
         panel.hide();
@@ -2212,6 +2215,9 @@ fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 #[cfg(not(target_os = "macos"))]
 fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if is_panel_pinned() {
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.hide();
     }
@@ -2657,48 +2663,10 @@ fn is_panel_pinned() -> bool {
     PANEL_PINNED.load(Ordering::Relaxed)
 }
 
-/// 把面板钉到【当前光标屏】的顶部居中并置顶（pin 打开时调用）。
-fn position_panel_pinned_top<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    let Some((cx, cy)) = cursor_logical_point(&window) else {
-        return;
-    };
-    let Some(monitor) = monitor_for_logical_point(&window, cx, cy) else {
-        return;
-    };
-    let scale = monitor.scale_factor();
-    let work_area = monitor.work_area();
-    let pos = work_area.position.to_logical::<f64>(scale);
-    let size = work_area.size.to_logical::<f64>(scale);
-    let panel_height = ((size.height * QUICK_PANEL_HEIGHT_RATIO).round() - QUICK_PANEL_HEIGHT_SHRINK)
-        .clamp(QUICK_PANEL_MIN_HEIGHT, QUICK_PANEL_MAX_HEIGHT);
-    let x = pos.x + (size.width - QUICK_PANEL_WIDTH) / 2.0;
-    let y = pos.y + QUICK_PANEL_MARGIN;
-    let _ = window.set_size(LogicalSize::new(QUICK_PANEL_WIDTH, panel_height));
-    let _ = window.set_position(LogicalPosition::new(x, y));
-    let _ = window.set_always_on_top(true);
-    log_to_file("debug", "panel-pin", &format!(
-        "pinned top-center: monitor=({},{}) size=({},{}) panel=({},{}) h={}",
-        pos.x, pos.y, size.width, size.height, x, y, panel_height
-    ));
-}
-
 #[tauri::command]
-fn set_panel_pinned_command<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    pinned: bool,
-) -> Result<bool, String> {
+fn set_panel_pinned_command(pinned: bool) -> Result<bool, String> {
     PANEL_PINNED.store(pinned, Ordering::Relaxed);
-    log_to_file("info", "panel-pin", &format!("set pinned = {}", pinned));
-    if pinned {
-        position_panel_pinned_top(&app);
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    }
+    log_to_file("info", "panel-pin", &format!("set pinned = {} (stay-in-place)", pinned));
     Ok(pinned)
 }
 
