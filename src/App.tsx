@@ -923,6 +923,13 @@ function ClipForgeApp() {
   const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
   const [isSearchActive, setSearchActive] = useState(false);
   const [nativeStatus, setNativeStatus] = useState("准备监听剪贴板");
+  const [completionToast, setCompletionToast] = useState<string | null>(null);
+  const completionToastTimerRef = useRef<number | null>(null);
+  const showCompletionToast = useCallback((message: string) => {
+    setCompletionToast(message);
+    if (completionToastTimerRef.current) window.clearTimeout(completionToastTimerRef.current);
+    completionToastTimerRef.current = window.setTimeout(() => setCompletionToast(null), 1200);
+  }, []);
   const [lastCopiedId, setLastCopiedId] = useState<string | null>(null);
   const [keyboardNavigating, setKeyboardNavigating] = useState(false);
   const [, setIsReadingClipboard] = useState(false);
@@ -1510,6 +1517,21 @@ function ClipForgeApp() {
     }
   }
 
+  async function favoriteSelectedClips(items: ClipItem[]) {
+    if (!items.length) return;
+    const targetFavorite = !items.every((item) => item.favorite);
+    await Promise.all(
+      items.map((item) =>
+        invoke("update_clip_record", { input: { id: item.id, favorite: targetFavorite } }),
+      ),
+    ).catch((error) => logAppError("warn", "Batch favorite failed", String(error)));
+    const ids = new Set(items.map((item) => item.id));
+    setClips((current) =>
+      current.map((clip) => (ids.has(clip.id) ? { ...clip, favorite: targetFavorite } : clip)),
+    );
+    showCompletionToast(targetFavorite ? `已收藏 ${items.length} 项` : `已取消收藏 ${items.length} 项`);
+  }
+
   async function copySelectedClips(items: ClipItem[]) {
     if (!items.length) {
       setNativeStatus("先选择需要聚合复制的内容");
@@ -1524,6 +1546,7 @@ function ClipForgeApp() {
       await navigator.clipboard.writeText(text);
       setNativeStatus(`已聚合复制 ${items.length} 条到浏览器剪贴板`);
     }
+    showCompletionToast(`已聚合复制 ${items.length} 项`);
     const now = Date.now();
     setLastCopiedId(items[0]?.id ?? null);
     items.forEach((item) => {
@@ -1806,6 +1829,7 @@ function ClipForgeApp() {
     try {
       await invoke("soft_delete_clip_records", { ids });
       setNativeStatus(`已移入垃圾箱 ${ids.length} 条`);
+      showCompletionToast(`已删除 ${ids.length} 项`);
     } catch (error) {
       logAppError("warn", "Soft delete failed", String(error));
       setNativeStatus("软删除失败，查看日志");
@@ -1892,6 +1916,7 @@ function ClipForgeApp() {
             }}
             onCopy={() => copySelectedClips(selectedInList)}
             onDelete={() => deleteClips(selectedInList.map((item) => item.id))}
+            onFavorite={() => favoriteSelectedClips(selectedInList)}
             onToggleAll={(checked) => {
               setSelectedIds(checked ? new Set(filteredClips.map((item) => item.id)) : new Set());
             }}
@@ -2033,6 +2058,9 @@ function ClipForgeApp() {
       >
         <Pin size={12} />
       </button>
+      {completionToast ? (
+        <div className="completion-toast" role="status">{completionToast}</div>
+      ) : null}
       <BottomDock
         activeView={activeView}
         onDrag={handleWindowDrag}
@@ -2229,6 +2257,7 @@ function MultiSelectToolbar({
   onClose,
   onCopy,
   onDelete,
+  onFavorite,
   onToggleAll,
 }: {
   allSelected: boolean;
@@ -2236,6 +2265,7 @@ function MultiSelectToolbar({
   onClose: () => void;
   onCopy: () => void;
   onDelete: () => void;
+  onFavorite: () => void;
   onToggleAll: (checked: boolean) => void;
 }) {
   return (
@@ -2249,20 +2279,21 @@ function MultiSelectToolbar({
           <span className="multi-toolbar-count">{count > 0 ? `${count} 项` : "点击项目选择"}</span>
         </div>
         <div className="multi-toolbar-actions">
-          <label className="multi-select-all">
+          <label className="multi-select-all" title="全选/取消全选">
             <input checked={allSelected} onChange={(event) => onToggleAll(event.currentTarget.checked)} type="checkbox" />
             <span>全选</span>
           </label>
-          <button className="primary-button" disabled={count === 0} onClick={onCopy} type="button">
-            <Copy size={13} />
-            复制
+          <button aria-label="聚合复制" className="icon-button subtle" disabled={count === 0} onClick={onCopy} title="聚合复制" type="button">
+            <Copy size={14} />
           </button>
-          <button className="danger-button" disabled={count === 0} onClick={onDelete} type="button">
-            <Trash2 size={13} />
-            删除
+          <button aria-label="批量收藏" className="icon-button subtle" disabled={count === 0} onClick={onFavorite} title="批量收藏" type="button">
+            <Heart size={14} />
           </button>
-          <button aria-label="关闭多选" className="icon-button subtle" onClick={onClose} type="button">
-            <X size={13} />
+          <button aria-label="删除" className="icon-button subtle" disabled={count === 0} onClick={onDelete} title="删除" type="button">
+            <Trash2 size={14} />
+          </button>
+          <button aria-label="关闭多选" className="icon-button subtle" onClick={onClose} title="关闭多选" type="button">
+            <X size={14} />
           </button>
         </div>
       </div>

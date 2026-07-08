@@ -194,3 +194,21 @@ struct NormalizedPosition {
 - 面板：tauri-nspanel (macOS) / WebviewWindow (Windows)
 - 定位：tauri-plugin-positioner + 自研 FollowCursor
 - MCP：进程内常驻 JSON-RPC 服务
+
+## 面板定位与交互（统一逻辑点空间）
+
+所有面板定位计算统一在**全局逻辑点空间**（主屏左上原点）下进行，避免物理/逻辑混用导致 Retina/混合 DPI 偏移与错屏：
+
+- **光标**：macOS 用 `CGEvent.location()`（`cursor_logical_point`），绕开 tao `cursor_position()` 用主屏 scale 转物理、再被 `monitor_from_point`(期望逻辑) 误判屏的连锁错误。
+- **选屏**：`monitor_for_logical_point` = `monitor_from_point`(逻辑) → 自行用 work_area 逻辑边界做命中 → primary；**绝不回退 `current_monitor()`**（面板隐藏时指向上次所在屏，是多屏错位根因）。
+- **尺寸**：默认 420×488；`open_panel` 同步定位 → 显示 → 异步 AX 精修（仅当焦点屏==光标屏才覆盖）。
+
+交互模型：
+
+- **快捷键**：全局 Ctrl+V 走 `toggle_quick_panel`（可见即隐藏），保证可重复触发。
+- **点击**：点击条目 = 粘贴并关闭（`paste_clipboard_text` 已含写入+隐藏+模拟 Cmd+V）。
+- **失焦关闭**：前端 `onFocusChanged` 失焦后 180ms 隐藏（pinned 时跳过）。
+- **分组快捷键**：列表每 10 项一组，激活组由视口中心决定；`Cmd+0-9` 触发激活组内第 N 项，`Cmd+↑/↓` 切组并焦点跟随新组第一项；纯 `↑/↓` 仍逐项移动。序号 0-9 仅在激活组内显示。
+- **pin 固定**：`PANEL_PINNED` 标志位（对齐 EcoPaste）；所有自动隐藏路径（hide_panel / hide_panel_before_paste / 前端 Escape / 前端失焦）在 pinned 时跳过，面板保持在当前位置。
+- **完成提示**：`completionToast` 状态，聚合复制/删除/批量收藏后 1.2s 短时浮现。
+
