@@ -1053,7 +1053,7 @@ function ClipForgeApp() {
             appWindow.hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
             setPanelClosing(false);
           }, 180);
-        }, 900);
+        }, 180);
       })
       .catch((error) => logAppError("warn", "Register focus listener failed", String(error)));
     return cancelHide;
@@ -1917,7 +1917,7 @@ function ClipForgeApp() {
                   limit={settings.quickItemLimit}
                   multiSelectMode={multiSelectMode}
                   selectedIds={selectedIds}
-                  onCopy={copyClip}
+                  onPaste={pasteClip}
                   onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
                   onLoadMore={loadMoreClips}
                   onOpen={openClipTarget}
@@ -2580,12 +2580,12 @@ function QuickPastePanel({
   hasMore,
   isLoadingMore,
   multiSelectMode,
-  onCopy,
   onFavorite,
   onLoadMore,
   onOpen,
   onOpenDetail,
   onPointerActive,
+  onPaste,
   onSelect,
   onStartMultiSelect,
   onToggleSelected,
@@ -2600,12 +2600,12 @@ function QuickPastePanel({
   limit: number;
   multiSelectMode: boolean;
   selectedIds: Set<string>;
-  onCopy: (item: ClipItem) => void;
   onFavorite: (item: ClipItem) => void;
   onLoadMore: () => void;
   onOpen: (item: ClipItem) => void;
   onOpenDetail: (item: ClipItem) => void;
   onPointerActive: () => void;
+  onPaste: (item: ClipItem) => void;
   onSelect: (item: ClipItem) => void;
   onStartMultiSelect: (id: string) => void;
   onToggleSelected: (id: string) => void;
@@ -2650,7 +2650,7 @@ function QuickPastePanel({
                 return;
               }
               onSelect(item);
-              onCopy(item);
+              onPaste(item);
             }}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -2676,7 +2676,7 @@ function QuickPastePanel({
               title={multiSelectMode ? "切换选择" : "进入多选"}
               type="button"
             >
-              {selectedIds.has(item.id) ? <Check size={12} /> : copiedId === item.id ? <Check size={12} /> : index + 1}
+              {selectedIds.has(item.id) ? <Check size={12} /> : copiedId === item.id ? <Check size={12} /> : index < 9 ? <span className="quick-index-num">{index + 1}</span> : null}
             </button>
             <div className="quick-content">
               <p className="quick-line" aria-label={getClipboardLine(item)}>{getClipboardLine(item)}</p>

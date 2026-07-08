@@ -6626,3 +6626,14 @@ body,
   width: 14px !important;
   height: 14px !important;
 }
+
+/* === P0 调整：列表序号仅 1-9、仅 hover/active 才显（>9 不渲染，见 App.tsx） === */
+.quick-index-num {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  font-variant-numeric: tabular-nums;
+}
+.quick-row:hover .quick-index-num,
+.quick-row.active .quick-index-num {
+  opacity: 0.55;
+}

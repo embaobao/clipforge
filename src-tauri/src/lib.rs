@@ -2394,7 +2394,7 @@ pub fn run() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
                     if shortcut == &quick_shortcut && event.state() == ShortcutState::Pressed {
-                        show_quick_panel(app, "shortcut");
+                        toggle_quick_panel(app, "shortcut");
                     }
                 })
                 .build(),
@@ -2626,6 +2626,20 @@ fn show_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) 
             "Open quick panel failed".to_string(),
             Some(error),
         );
+    }
+}
+
+/// 切换面板可见性。快捷键用这个而非 show_quick_panel：
+/// 面板已可见时再按快捷键应当【隐藏】（toggle），否则面板常驻可见、再按 show 是 no-op，
+/// 主观上表现为「快捷键只生效一次」。
+fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        let _ = hide_panel(app, reason);
+    } else {
+        show_quick_panel(app, reason);
     }
 }
 
