@@ -1638,12 +1638,19 @@ function ClipForgeApp() {
         return;
       }
 
-      // Cmd+↑ / Cmd+↓：切到上/下一分组（每 10 项一组，平滑滚动使该组进入视口）。
+      // Cmd+↑ / Cmd+↓：切到上/下一分组（每 10 项一组，平滑滚动使该组进入视口），
+      // 同时把键盘焦点/选中项移到新组第一项，方便紧接着 Enter / Cmd+0 操作。
       if (event.metaKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
         event.preventDefault();
         const dir = event.key === "ArrowDown" ? 1 : -1;
-        const next = Math.max(0, activeGroupStartRef.current + dir * 10);
+        const maxGroupStart = Math.max(0, Math.floor(Math.max(0, quickItems.length - 1) / 10) * 10);
+        const next = Math.min(Math.max(0, activeGroupStartRef.current + dir * 10), maxGroupStart);
         setGroupScrollTarget(next);
+        const firstInGroup = quickItems[next];
+        if (firstInGroup) {
+          setSelectedId(firstInGroup.id);
+          setPreviewClip(firstInGroup);
+        }
         return;
       }
 
