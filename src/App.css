@@ -6657,7 +6657,15 @@ body,
   background: oklch(0.12 0 0 / 0.85);
 }
 
-/* === 列表序号 1-9 作为快捷键提示：始终可见（用户反馈：要能看到序号对应快捷键），hover/active 更亮 === */
+/* === 分组：移除激活行焦点环（target-focus-ring），改用激活分组背景态 === */
+.target-focus-ring {
+  display: none !important;
+}
+.quick-row.in-active-group {
+  background: oklch(0 0 0 / 0.035);
+}
+
+/* === 列表序号 0-9（激活分组内）作为快捷键提示：始终可见，hover/active 更亮 === */
 .quick-index-num {
   opacity: 0.55;
   transition: opacity 0.12s ease;

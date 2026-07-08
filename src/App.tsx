@@ -913,6 +913,13 @@ function ClipForgeApp() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [activeGroupStart, setActiveGroupStart] = useState(0);
+  const [groupScrollTarget, setGroupScrollTarget] = useState<number | null>(null);
+  const activeGroupStartRef = useRef(0);
+  activeGroupStartRef.current = activeGroupStart;
+  const handleActiveGroupChange = useCallback((groupStart: number) => {
+    setActiveGroupStart(groupStart);
+  }, []);
   const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
   const [isSearchActive, setSearchActive] = useState(false);
   const [nativeStatus, setNativeStatus] = useState("准备监听剪贴板");
@@ -1566,9 +1573,10 @@ function ClipForgeApp() {
       if (event.ctrlKey || event.altKey) return;
 
       // 普通数字键必须保留给搜索输入；只有 Cmd+数字才作用于列表条目。
-      if (event.metaKey && /^[1-9]$/.test(event.key)) {
-        const index = Number(event.key) - 1;
-        const item = quickItems.slice(0, settingsRef.current.quickItemLimit)[index];
+      // Cmd+0..9：触发【激活分组】内第 N 项（激活分组由滚动位置决定；切组后同一数字对应不同项）。
+      if (event.metaKey && /^[0-9]$/.test(event.key)) {
+        const index = activeGroupStartRef.current + Number(event.key);
+        const item = quickItems[index];
         if (!item) return;
         event.preventDefault();
         setSelectedId(item.id);
@@ -1627,6 +1635,15 @@ function ClipForgeApp() {
         if (!settingsRef.current.panelPinned) {
           getCurrentWindow().hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
         }
+        return;
+      }
+
+      // Cmd+↑ / Cmd+↓：切到上/下一分组（每 10 项一组，平滑滚动使该组进入视口）。
+      if (event.metaKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        event.preventDefault();
+        const dir = event.key === "ArrowDown" ? 1 : -1;
+        const next = Math.max(0, activeGroupStartRef.current + dir * 10);
+        setGroupScrollTarget(next);
         return;
       }
 
@@ -1953,6 +1970,9 @@ function ClipForgeApp() {
                       return next;
                     })
                   }
+                  activeGroupStart={activeGroupStart}
+                  onActiveGroupChange={handleActiveGroupChange}
+                  groupScrollTarget={groupScrollTarget}
                 />
               )
             }
@@ -2491,6 +2511,9 @@ function VirtualList<T extends { id: string }>({
   onEndReached,
   renderItem,
   autoScroll = true,
+  groupSize,
+  onActiveGroupChange,
+  scrollToGroupStart,
 }: {
   activeId?: string | null;
   className: string;
@@ -2501,6 +2524,9 @@ function VirtualList<T extends { id: string }>({
   onEndReached?: () => void;
   renderItem: (item: T, index: number) => ReactNode;
   autoScroll?: boolean;
+  groupSize?: number;
+  onActiveGroupChange?: (groupStart: number) => void;
+  scrollToGroupStart?: number | null;
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(420);
@@ -2554,6 +2580,24 @@ function VirtualList<T extends { id: string }>({
     setFeedback(true);
     node.scrollTo({ top: targetTop, behavior: "smooth" });
   }, [activeId, autoScroll, itemHeight, items, setFeedback]);
+
+  // 分组：按视口中心算"激活分组"起始下标（groupSize 整数倍），上报父级（给 Cmd+0-9 用）。
+  useEffect(() => {
+    if (!groupSize || !onActiveGroupChange) return;
+    const centerIndex = Math.floor((scrollTop + height / 2) / itemHeight);
+    const groupStart = Math.max(0, Math.floor(centerIndex / groupSize) * groupSize);
+    onActiveGroupChange(groupStart);
+  }, [scrollTop, height, itemHeight, groupSize, onActiveGroupChange]);
+
+  // 父级命令：滚动到某个分组起始（Cmd+↑/↓ 切组用）。
+  useEffect(() => {
+    if (scrollToGroupStart == null) return;
+    const node = ref.current;
+    if (!node) return;
+    const top = Math.max(0, scrollToGroupStart * itemHeight);
+    setFeedback(true);
+    node.scrollTo({ top, behavior: "smooth" });
+  }, [scrollToGroupStart, itemHeight, setFeedback]);
 
   const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
   const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
@@ -2615,6 +2659,9 @@ function QuickPastePanel({
   onStartMultiSelect,
   onToggleSelected,
   selectedIds,
+  activeGroupStart,
+  onActiveGroupChange,
+  groupScrollTarget,
 }: {
   activeId: string | null;
   autoScroll: boolean;
@@ -2634,6 +2681,9 @@ function QuickPastePanel({
   onSelect: (item: ClipItem) => void;
   onStartMultiSelect: (id: string) => void;
   onToggleSelected: (id: string) => void;
+  activeGroupStart: number;
+  onActiveGroupChange: (groupStart: number) => void;
+  groupScrollTarget: number | null;
 }) {
   if (!clips.length) {
     return (
@@ -2657,6 +2707,9 @@ function QuickPastePanel({
           itemHeight={40}
           items={clips}
           onEndReached={onLoadMore}
+          groupSize={10}
+          onActiveGroupChange={onActiveGroupChange}
+          scrollToGroupStart={groupScrollTarget}
           renderItem={(item, index) => (
           <article
             className={[
@@ -2665,6 +2718,7 @@ function QuickPastePanel({
               copiedId === item.id ? "copied" : "",
               selectedIds.has(item.id) ? "selected" : "",
               multiSelectMode ? "selecting" : "",
+              index >= activeGroupStart && index < activeGroupStart + 10 ? "in-active-group" : "",
             ]
               .filter(Boolean)
               .join(" ")}
@@ -2701,7 +2755,7 @@ function QuickPastePanel({
               title={multiSelectMode ? "切换选择" : "进入多选"}
               type="button"
             >
-              {selectedIds.has(item.id) ? <Check size={12} /> : copiedId === item.id ? <Check size={12} /> : index < 9 ? <span className="quick-index-num">{index + 1}</span> : null}
+              {selectedIds.has(item.id) ? <Check size={12} /> : copiedId === item.id ? <Check size={12} /> : index - activeGroupStart >= 0 && index - activeGroupStart <= 9 ? <span className="quick-index-num">{index - activeGroupStart}</span> : null}
             </button>
             <div className="quick-content">
               <p className="quick-line" aria-label={getClipboardLine(item)}>{getClipboardLine(item)}</p>
