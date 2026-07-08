@@ -6627,13 +6627,13 @@ body,
   height: 14px !important;
 }
 
-/* === P0 调整：列表序号仅 1-9、仅 hover/active 才显（>9 不渲染，见 App.tsx） === */
+/* === 列表序号 1-9 作为快捷键提示：始终可见（用户反馈：要能看到序号对应快捷键），hover/active 更亮 === */
 .quick-index-num {
-  opacity: 0;
+  opacity: 0.55;
   transition: opacity 0.12s ease;
   font-variant-numeric: tabular-nums;
 }
 .quick-row:hover .quick-index-num,
 .quick-row.active .quick-index-num {
-  opacity: 0.55;
+  opacity: 0.9;
 }

@@ -2445,6 +2445,7 @@ pub fn run() {
             show_quick_panel_command,
             hide_quick_panel_command,
             toggle_quick_panel_command,
+            set_panel_pinned_command,
             focus_quick_panel_command,
             release_focus_command,
             get_panel_trigger_status,
@@ -2600,6 +2601,12 @@ fn hide_panel<R: tauri::Runtime>(
         .get_webview_window("main")
         .ok_or_else(|| "main window is not available".to_string())?;
 
+    // 面板已固定时，尊重用户意图：不隐藏（失焦/外部点击/切换 App 都保持可见）。
+    if is_panel_pinned() {
+        log_to_file("debug", "panel-pin", "hide skipped: panel is pinned");
+        return Ok(panel_trigger_payload(&window, reason, "pinned", ""));
+    }
+
     save_panel_position(&window);
 
     #[cfg(target_os = "macos")]
@@ -2641,6 +2648,58 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
     } else {
         show_quick_panel(app, reason);
     }
+}
+
+/// 面板「固定」状态：true 时失焦/外部点击不自动隐藏（参考 EcoPaste CLIPBOARD_WINDOW_PINNED）。
+static PANEL_PINNED: AtomicBool = AtomicBool::new(false);
+
+fn is_panel_pinned() -> bool {
+    PANEL_PINNED.load(Ordering::Relaxed)
+}
+
+/// 把面板钉到【当前光标屏】的顶部居中并置顶（pin 打开时调用）。
+fn position_panel_pinned_top<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some((cx, cy)) = cursor_logical_point(&window) else {
+        return;
+    };
+    let Some(monitor) = monitor_for_logical_point(&window, cx, cy) else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let work_area = monitor.work_area();
+    let pos = work_area.position.to_logical::<f64>(scale);
+    let size = work_area.size.to_logical::<f64>(scale);
+    let panel_height = ((size.height * QUICK_PANEL_HEIGHT_RATIO).round() - QUICK_PANEL_HEIGHT_SHRINK)
+        .clamp(QUICK_PANEL_MIN_HEIGHT, QUICK_PANEL_MAX_HEIGHT);
+    let x = pos.x + (size.width - QUICK_PANEL_WIDTH) / 2.0;
+    let y = pos.y + QUICK_PANEL_MARGIN;
+    let _ = window.set_size(LogicalSize::new(QUICK_PANEL_WIDTH, panel_height));
+    let _ = window.set_position(LogicalPosition::new(x, y));
+    let _ = window.set_always_on_top(true);
+    log_to_file("debug", "panel-pin", &format!(
+        "pinned top-center: monitor=({},{}) size=({},{}) panel=({},{}) h={}",
+        pos.x, pos.y, size.width, size.height, x, y, panel_height
+    ));
+}
+
+#[tauri::command]
+fn set_panel_pinned_command<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    pinned: bool,
+) -> Result<bool, String> {
+    PANEL_PINNED.store(pinned, Ordering::Relaxed);
+    log_to_file("info", "panel-pin", &format!("set pinned = {}", pinned));
+    if pinned {
+        position_panel_pinned_top(&app);
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+    Ok(pinned)
 }
 
 fn panel_trigger_payload<R: tauri::Runtime>(

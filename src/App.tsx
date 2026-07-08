@@ -7,6 +7,7 @@ import {
   Heart,
   History,
   Inbox,
+  Pin,
   RotateCcw,
   Search,
   Settings,
@@ -174,6 +175,7 @@ type AppSettings = {
   softDeletedRetentionDays: number;
   panelBackgroundOpacity: number;
   enableScrollCollapse: boolean;
+  panelPinned: boolean;
 };
 
 type UserSettingsPayload = {
@@ -227,6 +229,7 @@ const defaultSettings: AppSettings = {
   softDeletedRetentionDays: 30,
   panelBackgroundOpacity: 0.72,
   enableScrollCollapse: true,
+  panelPinned: false,
 };
 
 function makeId() {
@@ -701,6 +704,10 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
       typeof next.enableScrollCollapse === "boolean"
         ? next.enableScrollCollapse
         : defaultSettings.enableScrollCollapse,
+    panelPinned:
+      typeof next.panelPinned === "boolean"
+        ? next.panelPinned
+        : defaultSettings.panelPinned,
     tagRules: Array.isArray(next.tagRules) ? next.tagRules : defaultSettings.tagRules,
     fuzzySearchEnabled:
       typeof next.fuzzySearchEnabled === "boolean"
@@ -1047,6 +1054,7 @@ function ClipForgeApp() {
           return;
         }
         cancelHide();
+        if (settingsRef.current.panelPinned) return;
         hideTimer = window.setTimeout(() => {
           setPanelClosing(true);
           closeTimer = window.setTimeout(() => {
@@ -1996,6 +2004,14 @@ function ClipForgeApp() {
           setPreviewOpen(false);
           void navigateWorkspaceList();
         }}
+        panelPinned={settings.panelPinned}
+        onTogglePin={() => {
+          const nextPinned = !settings.panelPinned;
+          setSettings((prev) => ({ ...prev, panelPinned: nextPinned }));
+          invoke("set_panel_pinned_command", { pinned: nextPinned }).catch((error) =>
+            logAppError("warn", "Toggle panel pin failed", String(error)),
+          );
+        }}
         status={nativeStatus}
       />
     </main>
@@ -2225,13 +2241,17 @@ function BottomDock({
   activeView,
   onDrag,
   onOpenSettings,
+  onTogglePin,
   onViewChange,
+  panelPinned,
   status,
 }: {
   activeView: ViewKey;
   onDrag: (event: PointerEvent<HTMLElement>) => void;
   onOpenSettings: () => void;
+  onTogglePin: () => void;
   onViewChange: (view: ViewKey) => void;
+  panelPinned: boolean;
   status: string;
 }) {
   return (
@@ -2267,6 +2287,15 @@ function BottomDock({
         </button>
         <button aria-label="设置" className="icon-button subtle" onClick={onOpenSettings} title="设置" type="button">
           <Settings size={13} />
+        </button>
+        <button
+          aria-label={panelPinned ? "取消固定" : "固定面板"}
+          className={panelPinned ? "icon-button active" : "icon-button subtle"}
+          onClick={onTogglePin}
+          title={panelPinned ? "取消固定" : "固定面板（置顶常驻）"}
+          type="button"
+        >
+          <Pin size={13} />
         </button>
       </div>
     </footer>
