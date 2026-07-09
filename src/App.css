@@ -6662,6 +6662,10 @@ body,
   padding-top: 0 !important;
 }
 
+.app-shell:not(.search-active) .quick-panel {
+  padding-top: 0 !important;
+}
+
 /* === 完成提示 toast：短时浮现（聚合复制/删除/批量收藏后） === */
 .completion-toast {
   position: fixed;
