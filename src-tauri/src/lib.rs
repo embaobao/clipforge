@@ -2292,15 +2292,39 @@ fn simulate_platform_paste() -> Result<(), String> {
     Err("No supported paste simulator found. Install wtype or xdotool.".to_string())
 }
 
+/// 托盘菜单 id（用于切换监听状态后通过 app.tray_by_id 重建菜单刷新文案）。
+const TRAY_ID: &str = "main-tray";
+
+/// 构建托盘右键菜单。监听开关的文案随 LISTEN_PAUSED 当前状态变化，
+/// 因此切换后调用方需 set_menu 重建以刷新显示。
+fn build_tray_menu<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> Result<Menu<R>, String> {
+    let open_quick = MenuItemBuilder::with_id("open_quick", "打开快捷面板")
+        .accelerator("Ctrl+V")
+        .build(manager)
+        .map_err(|e| e.to_string())?;
+    let preferences = MenuItemBuilder::with_id("preferences", "偏好设置…")
+        .build(manager)
+        .map_err(|e| e.to_string())?;
+    let listen_label = if is_listen_paused() {
+        "▶ 恢复监听剪贴板"
+    } else {
+        "⏸ 暂停监听剪贴板"
+    };
+    let toggle_listen = MenuItemBuilder::with_id("toggle_listen", listen_label)
+        .build(manager)
+        .map_err(|e| e.to_string())?;
+    let quit = MenuItemBuilder::with_id("quit", "退出 ClipForge")
+        .build(manager)
+        .map_err(|e| e.to_string())?;
+    Menu::with_items(manager, &[&open_quick, &preferences, &toggle_listen, &quit])
+        .map_err(|e| e.to_string())
+}
+
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
         configure_quick_panel_window(&window);
     }
-    let open_quick = MenuItemBuilder::with_id("open_quick", "打开快捷面板")
-        .accelerator("Ctrl+V")
-        .build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "退出 ClipForge").build(app)?;
-    let menu = Menu::with_items(app, &[&open_quick, &quit])?;
+    let menu = build_tray_menu(app)?;
     let quick_shortcut = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyV);
     if let Err(error) = app.global_shortcut().register(quick_shortcut) {
         let _ = append_app_log(
@@ -2309,12 +2333,40 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             Some(error.to_string()),
         );
     }
-    let mut tray_builder = TrayIconBuilder::new()
+    let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("ClipForge")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_quick" => show_quick_panel(app, "tray"),
+            "preferences" => {
+                if let Err(e) = open_settings_window(app.clone()) {
+                    log_to_file("warn", "tray", &format!("open settings failed: {}", e));
+                }
+            }
+            "toggle_listen" => {
+                let next_paused = !is_listen_paused();
+                set_listen_paused(next_paused);
+                log_to_file(
+                    "info",
+                    "clipboard-monitor",
+                    if next_paused {
+                        "listen paused (toggle from tray)"
+                    } else {
+                        "listen resumed (toggle from tray)"
+                    },
+                );
+                if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                    match build_tray_menu(app) {
+                        Ok(new_menu) => {
+                            if let Err(e) = tray.set_menu(Some(new_menu)) {
+                                log_to_file("warn", "tray", &format!("set_menu failed: {}", e));
+                            }
+                        }
+                        Err(e) => log_to_file("warn", "tray", &format!("rebuild menu failed: {}", e)),
+                    }
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -2362,6 +2414,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 last_cleanup_time = std::time::Instant::now();
             }
 
+            if is_listen_paused() {
+                continue;
+            }
             if should_skip_writeback() {
                 continue;
             }
@@ -2698,6 +2753,19 @@ fn set_panel_pinned_command(pinned: bool) -> Result<bool, String> {
     PANEL_PINNED.store(pinned, Ordering::Relaxed);
     log_to_file("info", "panel-pin", &format!("set pinned = {} (stay-in-place)", pinned));
     Ok(pinned)
+}
+
+/// 剪贴板「监听暂停」标志：true 时后台监听线程跳过采集（对齐 EcoPaste 托盘暂停监听）。
+/// 仅影响读取入库；写回抑制、粘贴模拟、面板交互不受影响。进程内状态，重启重置。
+static LISTEN_PAUSED: AtomicBool = AtomicBool::new(false);
+
+fn is_listen_paused() -> bool {
+    LISTEN_PAUSED.load(Ordering::Relaxed)
+}
+
+fn set_listen_paused(paused: bool) -> bool {
+    LISTEN_PAUSED.store(paused, Ordering::Relaxed);
+    paused
 }
 
 fn panel_trigger_payload<R: tauri::Runtime>(

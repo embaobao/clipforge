@@ -39,6 +39,13 @@
 ## 尺寸
 - [x] 默认 420×488（适配 0-9 分组约 10 行）
 
+## 托盘菜单扩充（对齐 EcoPaste）
+- [x] build_tray_menu：打开快捷面板 / 偏好设置… / 暂停·恢复监听剪贴板 / 退出
+- [x] 偏好设置 → open_settings_window
+- [x] LISTEN_PAUSED 静态 + 后台监听线程每轮跳过采集（仅影响读取入库）
+- [x] 切换监听后 tray_by_id + set_menu 重建菜单刷新文案（⏸/▶）
+- [x] TrayIconBuilder::with_id(TRAY_ID) 便于重建定位
+
 ## 待办（后续）
 - [x] 配置面板宽高（通用设置项，open_panel 读取 settings；resolve_panel_dims 读 settings.panelWidth/Height 钳制）
 - [ ] 单项选中 checkbox 样式对齐多选 checkbox
