@@ -1074,7 +1074,11 @@ function ClipForgeApp() {
           return;
         }
         cancelHide();
-        if (settingsRef.current.panelPinned) return;
+        if (settingsRef.current.panelPinned) {
+          logAppError("info", "panel-pin: blur ignored, panel pinned (stay visible)");
+          return;
+        }
+        logAppError("info", "panel-pin: blur detected, scheduling hide in 180ms");
         hideTimer = window.setTimeout(() => {
           setPanelClosing(true);
           closeTimer = window.setTimeout(() => {
@@ -1327,6 +1331,10 @@ function ClipForgeApp() {
       .catch((error) => logAppError("warn", "Register tray listener failed", String(error)));
     appWindow
       .listen<string>("clipforge://hide-quick-panel", () => {
+        if (settingsRef.current.panelPinned) {
+          logAppError("info", "panel-pin: hide-quick-panel event ignored, panel pinned");
+          return;
+        }
         setPanelClosing(true);
         window.setTimeout(() => {
           appWindow.hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));

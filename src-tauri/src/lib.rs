@@ -2334,6 +2334,16 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
     tray_builder.build(app)?;
 
+    // 启动时从持久化设置恢复面板固定状态，保证 Rust 静态与前端 settings 一致：
+    // 否则重启后前端读到 panelPinned=true（黑按钮）但 Rust PANEL_PINNED 仍为 false，
+    // 任何走 Rust hide_panel 的路径（托盘/快捷键 toggle/命令）会误隐藏已固定面板。
+    if let Ok(settings) = read_user_settings() {
+        if let Some(pinned) = settings.settings.get("panelPinned").and_then(Value::as_bool) {
+            PANEL_PINNED.store(pinned, Ordering::Relaxed);
+            log_to_file("debug", "panel-pin", &format!("restored pinned={} from settings on startup", pinned));
+        }
+    }
+
     // 启动后台剪贴板监听线程：脱离 WebView，隐藏时也能工作
     // 直接入库而非依赖前端监听，确保 WebView 隐藏/未注册时也能正常采集
     let app_handle = app.handle().clone();

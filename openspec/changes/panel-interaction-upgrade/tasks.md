@@ -28,6 +28,7 @@
 - [x] PANEL_PINNED 标志 + set_panel_pinned_command（对齐 EcoPaste）
 - [x] 所有自动隐藏路径在 pinned 时跳过（不移动面板）
 - [x] 右上角悬浮 FAB（液态模糊玻璃圆，激活黑/未激活灰，tooltip「固定窗体」）
+- [x] 修复 pinned 后点击外部仍隐藏：启动时从持久化设置恢复 PANEL_PINNED（前后端一致）；hide-quick-panel 事件加 pin 守卫（防御纵深）；blur 路径加 panel-pin 调试日志
 
 ## 多选工具栏
 - [x] 操作按钮 icon-only + tooltip
@@ -39,7 +40,7 @@
 - [x] 默认 420×488（适配 0-9 分组约 10 行）
 
 ## 待办（后续）
-- [ ] 配置面板宽高（通用设置项，open_panel 读取 settings）
+- [x] 配置面板宽高（通用设置项，open_panel 读取 settings；resolve_panel_dims 读 settings.panelWidth/Height 钳制）
 - [ ] 单项选中 checkbox 样式对齐多选 checkbox
 - [ ] 列表右边距 + 滚动条浮右两边等宽
 - [ ] 长文案中间省略（头尾显示）
