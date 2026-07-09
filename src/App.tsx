@@ -250,6 +250,20 @@ function middleEllipsis(value: string, head = 34, tail = 14) {
   return `${normalized.slice(0, head)}...${normalized.slice(-tail)}`;
 }
 
+/** 把单行长文案拆成「头 + 尾」两段交给 CSS flex 布局：头部可收缩并末尾省略，尾部固定不裁。
+ *  修复旧实现「JS 先拼 head...tail，再被 .quick-line 的 text-overflow:ellipsis 二次裁掉尾部」的问题。
+ *  文本较短（不超过单行容量）时返回单段，走普通末尾省略。 */
+function splitLineForMiddleEllipsis(text: string, tailLen = 16) {
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= 50) return { split: false as const, text: normalized };
+  return {
+    split: true as const,
+    head: normalized.slice(0, Math.max(1, normalized.length - tailLen)),
+    tail: normalized.slice(-tailLen),
+    full: normalized,
+  };
+}
+
 function extractFirstUrl(content: string) {
   const match = content.match(/https?:\/\/[^\s<>"')\]]+/i);
   return match?.[0];
@@ -816,7 +830,9 @@ function getDisplayText(item: ClipItem, settings: AppSettings) {
 }
 
 function getClipboardLine(item: ClipItem) {
-  return middleEllipsis(item.content, 44, 18) || item.analysis.title;
+  const firstLine = (item.content || "").split(/\r?\n/, 1)[0] ?? "";
+  const line = firstLine.replace(/\s+/g, " ").trim();
+  return line || item.analysis.title || "";
 }
 
 function useDebouncedValue<T>(value: T, delayMs: number) {
@@ -2812,7 +2828,20 @@ function QuickPastePanel({
               {selectedIds.has(item.id) ? <Check size={12} /> : copiedId === item.id ? <Check size={12} /> : index - activeGroupStart >= 0 && index - activeGroupStart <= 9 ? <span className="quick-index-num">{index - activeGroupStart}</span> : null}
             </button>
             <div className="quick-content">
-              <p className="quick-line" aria-label={getClipboardLine(item)}>{getClipboardLine(item)}</p>
+              {(() => {
+                const parts = splitLineForMiddleEllipsis(getClipboardLine(item));
+                if (!parts.split) {
+                  return (
+                    <p className="quick-line" aria-label={parts.text}>{parts.text}</p>
+                  );
+                }
+                return (
+                  <p className="quick-line quick-line-mid" aria-label={parts.full} title={parts.full}>
+                    <span className="ql-head">{parts.head}</span>
+                    <span className="ql-tail">{parts.tail}</span>
+                  </p>
+                );
+              })()}
             </div>
             <div className={item.favorite ? "row-actions has-favorite" : "row-actions"} onClick={(event) => event.stopPropagation()}>
               {item.analysis.url || item.analysis.attachment ? (

@@ -50,5 +50,5 @@
 - [x] 配置面板宽高（通用设置项，open_panel 读取 settings；resolve_panel_dims 读 settings.panelWidth/Height 钳制）
 - [ ] 单项选中 checkbox 样式对齐多选 checkbox
 - [ ] 列表右边距 + 滚动条浮右两边等宽
-- [ ] 长文案中间省略（头尾显示）
+- [x] 长文案中间省略（头尾显示）：拆 head/tail 交 CSS flex，只收缩头部、尾部固定不裁，修复 JS 预截断后被 CSS 二次裁掉尾部
 - [ ] 输入框空时滚动收起 + 收起/激活态动画

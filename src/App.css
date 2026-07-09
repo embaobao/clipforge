@@ -5637,7 +5637,7 @@ body,
 
 /* 顶部导航沉浸：搜索条位置统一、面板边框更柔和。 */
 .toolbar {
-  top: 8px !important;
+  top: 4px !important;
 }
 
 .app-shell {
@@ -6630,8 +6630,8 @@ body,
 /* === 右上角悬浮 pin 按钮：液态模糊玻璃圆按钮，激活黑 / 未激活灰 === */
 .panel-pin-fab {
   position: fixed;
-  top: 8px;
-  right: 8px;
+  top: 4px;
+  right: 4px;
   z-index: 50;
   display: inline-flex;
   align-items: center;
@@ -6707,4 +6707,23 @@ body,
 .quick-row:hover .quick-index-num,
 .quick-row.active .quick-index-num {
   opacity: 0.9;
+}
+
+/* 长文案中间省略：头部 flex 收缩 + 末尾省略，尾部固定不裁，保证头尾都可见。
+   双类选择器优先级高于各视图的 .quick-line 基样式，末尾声明兜底。 */
+.quick-line.quick-line-mid {
+  display: flex !important;
+  align-items: baseline;
+  width: 100%;
+}
+.quick-line.quick-line-mid .ql-head {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-line.quick-line-mid .ql-tail {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
