@@ -367,6 +367,20 @@ struct QueryAppLogPayload {
     limit: i64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LogStatsPayload {
+    path: String,
+    size_bytes: u64,
+    line_count: u64,
+    oldest_ts_ms: i64,
+    max_size_mb: u32,
+    keep_ratio: f64,
+    retention_days: u32,
+    auto_cleanup: bool,
+    interval_min: u64,
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ClipboardChangePayload {
@@ -657,45 +671,139 @@ fn cleanup_logs_if_needed() {
     }
 }
 
+/// 日志清理的可配置项（从用户设置读取，缺失用默认）。
+struct LogCleanupSettings {
+    /// 触发清理的体积阈值（MB）。0 = 不按体积清理（仅按保留天数）。
+    max_size_mb: u32,
+    /// 体积超阈值时保留最新条目的比例（0.1~0.95）。
+    keep_ratio: f64,
+    /// 按天数清理：丢弃超过 N 天的条目。0 = 不按天数清理。
+    retention_days: u32,
+    /// 后台是否自动周期清理（false = 仅手动「立即清理」）。
+    auto_cleanup: bool,
+    /// 自动清理检查间隔（分钟）。
+    interval_min: u64,
+}
+
+fn read_log_cleanup_settings() -> LogCleanupSettings {
+    let mut s = LogCleanupSettings {
+        max_size_mb: 10,
+        keep_ratio: 0.6,
+        retention_days: 0,
+        auto_cleanup: true,
+        interval_min: 10,
+    };
+    if let Ok(settings) = read_user_settings() {
+        let v = &settings.settings;
+        if let Some(n) = v.get("logMaxSizeMb").and_then(Value::as_u64) {
+            s.max_size_mb = (n as u32).clamp(1, 1024);
+        }
+        if let Some(n) = v.get("logKeepRatio").and_then(Value::as_f64) {
+            s.keep_ratio = n.clamp(0.1, 0.95);
+        }
+        if let Some(n) = v.get("logRetentionDays").and_then(Value::as_u64) {
+            s.retention_days = n as u32;
+        }
+        if let Some(b) = v.get("logAutoCleanup").and_then(Value::as_bool) {
+            s.auto_cleanup = b;
+        }
+        if let Some(n) = v.get("logCleanupIntervalMin").and_then(Value::as_u64) {
+            s.interval_min = n.max(1);
+        }
+    }
+    s
+}
+
 #[tauri::command]
 fn cleanup_app_logs() -> Result<String, String> {
+    let cfg = read_log_cleanup_settings();
     let path = log_path()?;
     if !path.exists() {
         return Ok("log file does not exist".to_string());
     }
 
-    let file_size = fs::metadata(&path)
-        .map_err(|e| e.to_string())?
-        .len();
+    let file_size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
+    let max_size_bytes = (cfg.max_size_mb as u64) * 1024 * 1024;
 
-    let max_size_bytes = 10 * 1024 * 1024;
-    if file_size <= max_size_bytes {
-        return Ok(format!("log size {} bytes, no cleanup needed", file_size));
-    }
-
-    let mut entries = Vec::new();
+    let mut entries: Vec<(i64, String)> = Vec::new();
     let file = fs::File::open(&path).map_err(|e| e.to_string())?;
     for line in BufReader::new(file).lines().map_while(Result::ok) {
         if let Some(entry) = parse_log_line(&line) {
             entries.push((entry.ts_ms, line));
         }
     }
+    let original_lines = entries.len();
 
-    entries.sort_by(|a, b| b.0.cmp(&a.0));
-
-    let keep_lines = (entries.len() as f64 * 0.6).max(100.0) as usize;
-    let kept = entries.into_iter().take(keep_lines).collect::<Vec<_>>();
-
-    let mut file = fs::File::create(&path).map_err(|e| e.to_string())?;
-    for (_, line) in kept.into_iter().rev() {
-        writeln!(file, "{}", line).map_err(|e| e.to_string())?;
+    // 1) 按保留天数裁剪（retention_days > 0 时）：丢弃早于 cutoff 的条目
+    let now_ms = now_millis().unwrap_or(0);
+    if cfg.retention_days > 0 {
+        let cutoff = now_ms - (cfg.retention_days as i64) * 86_400_000;
+        entries.retain(|(ts, _)| *ts >= cutoff);
     }
 
-    let new_size = fs::metadata(&path)
-        .map_err(|e| e.to_string())?
-        .len();
+    // 2) 体积超阈值（max_size_mb > 0 且超出）：保留最新 keep_ratio（至少 100 行）
+    let size_over = cfg.max_size_mb > 0 && file_size > max_size_bytes;
+    if size_over {
+        entries.sort_by(|a, b| b.0.cmp(&a.0)); // 最新在前
+        let keep = (entries.len() as f64 * cfg.keep_ratio).max(100.0) as usize;
+        entries.truncate(keep);
+    }
 
-    Ok(format!("log cleaned: {} -> {} bytes (kept {} lines)", file_size, new_size, keep_lines))
+    let dropped = original_lines.saturating_sub(entries.len());
+    if dropped == 0 {
+        return Ok(format!(
+            "log size {} bytes, {} lines, no cleanup needed (max={}MB retentionDays={})",
+            file_size, original_lines, cfg.max_size_mb, cfg.retention_days
+        ));
+    }
+
+    // 回写：恢复时间顺序（旧→新）保持追加顺序
+    if size_over {
+        entries.reverse();
+    }
+    let mut file = fs::File::create(&path).map_err(|e| e.to_string())?;
+    for (_, line) in &entries {
+        writeln!(file, "{}", line).map_err(|e| e.to_string())?;
+    }
+    let new_size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
+
+    Ok(format!(
+        "log cleaned: {} -> {} bytes, {} -> {} lines (maxSize={}MB keepRatio={} retentionDays={})",
+        file_size, new_size, original_lines, entries.len(), cfg.max_size_mb, cfg.keep_ratio, cfg.retention_days
+    ))
+}
+
+#[tauri::command]
+fn get_log_stats() -> Result<LogStatsPayload, String> {
+    let path = log_path()?;
+    let mut size_bytes: u64 = 0;
+    let mut line_count: u64 = 0;
+    let mut oldest_ts_ms: i64 = 0;
+    if path.exists() {
+        size_bytes = fs::metadata(&path).map_err(|e| e.to_string())?.len();
+        if let Ok(file) = fs::File::open(&path) {
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                line_count += 1;
+                if let Some(entry) = parse_log_line(&line) {
+                    if oldest_ts_ms == 0 || entry.ts_ms < oldest_ts_ms {
+                        oldest_ts_ms = entry.ts_ms;
+                    }
+                }
+            }
+        }
+    }
+    let cfg = read_log_cleanup_settings();
+    Ok(LogStatsPayload {
+        path: path.to_string_lossy().to_string(),
+        size_bytes,
+        line_count,
+        oldest_ts_ms,
+        max_size_mb: cfg.max_size_mb,
+        keep_ratio: cfg.keep_ratio,
+        retention_days: cfg.retention_days,
+        auto_cleanup: cfg.auto_cleanup,
+        interval_min: cfg.interval_min,
+    })
 }
 
 #[tauri::command]
@@ -2403,15 +2511,24 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let mut last_text = String::new();
         let mut consecutive_errors = 0;
         let mut last_log_time = std::time::Instant::now();
-        let mut last_cleanup_time = std::time::Instant::now();
-        let cleanup_interval = std::time::Duration::from_secs(10 * 60);
+        let mut last_cleanup_tick = std::time::Instant::now();
+        let mut last_cleanup_run = std::time::Instant::now();
         log_to_file("info", "clipboard-monitor", "background monitor started, interval=100ms");
         loop {
             std::thread::sleep(std::time::Duration::from_millis(100));
 
-            if last_cleanup_time.elapsed() >= cleanup_interval {
-                cleanup_logs_if_needed();
-                last_cleanup_time = std::time::Instant::now();
+            // 至多每分钟读一次清理配置（避免每 100ms 读设置文件）；
+            // autoCleanup 关闭则不自动清理，仅保留手动「立即清理」入口（设置页）。
+            if last_cleanup_tick.elapsed() >= std::time::Duration::from_secs(60) {
+                last_cleanup_tick = std::time::Instant::now();
+                let cfg = read_log_cleanup_settings();
+                if cfg.auto_cleanup
+                    && last_cleanup_run.elapsed()
+                        >= std::time::Duration::from_secs(cfg.interval_min * 60)
+                {
+                    cleanup_logs_if_needed();
+                    last_cleanup_run = std::time::Instant::now();
+                }
             }
 
             if is_listen_paused() {
@@ -2529,12 +2646,14 @@ pub fn run() {
             get_app_log_path,
             query_app_logs,
             cleanup_app_logs,
+            get_log_stats,
             set_panel_mode,
             open_settings_window,
             show_quick_panel_command,
             hide_quick_panel_command,
             toggle_quick_panel_command,
             set_panel_pinned_command,
+            is_panel_pinned_command,
             focus_quick_panel_command,
             release_focus_command,
             get_panel_trigger_status,
@@ -2753,6 +2872,13 @@ fn set_panel_pinned_command(pinned: bool) -> Result<bool, String> {
     PANEL_PINNED.store(pinned, Ordering::Relaxed);
     log_to_file("info", "panel-pin", &format!("set pinned = {} (stay-in-place)", pinned));
     Ok(pinned)
+}
+
+/// 权威查询固定状态（对齐 EcoPaste should_auto_hide：隐藏决策统一以 Rust 标志为准，
+/// 避免前端 settingsRef 与 Rust PANEL_PINNED 不同步导致固定后仍被前端 appWindow.hide() 误关）。
+#[tauri::command]
+fn is_panel_pinned_command() -> bool {
+    is_panel_pinned()
 }
 
 /// 剪贴板「监听暂停」标志：true 时后台监听线程跳过采集（对齐 EcoPaste 托盘暂停监听）。

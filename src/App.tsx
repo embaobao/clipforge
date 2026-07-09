@@ -33,7 +33,6 @@ import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/worksp
 import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment";
-type ClipboardContentKind = "text" | "link" | "image" | "file" | "table" | "chart" | "richText" | "unknown";
 export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "file" | "image" | "json" | "chart" | "table";
 type ClipBucket = "history" | "archive" | "snippet";
 
@@ -113,36 +112,12 @@ export type ClipItem = {
 };
 
 type PanelUiState = {
-  previewClip: ClipItem | null;
-  isPreviewOpen: boolean;
   isClosing: boolean;
-  setPreviewClip: (clip: ClipItem | null) => void;
-  setPreviewOpen: (isOpen: boolean) => void;
   setClosing: (isClosing: boolean) => void;
 };
 
 const usePanelUiStore = create<PanelUiState>()((set) => ({
-  previewClip: null,
-  isPreviewOpen: true,
   isClosing: false,
-  setPreviewClip: (previewClip) =>
-    set((state) => {
-      const current = state.previewClip;
-      if (!current && !previewClip) return state;
-      if (
-        current &&
-        previewClip &&
-        current.id === previewClip.id &&
-        current.updatedAt === previewClip.updatedAt &&
-        current.favorite === previewClip.favorite &&
-        current.bucket === previewClip.bucket
-      ) {
-        return state;
-      }
-      return { previewClip };
-    }),
-  setPreviewOpen: (isPreviewOpen) =>
-    set((state) => (state.isPreviewOpen === isPreviewOpen ? state : { isPreviewOpen })),
   setClosing: (isClosing) => set((state) => (state.isClosing === isClosing ? state : { isClosing })),
 }));
 
@@ -271,18 +246,6 @@ function extractFirstUrl(content: string) {
 
 function extractUrls(content: string) {
   return Array.from(new Set(content.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? []));
-}
-
-function getClipboardContentKind(item: ClipItem): ClipboardContentKind {
-  const payload = item.payloadKind;
-  if (payload === "image" || item.analysis.attachment?.isImage) return "image";
-  if (payload === "file" || item.analysis.attachment) return "file";
-  if (payload === "link" || item.kind === "link") return "link";
-  if (payload === "table") return "table";
-  if (payload === "chart") return "chart";
-  if (payload === "markdown" || item.kind === "markdown") return "richText";
-  if (payload === "text" || item.kind === "text" || item.kind === "code" || item.kind === "command") return "text";
-  return "unknown";
 }
 
 const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"]);
@@ -974,10 +937,6 @@ function ClipForgeApp() {
   const scrollAccelRef = useRef<number | null>(null);
   const isPanelClosing = usePanelUiStore((state) => state.isClosing);
   const setPanelClosing = usePanelUiStore((state) => state.setClosing);
-  const previewClip = usePanelUiStore((state) => state.previewClip);
-  const setPreviewClip = usePanelUiStore((state) => state.setPreviewClip);
-  const isPreviewOpen = usePanelUiStore((state) => state.isPreviewOpen);
-  const setPreviewOpen = usePanelUiStore((state) => state.setPreviewOpen);
   const workspaceRoute = useWorkspaceStore((state) => state.route);
 
   useEffect(() => {
@@ -1090,26 +1049,23 @@ function ClipForgeApp() {
           return;
         }
         cancelHide();
-        if (settingsRef.current.panelPinned) {
-          logAppError("info", "panel-pin: blur ignored, panel pinned (stay visible)");
-          return;
-        }
         logAppError("info", "panel-pin: blur detected, scheduling hide in 180ms");
-        hideTimer = window.setTimeout(() => {
-          // 重新检查固定状态：点击「固定」按钮会触发一次 blur，blur 与本回调之间
-          // panelPinned 可能刚被置 true（settingsRef 在下一个 effect tick 才同步）。
-          // 失焦前排进队的定时器必须在此复查，否则会把已固定的面板误关。
-          if (settingsRef.current.panelPinned) {
-            logAppError("info", "panel-pin: hide timer fired while pinned, cancelled");
+        hideTimer = window.setTimeout(async () => {
+          // EcoPaste 式：隐藏决策以 Rust 的 PANEL_PINNED 为唯一权威源。
+          // 前端 settingsRef 可能与 Rust 不同步（重启 / 跨窗口写入），且 appWindow.hide()
+          // 直连 Tauri 绕过 Rust 守卫——故失焦隐藏前必须查 Rust 是否固定。
+          let pinned = false;
+          try {
+            pinned = await invoke<boolean>("is_panel_pinned_command");
+          } catch (error) {
+            logAppError("warn", "is_panel_pinned_command failed, assume not pinned", String(error));
+          }
+          if (pinned) {
+            logAppError("info", "panel-pin: Rust says pinned, blur hide cancelled");
             return;
           }
           setPanelClosing(true);
           closeTimer = window.setTimeout(() => {
-            if (settingsRef.current.panelPinned) {
-              logAppError("info", "panel-pin: close timer fired while pinned, cancelled");
-              setPanelClosing(false);
-              return;
-            }
             logAppError("info", "panel-pin: hide executing now");
             appWindow.hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
             setPanelClosing(false);
@@ -1266,7 +1222,6 @@ function ClipForgeApp() {
       setActiveTypeFilter("all");
       setFilterFavorite(false);
       setSearchActive(true);
-      setPreviewOpen(true);
       setIsPanelEntering(true);
       // 唤起面板时强制拉一次最新剪贴板，避免用户在别的 app 复制后到唤起之间漏掉记录
       window.setTimeout(() => setIsPanelEntering(false), 180);
@@ -1278,7 +1233,7 @@ function ClipForgeApp() {
         void captureClipboard("manual");
       }, 40);
     },
-    [captureClipboard, setPreviewOpen],
+    [captureClipboard],
   );
 
   const handleWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
@@ -1451,16 +1406,6 @@ function ClipForgeApp() {
     return filteredClips[0] ?? null;
   }, [clips, filteredClips, selectedId]);
 
-  useEffect(() => {
-    if (!selectedClip) {
-      if (previewClip) setPreviewClip(null);
-      return;
-    }
-    if (!previewClip || previewClip.id !== selectedClip.id) {
-      setPreviewClip(selectedClip);
-    }
-  }, [clips, previewClip, selectedClip, setPreviewClip]);
-
   const selectedInList = useMemo(() => {
     return filteredClips.filter((item) => selectedIds.has(item.id));
   }, [filteredClips, selectedIds]);
@@ -1478,8 +1423,6 @@ function ClipForgeApp() {
   const aggregatePreview = useMemo(() => {
     return selectedInList.map((item) => item.content.trim()).filter(Boolean).join("\n\n");
   }, [selectedInList]);
-
-  const previewLinks = useMemo(() => (previewClip ? extractUrls(previewClip.content) : []), [previewClip]);
 
   const focusSearch = useCallback(() => {
     setSearchActive(true);
@@ -1646,9 +1589,7 @@ function ClipForgeApp() {
         if (!item) return;
         event.preventDefault();
         setSelectedId(item.id);
-        setPreviewClip(item);
         if (multiSelectMode) {
-          setPreviewOpen(false);
           setSelectedIds((current) => {
             const next = new Set(current);
             if (next.has(item.id)) next.delete(item.id);
@@ -1664,7 +1605,6 @@ function ClipForgeApp() {
       if (event.key === "Escape") {
         event.preventDefault();
         if (workspaceRoute.name !== "list") {
-          setPreviewOpen(false);
           setMultiPreviewOpen(false);
           void navigateWorkspaceList();
           return;
@@ -1677,11 +1617,6 @@ function ClipForgeApp() {
         if (multiSelectMode) {
           setSelectedIds(new Set());
           setMultiSelectMode(false);
-          void navigateWorkspaceList();
-          return;
-        }
-        if (isPreviewOpen) {
-          setPreviewOpen(false);
           void navigateWorkspaceList();
           return;
         }
@@ -1715,7 +1650,6 @@ function ClipForgeApp() {
         const firstInGroup = quickItems[next];
         if (firstInGroup) {
           setSelectedId(firstInGroup.id);
-          setPreviewClip(firstInGroup);
         }
         return;
       }
@@ -1730,14 +1664,10 @@ function ClipForgeApp() {
             void navigateWorkspaceDetail(selectedClip.id);
           }
         } else if (workspaceRoute.name !== "list") {
-          setPreviewOpen(false);
           setMultiPreviewOpen(false);
           void navigateWorkspaceList();
         } else if (isMultiPreviewOpen) {
           setMultiPreviewOpen(false);
-          void navigateWorkspaceList();
-        } else if (isPreviewOpen) {
-          setPreviewOpen(false);
           void navigateWorkspaceList();
         } else if (multiSelectMode) {
           setSelectedIds(new Set());
@@ -1760,7 +1690,6 @@ function ClipForgeApp() {
         const nextItem = quickItems[nextIndex];
         if (nextItem) {
           setSelectedId(nextItem.id);
-          setPreviewClip(nextItem);
         }
         return;
       }
@@ -1794,8 +1723,6 @@ function ClipForgeApp() {
         if (!multiSelectMode) {
           setMultiSelectMode(true);
         }
-        setPreviewClip(item);
-        setPreviewOpen(true);
         return;
       }
 
@@ -1808,17 +1735,13 @@ function ClipForgeApp() {
   }, [
     filteredClips,
     focusSearch,
-    isPreviewOpen,
     isMultiPreviewOpen,
     isSearchActive,
     multiSelectMode,
-    previewClip,
     query,
     selectedId,
     selectedInList,
     searchSuggestions,
-    setPreviewClip,
-    setPreviewOpen,
     workspaceRoute.name,
   ]);
 
@@ -1862,9 +1785,6 @@ function ClipForgeApp() {
       clipsRef.current = updated;
       return updated;
     });
-    if (previewClip?.id === id) {
-      setPreviewClip({ ...previewClip, ...next, updatedAt });
-    }
   }
 
   async function deleteClips(ids: string[]) {
@@ -1921,7 +1841,7 @@ function ClipForgeApp() {
 
   return (
     <main
-      className={`app-shell view-${activeView} density-${settings.panelDensity}${isSearchActive || query ? " search-active" : ""}${isPreviewOpen && previewClip && !multiSelectMode ? " preview-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isFooterHidden ? " footer-hidden" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
+      className={`app-shell view-${activeView} density-${settings.panelDensity}${isSearchActive || query ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isFooterHidden ? " footer-hidden" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
       ref={shellRef}
       style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
     >
@@ -1963,16 +1883,6 @@ function ClipForgeApp() {
             onToggleAll={(checked) => {
               setSelectedIds(checked ? new Set(filteredClips.map((item) => item.id)) : new Set());
             }}
-          />
-        ) : null}
-
-        {isPreviewOpen && previewClip && !multiSelectMode ? (
-          <PreviewBand
-            clip={previewClip}
-            links={previewLinks}
-            onClose={() => setPreviewOpen(false)}
-            onCopy={copyClip}
-            onOpen={openClipTarget}
           />
         ) : null}
 
@@ -2024,7 +1934,6 @@ function ClipForgeApp() {
                   onLoadMore={loadMoreClips}
                   onOpen={openClipTarget}
                   onOpenDetail={(item) => {
-                    setPreviewOpen(true);
                     void navigateWorkspaceDetail(item.id);
                   }}
                   onPointerActive={() => setKeyboardNavigating(false)}
@@ -2033,7 +1942,6 @@ function ClipForgeApp() {
                   }}
                   onStartMultiSelect={(id) => {
                     setMultiSelectMode(true);
-                    setPreviewOpen(false);
                     setMultiPreviewOpen(false);
                     setSelectedIds(new Set([id]));
                   }}
@@ -2058,7 +1966,6 @@ function ClipForgeApp() {
                   clip={clip}
                   links={clip ? extractUrls(clip.content) : []}
                   onBack={() => {
-                    setPreviewOpen(false);
                     void navigateWorkspaceList();
                   }}
                   onCopy={copyClip}
@@ -2116,7 +2023,6 @@ function ClipForgeApp() {
           setActiveView(view);
           setSelectedIds(new Set());
           setMultiSelectMode(false);
-          setPreviewOpen(false);
           void navigateWorkspaceList();
         }}
         status={nativeStatus}
@@ -2237,63 +2143,6 @@ function FilterChips({
   );
 }
 
-function getPreviewBodyText(clip: ClipItem) {
-  const text = clip.content.trim();
-  if (!text) return clip.analysis.title;
-  return text;
-}
-
-function PreviewBand({
-  clip,
-  links,
-  onClose,
-  onCopy,
-  onOpen,
-}: {
-  clip: ClipItem;
-  links: string[];
-  onClose: () => void;
-  onCopy: (clip: ClipItem) => void;
-  onOpen: (clip: ClipItem) => void;
-}) {
-  return (
-    <section className="inline-preview-band quick-preview-band" aria-label="快速预览">
-      <div className="quick-preview-card">
-        <div className="quick-preview-actions">
-          {clip.analysis.url || clip.analysis.attachment ? (
-            <button className="icon-button subtle" onClick={() => onOpen(clip)} title="打开" type="button">
-              <ExternalLink size={13} />
-            </button>
-          ) : null}
-          <button className="icon-button subtle" onClick={() => onCopy(clip)} title="复制" type="button">
-            <Copy size={13} />
-          </button>
-          <button className="icon-button subtle" onClick={onClose} title="关闭预览" type="button">
-            <X size={13} />
-          </button>
-        </div>
-        <div className="quick-preview-body">
-          <p>{getPreviewBodyText(clip)}</p>
-          {links.length ? (
-            <div className="preview-link-row" aria-label="内容链接">
-              {links.slice(0, 4).map((url) => (
-                <button className="preview-link-chip" key={url} onClick={() => openUrl(url)} type="button">
-                  <ExternalLink size={11} />
-                  <span>{new URL(url).hostname.replace(/^www\./, "")}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-        <div className="quick-preview-footer">
-          <span className={`kind-pill ${clip.kind}`}>{getClipboardContentKind(clip)}</span>
-          <span className="quick-preview-hint">Space 关闭 · → 详情</span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function MultiSelectToolbar({
   allSelected,
   count,
@@ -2404,7 +2253,7 @@ function StatusLine({ status }: { status: string }) {
     <span className="footer-status">
       {status || (
         <>
-          <kbd>Space</kbd> 预览 · <kbd>Enter</kbd> 粘贴 · <kbd>/</kbd> 搜索
+          <kbd>Space</kbd> 多选 · <kbd>Enter</kbd> 粘贴 · <kbd>→</kbd> 详情 · <kbd>/</kbd> 搜索
         </>
       )}
     </span>

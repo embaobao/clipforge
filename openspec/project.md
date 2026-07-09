@@ -13,6 +13,7 @@
 - 历史、归档、片段视图
 - 收藏、复制、归档、删除、全选当前结果删除
 - 后续 MCP 标准工具接口
+- 图片、文件、富文本剪贴板历史（已立项，见 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md)）
 
 ## 非目标
 
@@ -26,3 +27,10 @@
 - 原生能力收敛在 Rust command 层，前端通过稳定命令调用。
 - 数据层先保持轻量，后续以 SQLite 和本地向量索引替换 localStorage。
 - MCP 作为标准工具接口暴露，不和 UI 状态强耦合。
+
+## 活跃提案
+
+| 提案 | 状态 | 说明 |
+|------|------|------|
+| [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | 待实现 | 引入 clipboard-rs，支持图片、文件、HTML/RTF 富文本剪贴板历史 |
+

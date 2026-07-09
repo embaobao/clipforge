@@ -32,6 +32,11 @@ interface AppSettings {
   enableScrollCollapse: boolean;
   panelWidth: number;
   panelHeight: number;
+  logMaxSizeMb: number;
+  logKeepRatio: number;
+  logRetentionDays: number;
+  logAutoCleanup: boolean;
+  logCleanupIntervalMin: number;
 }
 
 interface AccessibilityPermissionPayload {
@@ -93,6 +98,25 @@ interface SettingsAppState {
   panel: PanelTriggerPayload | null;
   settings: AppSettings;
   status: string;
+  logStats: LogStatsPayload | null;
+}
+
+interface LogStatsPayload {
+  path: string;
+  sizeBytes: number;
+  lineCount: number;
+  oldestTsMs: number;
+  maxSizeMb: number;
+  keepRatio: number;
+  retentionDays: number;
+  autoCleanup: boolean;
+  intervalMin: number;
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -120,6 +144,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   enableScrollCollapse: true,
   panelWidth: 420,
   panelHeight: 488,
+  logMaxSizeMb: 10,
+  logKeepRatio: 0.6,
+  logRetentionDays: 0,
+  logAutoCleanup: true,
+  logCleanupIntervalMin: 10,
 };
 
 function SettingGroup({ children, title }: { children: React.ReactNode; title: string }) {
@@ -285,18 +314,20 @@ export function SettingsApp() {
     panel: null,
     settings: DEFAULT_SETTINGS,
     status: "",
+    logStats: null,
   });
 
   useEffect(() => {
     void (async () => {
       try {
-        const [settings, configPath, databasePath, accessibility, panel, mcp] = await Promise.all([
+        const [settings, configPath, databasePath, accessibility, panel, mcp, logStats] = await Promise.all([
           invoke<AppSettings>("get_clipforge_settings"),
           invoke<string>("get_clipforge_config_path"),
           invoke<string>("get_clipforge_database_path"),
           invoke<AccessibilityPermissionPayload>("check_accessibility_permission"),
           invoke<PanelTriggerPayload>("get_panel_trigger_status"),
           invoke<McpStatusPayload>("get_mcp_status"),
+          invoke<LogStatsPayload>("get_log_stats"),
         ]);
         setState({
           accessibility,
@@ -305,7 +336,8 @@ export function SettingsApp() {
           databasePath,
           mcp,
           panel,
-          settings,
+          settings: { ...DEFAULT_SETTINGS, ...settings },
+          logStats,
           status: "",
         });
       } catch (error) {
@@ -323,6 +355,26 @@ export function SettingsApp() {
     invoke("update_clipforge_settings", { input: next }).catch((error) =>
       setState((prev) => ({ ...prev, status: String(error) })),
     );
+  }
+
+  async function refreshLogStats() {
+    try {
+      const stats = await invoke<LogStatsPayload>("get_log_stats");
+      setState((prev) => ({ ...prev, logStats: stats }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function cleanupLogsNow() {
+    setState((prev) => ({ ...prev, status: "正在清理日志…" }));
+    try {
+      const result = await invoke<string>("cleanup_app_logs");
+      await refreshLogStats();
+      setState((prev) => ({ ...prev, status: result }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
   }
 
   function addTagRule() {
@@ -640,6 +692,7 @@ export function SettingsApp() {
           )}
 
           {section === "storage" && (
+            <>
             <SettingGroup title="数据存储">
               <div className="setting-row">
                 <span>JSON5 配置文件</span>
@@ -693,6 +746,78 @@ export function SettingsApp() {
                 }
               />
             </SettingGroup>
+
+            <SettingGroup title="日志">
+              <div className="setting-row">
+                <span>日志文件</span>
+                <strong className="path">
+                  {state.logStats
+                    ? `${state.logStats.path} · ${formatBytes(state.logStats.sizeBytes)} / ${state.logStats.lineCount} 行`
+                    : "加载中…"}
+                </strong>
+              </div>
+              <NumberSetting
+                label="体积阈值 (MB)"
+                value={state.settings.logMaxSizeMb}
+                min={1}
+                max={1024}
+                onChange={(logMaxSizeMb) => updateSettings({ logMaxSizeMb })}
+              />
+              <NumberSetting
+                label="超阈值保留比例 (%)"
+                value={Math.round(state.settings.logKeepRatio * 100)}
+                min={10}
+                max={95}
+                onChange={(percent) => updateSettings({ logKeepRatio: percent / 100 })}
+              />
+              <NumberSetting
+                label="按天数清理 (0=关)"
+                value={state.settings.logRetentionDays}
+                min={0}
+                max={365}
+                onChange={(logRetentionDays) => updateSettings({ logRetentionDays })}
+              />
+              <div className="setting-row">
+                <span>自动周期清理</span>
+                <label className="switch">
+                  <input
+                    checked={state.settings.logAutoCleanup}
+                    onChange={(event) =>
+                      updateSettings({ logAutoCleanup: event.currentTarget.checked })
+                    }
+                    type="checkbox"
+                  />
+                  <span className="switch-track" />
+                </label>
+              </div>
+              <NumberSetting
+                label="自动清理间隔 (分钟)"
+                value={state.settings.logCleanupIntervalMin}
+                min={1}
+                max={1440}
+                onChange={(logCleanupIntervalMin) =>
+                  updateSettings({ logCleanupIntervalMin })
+                }
+              />
+              <div className="setting-row">
+                <span>手动清理</span>
+                <div className="footer-actions" style={{ gap: 8 }}>
+                  <button onClick={() => void cleanupLogsNow()} type="button">
+                    立即清理
+                  </button>
+                  <button onClick={() => void refreshLogStats()} type="button">
+                    刷新
+                  </button>
+                </div>
+              </div>
+              {state.status ? (
+                <div className="setting-row">
+                  <span>结果</span>
+                  <strong className="path">{state.status}</strong>
+                </div>
+              ) : null}
+            </SettingGroup>
+            </>
           )}
 
           {section === "tags" && (
