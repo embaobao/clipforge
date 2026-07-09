@@ -6727,3 +6727,18 @@ body,
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+/* 多选模式选中态：24px 实心方块过重，收缩为 16px 紧凑复选框并居中于 24px 列，
+   对齐顶部全选原生 checkbox 的视觉重量。仅作用于 .multi-selecting 下的选中项。 */
+.app-shell.multi-selecting .quick-row .quick-index.selected {
+  width: 16px;
+  height: 16px;
+  justify-self: center;
+  align-self: center;
+  border-radius: 5px;
+  box-shadow: none;
+}
+.app-shell.multi-selecting .quick-row .quick-index.selected svg {
+  width: 11px;
+  height: 11px;
+}

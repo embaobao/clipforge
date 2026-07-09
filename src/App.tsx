@@ -123,7 +123,7 @@ type PanelUiState = {
 
 const usePanelUiStore = create<PanelUiState>()((set) => ({
   previewClip: null,
-  isPreviewOpen: false,
+  isPreviewOpen: true,
   isClosing: false,
   setPreviewClip: (previewClip) =>
     set((state) => {
@@ -1096,8 +1096,21 @@ function ClipForgeApp() {
         }
         logAppError("info", "panel-pin: blur detected, scheduling hide in 180ms");
         hideTimer = window.setTimeout(() => {
+          // 重新检查固定状态：点击「固定」按钮会触发一次 blur，blur 与本回调之间
+          // panelPinned 可能刚被置 true（settingsRef 在下一个 effect tick 才同步）。
+          // 失焦前排进队的定时器必须在此复查，否则会把已固定的面板误关。
+          if (settingsRef.current.panelPinned) {
+            logAppError("info", "panel-pin: hide timer fired while pinned, cancelled");
+            return;
+          }
           setPanelClosing(true);
           closeTimer = window.setTimeout(() => {
+            if (settingsRef.current.panelPinned) {
+              logAppError("info", "panel-pin: close timer fired while pinned, cancelled");
+              setPanelClosing(false);
+              return;
+            }
+            logAppError("info", "panel-pin: hide executing now");
             appWindow.hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
             setPanelClosing(false);
           }, 180);
@@ -1253,7 +1266,7 @@ function ClipForgeApp() {
       setActiveTypeFilter("all");
       setFilterFavorite(false);
       setSearchActive(true);
-      setPreviewOpen(false);
+      setPreviewOpen(true);
       setIsPanelEntering(true);
       // 唤起面板时强制拉一次最新剪贴板，避免用户在别的 app 复制后到唤起之间漏掉记录
       window.setTimeout(() => setIsPanelEntering(false), 180);
