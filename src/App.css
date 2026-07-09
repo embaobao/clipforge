@@ -6657,6 +6657,11 @@ body,
   background: oklch(0.12 0 0 / 0.85);
 }
 
+/* 顶部上边距去掉：列表填满全高（搜索栏浮层覆盖顶部；切组时已下偏 56px 避让遮挡） */
+.quick-panel {
+  padding-top: 0 !important;
+}
+
 /* === 完成提示 toast：短时浮现（聚合复制/删除/批量收藏后） === */
 .completion-toast {
   position: fixed;
