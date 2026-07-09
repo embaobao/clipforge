@@ -30,6 +30,8 @@ interface AppSettings {
   positionStrategy: "trayCenter" | "followCursor" | "center" | "windowCenter" | "lastPosition" | "focusInput";
   panelBackgroundOpacity: number;
   enableScrollCollapse: boolean;
+  panelWidth: number;
+  panelHeight: number;
 }
 
 interface AccessibilityPermissionPayload {
@@ -116,6 +118,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   positionStrategy: "followCursor",
   panelBackgroundOpacity: 0.72,
   enableScrollCollapse: true,
+  panelWidth: 420,
+  panelHeight: 488,
 };
 
 function SettingGroup({ children, title }: { children: React.ReactNode; title: string }) {
@@ -492,6 +496,20 @@ export function SettingsApp() {
                 min={4}
                 max={30}
                 onChange={(quickItemLimit) => updateSettings({ quickItemLimit })}
+              />
+              <NumberSetting
+                label="面板宽度"
+                value={state.settings.panelWidth}
+                min={320}
+                max={600}
+                onChange={(panelWidth) => updateSettings({ panelWidth })}
+              />
+              <NumberSetting
+                label="面板高度"
+                value={state.settings.panelHeight}
+                min={300}
+                max={1000}
+                onChange={(panelHeight) => updateSettings({ panelHeight })}
               />
               <SliderSetting
                 label="面板背景透明度"

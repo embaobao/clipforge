@@ -143,6 +143,25 @@ const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 488.0;
 const QUICK_PANEL_MIN_HEIGHT: f64 = 320.0;
 const QUICK_PANEL_MAX_HEIGHT: f64 = 760.0;
 const QUICK_PANEL_MARGIN: f64 = 12.0;
+
+/// 从用户设置解析面板宽高（默认 420×488；宽 320-600，高 300-1000；0/非法用默认）。
+/// 高度 0 或缺失 = 自适应默认（按分组 10 行的 488）。
+fn resolve_panel_dims() -> (f64, f64) {
+    let (mut width, mut height) = (QUICK_PANEL_WIDTH, QUICK_PANEL_DEFAULT_HEIGHT);
+    if let Ok(settings) = read_user_settings() {
+        if let Some(value) = settings.settings.get("panelWidth").and_then(Value::as_f64) {
+            if value >= 320.0 {
+                width = value.clamp(320.0, 600.0);
+            }
+        }
+        if let Some(value) = settings.settings.get("panelHeight").and_then(Value::as_f64) {
+            if value >= 300.0 {
+                height = value.clamp(300.0, 1000.0);
+            }
+        }
+    }
+    (width, height)
+}
 const FOCUS_PREFETCH_INTERVAL_MS: u64 = 250;
 const FOCUS_CACHE_MAX_AGE_MS: i64 = 600;
 static LAST_NATIVE_POSITION_FAILURE_MS: AtomicI64 = AtomicI64::new(0);
@@ -2487,21 +2506,23 @@ fn open_panel<R: tauri::Runtime>(
             reason, strategy, cx, cy, cursor_monitor, acc
         ));
 
+        // 宽高可由用户设置覆盖（默认 420×488）。
+        let (panel_width, panel_h) = resolve_panel_dims();
         // 1. 计算面板高度（基于当前显示器工作区）
-        let panel_height = panel_position(&window, QUICK_PANEL_WIDTH, QUICK_PANEL_FALLBACK_HEIGHT)
+        let panel_height = panel_position(&window, panel_width, panel_h)
             .map(|(_, _, h)| h)
-            .unwrap_or(QUICK_PANEL_FALLBACK_HEIGHT);
-        let _ = window.set_size(LogicalSize::new(QUICK_PANEL_WIDTH, panel_height));
+            .unwrap_or(panel_h);
+        let _ = window.set_size(LogicalSize::new(panel_width, panel_height));
 
         // 2. 同步应用定位策略（单次定位，不重复）
-        let position_source: String = match apply_position_strategy(&window, strategy, QUICK_PANEL_WIDTH, panel_height) {
+        let position_source: String = match apply_position_strategy(&window, strategy, panel_width, panel_height) {
             Some((x, y)) => {
                 set_panel_position(&window, x, y);
                 format!("sync-{:?}", strategy_clone)
             }
             None => {
                 // 策略失败时用 fallback 居中
-                if let Some((fx, fy, _)) = panel_position(&window, QUICK_PANEL_WIDTH, panel_height) {
+                if let Some((fx, fy, _)) = panel_position(&window, panel_width, panel_height) {
                     set_panel_position(&window, fx, fy);
                 }
                 format!("fallback-{:?}", strategy_clone)
@@ -2555,8 +2576,8 @@ fn open_panel<R: tauri::Runtime>(
                 valid: true,
                 updated_at: now_millis().unwrap_or(0),
             };
-            if let Some((x, y, height)) = compute_panel_position(&w, QUICK_PANEL_WIDTH, &cache) {
-                let _ = w.set_size(LogicalSize::new(QUICK_PANEL_WIDTH, height));
+            if let Some((x, y, height)) = compute_panel_position(&w, panel_width, &cache) {
+                let _ = w.set_size(LogicalSize::new(panel_width, height));
                 set_panel_position(&w, x, y);
             }
         });
@@ -2750,7 +2771,7 @@ fn compute_panel_position<R: tauri::Runtime>(
     let position = work_area.position.to_logical::<f64>(target_scale);
     let size = work_area.size.to_logical::<f64>(target_scale);
     let max_height = (size.height - QUICK_PANEL_MARGIN * 2.0).min(QUICK_PANEL_MAX_HEIGHT);
-    let panel_height = QUICK_PANEL_DEFAULT_HEIGHT
+    let panel_height = resolve_panel_dims().1
         .min(max_height.max(QUICK_PANEL_MIN_HEIGHT))
         .max(QUICK_PANEL_MIN_HEIGHT);
 
@@ -2869,7 +2890,7 @@ fn panel_position<R: tauri::Runtime>(
         let position = work_area.position.to_logical::<f64>(scale);
         let size = work_area.size.to_logical::<f64>(scale);
         let max_height = (size.height - QUICK_PANEL_MARGIN * 2.0).min(QUICK_PANEL_MAX_HEIGHT);
-        panel_height = QUICK_PANEL_DEFAULT_HEIGHT
+        panel_height = fallback_height
             .min(max_height.max(QUICK_PANEL_MIN_HEIGHT))
             .max(QUICK_PANEL_MIN_HEIGHT);
         let fallback_x = position.x + size.width - panel_width - QUICK_PANEL_MARGIN;

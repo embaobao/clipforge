@@ -176,6 +176,8 @@ type AppSettings = {
   panelBackgroundOpacity: number;
   enableScrollCollapse: boolean;
   panelPinned: boolean;
+  panelWidth: number;
+  panelHeight: number;
 };
 
 type UserSettingsPayload = {
@@ -230,6 +232,8 @@ const defaultSettings: AppSettings = {
   panelBackgroundOpacity: 0.72,
   enableScrollCollapse: true,
   panelPinned: false,
+  panelWidth: 420,
+  panelHeight: 488,
 };
 
 function makeId() {
@@ -708,6 +712,8 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
       typeof next.panelPinned === "boolean"
         ? next.panelPinned
         : defaultSettings.panelPinned,
+    panelWidth: clampNumber(next.panelWidth, 320, 600, defaultSettings.panelWidth),
+    panelHeight: clampNumber(next.panelHeight, 300, 1000, defaultSettings.panelHeight),
     tagRules: Array.isArray(next.tagRules) ? next.tagRules : defaultSettings.tagRules,
     fuzzySearchEnabled:
       typeof next.fuzzySearchEnabled === "boolean"
