@@ -2665,10 +2665,13 @@ function QuickPastePanel({
             }}
             onContextMenu={(event) => {
               event.preventDefault();
-              onSelect(item);
               if (multiSelectMode) {
+                // 进入详情前不要 onSelect(item)：selectedId 在 PanelContentBoundary 的
+                // resetKey 里，改动会让 WorkspaceRouterProvider 重挂、TanStack Router
+                // 回到 "/"，把刚 navigate 的详情路由冲掉（renderDetail 用路由参数，不依赖 selectedId）。
                 onOpenDetail(item);
               } else {
+                onSelect(item);
                 onStartMultiSelect(item.id);
               }
             }}

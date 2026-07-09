@@ -3057,6 +3057,9 @@ fn show_panel_window<R: tauri::Runtime>(
         panel.set_level(quick_panel_level());
         panel.order_front_regardless();
         panel.show_and_make_key();
+        // 二次唤起时 NSPanel 已 resign_key，show_and_make_key 后再补一次 webview 级
+        // set_focus，确保键盘事件能进面板（修复「第二次触发不聚焦、快捷键不生效」）。
+        let _ = window.set_focus();
     } else {
         let _ = window.show();
         let _ = window.set_focus();
