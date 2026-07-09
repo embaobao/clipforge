@@ -2632,7 +2632,9 @@ function VirtualList<T extends { id: string }>({
     if (scrollToGroupStart == null) return;
     const node = ref.current;
     if (!node) return;
-    const top = Math.max(0, scrollToGroupStart * itemHeight);
+    // 切组时下偏一点，避免组首行被顶部搜索/导航栏遮挡。
+    const GROUP_SCROLL_TOP_OFFSET = 56;
+    const top = Math.max(0, scrollToGroupStart * itemHeight - GROUP_SCROLL_TOP_OFFSET);
     setFeedback(true);
     node.scrollTo({ top, behavior: "smooth" });
   }, [scrollToGroupStart, itemHeight, setFeedback]);
