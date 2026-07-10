@@ -158,7 +158,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   clipboardPollMs: 200,
   cleanupEnabled: true,
   cleanupIntervalHours: 24,
-  softDeletedRetentionDays: 7,
+  softDeletedRetentionDays: 30,
   enableMarkdownPreview: true,
   fuzzySearchEnabled: true,
   pinyinSearchEnabled: true,
@@ -891,13 +891,10 @@ export function SettingsApp() {
                 max={95}
                 onChange={(percent) => updateSettings({ logKeepRatio: percent / 100 })}
               />
-              <NumberSetting
-                label="按天数清理 (0=关)"
-                value={state.settings.logRetentionDays}
-                min={0}
-                max={365}
-                onChange={(logRetentionDays) => updateSettings({ logRetentionDays })}
-              />
+              <div className="setting-row">
+                <span>分级保留策略</span>
+                <strong>错误/警告 3 天 · 详情日志 1 天</strong>
+              </div>
               <div className="setting-row">
                 <span>自动周期清理</span>
                 <label className="switch">

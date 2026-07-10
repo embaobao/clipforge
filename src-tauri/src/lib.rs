@@ -404,6 +404,8 @@ struct DeleteClipPayload {
 #[serde(rename_all = "camelCase")]
 struct CleanupClipPayload {
     hard_deleted: i64,
+    retention_hard_deleted: i64,
+    overflow_hard_deleted: i64,
     ran_at: i64,
 }
 
@@ -909,6 +911,10 @@ struct LogCleanupSettings {
     keep_ratio: f64,
     /// 按天数清理：丢弃超过 N 天的条目。0 = 不按天数清理。
     retention_days: u32,
+    /// error/warn 日志保留天数。
+    error_retention_days: u32,
+    /// info/debug 等详情日志保留天数。
+    detail_retention_days: u32,
     /// 后台是否自动周期清理（false = 仅手动「立即清理」）。
     auto_cleanup: bool,
     /// 自动清理检查间隔（分钟）。
@@ -920,6 +926,8 @@ fn read_log_cleanup_settings() -> LogCleanupSettings {
         max_size_mb: 10,
         keep_ratio: 0.6,
         retention_days: 0,
+        error_retention_days: 3,
+        detail_retention_days: 1,
         auto_cleanup: true,
         interval_min: 10,
     };
@@ -933,6 +941,12 @@ fn read_log_cleanup_settings() -> LogCleanupSettings {
         }
         if let Some(n) = v.get("logRetentionDays").and_then(Value::as_u64) {
             s.retention_days = n as u32;
+        }
+        if let Some(n) = v.get("logErrorRetentionDays").and_then(Value::as_u64) {
+            s.error_retention_days = (n as u32).clamp(1, 365);
+        }
+        if let Some(n) = v.get("logDetailRetentionDays").and_then(Value::as_u64) {
+            s.detail_retention_days = (n as u32).clamp(1, 365);
         }
         if let Some(b) = v.get("logAutoCleanup").and_then(Value::as_bool) {
             s.auto_cleanup = b;
@@ -955,20 +969,31 @@ fn cleanup_app_logs() -> Result<String, String> {
     let file_size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
     let max_size_bytes = (cfg.max_size_mb as u64) * 1024 * 1024;
 
-    let mut entries: Vec<(i64, String)> = Vec::new();
+    let mut entries: Vec<(i64, String, String)> = Vec::new();
     let file = fs::File::open(&path).map_err(|e| e.to_string())?;
     for line in BufReader::new(file).lines().map_while(Result::ok) {
         if let Some(entry) = parse_log_line(&line) {
-            entries.push((entry.ts_ms, line));
+            entries.push((entry.ts_ms, entry.level, line));
         }
     }
     let original_lines = entries.len();
 
-    // 1) 按保留天数裁剪（retention_days > 0 时）：丢弃早于 cutoff 的条目
+    // 1) 按日志级别裁剪：错误/警告 3 天，普通详情 1 天。
     let now_ms = now_millis().unwrap_or(0);
+    let detail_cutoff = now_ms - (cfg.detail_retention_days as i64) * 86_400_000;
+    let error_cutoff = now_ms - (cfg.error_retention_days as i64) * 86_400_000;
+    entries.retain(|(ts, level, _)| {
+        if level == "error" || level == "warn" {
+            *ts >= error_cutoff
+        } else {
+            *ts >= detail_cutoff
+        }
+    });
+
+    // 兼容旧配置：如果用户显式配置了更短的全局保留天数，继续收紧。
     if cfg.retention_days > 0 {
         let cutoff = now_ms - (cfg.retention_days as i64) * 86_400_000;
-        entries.retain(|(ts, _)| *ts >= cutoff);
+        entries.retain(|(ts, _, _)| *ts >= cutoff);
     }
 
     // 2) 体积超阈值（max_size_mb > 0 且超出）：保留最新 keep_ratio（至少 100 行）
@@ -992,20 +1017,21 @@ fn cleanup_app_logs() -> Result<String, String> {
         entries.reverse();
     }
     let mut file = fs::File::create(&path).map_err(|e| e.to_string())?;
-    for (_, line) in &entries {
+    for (_, _, line) in &entries {
         writeln!(file, "{}", line).map_err(|e| e.to_string())?;
     }
     let new_size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
 
     Ok(format!(
-        "log cleaned: {} -> {} bytes, {} -> {} lines (maxSize={}MB keepRatio={} retentionDays={})",
+        "log cleaned: {} -> {} bytes, {} -> {} lines (maxSize={}MB keepRatio={} errorRetentionDays={} detailRetentionDays={})",
         file_size,
         new_size,
         original_lines,
         entries.len(),
         cfg.max_size_mb,
         cfg.keep_ratio,
-        cfg.retention_days
+        cfg.error_retention_days,
+        cfg.detail_retention_days
     ))
 }
 
@@ -1338,25 +1364,61 @@ fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
 }
 
 #[tauri::command]
-fn cleanup_clip_records(retention_days: i64) -> Result<CleanupClipPayload, String> {
+fn cleanup_clip_records(
+    retention_days: i64,
+    max_active_items: Option<i64>,
+) -> Result<CleanupClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let ran_at = now_millis()?;
     let retention_ms = retention_days.max(1) * 24 * 60 * 60 * 1000;
     let cutoff = ran_at - retention_ms;
-    let hard_deleted = conn
+    let retention_hard_deleted = conn
         .execute(
             "DELETE FROM clips WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
             params![cutoff],
         )
         .map_err(|error| error.to_string())? as i64;
+    let max_active_items = max_active_items.unwrap_or(500).clamp(50, 5000);
+    let active_count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM clips WHERE deleted_at IS NULL",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let overflow = (active_count - max_active_items).max(0);
+    let mut overflow_ids = Vec::new();
+    if overflow > 0 {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM clips
+                 WHERE deleted_at IS NULL AND favorite = 0
+                 ORDER BY last_seen_at ASC, created_at ASC
+                 LIMIT ?1",
+            )
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map(params![overflow], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        for row in rows {
+            overflow_ids.push(row.map_err(|error| error.to_string())?);
+        }
+    }
+    for id in &overflow_ids {
+        conn.execute("DELETE FROM clips WHERE id = ?1", params![id])
+            .map_err(|error| error.to_string())?;
+    }
+    let overflow_hard_deleted = overflow_ids.len() as i64;
     conn.execute(
         "DELETE FROM clip_fts WHERE id NOT IN (SELECT id FROM clips WHERE deleted_at IS NULL)",
         [],
     )
     .map_err(|error| error.to_string())?;
     Ok(CleanupClipPayload {
-        hard_deleted,
+        hard_deleted: retention_hard_deleted + overflow_hard_deleted,
+        retention_hard_deleted,
+        overflow_hard_deleted,
         ran_at,
     })
 }

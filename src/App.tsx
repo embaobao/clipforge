@@ -1444,6 +1444,11 @@ function ClipForgeApp() {
         setClips(items);
         clipsRef.current = items;
         setNextCursor(items.length === payload.items.length ? (payload.nextCursor ?? null) : null);
+        logAppError("info", "clip-list: initialized from database", {
+          itemCount: items.length,
+          rawCount: payload.items.length,
+          hasMore: Boolean(payload.nextCursor),
+        });
       })
       .catch((error) => {
         if (cancelled) return;
@@ -1481,10 +1486,30 @@ function ClipForgeApp() {
       observedAt: now,
     });
     const nextClip = normalizeClip(payload.item, settingsRef.current) ?? createClip(text, settingsRef.current);
-    const current = clipsRef.current.filter((item) => item.id !== nextClip.id);
-    const next = [nextClip, ...current].slice(0, settingsRef.current.maxStoredItems);
-    clipsRef.current = next;
-    setClips(next);
+    try {
+      const result = await invoke<QueryClipPayload>("query_clip_records", {
+        text: "",
+        bucket: "all",
+        limit: 200,
+      });
+      const items = result.items
+        .map((item) => normalizeClip(item, settingsRef.current))
+        .filter((item): item is ClipItem => Boolean(item));
+      clipsRef.current = items;
+      setClips(items);
+      setNextCursor(result.nextCursor ?? null);
+      logAppError("info", "clipboard-promote: refreshed full list", {
+        promotedId: nextClip.id,
+        status: payload.status,
+        itemCount: items.length,
+      });
+    } catch (error) {
+      logAppError("warn", "clipboard-promote: refresh full list failed, using local merge", String(error));
+      const current = clipsRef.current.filter((item) => item.id !== nextClip.id);
+      const next = [nextClip, ...current].slice(0, settingsRef.current.maxStoredItems);
+      clipsRef.current = next;
+      setClips(next);
+    }
     setSelectedId(nextClip.id);
     setActiveView("history");
     return payload.status;
@@ -1645,14 +1670,23 @@ function ClipForgeApp() {
     if (isSettingsWindow) return;
     if (!settings.cleanupEnabled) return;
     const runCleanup = () => {
-      invoke("cleanup_clip_records", { retentionDays: settings.softDeletedRetentionDays })
-        .then(() => logAppError("info", "Cleanup completed"))
+      invoke("cleanup_clip_records", {
+        retentionDays: settings.softDeletedRetentionDays,
+        maxActiveItems: settings.maxStoredItems,
+      })
+        .then((payload) => logAppError("info", "Cleanup completed", payload))
         .catch((error) => logAppError("warn", "Cleanup failed", String(error)));
     };
     const timer = window.setInterval(runCleanup, settings.cleanupIntervalHours * 60 * 60 * 1000);
     runCleanup();
     return () => window.clearInterval(timer);
-  }, [isSettingsWindow, settings.cleanupEnabled, settings.cleanupIntervalHours, settings.softDeletedRetentionDays]);
+  }, [
+    isSettingsWindow,
+    settings.cleanupEnabled,
+    settings.cleanupIntervalHours,
+    settings.maxStoredItems,
+    settings.softDeletedRetentionDays,
+  ]);
 
   useEffect(() => {
     if (isSettingsWindow) return;
