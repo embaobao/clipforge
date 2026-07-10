@@ -53,11 +53,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
+import agentAccessIcon from "../assets/brand/icons/256/agent-access.png";
 import clipforgeAppIcon from "../src-tauri/icons/64x64.png";
 import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
-export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "file" | "image" | "json" | "chart" | "table";
+export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "rtf" | "file" | "image" | "json" | "chart" | "table";
 type ClipTypeFilter = "all" | ClipPayloadKind;
 type ClipBucket = "history" | "archive" | "snippet";
 
@@ -666,7 +667,7 @@ function getPayloadKindFromFormat(primaryFormat: string, fallback: ClipPayloadKi
   if (primaryFormat === "image/png") return "image";
   if (primaryFormat === "application/file-list") return "file";
   if (primaryFormat === "text/html") return "html";
-  if (primaryFormat === "text/rtf") return "html";
+  if (primaryFormat === "text/rtf") return "rtf";
   if (primaryFormat === "text/uri-list") return "link";
   return fallback;
 }
@@ -675,6 +676,7 @@ function getPrimaryFormatForPayload(payloadKind: ClipPayloadKind) {
   if (payloadKind === "image") return "image/png";
   if (payloadKind === "file") return "application/file-list";
   if (payloadKind === "html") return "text/html";
+  if (payloadKind === "rtf") return "text/rtf";
   return "text/plain";
 }
 
@@ -761,6 +763,7 @@ function getSearchSuggestionToken(suggestion: SearchSuggestion) {
     chart: "@图表",
     table: "@表格",
     html: "@HTML",
+    rtf: "@RTF",
     file: "@文件",
     image: "@图片",
   };
@@ -782,6 +785,7 @@ function getSearchSuggestionAliases(suggestion: SearchSuggestion) {
     chart: ["chart", "图表"],
     table: ["table", "表格", "tsv", "csv"],
     html: ["html", "富文本"],
+    rtf: ["rtf", "richtext", "富文本"],
     file: ["file", "files", "文件", "路径"],
     image: ["image", "img", "图片"],
   };
@@ -2011,6 +2015,7 @@ function ClipForgeApp() {
       { id: "file", label: "文件", hint: `${countKind("file")}`, kind: "type", typeFilter: "file" },
       { id: "image", label: "图片", hint: `${countKind("image")}`, kind: "type", typeFilter: "image" },
       { id: "html", label: "HTML", hint: `${countKind("html")}`, kind: "type", typeFilter: "html" },
+      { id: "rtf", label: "RTF", hint: `${countKind("rtf")}`, kind: "type", typeFilter: "rtf" },
       { id: "code", label: "代码", hint: `${countKind("code")}`, kind: "type", typeFilter: "code" },
       { id: "json", label: "JSON", hint: `${countKind("json")}`, kind: "type", typeFilter: "json" },
       { id: "command", label: "命令", hint: `${countKind("command")}`, kind: "type", typeFilter: "command" },
@@ -2992,7 +2997,7 @@ function ClipForgeApp() {
 
   return (
     <main
-      className={`app-shell view-${activeView} density-${settings.panelDensity}${isSearchActive || query ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isFooterHidden ? " footer-hidden" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
+      className={`app-shell view-${activeView} surface-${activeSurface} density-${settings.panelDensity}${activeSurface === "clipboard" && (isSearchActive || query) ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isFooterHidden ? " footer-hidden" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
       ref={shellRef}
       style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
     >
@@ -3018,18 +3023,7 @@ function ClipForgeApp() {
           suggestions={searchSuggestions}
         />
 
-        <PanelSurfaceTabs
-          activeSurface={activeSurface}
-          agentContextCount={selectedClip ? 1 : 0}
-          onChange={(surface) => {
-            setActiveSurface(surface);
-            if (surface === "clipboard") {
-              window.setTimeout(() => searchRef.current?.focus(), 0);
-            }
-          }}
-        />
-
-        {activeSurface === "clipboard" && multiSelectMode ? (
+        {multiSelectMode ? (
           <MultiSelectToolbar
             allSelected={selectedInList.length > 0 && selectedInList.length === filteredClips.length}
             count={selectedInList.length}
@@ -3051,24 +3045,7 @@ function ClipForgeApp() {
           />
         ) : null}
 
-        <PanelContentBoundary resetKey={`${activeSurface}:workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}>
-          {activeSurface === "agent" ? (
-            <ClipboardAgentPanel
-              activeClip={selectedClip}
-              allClips={clips}
-              filteredClips={filteredClips}
-              selectedClips={selectedInList}
-              query={query}
-              onArchiveClip={archiveAgentSourceClip}
-              onBackToClipboard={() => {
-                setActiveSurface("clipboard");
-                window.setTimeout(() => searchRef.current?.focus(), 0);
-              }}
-              onCopyResult={(text) => copyText(text, "agent-result", { sourceClipId: selectedClip?.id })}
-              onFavoriteClip={favoriteAgentSourceClip}
-              onSaveResult={saveAgentResultAsClip}
-            />
-          ) : (
+        <PanelContentBoundary resetKey={`workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}>
           <WorkspaceRouterProvider
             renderList={() =>
               activeView === "trash" ? (
@@ -3250,9 +3227,32 @@ function ClipForgeApp() {
               />
             )}
           />
-          )}
         </PanelContentBoundary>
       </section>
+
+      <div
+        aria-hidden={activeSurface !== "agent"}
+        className={activeSurface === "agent" ? "agent-overlay open" : "agent-overlay"}
+      >
+        <div className="agent-overlay-scrim" />
+        <div className="agent-overlay-panel" role="dialog" aria-label="Agent 面板" aria-modal={activeSurface === "agent"}>
+          <ClipboardAgentPanel
+            activeClip={selectedClip}
+            allClips={clips}
+            filteredClips={filteredClips}
+            selectedClips={selectedInList}
+            query={query}
+            onArchiveClip={archiveAgentSourceClip}
+            onBackToClipboard={() => {
+              setActiveSurface("clipboard");
+              window.setTimeout(() => searchRef.current?.focus(), 0);
+            }}
+            onCopyResult={(text) => copyText(text, "agent-result", { sourceClipId: selectedClip?.id })}
+            onFavoriteClip={favoriteAgentSourceClip}
+            onSaveResult={saveAgentResultAsClip}
+          />
+        </div>
+      </div>
 
       <button
         aria-label={settings.panelPinned ? "取消固定窗体" : "固定窗体"}
@@ -3268,8 +3268,16 @@ function ClipForgeApp() {
         <div className="completion-toast" role="status">{completionToast}</div>
       ) : null}
       <BottomDock
+        activeSurface={activeSurface}
         activeView={activeView}
+        agentContextCount={selectedClip ? 1 : 0}
         onDrag={handleWindowDrag}
+        onOpenAgent={() => {
+          setActiveSurface("agent");
+          setSelectedIds(new Set());
+          setMultiSelectMode(false);
+          setMultiPreviewOpen(false);
+        }}
         onOpenSettings={() => {
           invoke("open_settings_window").catch((error) =>
             logAppError("warn", "Open settings window failed", String(error)),
@@ -3277,6 +3285,7 @@ function ClipForgeApp() {
         }}
         onStartOnboarding={startOnboarding}
         onViewChange={(view) => {
+          setActiveSurface("clipboard");
           setActiveView(view);
           setSelectedIds(new Set());
           setMultiSelectMode(false);
@@ -3371,42 +3380,6 @@ function ClipForgeApp() {
         />
       ) : null}
     </main>
-  );
-}
-
-function PanelSurfaceTabs({
-  activeSurface,
-  agentContextCount,
-  onChange,
-}: {
-  activeSurface: PanelSurface;
-  agentContextCount: number;
-  onChange: (surface: PanelSurface) => void;
-}) {
-  return (
-    <nav className="panel-surface-tabs" aria-label="面板模式">
-      <button
-        aria-selected={activeSurface === "clipboard"}
-        className={activeSurface === "clipboard" ? "active" : ""}
-        onClick={() => onChange("clipboard")}
-        role="tab"
-        type="button"
-      >
-        <Clipboard size={13} />
-        <span>剪贴板</span>
-      </button>
-      <button
-        aria-selected={activeSurface === "agent"}
-        className={activeSurface === "agent" ? "active" : ""}
-        onClick={() => onChange("agent")}
-        role="tab"
-        type="button"
-      >
-        <Bot size={13} />
-        <span>Agent</span>
-        {agentContextCount ? <em>{agentContextCount}</em> : null}
-      </button>
-    </nav>
   );
 }
 
@@ -3582,15 +3555,21 @@ function MultiSelectToolbar({
 }
 
 function BottomDock({
+  activeSurface,
   activeView,
+  agentContextCount,
   onDrag,
+  onOpenAgent,
   onOpenSettings,
   onStartOnboarding,
   onViewChange,
   status,
 }: {
+  activeSurface: PanelSurface;
   activeView: ViewKey;
+  agentContextCount: number;
   onDrag: (event: PointerEvent<HTMLElement>) => void;
+  onOpenAgent: () => void;
   onOpenSettings: () => void;
   onStartOnboarding: () => void;
   onViewChange: (view: ViewKey) => void;
@@ -3598,11 +3577,24 @@ function BottomDock({
 }) {
   return (
     <footer className="list-footer" data-tauri-drag-region onPointerDown={onDrag}>
+      <div className="footer-agent-slot" onPointerDown={(event) => event.stopPropagation()}>
+        <button
+          aria-label="打开 Agent 面板"
+          className={activeSurface === "agent" ? "icon-button active" : "icon-button subtle"}
+          data-tooltip="Agent"
+          onClick={onOpenAgent}
+          title="Agent"
+          type="button"
+        >
+          <img alt="" className="agent-access-icon" src={agentAccessIcon} />
+          {agentContextCount ? <em>{agentContextCount}</em> : null}
+        </button>
+      </div>
       <StatusLine status={status} />
       <div className="footer-actions" onPointerDown={(event) => event.stopPropagation()}>
         <button
           aria-label="历史"
-          className={activeView === "history" ? "icon-button active" : "icon-button subtle"}
+          className={activeSurface === "clipboard" && activeView === "history" ? "icon-button active" : "icon-button subtle"}
           data-tooltip="历史"
           onClick={() => onViewChange("history")}
           title="历史"
@@ -3612,7 +3604,7 @@ function BottomDock({
         </button>
         <button
           aria-label="收藏"
-          className={activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
+          className={activeSurface === "clipboard" && activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
           data-tooltip="收藏"
           onClick={() => onViewChange("favorites")}
           title="收藏"
@@ -3622,7 +3614,7 @@ function BottomDock({
         </button>
         <button
           aria-label="垃圾箱"
-          className={activeView === "trash" ? "icon-button active" : "icon-button subtle"}
+          className={activeSurface === "clipboard" && activeView === "trash" ? "icon-button active" : "icon-button subtle"}
           data-tooltip="垃圾箱"
           onClick={() => onViewChange("trash")}
           title="垃圾箱"

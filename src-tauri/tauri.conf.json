@@ -47,7 +47,16 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$APPLOCALDATA/**",
+          "$HOME/Library/Application Support/ClipForge/**",
+          "$HOME/.config/clipforge/**"
+        ]
+      }
     }
   },
   "bundle": {

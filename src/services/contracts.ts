@@ -6,6 +6,7 @@ export type ClipPayloadKind =
   | "code"
   | "command"
   | "html"
+  | "rtf"
   | "file"
   | "image"
   | "json"

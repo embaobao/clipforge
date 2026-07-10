@@ -16,6 +16,8 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+mod clipboard;
+
 #[cfg(target_os = "macos")]
 use tauri_nspanel::objc2_app_kit::{NSResponder, NSWindow as AppKitNSWindow};
 #[cfg(target_os = "macos")]
@@ -303,7 +305,7 @@ struct SourceAppPayload {
     icon_base64: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ClipboardRepresentationPayload {
     format: String,
@@ -631,10 +633,21 @@ fn paste_clipboard_text<R: tauri::Runtime>(
     text: String,
     source: Option<String>,
 ) -> Result<(), String> {
-    let trigger_source = source.unwrap_or_else(|| "unknown".to_string());
-    let char_count = text.chars().count();
-    let line_count = text.lines().count().max(1);
     let fingerprint = content_hash("paste", text.as_bytes());
+    suppress_writeback_for(Duration::from_millis(700));
+    write_platform_clipboard(&text)?;
+    paste_prepared_clipboard(app, source, text, fingerprint)
+}
+
+fn paste_prepared_clipboard<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    source: Option<String>,
+    text_preview: String,
+    fingerprint: String,
+) -> Result<(), String> {
+    let trigger_source = source.unwrap_or_else(|| "unknown".to_string());
+    let char_count = text_preview.chars().count();
+    let line_count = text_preview.lines().count().max(1);
     // osascript 级诊断（frontmost_app_for_log / focused_ui_for_log）每次都要 fork osascript，
     // 在 IPC 线程上累计 80~230ms/次，是粘贴卡顿的主因之一。默认走轻量日志；仅在
     // CLIPFORGE_VERBOSE_PASTE=1 时才输出完整诊断。
@@ -667,8 +680,6 @@ fn paste_clipboard_text<R: tauri::Runtime>(
         );
     }
     ensure_paste_accessibility_permission()?;
-    suppress_writeback_for(Duration::from_millis(700));
-    write_platform_clipboard(&text)?;
     hide_panel_before_paste(&app);
     // 面板已 hide，焦点释放通常很快；原 420ms 预算过大、经常空等，缩到 140ms。
     let waited_ms = wait_for_panel_release_before_paste(&app, Duration::from_millis(140));
@@ -735,9 +746,8 @@ fn write_clipboard_item(input: ClipboardItemCommandInput) -> Result<ClipItemPayl
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let item = load_clip(&conn, &input.id)?;
-    let text = text_for_paste_mode(&item, input.paste_mode.as_deref());
     suppress_writeback_for(Duration::from_millis(450));
-    write_platform_clipboard(&text)?;
+    let write_result = clipboard::write_clipboard_item(&item, input.paste_mode.as_deref())?;
     update_clip_record(UpdateClipInput {
         id: item.id.clone(),
         content: None,
@@ -754,10 +764,12 @@ fn write_clipboard_item(input: ClipboardItemCommandInput) -> Result<ClipItemPayl
         "info",
         "clipboard-write",
         &format!(
-            "id={} primaryFormat={} pasteMode={}",
+            "id={} primaryFormat={} pasteMode={} writtenFormats={} guardHash={}",
             item.id,
             item.primary_format,
-            input.paste_mode.unwrap_or_else(|| "rich".to_string())
+            input.paste_mode.unwrap_or_else(|| "rich".to_string()),
+            write_result.written_formats.join("|"),
+            write_result.guard_hash
         ),
     );
     load_clip(&conn, &item.id)
@@ -771,8 +783,14 @@ fn paste_clipboard_item<R: tauri::Runtime>(
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let item = load_clip(&conn, &input.id)?;
-    let text = text_for_paste_mode(&item, input.paste_mode.as_deref());
-    paste_clipboard_text(app, text, input.source.clone())?;
+    suppress_writeback_for(Duration::from_millis(700));
+    let write_result = clipboard::write_clipboard_item(&item, input.paste_mode.as_deref())?;
+    paste_prepared_clipboard(
+        app,
+        input.source.clone(),
+        write_result.text_fallback.clone(),
+        write_result.guard_hash.clone(),
+    )?;
     update_clip_record(UpdateClipInput {
         id: item.id.clone(),
         content: None,
@@ -789,25 +807,15 @@ fn paste_clipboard_item<R: tauri::Runtime>(
         "info",
         "clipboard-paste",
         &format!(
-            "id={} primaryFormat={} pasteMode={} source={}",
+            "id={} primaryFormat={} pasteMode={} writtenFormats={} source={}",
             item.id,
             item.primary_format,
             input.paste_mode.unwrap_or_else(|| "rich".to_string()),
+            write_result.written_formats.join("|"),
             input.source.unwrap_or_else(|| "unknown".to_string())
         ),
     );
     load_clip(&conn, &item.id)
-}
-
-fn text_for_paste_mode(item: &ClipItemPayload, paste_mode: Option<&str>) -> String {
-    match paste_mode.unwrap_or("rich") {
-        "plain" | "filesAsPaths" | "files-as-paths" => item
-            .search_text
-            .clone()
-            .filter(|text| !text.trim().is_empty())
-            .unwrap_or_else(|| item.plain_text.clone()),
-        _ => item.content.clone(),
-    }
 }
 
 #[tauri::command]
@@ -864,14 +872,31 @@ fn capture_clip_record(
     source_label: Option<String>,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
+    capture_clip_payload(
+        clipboard::StandardClipboardPayload::Text(clipboard::TextPayload {
+            text: content,
+            html: None,
+            rtf: None,
+        }),
+        source_label,
+        observed_at,
+    )
+}
+
+fn capture_clip_payload(
+    payload: clipboard::StandardClipboardPayload,
+    source_label: Option<String>,
+    observed_at: i64,
+) -> Result<CaptureClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
-    let content = content.trim().to_string();
-    if content.is_empty() {
+    let image_store = clipboard::ImageStore::new(image_storage_path()?);
+    let draft = clipboard::build_clipboard_draft(payload, &image_store)?;
+    let content = draft.content.trim().to_string();
+    if content.is_empty() && draft.plain_text.trim().is_empty() {
         return Err("content is empty".to_string());
     }
-    let payload_kind = detect_payload_kind(&content);
-    let hash = content_hash(&payload_kind, content.as_bytes());
+    let hash = draft.content_hash.clone();
     let existing_id: Option<String> = conn
         .query_row(
             "SELECT id FROM clips WHERE content_hash = ?1 AND deleted_at IS NULL LIMIT 1",
@@ -895,15 +920,17 @@ fn capture_clip_record(
     }
 
     let id = format!("clip_{hash}_{observed_at}");
-    let payload_kind = detect_payload_kind(&content);
-    let primary_format = primary_format_from_payload(&payload_kind).to_string();
-    let available_formats = vec![primary_format.clone()];
-    let representations = build_representations(&content, &payload_kind);
-    let representations_json = json_string(&representations)?;
-    let available_formats_json = json_string(&available_formats)?;
+    let primary_format = draft.primary_format.clone();
+    let available_formats_json = json_string(&draft.available_formats)?;
+    let representations_json = json_string(&draft.representations)?;
     let source_label_value = source_label.unwrap_or_else(|| "Clipboard".to_string());
-    let analysis = analyze_clip(&content, &source_label_value);
-    let mut default_tag_values = default_tags(&analysis, &content);
+    let analysis_basis = if draft.plain_text.trim().is_empty() {
+        &content
+    } else {
+        &draft.plain_text
+    };
+    let analysis = analyze_clip(analysis_basis, &source_label_value);
+    let mut default_tag_values = default_tags(&analysis, analysis_basis);
     if source_label_value.to_lowercase().contains("agent")
         || source_label_value.to_lowercase().contains("mcp")
         || source_label_value.to_lowercase().contains("ai")
@@ -917,9 +944,10 @@ fn capture_clip_record(
         source_app.as_ref(),
         observed_at,
         &primary_format,
-        &available_formats,
+        &draft.available_formats,
     );
     let capture_context_json = json_string(&capture_context)?;
+    let metadata_json = json_string(&draft.metadata)?;
     let source_app_name = source_app.as_ref().map(|s| s.name.as_str()).unwrap_or("");
     let source_app_bundle = source_app
         .as_ref()
@@ -933,11 +961,12 @@ fn capture_clip_record(
     conn.execute(
         "INSERT INTO clips (
             id, content, content_hash, primary_format, available_formats, representations_json,
-            plain_text, search_text, sub_kind, size, capture_context_json, metadata_json, agent_context_json,
+            plain_text, search_text, sub_kind, width, height, size, file_types, thumbnail_path, image_file,
+            is_sensitive, capture_context_json, metadata_json, agent_context_json,
             kind, bucket, source, source_label, favorite, tags,
             copy_count, created_at, updated_at, last_seen_at, title, summary, url, host, payload_kind,
             source_app_name, source_app_bundle, source_app_executable, source_app_icon
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?9, ?10, '{}', '{}', ?11, 'history', 'clipboard', ?12, 0, ?13, 0, ?14, ?14, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 0, ?16, ?17, '{}', ?18, 'history', 'clipboard', ?19, 0, ?20, 0, ?21, ?21, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
         params![
             id,
             content,
@@ -945,11 +974,18 @@ fn capture_clip_record(
             primary_format,
             available_formats_json,
             representations_json,
-            content,
-            if payload_kind == "html" { Some("html".to_string()) } else { None },
-            content.as_bytes().len() as i64,
+            draft.plain_text,
+            draft.search_text,
+            draft.sub_kind,
+            draft.width,
+            draft.height,
+            draft.size,
+            draft.file_types,
+            draft.thumbnail_path,
+            draft.image_file,
             capture_context_json,
-            analysis_kind_from_payload(&payload_kind),
+            metadata_json,
+            draft.kind,
             source_label_value,
             tags,
             observed_at,
@@ -957,7 +993,7 @@ fn capture_clip_record(
             analysis.summary,
             analysis.url,
             analysis.host,
-            payload_kind,
+            draft.payload_kind,
             source_app_name,
             source_app_bundle,
             source_app_executable,
@@ -977,11 +1013,33 @@ fn capture_clip_record_internal(
     content: &str,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
-    capture_clip_record(
-        content.to_string(),
+    capture_clip_payload(
+        clipboard::StandardClipboardPayload::Text(clipboard::TextPayload {
+            text: content.to_string(),
+            html: None,
+            rtf: None,
+        }),
         Some("Clipboard".to_string()),
         observed_at,
     )
+}
+
+fn clipboard_payload_fingerprint(payload: &clipboard::StandardClipboardPayload) -> String {
+    match payload {
+        clipboard::StandardClipboardPayload::Text(text) => {
+            if let Some(html) = text.html.as_ref().filter(|value| !value.trim().is_empty()) {
+                content_hash("text/html", html.as_bytes())
+            } else if let Some(rtf) = text.rtf.as_ref().filter(|value| !value.trim().is_empty()) {
+                content_hash("text/rtf", rtf.as_bytes())
+            } else {
+                content_hash("text/plain", text.text.as_bytes())
+            }
+        }
+        clipboard::StandardClipboardPayload::Image(image) => content_hash("image/png", &image.bytes),
+        clipboard::StandardClipboardPayload::Files(paths) => {
+            content_hash("application/file-list", paths.join("\n").as_bytes())
+        }
+    }
 }
 
 fn log_to_file(level: &str, module: &str, message: &str) {
@@ -3289,7 +3347,8 @@ fn image_storage_path() -> Result<PathBuf, String> {
     Ok(settings_path()?
         .parent()
         .ok_or_else(|| "settings parent is not available".to_string())?
-        .join("images"))
+        .join("resources")
+        .join("clipboard-images"))
 }
 
 fn open_clip_db() -> Result<Connection, String> {
@@ -3448,6 +3507,7 @@ fn primary_format_from_payload(payload_kind: &str) -> &'static str {
         "image" => "image/png",
         "file" => "application/file-list",
         "html" => "text/html",
+        "rtf" => "text/rtf",
         _ => "text/plain",
     }
 }
@@ -3456,7 +3516,8 @@ fn payload_kind_from_primary_format(primary_format: &str, fallback: &str) -> Str
     match primary_format {
         "image/png" => "image".to_string(),
         "application/file-list" => "file".to_string(),
-        "text/html" | "text/rtf" => "html".to_string(),
+        "text/html" => "html".to_string(),
+        "text/rtf" => "rtf".to_string(),
         "text/uri-list" => "link".to_string(),
         _ => fallback.to_string(),
     }
@@ -3679,7 +3740,7 @@ fn analysis_kind(analysis: &ClipAnalysisPayload) -> String {
 
 fn analysis_kind_from_payload(payload_kind: &str) -> String {
     match payload_kind {
-        "html" | "file" | "image" => "attachment",
+        "html" | "rtf" | "file" | "image" => "attachment",
         "json" | "chart" | "table" => payload_kind,
         "markdown" => "markdown",
         _ => "text",
@@ -3952,36 +4013,7 @@ fn import_items(
 }
 
 fn read_platform_clipboard() -> Result<String, String> {
-    #[cfg(target_os = "macos")]
-    {
-        // pbpaste 比 osascript 快 5-10 倍；优先用 pbpaste，失败再回退
-        if let Ok(text) = read_command("pbpaste", &[]) {
-            return Ok(text);
-        }
-        return read_command("osascript", &["-e", "the clipboard as «class utf8»"]);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return read_command(
-            "powershell",
-            &["-NoProfile", "-Command", "Get-Clipboard -Raw"],
-        );
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        for (program, args) in [
-            ("wl-paste", vec!["--no-newline"]),
-            ("xclip", vec!["-selection", "clipboard", "-out"]),
-            ("xsel", vec!["--clipboard", "--output"]),
-        ] {
-            if let Ok(text) = read_command(program, &args) {
-                return Ok(text);
-            }
-        }
-        Err("No supported clipboard reader found. Install wl-clipboard, xclip, or xsel.".into())
-    }
+    clipboard::read_clipboard_text_fallback()
 }
 
 #[tauri::command]
@@ -4031,37 +4063,10 @@ fn poll_clipboard_change(last_change_count: i64) -> Result<ClipboardChangePayloa
 }
 
 fn write_platform_clipboard(text: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        return write_command("pbcopy", &[], text);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return write_command(
-            "powershell",
-            &[
-                "-NoProfile",
-                "-Command",
-                "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
-            ],
-            text,
-        );
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        for (program, args) in [
-            ("wl-copy", vec![]),
-            ("xclip", vec!["-selection", "clipboard", "-in"]),
-            ("xsel", vec!["--clipboard", "--input"]),
-        ] {
-            if write_command(program, &args, text).is_ok() {
-                return Ok(());
-            }
-        }
-        Err("No supported clipboard writer found. Install wl-clipboard, xclip, or xsel.".into())
-    }
+    use clipboard_rs::{Clipboard, ClipboardContext};
+    let ctx = ClipboardContext::new().map_err(|error| error.to_string())?;
+    ctx.set_text(text.to_string())
+        .map_err(|error| error.to_string())
 }
 
 fn read_command(program: &str, args: &[&str]) -> Result<String, String> {
@@ -4812,7 +4817,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 直接入库而非依赖前端监听，确保 WebView 隐藏/未注册时也能正常采集
     let app_handle = app.handle().clone();
     std::thread::spawn(move || {
-        let mut last_text = String::new();
+        let mut last_fingerprint = String::new();
         let mut consecutive_errors = 0;
         let mut last_log_time = std::time::Instant::now();
         let mut last_cleanup_tick = std::time::Instant::now();
@@ -4845,21 +4850,20 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             if should_skip_writeback() {
                 continue;
             }
-            match read_platform_clipboard() {
-                Ok(text) => {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() && trimmed != last_text {
+            match clipboard::read_clipboard_payload() {
+                Ok(Some(payload)) => {
+                    let fingerprint = clipboard_payload_fingerprint(&payload);
+                    if fingerprint != last_fingerprint {
                         let now = now_millis().unwrap_or(0);
-                        let char_count = trimmed.chars().count();
                         log_to_file(
                             "info",
                             "clipboard-monitor",
-                            &format!("detected change, {} chars, ts={}", char_count, now),
+                            &format!("detected change, hash={}, ts={}", &fingerprint[..8], now),
                         );
-                        last_text = trimmed.to_string();
+                        last_fingerprint = fingerprint;
                         consecutive_errors = 0;
 
-                        match capture_clip_record_internal(trimmed, now) {
+                        match capture_clip_payload(payload, Some("Clipboard".to_string()), now) {
                             Ok(payload) => {
                                 log_to_file(
                                     "debug",
@@ -4872,8 +4876,8 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                                 let payload_json = ClipboardChangePayload {
                                     change_count: now,
                                     has_change: true,
-                                    preview: Some(trimmed.chars().take(40).collect()),
-                                    preview_len: Some(trimmed.chars().count() as i64),
+                                    preview: Some(payload.item.plain_text.chars().take(40).collect()),
+                                    preview_len: Some(payload.item.plain_text.chars().count() as i64),
                                 };
                                 let emit_result =
                                     app_handle.emit("clipboard-changed", payload_json);
@@ -4895,6 +4899,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                Ok(None) => {}
                 Err(e) => {
                     consecutive_errors += 1;
                     if consecutive_errors <= 3 || consecutive_errors % 100 == 0 {
@@ -6635,9 +6640,9 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
                 .item
             };
             let paste_mode = args.get("pasteMode").and_then(Value::as_str);
-            let text = text_for_paste_mode(&item, paste_mode);
             suppress_writeback_for(Duration::from_millis(450));
-            write_platform_clipboard(&text).map_err(|error| (-32000, error))?;
+            let write_result =
+                clipboard::write_clipboard_item(&item, paste_mode).map_err(|error| (-32000, error))?;
             let updated = update_clip_record(UpdateClipInput {
                 id: item.id.clone(),
                 content: None,
@@ -6656,7 +6661,8 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
                 "id": updated.id,
                 "primaryFormat": updated.primary_format,
                 "availableFormats": updated.available_formats,
-                "chars": text.chars().count()
+                "writtenFormats": write_result.written_formats,
+                "chars": write_result.text_fallback.chars().count()
             })
         }
         "clipf.update" => {

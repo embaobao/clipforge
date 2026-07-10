@@ -14,7 +14,7 @@ import {
   Table2,
   X,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Component, useEffect, useMemo, useState } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { ClipItem, ClipPayloadKind } from "../App";
@@ -31,6 +31,8 @@ function getPayloadKindLabel(kind: ClipPayloadKind): string {
       return "命令";
     case "html":
       return "HTML";
+    case "rtf":
+      return "RTF";
     case "file":
       return "文件";
     case "image":
@@ -57,6 +59,8 @@ function getPayloadKindIcon(kind: ClipPayloadKind) {
     case "command":
       return Copy;
     case "html":
+      return FileText;
+    case "rtf":
       return FileText;
     case "file":
       return FileText;
@@ -130,6 +134,20 @@ function extractDetailHashTags(content: string) {
   return normalizeDetailTags(
     Array.from(content.matchAll(/(^|[\s([{])#([\p{L}\p{N}_-]{1,32})/gu)).map((match) => match[2]),
   );
+}
+
+function clipImageSrc(clip: ClipItem) {
+  const path = clip.imageFile || clip.thumbnailPath;
+  if (!path) return null;
+  if (/^(data:|https?:|asset:|http:\/\/asset\.localhost)/i.test(path)) return path;
+  return convertFileSrc(path);
+}
+
+function fileRowsFromClip(clip: ClipItem) {
+  return clip.content
+    .split(/\r?\n/)
+    .map((path) => path.trim())
+    .filter(Boolean);
 }
 
 function detectDetailMode(clip: ClipItem) {
@@ -619,6 +637,54 @@ function AgentMcpCopyButton({ clip }: { clip: ClipItem }) {
   );
 }
 
+function AvailableFormatsRow({ clip }: { clip: ClipItem }) {
+  const formats = clip.availableFormats.length ? clip.availableFormats : [clip.primaryFormat];
+  return (
+    <div className="detail-format-row" aria-label="可用格式">
+      {formats.map((format) => (
+        <span key={format}>{format}</span>
+      ))}
+    </div>
+  );
+}
+
+function ImageFilePreview({ clip }: { clip: ClipItem }) {
+  const src = clipImageSrc(clip);
+  return (
+    <div className="detail-binary-preview">
+      {src ? <img alt={clip.analysis.title || "Clipboard image"} src={src} /> : null}
+      <div className="detail-binary-meta">
+        <span>{clip.width && clip.height ? `${clip.width} x ${clip.height}` : "Image"}</span>
+        {clip.size ? <span>{Math.round(clip.size / 1024)} KB</span> : null}
+        {clip.imageFile ? <span title={clip.imageFile}>{clip.imageFile}</span> : null}
+      </div>
+      <AvailableFormatsRow clip={clip} />
+    </div>
+  );
+}
+
+function FileListPreview({ clip }: { clip: ClipItem }) {
+  const rows = fileRowsFromClip(clip);
+  return (
+    <div className="detail-file-preview">
+      <div className="detail-file-summary">
+        <FileText size={13} />
+        <span>{rows.length} 个文件</span>
+        {clip.fileTypes ? <em>{clip.fileTypes}</em> : null}
+      </div>
+      <div className="detail-file-list">
+        {rows.map((path) => (
+          <button key={path} title={path} type="button">
+            <FileText size={12} />
+            <span>{path}</span>
+          </button>
+        ))}
+      </div>
+      <AvailableFormatsRow clip={clip} />
+    </div>
+  );
+}
+
 export function ClipDetailWorkspace({
   clip,
   links,
@@ -796,6 +862,10 @@ export function ClipDetailWorkspace({
               onTagsChange={setDraftTags}
               onSave={saveDraftContent}
             />
+          ) : clip.payloadKind === "image" ? (
+            <ImageFilePreview clip={clip} />
+          ) : clip.payloadKind === "file" ? (
+            <FileListPreview clip={clip} />
           ) : imageUrl ? (
             <img src={imageUrl} alt={clip.analysis.title} />
           ) : clip.analysis.url || clip.kind === "link" ? (
