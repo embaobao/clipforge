@@ -5848,6 +5848,45 @@ body,
   color: oklch(1 0 0 / 0.72);
 }
 
+.active-filter-chips {
+  display: flex;
+  gap: 6px;
+  height: 26px;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 2px;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.active-filter-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.active-filter-chip {
+  align-items: center;
+  background: oklch(0.18 0 0 / 0.82);
+  border: 1px solid oklch(0.18 0 0 / 0.48);
+  border-radius: var(--cf-radius-sm);
+  color: oklch(1 0 0 / 0.88);
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  height: 24px;
+  max-width: 132px;
+  padding: 0 7px;
+}
+
+.active-filter-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.active-filter-chip svg {
+  flex: 0 0 auto;
+}
+
 .app-shell.search-active .quick-panel {
   padding-top: 68px !important;
 }

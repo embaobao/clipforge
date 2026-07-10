@@ -9,24 +9,24 @@
 
 ## Phase 2：采集保真验收
 
-- [ ] HTML 同时保存 html + plain
-- [ ] RTF 同时保存 rtf + plain
-- [ ] 图片保存 image/png + 可选来源路径
-- [ ] 文件保存 file-list + plain paths
+- [x] HTML 同时保存 html + plain
+- [x] RTF 同时保存 rtf + plain
+- [x] 图片保存 image/png + 可选来源路径
+- [x] 文件保存 file-list + plain paths
 - [ ] 当平台缺失某个格式时写入诊断日志，避免把能力缺失误判成数据丢失
 
 ## Phase 3：写回
 
 - [x] 确认 `PasteMode = Rich | Plain | FilesAsPaths` 已由基础提案暴露给前端命令
-- [ ] 实现 rich 写回格式组合
-- [ ] 实现 plain 写回
-- [ ] 实现 files-as-paths 写回
+- [x] 实现 rich 写回格式组合
+- [x] 实现 plain 写回
+- [x] 实现 files-as-paths 写回
 - [ ] 写回前后接入 WritebackGuard
-- [ ] 写回日志包含 writtenFormats
+- [x] 写回日志包含 writtenFormats
 
 ## Phase 4：前端动作
 
-- [ ] 详情页展示可用格式
+- [x] 详情页展示可用格式
 - [ ] 右键菜单增加复制原格式/复制为纯文本/文件复制为路径
 - [ ] 不可用动作禁用并显示原因
 - [x] 快速面板默认动作保持“复制原格式”

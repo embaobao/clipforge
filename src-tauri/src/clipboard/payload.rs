@@ -5,6 +5,11 @@ pub enum StandardClipboardPayload {
     Files(Vec<String>),
 }
 
+#[allow(dead_code)]
+pub type ClipboardCapture = StandardClipboardPayload;
+#[allow(dead_code)]
+pub type FilesPayload = Vec<String>;
+
 #[derive(Debug, Clone)]
 pub struct TextPayload {
     pub text: String,

@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -382,6 +382,20 @@ struct QueryClipPayload {
     limit: i64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchClipsRequest {
+    text: Option<String>,
+    bucket: Option<String>,
+    kinds: Option<Vec<String>>,
+    types: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
+    file_extensions: Option<Vec<String>>,
+    favorite: Option<bool>,
+    limit: Option<i64>,
+    cursor: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateCheckState {
@@ -626,17 +640,6 @@ fn read_clipboard_text() -> Result<ClipboardPayload, String> {
     } else {
         Ok(ClipboardPayload { text: Some(text) })
     }
-}
-
-fn paste_clipboard_text<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    text: String,
-    source: Option<String>,
-) -> Result<(), String> {
-    let fingerprint = content_hash("paste", text.as_bytes());
-    suppress_writeback_for(Duration::from_millis(700));
-    write_platform_clipboard(&text)?;
-    paste_prepared_clipboard(app, source, text, fingerprint)
 }
 
 fn paste_prepared_clipboard<R: tauri::Runtime>(
@@ -1007,21 +1010,6 @@ fn capture_clip_payload(
         status: "created".to_string(),
         item,
     })
-}
-
-fn capture_clip_record_internal(
-    content: &str,
-    observed_at: i64,
-) -> Result<CaptureClipPayload, String> {
-    capture_clip_payload(
-        clipboard::StandardClipboardPayload::Text(clipboard::TextPayload {
-            text: content.to_string(),
-            html: None,
-            rtf: None,
-        }),
-        Some("Clipboard".to_string()),
-        observed_at,
-    )
 }
 
 fn clipboard_payload_fingerprint(payload: &clipboard::StandardClipboardPayload) -> String {
@@ -1487,6 +1475,125 @@ fn query_clip_records(
 }
 
 #[tauri::command]
+fn search_clip_records(input: SearchClipsRequest) -> Result<QueryClipPayload, String> {
+    let conn = open_clip_db()?;
+    init_schema(&conn)?;
+    let limit = input.limit.unwrap_or(50).clamp(1, 200);
+    let cursor_seen_at = input
+        .cursor
+        .as_deref()
+        .and_then(|value| value.split(':').next())
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(i64::MAX);
+    let text = input.text.unwrap_or_default();
+    let bucket = input.bucket.unwrap_or_else(|| "all".to_string());
+    let has_text = !text.trim().is_empty();
+    let mut sql = if has_text {
+        "SELECT DISTINCT clips.id FROM clip_fts JOIN clips ON clips.id = clip_fts.id".to_string()
+    } else {
+        "SELECT DISTINCT clips.id FROM clips".to_string()
+    };
+    let mut clauses = Vec::new();
+    let mut values: Vec<SqlValue> = Vec::new();
+
+    if has_text {
+        clauses.push("clip_fts MATCH ?".to_string());
+        values.push(SqlValue::Text(fts_query(&text)));
+    }
+    match bucket.as_str() {
+        "trash" => clauses.push("clips.deleted_at IS NOT NULL".to_string()),
+        "all" => clauses.push("clips.deleted_at IS NULL".to_string()),
+        value => {
+            clauses.push("clips.deleted_at IS NULL".to_string());
+            clauses.push("clips.bucket = ?".to_string());
+            values.push(SqlValue::Text(value.to_string()));
+        }
+    }
+    clauses.push("clips.last_seen_at < ?".to_string());
+    values.push(SqlValue::Integer(cursor_seen_at));
+
+    push_in_clause(&mut clauses, &mut values, "clips.kind", input.kinds);
+    push_in_clause(&mut clauses, &mut values, "clips.payload_kind", input.types);
+
+    if let Some(tags) = input.tags {
+        for tag in normalize_tags(tags) {
+            clauses.push("lower(',' || clips.tags || ',') LIKE ?".to_string());
+            values.push(SqlValue::Text(format!("%,{},%", tag.to_lowercase())));
+        }
+    }
+    if let Some(file_extensions) = input.file_extensions {
+        let extensions = normalize_tags(file_extensions);
+        if !extensions.is_empty() {
+            let placeholders = std::iter::repeat("lower(clips.file_types) LIKE ?")
+                .take(extensions.len())
+                .collect::<Vec<_>>()
+                .join(" OR ");
+            clauses.push(format!("({placeholders})"));
+            for extension in extensions {
+                values.push(SqlValue::Text(format!("%{}%", extension.to_lowercase())));
+            }
+        }
+    }
+    if let Some(favorite) = input.favorite {
+        clauses.push("clips.favorite = ?".to_string());
+        values.push(SqlValue::Integer(if favorite { 1 } else { 0 }));
+    }
+
+    if !clauses.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&clauses.join(" AND "));
+    }
+    sql.push_str(" ORDER BY clips.last_seen_at DESC LIMIT ?");
+    values.push(SqlValue::Integer(limit));
+
+    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    let rows = stmt
+        .query_map(params_from_iter(values), |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?;
+    let mut items = Vec::new();
+    for row in rows {
+        items.push(load_clip(&conn, &row.map_err(|error| error.to_string())?)?);
+    }
+    let next_cursor = if items.len() as i64 == limit {
+        items
+            .last()
+            .map(|item| format!("{}:{}", item.last_seen_at, item.id))
+    } else {
+        None
+    };
+    Ok(QueryClipPayload {
+        items,
+        next_cursor,
+        limit,
+    })
+}
+
+fn push_in_clause(
+    clauses: &mut Vec<String>,
+    values: &mut Vec<SqlValue>,
+    column: &str,
+    raw_values: Option<Vec<String>>,
+) {
+    let normalized = raw_values
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if normalized.is_empty() {
+        return;
+    }
+    let placeholders = std::iter::repeat("?")
+        .take(normalized.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    clauses.push(format!("{column} IN ({placeholders})"));
+    for value in normalized {
+        values.push(SqlValue::Text(value));
+    }
+}
+
+#[tauri::command]
 fn soft_delete_clip_records(ids: Vec<String>) -> Result<DeleteClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
@@ -1538,11 +1645,29 @@ struct HardDeleteClipPayload {
 fn hard_delete_clip_records(ids: Vec<String>) -> Result<HardDeleteClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
+    let image_store = clipboard::ImageStore::new(image_storage_path()?);
     for id in &ids {
+        let image_file_name: Option<String> = conn
+            .query_row(
+                "SELECT content FROM clips WHERE id = ?1 AND primary_format = 'image/png'",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
         conn.execute("DELETE FROM clip_fts WHERE id = ?1", params![id])
             .map_err(|error| error.to_string())?;
         conn.execute("DELETE FROM clips WHERE id = ?1", params![id])
             .map_err(|error| error.to_string())?;
+        if let Some(file_name) = image_file_name {
+            if let Err(error) = image_store.remove(&file_name) {
+                log_to_file(
+                    "warn",
+                    "clipboard-image",
+                    &format!("remove image file failed id={} file={} error={}", id, file_name, error),
+                );
+            }
+        }
     }
     Ok(HardDeleteClipPayload {
         hard_deleted_ids: ids,
@@ -4062,13 +4187,6 @@ fn poll_clipboard_change(last_change_count: i64) -> Result<ClipboardChangePayloa
     }
 }
 
-fn write_platform_clipboard(text: &str) -> Result<(), String> {
-    use clipboard_rs::{Clipboard, ClipboardContext};
-    let ctx = ClipboardContext::new().map_err(|error| error.to_string())?;
-    ctx.set_text(text.to_string())
-        .map_err(|error| error.to_string())
-}
-
 fn read_command(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(args)
@@ -4079,29 +4197,6 @@ fn read_command(program: &str, args: &[&str]) -> Result<String, String> {
         String::from_utf8(output.stdout).map_err(|error| error.to_string())
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
-    }
-}
-
-fn write_command(program: &str, args: &[&str], text: &str) -> Result<(), String> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("{program}: {error}"))?;
-
-    let stdin = child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| format!("{program}: stdin unavailable"))?;
-    stdin
-        .write_all(text.as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    let status = child.wait().map_err(|error| error.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{program}: exited with {status}"))
     }
 }
 
@@ -4957,6 +5052,7 @@ pub fn run() {
             check_update,
             capture_clip_record,
             query_clip_records,
+            search_clip_records,
             soft_delete_clip_records,
             restore_clip_records,
             hard_delete_clip_records,
@@ -6389,13 +6485,23 @@ fn mcp_tool_specs() -> Vec<McpToolSpec> {
         },
         McpToolSpec {
             name: "clipf.search",
-            description: "Search ClipForge clipboard history.",
+            description: "Search ClipForge clipboard history with text, tags, type, kind, bucket, favorite, and file extension filters.",
             input_schema: || json!({
                 "type": "object",
                 "properties": {
                     "text": { "type": "string" },
                     "bucket": { "type": "string", "enum": ["all", "history", "archive", "snippet", "trash"] },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                    "types": { "type": "array", "items": { "type": "string" } },
+                    "type": { "type": "string" },
+                    "kinds": { "type": "array", "items": { "type": "string" } },
+                    "kind": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" } },
+                    "tag": { "type": "string" },
+                    "fileExtensions": { "type": "array", "items": { "type": "string" } },
+                    "fileExtension": { "type": "string" },
+                    "favorite": { "type": "boolean" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+                    "cursor": { "type": "string" }
                 }
             }),
         },
@@ -6496,6 +6602,39 @@ fn mcp_source_payload(args: &Value) -> Value {
     })
 }
 
+fn json_string_vec(args: &Value, key: &str) -> Option<Vec<String>> {
+    match args.get(key)? {
+        Value::Array(values) => {
+            let out = values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            if out.is_empty() {
+                None
+            } else {
+                Some(out)
+            }
+        }
+        Value::String(value) => {
+            let out = value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            if out.is_empty() {
+                None
+            } else {
+                Some(out)
+            }
+        }
+        _ => None,
+    }
+}
+
 fn mcp_next_actions(tool: &str) -> Vec<&'static str> {
     match tool {
         "clipf.capture" => vec!["clipf.get id=<returned id>", "clipf.copy id=<returned id>"],
@@ -6583,16 +6722,31 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
         }
         "clipf.search" => {
-            let payload = query_clip_records(
-                args.get("text")
+            let payload = search_clip_records(SearchClipsRequest {
+                text: args
+                    .get("text")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
-                args.get("bucket")
+                bucket: args
+                    .get("bucket")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
-                args.get("limit").and_then(Value::as_i64),
-                None,
-            )
+                kinds: json_string_vec(&args, "kinds")
+                    .or_else(|| json_string_vec(&args, "kind").map(|values| values.into_iter().take(1).collect())),
+                types: json_string_vec(&args, "types")
+                    .or_else(|| json_string_vec(&args, "type").map(|values| values.into_iter().take(1).collect())),
+                tags: json_string_vec(&args, "tags")
+                    .or_else(|| json_string_vec(&args, "tag").map(|values| values.into_iter().take(1).collect())),
+                file_extensions: json_string_vec(&args, "fileExtensions")
+                    .or_else(|| json_string_vec(&args, "fileExtension"))
+                    .or_else(|| json_string_vec(&args, "file")),
+                favorite: args.get("favorite").and_then(Value::as_bool),
+                limit: args.get("limit").and_then(Value::as_i64),
+                cursor: args
+                    .get("cursor")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+            })
             .map_err(|error| (-32000, error))?;
             serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
         }

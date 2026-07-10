@@ -61,6 +61,7 @@ type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment"
 export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "rtf" | "file" | "image" | "json" | "chart" | "table";
 type ClipTypeFilter = "all" | ClipPayloadKind;
 type ClipBucket = "history" | "archive" | "snippet";
+type PasteMode = "rich" | "plain" | "filesAsPaths";
 
 type SourceAppInfo = {
   name: string;
@@ -86,6 +87,19 @@ type ParsedSearchCommand = {
   filterFavorite: boolean;
   tag: string | null;
   label: string | null;
+  ast: SearchQueryAst;
+};
+
+type SearchQueryAst = {
+  text: string;
+  bucket: "all" | ClipBucket | "trash";
+  kinds: string[];
+  types: ClipPayloadKind[];
+  tags: string[];
+  fileExtensions: string[];
+  favorite: boolean;
+  invalidTokens: string[];
+  labels: string[];
 };
 
 export type ClipboardRepresentation = {
@@ -271,6 +285,18 @@ type QueryClipPayload = {
   limit: number;
 };
 
+type SearchClipsRequest = {
+  text?: string;
+  bucket?: "all" | ClipBucket | "trash";
+  kinds?: string[];
+  types?: ClipPayloadKind[];
+  tags?: string[];
+  fileExtensions?: string[];
+  favorite?: boolean;
+  limit?: number;
+  cursor?: string | null;
+};
+
 const ACTIVE_VIEW_KEY = "clipforge.active-view.v1";
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 const DEFAULT_SHORTCUT = "Control+V";
@@ -289,6 +315,20 @@ const ONBOARDING_SAMPLE_CONTENT = [
   "",
   "https://ui.shadcn.com/docs/components/base/dropdown-menu",
 ].join("\n");
+const CLIP_PAYLOAD_KIND_VALUES = [
+  "text",
+  "link",
+  "markdown",
+  "code",
+  "command",
+  "html",
+  "rtf",
+  "file",
+  "image",
+  "json",
+  "chart",
+  "table",
+] as const satisfies readonly ClipPayloadKind[];
 const defaultSettings: AppSettings = {
   panelDensity: "dense",
   quickItemLimit: 10,
@@ -802,7 +842,32 @@ function matchesSearchSuggestionToken(suggestion: SearchSuggestion, rawToken: st
   );
 }
 
+function isClipPayloadKind(value: string): value is ClipPayloadKind {
+  return CLIP_PAYLOAD_KIND_VALUES.includes(value as ClipPayloadKind);
+}
+
+function createEmptySearchAst(rawText = ""): SearchQueryAst {
+  return {
+    text: rawText,
+    bucket: "all",
+    kinds: [],
+    types: [],
+    tags: [],
+    fileExtensions: [],
+    favorite: false,
+    invalidTokens: [],
+    labels: [],
+  };
+}
+
+function addUnique<T extends string>(values: T[], value: T) {
+  if (!values.some((item) => item.toLowerCase() === value.toLowerCase())) {
+    values.push(value);
+  }
+}
+
 function parseSearchCommand(rawQuery: string, suggestions: SearchSuggestion[]): ParsedSearchCommand {
+  const ast = createEmptySearchAst(rawQuery);
   const fallback: ParsedSearchCommand = {
     handled: false,
     queryText: rawQuery,
@@ -810,49 +875,147 @@ function parseSearchCommand(rawQuery: string, suggestions: SearchSuggestion[]): 
     filterFavorite: false,
     tag: null,
     label: null,
+    ast,
   };
-  const trimmedStart = rawQuery.trimStart();
-  if (trimmedStart.startsWith("#")) {
-    const body = trimmedStart.slice(1);
-    const [, token = "", rest = ""] = body.match(/^([^\s]*)\s*(.*)$/) ?? [];
-    const tag = normalizeTagName(token);
-    return {
-      handled: true,
-      queryText: rest,
-      typeFilter: "all",
-      filterFavorite: false,
-      tag,
-      label: tag ? `#${tag}` : null,
-    };
+  const tokens = rawQuery.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return fallback;
+
+  const textTokens: string[] = [];
+  let handled = false;
+  for (const token of tokens) {
+    const normalizedToken = normalizeSearch(token);
+    if (token.startsWith("#")) {
+      const tag = normalizeTagName(token);
+      if (tag) {
+        addUnique(ast.tags, tag);
+        ast.labels.push(`#${tag}`);
+        handled = true;
+        continue;
+      }
+    }
+
+    const keyed = token.match(/^(tag|type|kind|file|ext|bucket):(.+)$/i);
+    if (keyed) {
+      const key = keyed[1].toLowerCase();
+      const value = keyed[2].trim();
+      if (key === "tag") {
+        const tag = normalizeTagName(value);
+        if (tag) {
+          addUnique(ast.tags, tag);
+          ast.labels.push(`#${tag}`);
+          handled = true;
+          continue;
+        }
+      }
+      if (key === "type") {
+        const type = normalizeSearch(value);
+        if (isClipPayloadKind(type)) {
+          addUnique(ast.types, type);
+          ast.labels.push(`type:${type}`);
+          handled = true;
+          continue;
+        }
+      }
+      if (key === "kind") {
+        const kind = normalizeSearch(value);
+        if (kind) {
+          addUnique(ast.kinds, kind);
+          ast.labels.push(`kind:${kind}`);
+          handled = true;
+          continue;
+        }
+      }
+      if (key === "file" || key === "ext") {
+        const extension = value.replace(/^\./, "").toLowerCase();
+        if (extension) {
+          addUnique(ast.fileExtensions, extension);
+          ast.labels.push(`file:${extension}`);
+          handled = true;
+          continue;
+        }
+      }
+      if (key === "bucket") {
+        const bucket = normalizeSearch(value);
+        if (bucket === "all" || bucket === "history" || bucket === "archive" || bucket === "snippet" || bucket === "trash") {
+          ast.bucket = bucket;
+          ast.labels.push(`bucket:${bucket}`);
+          handled = true;
+          continue;
+        }
+      }
+      ast.invalidTokens.push(token);
+      handled = true;
+      continue;
+    }
+
+    if (normalizedToken === "favorite" || normalizedToken === "fav" || normalizedToken === "收藏" || normalizedToken === "@favorite") {
+      ast.favorite = true;
+      ast.labels.push("@favorite");
+      handled = true;
+      continue;
+    }
+
+    if (token.startsWith("@")) {
+      const command = normalizeSearch(token.slice(1));
+      const matched = suggestions.find((suggestion) =>
+        getSearchSuggestionAliases(suggestion).some((alias) => alias === command),
+      );
+      if (matched) {
+        if (matched.kind === "favorite") {
+          ast.favorite = true;
+        } else if (matched.kind === "type") {
+          addUnique(ast.types, matched.typeFilter);
+        } else if (matched.kind === "saved") {
+          addUnique(ast.tags, matched.tag);
+        }
+        if (matched.kind !== "all") ast.labels.push(getSearchSuggestionToken(matched));
+        handled = true;
+        continue;
+      }
+      ast.invalidTokens.push(token);
+      handled = true;
+      continue;
+    }
+
+    textTokens.push(token);
   }
-  if (!trimmedStart.startsWith("@")) return fallback;
 
-  const body = trimmedStart.slice(1);
-  const [, token = "", rest = ""] = body.match(/^([^\s]*)\s*(.*)$/) ?? [];
-  const normalizedToken = normalizeSearch(token);
-  const matched = suggestions.find((suggestion) =>
-    getSearchSuggestionAliases(suggestion).some((alias) => alias === normalizedToken),
-  );
-
-  if (!matched) {
-    return {
-      handled: true,
-      queryText: rest,
-      typeFilter: "all",
-      filterFavorite: false,
-      tag: null,
-      label: normalizedToken ? `@${token}` : null,
-    };
-  }
-
+  ast.text = textTokens.join(" ");
+  const typeFilter = ast.types[0] ?? "all";
+  const tag = ast.tags[0] ?? null;
   return {
-    handled: true,
-    queryText: rest,
-    typeFilter: matched.kind === "type" ? matched.typeFilter : "all",
-    filterFavorite: matched.kind === "favorite",
-    tag: matched.kind === "saved" ? matched.tag : null,
-    label: getSearchSuggestionToken(matched),
+    handled,
+    queryText: ast.text,
+    typeFilter,
+    filterFavorite: ast.favorite,
+    tag,
+    label: ast.labels[0] ?? ast.invalidTokens[0] ?? null,
+    ast,
   };
+}
+
+function removeSearchFilterToken(rawQuery: string, label: string) {
+  const normalizedLabel = normalizeSearch(label);
+  const labelValue = label.replace(/^#/, "").replace(/^[^:]+:/, "");
+  const normalizedValue = normalizeSearch(labelValue);
+  return rawQuery
+    .trim()
+    .split(/\s+/)
+    .filter((token) => {
+      const normalizedToken = normalizeSearch(token);
+      if (normalizedToken === normalizedLabel) return false;
+      if (normalizedLabel.startsWith("#")) {
+        return normalizedToken !== `#${normalizedValue}` && normalizedToken !== `tag:${normalizedValue}`;
+      }
+      if (normalizedLabel.startsWith("type:")) {
+        return normalizedToken !== normalizedLabel && normalizedToken !== `@${normalizedValue}`;
+      }
+      if (normalizedLabel.startsWith("kind:") || normalizedLabel.startsWith("file:") || normalizedLabel.startsWith("bucket:")) {
+        return normalizedToken !== normalizedLabel;
+      }
+      return true;
+    })
+    .join(" ");
 }
 
 function createClip(content: string, settings: AppSettings): ClipItem {
@@ -1076,6 +1239,39 @@ function getBucketForView(view: ViewKey): ClipBucket | "trash" | null {
 
 function isFavoriteView(view: ViewKey): boolean {
   return view === "favorites";
+}
+
+function buildSearchClipsRequest({
+  activeTag,
+  activeTypeFilter,
+  activeView,
+  ast,
+  cursor,
+  filterFavorite,
+  limit,
+}: {
+  activeTag: string | null;
+  activeTypeFilter: ClipTypeFilter;
+  activeView: ViewKey;
+  ast: SearchQueryAst;
+  cursor?: string | null;
+  filterFavorite: boolean;
+  limit: number;
+}): SearchClipsRequest {
+  const bucket = ast.bucket !== "all" ? ast.bucket : (getBucketForView(activeView) ?? "all");
+  const tags = normalizeTagList([...(activeTag ? [activeTag] : []), ...ast.tags]);
+  const types = activeTypeFilter !== "all" ? [activeTypeFilter] : ast.types;
+  return {
+    text: ast.text.trim() || undefined,
+    bucket,
+    kinds: ast.kinds.length ? ast.kinds : undefined,
+    types: types.length ? types : undefined,
+    tags: tags.length ? tags : undefined,
+    fileExtensions: ast.fileExtensions.length ? ast.fileExtensions : undefined,
+    favorite: isFavoriteView(activeView) || filterFavorite || ast.favorite ? true : undefined,
+    limit,
+    cursor,
+  };
 }
 
 function getDisplayText(item: ClipItem, settings: AppSettings) {
@@ -1447,6 +1643,7 @@ function ClipForgeApp() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 120);
   const clipsRef = useRef<ClipItem[]>(clips);
+  const searchRequestRef = useRef<SearchClipsRequest>({ bucket: "all", limit: 200 });
   const shellRef = useRef<HTMLElement | null>(null);
   const settingsRef = useRef<AppSettings>(settings);
   const configReadyRef = useRef(false);
@@ -1507,14 +1704,11 @@ function ClipForgeApp() {
   }, []);
 
   const loadMoreClips = useCallback(async () => {
-    if (!nextCursor || isLoadingMore || debouncedQuery.trim() || activeTag) return;
+    if (!nextCursor || isLoadingMore) return;
     setIsLoadingMore(true);
     try {
-      const payload = await invoke<QueryClipPayload>("query_clip_records", {
-        text: "",
-        bucket: "all",
-        limit: 200,
-        cursor: nextCursor,
+      const payload = await invoke<QueryClipPayload>("search_clip_records", {
+        input: { ...searchRequestRef.current, cursor: nextCursor },
       });
       const items = payload.items
         .map((item) => normalizeClip(item, settingsRef.current))
@@ -1527,7 +1721,7 @@ function ClipForgeApp() {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [activeTag, appendLoadedClips, debouncedQuery, isLoadingMore, nextCursor]);
+  }, [appendLoadedClips, isLoadingMore, nextCursor]);
 
   const handleScroll = useCallback(
     (event: UIEvent<HTMLElement>) => {
@@ -1701,10 +1895,11 @@ function ClipForgeApp() {
         if (cancelled) return;
         logAppError("info", `Clip database ready at ${payload.path}`);
         if (isSettingsWindow) return null;
-        return invoke<QueryClipPayload>("query_clip_records", {
-          text: "",
-          bucket: "all",
-          limit: 200,
+        return invoke<QueryClipPayload>("search_clip_records", {
+          input: {
+            bucket: "all",
+            limit: 200,
+          },
         });
       })
       .then(async (payload) => {
@@ -1776,10 +1971,11 @@ function ClipForgeApp() {
     });
     const nextClip = normalizeClip(payload.item, settingsRef.current) ?? createClip(text, settingsRef.current);
     try {
-      const result = await invoke<QueryClipPayload>("query_clip_records", {
-        text: "",
-        bucket: "all",
-        limit: 200,
+      const result = await invoke<QueryClipPayload>("search_clip_records", {
+        input: {
+          bucket: "all",
+          limit: 200,
+        },
       });
       const items = result.items
         .map((item) => normalizeClip(item, settingsRef.current))
@@ -1923,10 +2119,8 @@ function ClipForgeApp() {
         if (!payload.hasChange) return;
         // 后端已入库，前端直接从数据库刷新列表
         try {
-          const result = await invoke<QueryClipPayload>("query_clip_records", {
-            text: "",
-            bucket: "all",
-            limit: 200,
+          const result = await invoke<QueryClipPayload>("search_clip_records", {
+            input: searchRequestRef.current,
           });
           const items = result.items
             .map((item) => normalizeClip(item, settingsRef.current))
@@ -2037,10 +2231,54 @@ function ClipForgeApp() {
   );
 
   const effectiveQuery = parsedSearchCommand.handled ? parsedSearchCommand.queryText : debouncedQuery;
-  const effectiveTypeFilter =
-    activeTypeFilter !== "all" ? activeTypeFilter : parsedSearchCommand.typeFilter;
+  const effectiveTypeFilters =
+    activeTypeFilter !== "all" ? [activeTypeFilter] : parsedSearchCommand.ast.types;
   const effectiveFilterFavorite = filterFavorite || parsedSearchCommand.filterFavorite;
-  const effectiveActiveTag = activeTag ?? parsedSearchCommand.tag;
+  const effectiveActiveTags = normalizeTagList([...(activeTag ? [activeTag] : []), ...parsedSearchCommand.ast.tags]);
+  const searchRequest = useMemo(
+    () =>
+      buildSearchClipsRequest({
+        activeTag,
+        activeTypeFilter,
+        activeView,
+        ast: parsedSearchCommand.ast,
+        filterFavorite,
+        limit: 200,
+      }),
+    [activeTag, activeTypeFilter, activeView, filterFavorite, parsedSearchCommand.ast],
+  );
+  const searchRequestKey = useMemo(() => JSON.stringify(searchRequest), [searchRequest]);
+
+  useEffect(() => {
+    searchRequestRef.current = searchRequest;
+  }, [searchRequestKey, searchRequest]);
+
+  useEffect(() => {
+    if (isSettingsWindow) return;
+    let cancelled = false;
+    const request = JSON.parse(searchRequestKey) as SearchClipsRequest;
+    searchRequestRef.current = request;
+    invoke<QueryClipPayload>("search_clip_records", { input: request })
+      .then((payload) => {
+        if (cancelled) return;
+        const items = payload.items
+          .map((item) => normalizeClip(item, settingsRef.current))
+          .filter((item): item is ClipItem => Boolean(item));
+        clipsRef.current = items;
+        setClips(items);
+        setNextCursor(payload.nextCursor ?? null);
+        setSelectedId((current) => (current && items.some((item) => item.id === current) ? current : (items[0]?.id ?? null)));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          logAppError("warn", "Search clip records failed", String(error));
+          setNativeStatus("搜索剪贴板失败，查看日志");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSettingsWindow, searchRequestKey]);
 
   const filteredClips = useMemo(() => {
     const bucket = getBucketForView(activeView);
@@ -2055,28 +2293,38 @@ function ClipForgeApp() {
         bucketSource = bucketSource.filter((item) => item.bucket === bucket);
       }
     }
-    const activeSavedSearch = effectiveActiveTag
-      ? settings.tagRules.find((rule) => rule.label.trim() === effectiveActiveTag)
-      : undefined;
     return bucketSource.filter((item) => {
-      if (effectiveTypeFilter !== "all" && item.payloadKind !== effectiveTypeFilter) return false;
+      if (effectiveTypeFilters.length && !effectiveTypeFilters.includes(item.payloadKind)) return false;
       if (effectiveFilterFavorite && !item.favorite && !isFavoriteView(activeView)) return false;
       const matchesQuery = effectiveQuery.trim() ? matchesSearchTerm(item, effectiveQuery, settings) : true;
-      const matchesTag = effectiveActiveTag
-        ? item.tags.some((tag) => tag.toLowerCase() === effectiveActiveTag.toLowerCase()) ||
-          Boolean(activeSavedSearch && matchesSavedSearch(item, activeSavedSearch, settings))
+      const matchesTag = effectiveActiveTags.length
+        ? effectiveActiveTags.every((activeTagValue) => {
+            const activeSavedSearch = settings.tagRules.find((rule) => rule.label.trim() === activeTagValue);
+            return (
+              item.tags.some((tag) => tag.toLowerCase() === activeTagValue.toLowerCase()) ||
+              Boolean(activeSavedSearch && matchesSavedSearch(item, activeSavedSearch, settings))
+            );
+          })
         : true;
       return matchesQuery && matchesTag;
     });
   }, [
     activeView,
     clips,
-    effectiveActiveTag,
+    effectiveActiveTags,
     effectiveFilterFavorite,
     effectiveQuery,
-    effectiveTypeFilter,
+    effectiveTypeFilters,
     settings,
   ]);
+  const activeSearchSummary = useMemo(() => {
+    const parts = [
+      ...parsedSearchCommand.ast.labels,
+      ...parsedSearchCommand.ast.invalidTokens,
+      effectiveQuery.trim() ? `text:${effectiveQuery.trim()}` : "",
+    ].filter(Boolean);
+    return parts.length ? `当前筛选：${parts.join(" · ")}` : null;
+  }, [effectiveQuery, parsedSearchCommand.ast.invalidTokens, parsedSearchCommand.ast.labels]);
 
   const selectedClip = useMemo(() => {
     if (selectedId) {
@@ -2155,7 +2403,26 @@ function ClipForgeApp() {
     window.setTimeout(() => searchRef.current?.focus(), 0);
   }
 
-  function searchByTag(tag: string) {
+  const removeSearchFilter = (label: string) => {
+    setQuery((current) => removeSearchFilterToken(current, label));
+    setActiveTag((current) => (current && label.toLowerCase() === `#${current.toLowerCase()}` ? null : current));
+    setFilterFavorite((current) => (label === "@favorite" || label === "@收藏" ? false : current));
+    setActiveTypeFilter((current) => {
+      if (current === "all") return current;
+      const currentToken = getSearchSuggestionToken({
+        id: current,
+        label: current,
+        hint: "",
+        kind: "type",
+        typeFilter: current,
+      });
+      return label.toLowerCase() === `type:${current}` || label === currentToken ? "all" : current;
+    });
+    setSearchActive(true);
+    window.setTimeout(() => searchRef.current?.focus(), 0);
+  };
+
+  const searchByTag = (tag: string) => {
     const normalized = normalizeTagName(tag);
     if (!normalized) return;
     setQuery(`#${normalized} `);
@@ -2165,7 +2432,7 @@ function ClipForgeApp() {
     setSearchActive(true);
     void navigateWorkspaceList();
     window.setTimeout(() => searchRef.current?.focus(), 0);
-  }
+  };
 
   function markClipCopied(item: ClipItem, status: string) {
     const now = Date.now();
@@ -2197,10 +2464,10 @@ function ClipForgeApp() {
     );
   }, []);
 
-  async function copyClip(item: ClipItem) {
+  async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
     try {
       const payload = await invoke<Partial<ClipItem>>("write_clipboard_item", {
-        input: { id: item.id, pasteMode: "rich", source: "ui" },
+        input: { id: item.id, pasteMode, source: "ui" },
       });
       const normalized = normalizeClip(payload, settingsRef.current);
       lastSeenClipboard.current = item.content.trim();
@@ -2211,7 +2478,14 @@ function ClipForgeApp() {
           return next;
         });
       }
-      markClipCopied(normalized ?? item, "已复制到系统剪贴板");
+      markClipCopied(
+        normalized ?? item,
+        pasteMode === "plain"
+          ? "已复制为纯文本"
+          : pasteMode === "filesAsPaths"
+            ? "已复制文件路径"
+            : "已复制原格式",
+      );
     } catch {
       await navigator.clipboard.writeText(item.content);
       markClipCopied(item, "已复制到浏览器剪贴板");
@@ -3006,6 +3280,7 @@ function ClipForgeApp() {
 
       <section className="content-column" onScroll={handleScroll}>
         <GlassSearchBar
+          activeFilterLabels={parsedSearchCommand.ast.labels}
           inputRef={searchRef}
           onApplySuggestion={applySearchSuggestion}
           onBlur={closeSearchIfEmpty}
@@ -3018,6 +3293,7 @@ function ClipForgeApp() {
             searchRef.current?.focus();
           }}
           onFocus={focusSearch}
+          onRemoveFilter={removeSearchFilter}
           parsedSearchCommand={parsedSearchCommand}
           query={query}
           suggestions={searchSuggestions}
@@ -3053,6 +3329,7 @@ function ClipForgeApp() {
                   activeId={selectedClip?.id ?? null}
                   autoScroll={keyboardNavigating}
                   clips={filteredClips}
+                  emptySummary={activeSearchSummary}
                   onEmptyTrash={emptyTrash}
                   hasMore={Boolean(nextCursor)}
                   isLoadingMore={isLoadingMore}
@@ -3088,6 +3365,7 @@ function ClipForgeApp() {
                   autoScroll={keyboardNavigating}
                   clips={filteredClips}
                   copiedId={lastCopiedId}
+                  emptySummary={activeSearchSummary}
                   hasMore={Boolean(nextCursor)}
                   isLoadingMore={isLoadingMore}
                   limit={settings.quickItemLimit}
@@ -3384,22 +3662,26 @@ function ClipForgeApp() {
 }
 
 function GlassSearchBar({
+  activeFilterLabels,
   inputRef,
   onApplySuggestion,
   onBlur,
   onChange,
   onClear,
   onFocus,
+  onRemoveFilter,
   parsedSearchCommand,
   query,
   suggestions,
 }: {
+  activeFilterLabels: string[];
   inputRef: RefObject<HTMLInputElement | null>;
   onApplySuggestion: (suggestion: SearchSuggestion) => void;
   onBlur: () => void;
   onChange: (value: string) => void;
   onClear: () => void;
   onFocus: () => void;
+  onRemoveFilter: (label: string) => void;
   parsedSearchCommand: ParsedSearchCommand;
   query: string;
   suggestions: SearchSuggestion[];
@@ -3428,6 +3710,23 @@ function GlassSearchBar({
             </button>
           ) : null}
         </div>
+        {activeFilterLabels.length ? (
+          <div className="active-filter-chips" aria-label="当前搜索筛选">
+            {activeFilterLabels.map((label) => (
+              <button
+                aria-label={`移除筛选 ${label}`}
+                className="active-filter-chip"
+                key={label}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onRemoveFilter(label)}
+                type="button"
+              >
+                <span>{label}</span>
+                <X size={11} />
+              </button>
+            ))}
+          </div>
+        ) : null}
         {suggestions.length ? (
           <FilterChips
             onApplySuggestion={onApplySuggestion}
@@ -3670,6 +3969,7 @@ function TrashPanel({
   activeId,
   autoScroll,
   clips,
+  emptySummary,
   hasMore,
   isLoadingMore,
   multiSelectMode,
@@ -3689,6 +3989,7 @@ function TrashPanel({
   activeId: string | null;
   autoScroll: boolean;
   clips: ClipItem[];
+  emptySummary: string | null;
   hasMore: boolean;
   isLoadingMore: boolean;
   multiSelectMode: boolean;
@@ -3747,7 +4048,7 @@ function TrashPanel({
       <div className="empty-list">
         <Trash2 size={30} />
         <h2>垃圾箱为空</h2>
-        <p>软删除的内容会在这里显示，可恢复或彻底删除。</p>
+        <p>{emptySummary ?? "软删除的内容会在这里显示，可恢复或彻底删除。"}</p>
       </div>
     );
   }
@@ -4102,6 +4403,7 @@ function QuickPastePanel({
   autoScroll,
   clips,
   copiedId,
+  emptySummary,
   hasMore,
   isLoadingMore,
   multiSelectMode,
@@ -4128,6 +4430,7 @@ function QuickPastePanel({
   autoScroll: boolean;
   clips: ClipItem[];
   copiedId: string | null;
+  emptySummary: string | null;
   hasMore: boolean;
   isLoadingMore: boolean;
   limit: number;
@@ -4194,8 +4497,8 @@ function QuickPastePanel({
     return (
       <div className="empty-list">
         <Inbox size={30} />
-        <h2>还没有剪贴板内容</h2>
-        <p>复制文本后，这里会显示最近项目。</p>
+        <h2>{emptySummary ? "没有匹配的剪贴板内容" : "还没有剪贴板内容"}</h2>
+        <p>{emptySummary ?? "复制文本后，这里会显示最近项目。"}</p>
       </div>
     );
   }
