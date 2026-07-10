@@ -38,6 +38,7 @@ interface AppSettings {
   onboardingCompleted: boolean;
   logMaxSizeMb: number;
   logKeepRatio: number;
+  logMaxLines: number;
   logRetentionDays: number;
   logAutoCleanup: boolean;
   logCleanupIntervalMin: number;
@@ -177,6 +178,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   onboardingCompleted: false,
   logMaxSizeMb: 10,
   logKeepRatio: 0.6,
+  logMaxLines: 20000,
   logRetentionDays: 0,
   logAutoCleanup: true,
   logCleanupIntervalMin: 10,
@@ -891,9 +893,16 @@ export function SettingsApp() {
                 max={95}
                 onChange={(percent) => updateSettings({ logKeepRatio: percent / 100 })}
               />
+              <NumberSetting
+                label="最大日志行数"
+                value={state.settings.logMaxLines}
+                min={1000}
+                max={1000000}
+                onChange={(logMaxLines) => updateSettings({ logMaxLines })}
+              />
               <div className="setting-row">
                 <span>分级保留策略</span>
-                <strong>错误/警告 3 天 · 详情日志 1 天</strong>
+                <strong>错误/警告 7 天 · 详情日志 3 天</strong>
               </div>
               <div className="setting-row">
                 <span>自动周期清理</span>

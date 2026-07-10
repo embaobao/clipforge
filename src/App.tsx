@@ -175,6 +175,12 @@ type AppSettings = {
   panelWidth: number;
   panelHeight: number;
   onboardingCompleted: boolean;
+  logMaxSizeMb: number;
+  logKeepRatio: number;
+  logMaxLines: number;
+  logRetentionDays: number;
+  logAutoCleanup: boolean;
+  logCleanupIntervalMin: number;
 };
 
 type UserSettingsPayload = {
@@ -245,6 +251,12 @@ const defaultSettings: AppSettings = {
   panelWidth: 420,
   panelHeight: DEFAULT_PANEL_HEIGHT,
   onboardingCompleted: false,
+  logMaxSizeMb: 10,
+  logKeepRatio: 0.6,
+  logMaxLines: 20000,
+  logRetentionDays: 0,
+  logAutoCleanup: true,
+  logCleanupIntervalMin: 10,
 };
 
 function makeId() {

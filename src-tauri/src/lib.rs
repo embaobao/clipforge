@@ -909,6 +909,8 @@ struct LogCleanupSettings {
     max_size_mb: u32,
     /// 体积超阈值时保留最新条目的比例（0.1~0.95）。
     keep_ratio: f64,
+    /// 最大日志行数。0 = 不按行数清理。
+    max_lines: usize,
     /// 按天数清理：丢弃超过 N 天的条目。0 = 不按天数清理。
     retention_days: u32,
     /// error/warn 日志保留天数。
@@ -926,8 +928,9 @@ fn read_log_cleanup_settings() -> LogCleanupSettings {
         max_size_mb: 10,
         keep_ratio: 0.6,
         retention_days: 0,
-        error_retention_days: 3,
-        detail_retention_days: 1,
+        max_lines: 20_000,
+        error_retention_days: 7,
+        detail_retention_days: 3,
         auto_cleanup: true,
         interval_min: 10,
     };
@@ -938,6 +941,9 @@ fn read_log_cleanup_settings() -> LogCleanupSettings {
         }
         if let Some(n) = v.get("logKeepRatio").and_then(Value::as_f64) {
             s.keep_ratio = n.clamp(0.1, 0.95);
+        }
+        if let Some(n) = v.get("logMaxLines").and_then(Value::as_u64) {
+            s.max_lines = (n as usize).clamp(1_000, 1_000_000);
         }
         if let Some(n) = v.get("logRetentionDays").and_then(Value::as_u64) {
             s.retention_days = n as u32;
@@ -978,7 +984,7 @@ fn cleanup_app_logs() -> Result<String, String> {
     }
     let original_lines = entries.len();
 
-    // 1) 按日志级别裁剪：错误/警告 3 天，普通详情 1 天。
+    // 1) 按日志级别裁剪：错误/警告 7 天，普通详情 3 天。
     let now_ms = now_millis().unwrap_or(0);
     let detail_cutoff = now_ms - (cfg.detail_retention_days as i64) * 86_400_000;
     let error_cutoff = now_ms - (cfg.error_retention_days as i64) * 86_400_000;
@@ -1004,16 +1010,28 @@ fn cleanup_app_logs() -> Result<String, String> {
         entries.truncate(keep);
     }
 
+    // 3) 行数超阈值：保留最新 max_lines 行。
+    let line_over = cfg.max_lines > 0 && entries.len() > cfg.max_lines;
+    if line_over {
+        entries.sort_by(|a, b| b.0.cmp(&a.0)); // 最新在前
+        entries.truncate(cfg.max_lines);
+    }
+
     let dropped = original_lines.saturating_sub(entries.len());
     if dropped == 0 {
         return Ok(format!(
-            "log size {} bytes, {} lines, no cleanup needed (max={}MB retentionDays={})",
-            file_size, original_lines, cfg.max_size_mb, cfg.retention_days
+            "log size {} bytes, {} lines, no cleanup needed (max={}MB maxLines={} errorRetentionDays={} detailRetentionDays={})",
+            file_size,
+            original_lines,
+            cfg.max_size_mb,
+            cfg.max_lines,
+            cfg.error_retention_days,
+            cfg.detail_retention_days
         ));
     }
 
     // 回写：恢复时间顺序（旧→新）保持追加顺序
-    if size_over {
+    if size_over || line_over {
         entries.reverse();
     }
     let mut file = fs::File::create(&path).map_err(|e| e.to_string())?;
@@ -1023,13 +1041,14 @@ fn cleanup_app_logs() -> Result<String, String> {
     let new_size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
 
     Ok(format!(
-        "log cleaned: {} -> {} bytes, {} -> {} lines (maxSize={}MB keepRatio={} errorRetentionDays={} detailRetentionDays={})",
+        "log cleaned: {} -> {} bytes, {} -> {} lines (maxSize={}MB keepRatio={} maxLines={} errorRetentionDays={} detailRetentionDays={})",
         file_size,
         new_size,
         original_lines,
         entries.len(),
         cfg.max_size_mb,
         cfg.keep_ratio,
+        cfg.max_lines,
         cfg.error_retention_days,
         cfg.detail_retention_days
     ))
