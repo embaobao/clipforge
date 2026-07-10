@@ -7,12 +7,14 @@ import {
   FileJson,
   FileText,
   Image,
+  Pencil,
   RotateCcw,
+  Save,
   Table2,
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { Component } from "react";
+import { Component, useEffect, useMemo, useState } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { ClipItem, ClipPayloadKind } from "../App";
 
@@ -78,6 +80,7 @@ type ClipDetailWorkspaceProps = {
   onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
   onOpen: (clip: ClipItem) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
+  onUpdateContent: (clip: ClipItem, content: string) => Promise<ClipItem | void>;
   quickActions?: DetailQuickAction[];
 };
 
@@ -114,6 +117,30 @@ function detectDetailMode(clip: ClipItem) {
 
 function isLikelyMarkdown(clip: ClipItem) {
   return clip.kind === "markdown" || clip.analysis.isMarkdown || detectDetailMode(clip) === "Markdown";
+}
+
+function isLikelyJson(clip: ClipItem) {
+  return clip.payloadKind === "json" || detectDetailMode(clip) === "JSON";
+}
+
+function formatJsonPreview(content: string) {
+  try {
+    const value = JSON.parse(content);
+    const formatted = JSON.stringify(value, null, 2);
+    const root =
+      Array.isArray(value)
+        ? `Array(${value.length})`
+        : value && typeof value === "object"
+          ? `Object(${Object.keys(value as Record<string, unknown>).length})`
+          : typeof value;
+    return { formatted, root, error: "" };
+  } catch (error) {
+    return {
+      formatted: content,
+      root: "Invalid JSON",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function appendWorkspacePanelLog(level: "info" | "warn" | "error", message: string, context: Record<string, unknown>) {
@@ -399,6 +426,120 @@ function LinkPreview({ clip, links, onCopy, onOpen }: { clip: ClipItem; links: s
   );
 }
 
+function JsonPreview({
+  clip,
+  content,
+  onCopyText,
+}: {
+  clip: ClipItem;
+  content: string;
+  onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
+}) {
+  const preview = useMemo(() => formatJsonPreview(content), [content]);
+  return (
+    <div className={preview.error ? "json-preview has-error" : "json-preview"}>
+      <div className="json-preview-toolbar">
+        <span>
+          <FileJson size={12} />
+          {preview.error ? "JSON 原文" : "JSON 格式化"}
+          <em>{preview.root}</em>
+        </span>
+        <button
+          type="button"
+          onClick={() =>
+            onCopyText(preview.formatted, `json-preview:${clip.id}`, {
+              businessChain: "quick-panel -> workspace-router -> detail-route -> json-preview -> copy-formatted",
+              clipId: clip.id,
+              chars: preview.formatted.length,
+              valid: !preview.error,
+            })
+          }
+        >
+          <Copy size={11} />
+          复制格式化
+        </button>
+      </div>
+      {preview.error ? <p className="json-preview-error">解析失败：{preview.error}</p> : null}
+      <pre><code>{preview.formatted}</code></pre>
+    </div>
+  );
+}
+
+function DetailQuickEditor({
+  content,
+  error,
+  hasChanges,
+  isSaving,
+  onCancel,
+  onChange,
+  onSave,
+}: {
+  content: string;
+  error: string;
+  hasChanges: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="detail-editor">
+      <div className="detail-editor-toolbar">
+        <span>
+          快速编辑
+          <em>{content.length} 字符 / {content.split(/\r?\n/).length} 行</em>
+        </span>
+        <div>
+          <button type="button" onClick={onCancel}>
+            <X size={11} />
+            取消
+          </button>
+          <button disabled={!hasChanges || isSaving || !content.trim()} type="button" onClick={onSave}>
+            <Save size={11} />
+            {isSaving ? "保存中" : "保存"}
+          </button>
+        </div>
+      </div>
+      <textarea
+        aria-label="编辑剪贴板内容"
+        className="detail-editor-textarea"
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck={false}
+        value={content}
+      />
+      {error ? <p className="detail-editor-error" role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
+function AgentMcpCopyButton({ clip }: { clip: ClipItem }) {
+  const getCommand = `use clipf.get id=${clip.id}`;
+  const [copied, setCopied] = useState(false);
+  const copyCommand = (text: string) => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  };
+  const tooltip = [
+    "复制 Agent MCP 获取命令",
+    getCommand,
+  ].join("\n");
+
+  return (
+    <button
+      aria-label="复制 Agent MCP 获取命令"
+      className={copied ? "agent-mcp-copy-button copied" : "agent-mcp-copy-button"}
+      onClick={() => copyCommand(getCommand)}
+      title={tooltip}
+      type="button"
+    >
+      <Clipboard size={12} />
+      <span>{copied ? "已复制" : "复制 MCP"}</span>
+    </button>
+  );
+}
+
 export function ClipDetailWorkspace({
   clip,
   links,
@@ -407,8 +548,21 @@ export function ClipDetailWorkspace({
   onCopyText,
   onOpen,
   onPasteText,
+  onUpdateContent,
   quickActions = [],
 }: ClipDetailWorkspaceProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState("");
+  const [editError, setEditError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setDraftContent(clip?.content ?? "");
+    setIsEditing(false);
+    setEditError("");
+    setIsSaving(false);
+  }, [clip?.id, clip?.content]);
+
   if (!clip) {
     return (
       <section className="workspace-page workspace-detail-page">
@@ -422,9 +576,31 @@ export function ClipDetailWorkspace({
   const imageUrl = clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url"
     ? clip.analysis.attachment.target
     : null;
+  const hasDraftChanges = draftContent !== clip.content;
   const safeLinks = safeHttpUrls(links);
   const droppedLinkCount = links.length - safeLinks.length;
   const droppedLinkLogKey = `${clip.id}:${links.length}:${safeLinks.length}`;
+
+  const saveDraftContent = async () => {
+    if (!draftContent.trim()) {
+      setEditError("内容不能为空");
+      return;
+    }
+    if (!hasDraftChanges) {
+      setIsEditing(false);
+      return;
+    }
+    setIsSaving(true);
+    setEditError("");
+    try {
+      await onUpdateContent(clip, draftContent);
+      setIsEditing(false);
+    } catch (error) {
+      setEditError(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   if (droppedLinkCount > 0 && !droppedLinkLogKeys.has(droppedLinkLogKey)) {
     droppedLinkLogKeys.add(droppedLinkLogKey);
@@ -442,6 +618,21 @@ export function ClipDetailWorkspace({
   return (
     <section className="workspace-page workspace-detail-page">
       <WorkspaceCrumb title="内容详情" subtitle={mode} onBack={onBack}>
+        <AgentMcpCopyButton clip={clip} />
+        <button
+          aria-label={isEditing ? "正在编辑内容" : "编辑内容"}
+          className={isEditing ? "detail-edit-button active" : "detail-edit-button"}
+          onClick={() => {
+            setDraftContent(clip.content);
+            setEditError("");
+            setIsEditing(true);
+          }}
+          title="快速编辑当前剪贴板内容"
+          type="button"
+        >
+          <Pencil size={12} />
+          <span>{isEditing ? "编辑中" : "编辑"}</span>
+        </button>
         {clip.analysis.url || clip.analysis.attachment ? (
           <button className="icon-button" onClick={() => onOpen(clip)} type="button" aria-label="打开内容">
             <ExternalLink size={14} />
@@ -453,6 +644,9 @@ export function ClipDetailWorkspace({
       </WorkspaceCrumb>
 
       <div className="detail-meta" aria-label="内容元信息">
+        <span className="clip-id-chip" title={clip.id}>
+          ID {clip.id.slice(0, 8)}…{clip.id.slice(-6)}
+        </span>
         <span className={`kind-chip ${clip.payloadKind}`} title={getPayloadKindLabel(clip.payloadKind)}>
           {(() => {
             const Icon = getPayloadKindIcon(clip.payloadKind);
@@ -483,10 +677,29 @@ export function ClipDetailWorkspace({
 
       <DetailContentBoundary clip={clip} onBack={onBack} onCopy={onCopy}>
         <div className="detail-content">
-          {imageUrl ? (
+          {isEditing ? (
+            <DetailQuickEditor
+              content={draftContent}
+              error={editError}
+              hasChanges={hasDraftChanges}
+              isSaving={isSaving}
+              onCancel={() => {
+                setDraftContent(clip.content);
+                setEditError("");
+                setIsEditing(false);
+              }}
+              onChange={(value) => {
+                setDraftContent(value);
+                if (editError) setEditError("");
+              }}
+              onSave={saveDraftContent}
+            />
+          ) : imageUrl ? (
             <img src={imageUrl} alt={clip.analysis.title} />
           ) : clip.analysis.url || clip.kind === "link" ? (
             <LinkPreview clip={clip} links={links} onCopy={onCopy} onOpen={onOpen} />
+          ) : isLikelyJson(clip) ? (
+            <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} />
           ) : isLikelyMarkdown(clip) ? (
             <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
           ) : (

@@ -5,11 +5,13 @@
 ### 列表展示
 
 - 文本条目：保持现有展示逻辑（内容摘要 + 类型图标）。
-- 图片条目：列表左侧显示 48×48 缩略图，右侧显示尺寸（如 `1920×1080`）与文件大小（如 `1.2 MB`）。
+- 图片条目：
+  - 快速面板保持高密度行高，不把缩略图做成素材库卡片；左侧使用 24-28px 缩略图或图片图标，右侧显示尺寸（如 `1920×1080`）与文件大小（如 `1.2 MB`）。
+  - 详情页再展示 48px 缩略图和原图预览。
 - 文件条目：
   - 单文件：显示文件图标 + 文件名 + 路径。
   - 多文件：显示堆叠图标 +「3 个文件」+ 前两个文件名。
-  - 文件已删除：图标置灰，文件名加删除线。
+  - 文件已删除：图标置灰，文件名加删除线；文件存在性由后台批量检查并缓存，列表渲染时不逐行同步 `stat`。
 - 富文本条目：在文本摘要前加「HTML」「RTF」小标签，粘贴时默认保留格式。
 
 ### 详情页
@@ -30,8 +32,8 @@
 
 新增「采集设置」分组：
 
-- 启用/禁用文本、图片、文件采集。
-- 采集顺序（拖拽）：文本 / 图片 / 文件 / HTML / RTF。
+- 启用/禁用文本、HTML、RTF、图片、文件采集。
+- 第一阶段不做拖拽排序；采用固定优先级生成 `primaryFormat`，并保留所有可用 representation。
 - 图片大小上限（MB）。
 - 文本大小上限（MB）。
 - 是否采集敏感内容（API Key 等）。
@@ -70,19 +72,49 @@ src-tauri/src/
 
 ### 3. 数据模型扩展
 
+文件、图片和富文本不是几个互斥的 `kind`，而是一次剪贴板复制可能同时存在的多格式 representation。第一阶段必须把 representation 模型放入基础数据结构，避免后续 HTML/RTF 保真、文件类型筛选和纯文本降级返工。
+
+```rust
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardRepresentation {
+    pub format: String,        // text/plain | text/html | text/rtf | image/png | application/file-list | text/uri-list
+    pub storage: String,       // inline | file | derived
+    pub content: Option<String>,
+    pub file_name: Option<String>,
+    pub size: Option<i64>,
+    pub hash: Option<String>,
+    pub preferred: bool,
+}
+```
+
+前端对应类型：
+
+```typescript
+export type ClipboardRepresentation = {
+  format: "text/plain" | "text/html" | "text/rtf" | "image/png" | "application/file-list" | "text/uri-list";
+  storage: "inline" | "file" | "derived";
+  content?: string;
+  fileName?: string;
+  size?: number;
+  hash?: string;
+  preferred?: boolean;
+};
+```
+
 扩展现有 `ClipItemPayload`（camelCase JSON）：
 
 ```rust
 pub struct ClipItemPayload {
     pub id: String,
-    pub content: String,              // 文本：原文；图片：<hash>.png；文件：换行分隔的路径列表
-    pub content_hash: String,         // 去重指纹
+    pub content: String,              // 兼容字段：文本为 plainText；图片为 <hash>.png；文件为换行路径
+    pub content_hash: String,         // 去重指纹，来自 primaryFormat + 关键 representation hash
     pub created_at: i64,
     pub updated_at: i64,
     pub last_seen_at: i64,
     pub last_copied_at: Option<i64>,
     pub source: String,
-    pub kind: String,                 // text | image | files
+    pub kind: String,                 // text | attachment | code | link | markdown 等现有 UI 分类
     pub sub_kind: Option<String>,     // html | rtf | url | email | color | path
     pub bucket: String,
     pub favorite: bool,
@@ -92,6 +124,9 @@ pub struct ClipItemPayload {
     pub payload_kind: String,
     pub source_app: Option<SourceAppPayload>,
     // 新增字段
+    pub primary_format: String,       // text/plain | image/png | application/file-list | text/html | text/rtf
+    pub representations_json: String, // Vec<ClipboardRepresentation> 的 JSON
+    pub plain_text: String,           // 纯文本 fallback，用于 UI 摘要、纯文本粘贴、FTS
     pub search_text: Option<String>,  // 用于 FTS 的纯文本/文件名
     pub width: Option<i64>,           // 图片宽
     pub height: Option<i64>,          // 图片高
@@ -107,6 +142,9 @@ pub struct ClipItemPayload {
 ALTER TABLE clips ADD COLUMN content_hash TEXT;
 ALTER TABLE clips ADD COLUMN search_text TEXT;
 ALTER TABLE clips ADD COLUMN sub_kind TEXT;
+ALTER TABLE clips ADD COLUMN primary_format TEXT DEFAULT 'text/plain';
+ALTER TABLE clips ADD COLUMN representations_json TEXT DEFAULT '[]';
+ALTER TABLE clips ADD COLUMN plain_text TEXT DEFAULT '';
 ALTER TABLE clips ADD COLUMN width INTEGER;
 ALTER TABLE clips ADD COLUMN height INTEGER;
 ALTER TABLE clips ADD COLUMN size INTEGER;
@@ -119,6 +157,16 @@ ALTER TABLE clips ADD COLUMN is_sensitive INTEGER DEFAULT 0;
 
 ```sql
 UPDATE clips SET content_hash = id WHERE content_hash IS NULL;
+UPDATE clips SET primary_format = 'text/plain' WHERE primary_format IS NULL OR primary_format = '';
+UPDATE clips SET plain_text = content WHERE plain_text IS NULL OR plain_text = '';
+UPDATE clips
+SET representations_json = json_array(json_object(
+  'format', 'text/plain',
+  'storage', 'inline',
+  'content', content,
+  'preferred', 1
+))
+WHERE representations_json IS NULL OR representations_json = '[]';
 ```
 
 FTS 表同步 `search_text`：
@@ -166,7 +214,7 @@ pub struct ClipboardReader { ctx: ClipboardContext }
 
 impl ClipboardReader {
     pub fn new() -> Result<Self>;
-    pub fn read_with_capture(&self, capture: &CaptureSettings) -> Result<Option<ClipboardPayload>>;
+    pub fn read_with_capture(&self, capture: &CaptureSettings) -> Result<Option<ClipboardCapture>>;
 }
 ```
 
@@ -179,13 +227,18 @@ pub struct CaptureSettings {
     pub rtf: bool,
     pub image: bool,
     pub files: bool,
-    pub order: Vec<CaptureKind>,      // 采集优先级
     pub max_text_bytes: Option<u64>,
     pub max_image_bytes: Option<u64>,
 }
 ```
 
-读取优先级按 `order` 顺序，第一个命中且非空的类型获胜。
+读取流程尽量读取同一次剪贴板中的所有可用格式：
+
+1. `text/plain` 作为 `plain_text`、搜索和纯文本 fallback。
+2. `text/html` / `text/rtf` 作为富文本 representation，普通粘贴时与 `text/plain` 一起写回。
+3. `image/png` 落入 ImageStore，representation 只保存文件名、hash、大小和尺寸。
+4. `application/file-list` 保存路径列表，`plain_text/search_text` 保存文件名和路径文本。
+5. `primary_format` 只决定列表展示和默认动作，不丢弃其它 representation。
 
 ### 6. 采集/入库流程
 
@@ -193,16 +246,17 @@ pub struct CaptureSettings {
 // clipboard/ingest.rs
 pub fn build_item(
     store: &ImageStore,
-    payload: &ClipboardPayload,
+    payload: &ClipboardCapture,
     capture: &CaptureSettings,
 ) -> Result<Option<ClipItem>>;
 ```
 
 关键规则：
 
-- 文本：`content` 存源表示（HTML/RTF/plain），`search_text` 存纯文本用于 FTS。
-- 图片：`content` 存 `<hash>.png`，`content_hash = blake3(Image, file_name)`，图片字节哈希决定文件名 → 去重对字节敏感。
-- 文件：`content` 存换行分隔的绝对路径，`search_text` 存文件名列表用于 FTS。
+- 文本：`content` 和 `plain_text` 存纯文本；HTML/RTF 存入 `representations_json`。
+- 图片：`content` 存 `<hash>.png`，`image/png` representation 存文件名、hash、size、width、height；图片字节哈希决定文件名 → 去重对字节敏感。
+- 文件：`content` 存换行分隔的绝对路径，`application/file-list` representation 存路径列表，`search_text` 存文件名列表用于 FTS。
+- 去重：优先使用 `primary_format + preferred representation hash`；富文本同时带 plain/html 时，HTML/RTF hash 参与指纹，避免样式不同但 plain 相同的内容互相覆盖。
 - 子类型识别：url / email / color / path（纯文本场景）。
 - 大小限制：超过限制直接丢弃，避免数据库/磁盘被大文件撑爆。
 
@@ -214,13 +268,16 @@ pub fn write_to_clipboard(
     store: &ImageStore,
     guard: &WritebackGuard,
     item: &ClipItem,
-    plain: bool,
+    mode: PasteMode,
 ) -> Result<()>;
 ```
 
-- `plain = false`：按原 `kind` 写回。
-- `plain = true`：强制纯文本（仅文本/文件有意义）。
+- `PasteMode::Rich`：按 `primary_format` 和 `availableFormats` 写回可用格式组合。
+- `PasteMode::Plain`：只写 `text/plain`，仅文本、HTML、RTF、文件路径有意义。
+- `PasteMode::FilesAsPaths`：文件条目写路径文本。
+- 图片纯文本粘贴第一阶段不支持，UI 禁用该动作并显示原因。
 - 写回前调用 `guard.suppress(content_hash)`，避免监听线程把同内容再次入库。
+- 写回日志必须包含 `clipId`、`primaryFormat`、`availableFormats`、`pasteMode`、`writtenFormats`、`guardHash`。
 
 ### 8. 监听升级
 
@@ -247,6 +304,9 @@ export interface ClipItem {
   contentHash: string;
   searchText?: string;
   subKind?: "html" | "rtf" | "url" | "email" | "color" | "path";
+  primaryFormat: ClipboardRepresentation["format"];
+  availableFormats: ClipboardRepresentation[];
+  plainText: string;
   width?: number;
   height?: number;
   size?: number;

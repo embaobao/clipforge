@@ -85,15 +85,18 @@ await repository.import({
 
 ## MCP 工具映射
 
-后续 MCP server 应映射到这些工具名：
+内测阶段 MCP server 统一使用 `clipf.*` 工具名：
 
-- `clipboard.capture`
-- `clipboard.search`
-- `clipboard.copy`
-- `clipboard.update`
-- `clipboard.delete`
-- `clipboard.export`
-- `clipboard.import`
+- `clipf.capture`
+- `clipf.get`
+- `clipf.list`
+- `clipf.search`
+- `clipf.analyze`
+- `clipf.copy`
+- `clipf.update`
+- `clipf.delete`
+- `clipf.export`
+- `clipf.import`
 
 MCP 只负责标准调用入口，不应该引入复杂 AI 配置流程。
 
@@ -114,7 +117,7 @@ flowchart LR
 
 ```ts
 await bridge.call({
-  tool: "clipboard.capture",
+  tool: "clipf.capture",
   input: {
     content: "hello from agent",
     source: "external",
@@ -124,7 +127,7 @@ await bridge.call({
 });
 
 await bridge.call({
-  tool: "clipboard.search",
+  tool: "clipf.search",
   input: {
     text: "hello",
     bucket: "all",

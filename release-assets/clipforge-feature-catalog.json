@@ -1,0 +1,64 @@
+{
+  "version": "0.1.0",
+  "updatedAt": "2026-07-10",
+  "title": "ClipForge 安装必读 / Read Me First",
+  "features": [
+    {
+      "title": "剪贴板历史",
+      "description": "自动采集文本，写入本地 SQLite，按时间浏览和搜索。"
+    },
+    {
+      "title": "悬浮面板",
+      "description": "全局快捷键、托盘入口、圆角非激活面板、失焦隐藏和 pin 固定。"
+    },
+    {
+      "title": "搜索与筛选",
+      "description": "支持关键字、收藏、垃圾箱、类型和来源信息展示。"
+    },
+    {
+      "title": "复制与快速键入",
+      "description": "支持复制到系统剪贴板、选中项粘贴、数字快捷选择。"
+    },
+    {
+      "title": "收藏与垃圾箱",
+      "description": "收藏保护、软删除、恢复、彻底删除和清空垃圾箱。"
+    },
+    {
+      "title": "详情与聚合",
+      "description": "右键进入详情，多选进入聚合页面，支持链接和 Markdown 预览。"
+    },
+    {
+      "title": "日志与清理",
+      "description": "分级日志、保留策略、历史过量清理，收藏内容不会自动删除。"
+    },
+    {
+      "title": "设置中心",
+      "description": "展示配置、数据库、日志、权限诊断和 MCP 状态。"
+    },
+    {
+      "title": "MCP 接口",
+      "description": "提供 stdio 工具面，外部客户端可通过命令接入基础剪贴板能力。"
+    }
+  ],
+  "shortcuts": [
+    ["Control", "V", "唤起面板"],
+    ["0-8", "快速选择"],
+    ["Space", "多选"],
+    ["Tab", "切换视图"],
+    ["Control", "J", "快速操作"],
+    ["Control", "P", "固定面板"],
+    ["Control", "F", "收藏"]
+  ],
+  "mcpTools": [
+    ["clipf.capture", "写入历史"],
+    ["clipf.get", "按 id 获取条目"],
+    ["clipf.list", "读取最近列表"],
+    ["clipf.search", "搜索历史"],
+    ["clipf.analyze", "分析内容"],
+    ["clipf.copy", "按 id 快速复制条目内容"],
+    ["clipf.update", "修改收藏、置顶、备注和 bucket"],
+    ["clipf.delete", "移动到垃圾箱"],
+    ["clipf.export", "导出 JSON"],
+    ["clipf.import", "导入 JSON"]
+  ]
+}

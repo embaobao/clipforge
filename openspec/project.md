@@ -32,6 +32,19 @@
 
 | 提案 | 状态 | 说明 |
 |------|------|------|
-| [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | 待实现 | 引入 clipboard-rs，支持图片、文件、HTML/RTF 富文本剪贴板历史 |
-| [context-plugin-agent-runtime](./changes/context-plugin-agent-runtime/proposal.md) | 提案中 | 上下文快照、插件边界、Agent/AG-UI 桥、MCP 工具面与自动升级能力 |
-| [detail-rich-editor-agent-bridge](./changes/detail-rich-editor-agent-bridge/proposal.md) | 提案中 | 详情页 Tiptap 富文本编辑、变量上下文、MCP/Agent 扩展桥 |
+| [github-release-update-distribution](./changes/github-release-update-distribution/proposal.md) | P0 提案中 | 先补齐 GitHub Releases 分发、版本检查、签名更新、失败回滚和本地更新状态 |
+| [app-internationalization-en-support](./changes/app-internationalization-en-support/proposal.md) | P0.5 提案中 | 添加基础国际化能力，支持中文/英文切换，并为公开分发前的用户可见文案建立 key 与检查流程 |
+| [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | P1 待实现 | 格式支持基础层：引入 clipboard-rs，支持图片、文件、HTML/RTF 富文本剪贴板历史 |
+| [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) | P1 提案中 | 格式支持保真层：补齐 HTML/RTF/图片/文件的多 representation、纯文本降级和回写验证矩阵 |
+| [search-filter-tags-filetypes](./changes/search-filter-tags-filetypes/proposal.md) | P2 提案中 | 搜索增强依托前面的格式字段，支持 `tag:`、`#tag`、`type:`、`file:`、`kind:`、`bucket:` 等结构化筛选 |
+| [content-smart-format-decoder](./changes/content-smart-format-decoder/proposal.md) | P3 小功能提案 | 智能识别代码、JSON、URL/Base64/JWT/Unicode/HTML entity，并提供格式化、补齐和解码动作 |
+| [context-plugin-agent-runtime](./changes/context-plugin-agent-runtime/proposal.md) | 提案中 | 上下文快照、插件边界、Agent 智能建议反吐、AG-UI 桥、MCP 工具面与自动升级能力 |
+| [detail-rich-editor-agent-bridge](./changes/detail-rich-editor-agent-bridge/proposal.md) | 提案中 | 详情页紧凑编辑、tag 快速编辑、`#tag` 建议、AI 建议回填、后续 Tiptap 富文本编辑 |
+
+## 建议推进顺序
+
+1. P0：先完成 [github-release-update-distribution](./changes/github-release-update-distribution/proposal.md)，让后续功能有稳定分发、检查升级和回滚基础。
+2. P0.5：公开分发前完成 [app-internationalization-en-support](./changes/app-internationalization-en-support/proposal.md)，支持英文并建立新增文案收口流程。
+3. P1：再完成格式支持，先落 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md)，再补 [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md)。
+4. P2：搜索增强依托格式字段推进，完成 [search-filter-tags-filetypes](./changes/search-filter-tags-filetypes/proposal.md)，其中 `#tag` 与详情页 tag 跳转可先用现有 tags 字段铺垫。
+5. P3：最后做 [content-smart-format-decoder](./changes/content-smart-format-decoder/proposal.md)，按 JSON 格式化/补齐和常用解码小功能逐步交付。

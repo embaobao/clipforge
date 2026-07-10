@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build:web": "tsc && vite build",
+    "build:manual": "node scripts/generate-release-manual.mjs",
     "build": "bash ./scripts/build-mac-release.sh",
     "build:mac-release": "bash ./scripts/build-mac-release.sh",
     "preview": "vite preview",

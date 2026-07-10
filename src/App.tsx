@@ -40,6 +40,7 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
+import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { Avatar, AvatarFallback, AvatarImage } from "./components/ui/avatar";
 import {
   DropdownMenu,
@@ -53,7 +54,7 @@ import {
 import clipforgeAppIcon from "../src-tauri/icons/64x64.png";
 import "./App.css";
 
-type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment";
+type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
 export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "file" | "image" | "json" | "chart" | "table";
 type ClipBucket = "history" | "archive" | "snippet";
 
@@ -88,6 +89,8 @@ type ContentSource =
   | "command"
   | "markdown"
   | "code"
+  | "json"
+  | "table"
   | "image"
   | "file"
   | "link"
@@ -197,6 +200,13 @@ type AccessibilityPermissionPayload = {
   status: "granted" | "missing" | "unsupported";
   canReadFocusedInput: boolean;
   message: string;
+};
+
+type AccessibilityFirstPromptPayload = {
+  status: "granted" | "missing" | "unsupported" | "error";
+  message: string;
+  prompted: boolean;
+  createdAt: number;
 };
 
 type CaptureClipPayload = {
@@ -405,6 +415,14 @@ function isMarkdownLike(content: string) {
   );
 }
 
+function isJsonLike(content: string) {
+  const trimmed = content.trim();
+  return (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  );
+}
+
 function parseUrlSummary(urlValue: string) {
   try {
     const url = new URL(urlValue);
@@ -480,6 +498,17 @@ function analyzeContent(content: string): ClipAnalysis {
       isMarkdown: false,
     };
   }
+  if (isJsonLike(content)) {
+    const isArray = content.trimStart().startsWith("[");
+    return {
+      source: "json",
+      sourceName: "JSON",
+      badge: "JSON",
+      title: isArray ? "JSON Array" : "JSON Object",
+      summary: middleEllipsis(normalized, 56, 12),
+      isMarkdown: false,
+    };
+  }
   if (isMarkdownLike(content)) {
     const titleMatch = content.match(/^#{1,6}\s+(.+)$/m);
     const title = titleMatch ? titleMatch[1].trim().slice(0, 60) : firstLine.slice(0, 60) || "Markdown";
@@ -527,6 +556,7 @@ function detectKind(content: string): ClipKind {
     return "link";
   }
   if (analysis.source === "command") return "command";
+  if (analysis.source === "json") return "json";
   if (analysis.source === "markdown") return "markdown";
   if (analysis.source === "code") return "code";
   return "text";
@@ -542,6 +572,7 @@ function getTypeTags(analysis: ClipAnalysis): string[] {
   if (analysis.attachment) return [analysis.attachment.isImage ? "图片" : "资源"];
   if (analysis.source === "github" || analysis.source === "gitlab" || analysis.source === "link") return ["链接"];
   if (analysis.source === "command") return ["命令"];
+  if (analysis.source === "json") return ["JSON"];
   if (analysis.source === "markdown") return ["Markdown"];
   if (analysis.source === "code") return ["代码"];
   return ["文本"];
@@ -612,6 +643,9 @@ function getSearchSuggestionToken(suggestion: SearchSuggestion) {
     markdown: "@Markdown",
     command: "@命令",
     attachment: "@文件",
+    json: "@JSON",
+    chart: "@图表",
+    table: "@表格",
   };
   return tokenMap[suggestion.typeFilter];
 }
@@ -628,6 +662,9 @@ function getSearchSuggestionAliases(suggestion: SearchSuggestion) {
     markdown: ["md", "markdown"],
     command: ["cmd", "command", "shell", "命令"],
     attachment: ["file", "files", "attachment", "image", "img", "文件", "图片", "资源"],
+    json: ["json", "结构化"],
+    chart: ["chart", "图表"],
+    table: ["table", "表格", "tsv", "csv"],
   };
   return [label, ...aliasMap[suggestion.typeFilter]];
 }
@@ -772,7 +809,9 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
   const updatedAt = typeof raw.updatedAt === "number" ? raw.updatedAt : createdAt;
   const lastSeenAt = typeof raw.lastSeenAt === "number" ? raw.lastSeenAt : updatedAt;
   const analysis = analyzeContent(raw.content);
-  const kind = detectKind(raw.content);
+  const detectedKind = detectKind(raw.content);
+  const validKinds: ClipKind[] = ["text", "code", "link", "markdown", "command", "attachment", "json", "chart", "table"];
+  const kind = validKinds.includes(raw.kind as ClipKind) ? (raw.kind as ClipKind) : detectedKind;
   const payloadKind =
     typeof raw.payloadKind === "string"
       ? (raw.payloadKind as ClipPayloadKind)
@@ -852,7 +891,7 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
 
 function logAppError(level: "info" | "warn" | "error", message: string, context?: unknown) {
   const contextText =
-    typeof context === "string" ? context : context ? JSON.stringify(context).slice(0, 2000) : "";
+    typeof context === "string" ? context : context ? JSON.stringify(context).slice(0, 8000) : "";
   invoke("append_app_log", { level, message, context: contextText }).catch(() => {
     if (level === "error") console.error(message, context);
   });
@@ -1390,16 +1429,24 @@ function ClipForgeApp() {
   }, [isSettingsWindow, setPanelClosing]);
 
   useEffect(() => {
+    logAppError("info", "frontend-environment", getFrontendEnvironmentSnapshot());
+
     const onError = (event: ErrorEvent) => {
       logAppError("error", event.message, {
+        event: "window.error",
         filename: event.filename,
         lineno: event.lineno,
         colno: event.colno,
-        stack: event.error instanceof Error ? event.error.stack : undefined,
+        ...getErrorDiagnostics(event.error ?? event.message),
+        frontend: getFrontendEnvironmentSnapshot(),
       });
     };
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
-      logAppError("error", "Unhandled promise rejection", String(event.reason));
+      logAppError("error", "Unhandled promise rejection", {
+        event: "window.unhandledrejection",
+        ...getErrorDiagnostics(event.reason),
+        frontend: getFrontendEnvironmentSnapshot(),
+      });
     };
     window.addEventListener("error", onError);
     window.addEventListener("unhandledrejection", onUnhandledRejection);
@@ -1408,6 +1455,25 @@ function ClipForgeApp() {
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
     };
   }, []);
+
+  useEffect(() => {
+    if (isSettingsWindow) return;
+    let disposed = false;
+    listen<AccessibilityFirstPromptPayload>("clipforge://accessibility-first-prompt", ({ payload }) => {
+      if (disposed) return;
+      logAppError("info", "accessibility-first-prompt", payload);
+      if (payload.status === "granted") {
+        setNativeStatus("辅助功能权限已生效，可继续快速粘贴");
+      } else if (payload.prompted) {
+        setNativeStatus("已请求辅助功能授权；若系统设置已勾选但仍无效，请重启 ClipForge");
+      } else {
+        setNativeStatus(payload.message || "辅助功能权限状态已记录");
+      }
+    }).catch((error) => logAppError("warn", "Register accessibility prompt listener failed", String(error)));
+    return () => {
+      disposed = true;
+    };
+  }, [isSettingsWindow]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1736,8 +1802,11 @@ function ClipForgeApp() {
       { id: "link", label: "链接", hint: `${countKind("link")}`, kind: "type", typeFilter: "link" },
       { id: "attachment", label: "文件", hint: `${countKind("attachment")}`, kind: "type", typeFilter: "attachment" },
       { id: "code", label: "代码", hint: `${countKind("code")}`, kind: "type", typeFilter: "code" },
+      { id: "json", label: "JSON", hint: `${countKind("json")}`, kind: "type", typeFilter: "json" },
       { id: "command", label: "命令", hint: `${countKind("command")}`, kind: "type", typeFilter: "command" },
       { id: "markdown", label: "Markdown", hint: `${countKind("markdown")}`, kind: "type", typeFilter: "markdown" },
+      { id: "table", label: "表格", hint: `${countKind("table")}`, kind: "type", typeFilter: "table" },
+      { id: "chart", label: "图表", hint: `${countKind("chart")}`, kind: "type", typeFilter: "chart" },
     ];
     const saved = settings.tagRules
       .map((rule) => rule.label.trim())
@@ -2374,6 +2443,30 @@ function ClipForgeApp() {
     });
   }
 
+  async function updateClipContent(item: ClipItem, content: string) {
+    const payload = await invoke<Partial<ClipItem>>("update_clip_record", {
+      input: {
+        id: item.id,
+        content,
+      },
+    });
+    const normalized = normalizeClip(payload, settingsRef.current);
+    if (!normalized) throw new Error("保存后的剪贴板内容为空");
+    setClips((current) => {
+      const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+      clipsRef.current = next;
+      return next;
+    });
+    setSelectedId(normalized.id);
+    setNativeStatus("已保存详情编辑");
+    logAppError("info", "clip-detail-edit: saved", {
+      id: normalized.id,
+      payloadKind: normalized.payloadKind,
+      chars: normalized.content.length,
+    });
+    return normalized;
+  }
+
   async function deleteClips(ids: string[]) {
     const now = Date.now();
     // 删除后锚定到「被删项当前位置的下一项」；若已是最后一项则锚定上一项；都没有则不锚定。
@@ -2617,6 +2710,7 @@ function ClipForgeApp() {
                   onCopyText={copyText}
                   onOpen={openClipTarget}
                   onPasteText={pasteText}
+                  onUpdateContent={updateClipContent}
                   quickActions={[
                     ...(clip && canOpenClipTarget(clip)
                       ? [
@@ -3395,6 +3489,12 @@ function VirtualList<T extends { id: string }>({
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
+    if (typeof ResizeObserver === "undefined") {
+      const syncHeight = () => setHeight(node.getBoundingClientRect().height || 420);
+      syncHeight();
+      window.addEventListener("resize", syncHeight);
+      return () => window.removeEventListener("resize", syncHeight);
+    }
     const resizeObserver = new ResizeObserver(([entry]) => {
       setHeight(entry.contentRect.height);
     });

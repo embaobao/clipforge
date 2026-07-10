@@ -38,6 +38,7 @@ App Core 是唯一业务真实源，负责：
 插件是能力单元，不等于 MCP server。插件可以有不同运行形态：
 
 - `builtin`：内置插件，例如 Markdown 检查、模板变量渲染。
+- `script`：用户或 Agent 生成的本地快捷指令脚本，使用受控变量、权限和确认流程执行。
 - `mcp`：外部 MCP server 暴露的工具。
 - `rpc`：本地 sidecar 或远程服务。
 - `panel`：只返回声明式渲染 schema，由详情页沙盒渲染。
@@ -75,6 +76,7 @@ export type ClipboardContextSnapshot = {
     payloadKind: string;
     title: string;
     summary: string;
+    tags: string[];
     chars: number;
     lines: number;
     createdAt: number;
@@ -87,6 +89,19 @@ export type ClipboardContextSnapshot = {
     bundleId?: string;
     iconAvailable: boolean;
     executablePath?: string;
+  };
+  activeApp?: {
+    name: string;
+    bundleId?: string;
+    iconAvailable: boolean;
+    executablePath?: string;
+  };
+  provenance?: {
+    generatedBy?: "user" | "agent" | "plugin" | "system";
+    agentProviderId?: string;
+    agentRunId?: string;
+    agentGenerated: boolean;
+    defaultTags: string[];
   };
   detail: {
     routePath: "/clip/$clipId";
@@ -146,6 +161,7 @@ export type EditorSessionSnapshot = {
 - 后台监听和显式 capture 的 `kind` 分类路径要统一。
 - `sourceApp.executablePath` 默认只允许本地 trusted 插件读取。
 - 大正文、OCR 文本、编辑器全文必须按权限和长度上限暴露。
+- Agent 生成或 Agent 建议应用保存后的条目必须标记来源，并默认追加 `AI` tag。
 
 ## 4. 插件边界
 
@@ -153,8 +169,13 @@ export type EditorSessionSnapshot = {
 export type ClipForgePluginManifest = {
   id: string;
   name: string;
+  icon: {
+    type: "lucide" | "image";
+    value: string;
+  };
+  description?: string;
   version: string;
-  runtime: "builtin" | "mcp" | "rpc" | "panel";
+  runtime: "builtin" | "script" | "mcp" | "rpc" | "panel";
   entry?: string;
   capabilities: Array<
     | "context.read"
@@ -162,7 +183,13 @@ export type ClipForgePluginManifest = {
     | "content.transform"
     | "editor.previewPatch"
     | "editor.applyPatch"
+    | "editor.suggestUpdate"
+    | "metadata.updateTags"
     | "clipboard.write"
+    | "external.openUrl"
+    | "external.openApp"
+    | "external.openTerminal"
+    | "external.runCommand"
     | "agent.call"
     | "panel.render"
     | "network.request"
@@ -173,12 +200,26 @@ export type ClipForgePluginManifest = {
     surface: "detail" | "editor" | "quick-action" | "background";
     actionId: string;
     label: string;
+    shortcut?: string;
   }>;
+  matching: {
+    priority: number;
+    contentKinds?: string[];
+    payloadKinds?: string[];
+    sourceAppBundleIds?: string[];
+    activeAppBundleIds?: string[];
+    urlPatterns?: string[];
+    tagFilters?: string[];
+  };
   permissions: {
     requiresUserConfirmation: boolean;
     allowFullContent: boolean;
     allowSourceExecutablePath: boolean;
     allowNetwork: boolean;
+    allowOpenUrl: boolean;
+    allowOpenApp: boolean;
+    allowRunCommand: boolean;
+    commandAllowlist?: string[];
   };
   compatibility: {
     app: string;
@@ -189,13 +230,209 @@ export type ClipForgePluginManifest = {
 };
 ```
 
+### 标准内置插件：打开链接
+
+现有详情页“打开链接”能力应改造成内置插件，而不是保留 UI 特判：
+
+```ts
+const openLinkPlugin: ClipForgePluginManifest = {
+  id: "builtin.open-link",
+  name: "打开链接",
+  icon: { type: "lucide", value: "ExternalLink" },
+  version: "1.0.0",
+  runtime: "builtin",
+  capabilities: ["context.read", "external.openUrl"],
+  contextFields: ["clip.url", "clip.content", "clip.payloadKind"],
+  contentTypes: ["link", "text", "markdown", "html"],
+  triggers: [
+    { surface: "detail", actionId: "open-link", label: "打开链接", shortcut: "Mod+J" },
+    { surface: "quick-action", actionId: "open-link", label: "打开链接", shortcut: "Mod+J" }
+  ],
+  matching: {
+    priority: 900,
+    contentKinds: ["link"],
+    payloadKinds: ["link", "html", "markdown", "text"],
+    urlPatterns: ["^https?://"]
+  },
+  permissions: {
+    requiresUserConfirmation: false,
+    allowFullContent: false,
+    allowSourceExecutablePath: false,
+    allowNetwork: false,
+    allowOpenUrl: true,
+    allowOpenApp: false,
+    allowRunCommand: false
+  },
+  compatibility: { app: ">=0.1.0", contextSchema: 1 }
+};
+```
+
+执行规则：
+
+- 插件从 `clip.url` 或内容中的第一个安全 URL 解析目标。
+- 只允许 `http:` / `https:`，其它 scheme 第一阶段必须二次确认或禁用。
+- 执行使用现有 `openUrl` 能力，但调用链改为 `clipboard.plugin.call({ pluginId: "builtin.open-link" })`。
+- 结构化日志记录 `pluginId`、`actionId`、`targetHost`、`permissionDecision`，不记录完整 URL query。
+
+### 标准内置插件：进入详情
+
+普通文本没有更高优先级插件命中时，`Ctrl/Cmd+J` 默认进入详情页：
+
+```ts
+const openDetailPlugin: ClipForgePluginManifest = {
+  id: "builtin.open-detail",
+  name: "进入详情",
+  icon: { type: "lucide", value: "FileJson" },
+  version: "1.0.0",
+  runtime: "builtin",
+  capabilities: ["context.read", "ui.navigateDetail"],
+  contextFields: ["clip.id", "clip.payloadKind", "clip.contentKind"],
+  contentTypes: ["text", "markdown", "code", "command", "attachment"],
+  triggers: [
+    { surface: "quick-action", actionId: "open-detail", label: "进入详情", shortcut: "Mod+J" },
+    { surface: "detail", actionId: "open-detail", label: "进入详情" }
+  ],
+  matching: {
+    priority: 100,
+    contentKinds: ["text", "markdown", "code", "command", "attachment"]
+  },
+  permissions: {
+    requiresUserConfirmation: false,
+    allowFullContent: false,
+    allowSourceExecutablePath: false,
+    allowNetwork: false,
+    allowOpenUrl: false,
+    allowOpenApp: false,
+    allowRunCommand: false
+  },
+  compatibility: { app: ">=0.1.0", contextSchema: 1 }
+};
+```
+
+### `Ctrl/Cmd+J` 动作解析器
+
+`Ctrl/Cmd+J` 是快速动作入口，不再直接绑定“打开链接”或“进入详情”。解析流程：
+
+1. 构造 `ClipboardContextSnapshot`，包含当前 clip、复制来源应用 `sourceApp`、当前前台应用 `activeApp`、触发面和快捷键。
+2. 读取所有启用插件 manifest，过滤 `surface=quick-action/detail` 且 content type 匹配的插件。
+3. 按 `matching.priority`、source app、active app、tag、URL pattern 和用户最近确认记录计算候选。
+4. 如果最高候选是 `builtin.open-link`，直接打开安全链接。
+5. 如果无其它高优先级候选且内容是普通文本，执行 `builtin.open-detail`。
+6. 如果最高候选需要权限确认（如 `runCommand/openApp`），先展示动作预览。
+7. 如果多个候选分数接近，展示紧凑动作菜单，用户选择后记录学习样本。
+
+解析结果：
+
+```ts
+export type PluginActionResolution = {
+  traceId: string;
+  clipId: string;
+  surface: "quick-action" | "detail" | "editor";
+  shortcut?: "Mod+J";
+  selected: {
+    pluginId: string;
+    actionId: string;
+    priority: number;
+    requiresUserConfirmation: boolean;
+  };
+  candidates: Array<{
+    pluginId: string;
+    actionId: string;
+    score: number;
+    reasons: string[];
+  }>;
+};
+```
+
+### Agent 学习与插件优先级
+
+Agent 可以根据用户确认记录提出插件和优先级调整，但不能静默改默认动作：
+
+```ts
+export type PluginLearningRecord = {
+  id: string;
+  createdAt: number;
+  clipId: string;
+  sourceAppBundleId?: string;
+  activeAppBundleId?: string;
+  payloadKind: string;
+  contentKind: string;
+  selectedPluginId: string;
+  selectedActionId: string;
+  rejectedPluginIds: string[];
+  userConfirmed: boolean;
+};
+
+export type PluginPrioritySuggestion = {
+  pluginId: string;
+  reason: string;
+  matchPatch: Partial<ClipForgePluginManifest["matching"]>;
+  confidence: number;
+  status: "draft" | "pending-confirmation" | "applied";
+};
+```
+
+规则：
+
+- 学习来源只来自用户显式选择、执行成功/失败和用户保存的插件草稿。
+- Agent 可生成 `PluginPrioritySuggestion`，由用户确认后写入 manifest 或本地优先级覆盖表。
+- 来源应用和当前应用都可作为匹配条件，例如“从浏览器复制链接且当前在 IDE 时，优先触发 Claude 分析插件”。
+- 优先级更新必须可查看、可禁用、可回滚。
+- 快速面板主路径只读取已编译/缓存后的优先级表，不在快捷键热路径调用 Agent。
+
+### 受控脚本插件
+
+脚本插件是详情页快捷指令，不是任意代码扩展。它由 manifest、变量模板和执行策略组成：
+
+```ts
+export type ScriptPluginSpec = {
+  pluginId: string;
+  shell: "system" | "zsh" | "bash" | "powershell";
+  mode: "open-terminal" | "run-background" | "copy-command";
+  cwd?: string;
+  commandTemplate: string;
+  env?: Record<string, string>;
+  timeoutMs: number;
+  outputMode: "panel" | "toast" | "log-only";
+};
+```
+
+示例：基于当前详情内容打开终端并执行 Claude Code 非交互命令：
+
+```json
+{
+  "pluginId": "user.claude-p-current-clip",
+  "shell": "zsh",
+  "mode": "open-terminal",
+  "cwd": "{{runtime.homeDir}}",
+  "commandTemplate": "claude -p {{json editor.text}}",
+  "timeoutMs": 120000,
+  "outputMode": "panel"
+}
+```
+
+`claude -p` 是 Claude Code 的 print / non-interactive 模式；长输出场景可以使用 `--output-format=stream-json` 作为后续增强。
+
+安全规则：
+
+- `commandTemplate` 只能通过变量渲染器生成 argv 或 shell-escaped 字符串，禁止字符串拼接未转义变量。
+- `mode=open-terminal` 默认比后台执行更安全，因为用户能看到命令窗口；`run-background` 必须单独授权。
+- `allowRunCommand=true` 的插件必须显示将执行的命令预览。
+- Agent 通过 MCP 生成脚本插件时只能保存为 `draft`，第一次执行必须用户确认。
+- `commandAllowlist` 第一阶段至少限制命令前缀，例如 `claude`、`open`、`code`；权限扩大必须重新确认。
+
 插件输出不能直接执行 UI 代码。第一阶段只允许以下输出：
 
 - `renderPanel`：声明式面板 schema。
 - `previewPatch`：编辑器 patch 预览。
 - `replaceSelection`：编辑器选区替换建议。
 - `replaceDocument`：整篇内容替换建议。
+- `suggestUpdate`：Agent 返回智能建议反吐，包含内容 patch、tag patch、说明和风险级别。
+- `updateTags`：tag patch 预览，只能在用户确认后应用。
 - `copyResult`：把结果写到系统剪贴板，需要用户确认。
+- `openUrl`：打开 URL，第一阶段由 `builtin.open-link` 使用。
+- `openApp`：打开本地应用，需要用户确认。
+- `runCommand`：执行受控脚本插件，需要命令预览、权限和日志。
 - `callAgent`：调用 Agent Provider，需要用户确认和日志。
 
 ## 5. Agent 边界
@@ -223,6 +460,29 @@ Agent 输出统一转成 AG-UI events：
 - state snapshot / delta
 - error event
 - custom event：panel render、patch preview、permission prompt
+- custom event：suggest update、tag patch preview、agent generated clip metadata
+
+### Agent 生成内容的来源规则
+
+Agent 生成的新粘贴项或 Agent 建议应用保存后的条目必须携带来源元数据：
+
+```ts
+type AgentGeneratedClipMetadata = {
+  agentGenerated: true;
+  agentProviderId: string;
+  agentRunId: string;
+  suggestionId?: string;
+  appliedAt: number;
+  defaultTags: ["AI"];
+};
+```
+
+规则：
+
+- 默认追加 `AI` tag。
+- 用户手动移除 `AI` tag 后，普通编辑保存不再自动加回。
+- 如果同一条目再次由 Agent 生成、Agent 改写或 Agent 建议应用保存，可以再次追加 `AI` tag。
+- MCP、插件、Agent 日志只记录 `agentProviderId`、`agentRunId`、tag 数量和字段长度，不记录完整正文。
 
 ## 6. MCP 工具面
 
@@ -236,6 +496,7 @@ Agent 输出统一转成 AG-UI events：
 | `clipboard.editor.context` | 获取编辑器 session 上下文 |
 | `clipboard.editor.preview_patch` | 提交 patch 预览，不写入 |
 | `clipboard.editor.apply_patch` | 用户确认后应用到 draft |
+| `clipboard.editor.suggest_update` | 返回智能建议反吐，不写入 |
 | `clipboard.agent.run` | 以 AG-UI 兼容输入启动 Agent run |
 
 MCP tool 返回值必须带 `traceId`、`businessChain`、`redactedFields`、`permissionDecision`，方便排障。
@@ -301,6 +562,8 @@ export type CapabilityVersionRecord = {
 - `payloadKind`
 - `contextSchema`
 - `permissionDecision`
+- `provenance`
+- `defaultTags`
 - `redactedFields`
 
 页面层使用兜底组件隔离：
@@ -320,4 +583,3 @@ export type CapabilityVersionRecord = {
 6. 定义 AG-UI Agent Panel Bridge。
 7. 定义自动升级 registry、兼容性检查、kill switch、回滚日志。
 8. 再进入 Tiptap 编辑器和 Agent 面板实现。
-

@@ -88,26 +88,30 @@ Service Layer 是业务逻辑的唯一实现位置，Tauri command 和 MCP handl
 | `query` | 查询日志 | `text: Option<&str>`, `level: Option<&str>`, `limit: i64` | `Result<Vec<LogEntry>>` |
 | `cleanup` | 清理日志（超过 10MB） | - | `Result<String>` |
 
-## MCP 服务（进程内常驻）
+## MCP 服务（应用托管 + stdio）
 
-MCP 服务不再通过子进程启动，而是作为线程内常驻服务运行：
+当前实现以 `clipforge --mcp` stdio server 为稳定外部入口。应用启动时会自动托管一个 MCP 子进程用于状态检测和应用内展示；外部 MCP Client 仍按 MCP 规范启动自己的 stdio server 进程。
 
-- **启动时机**：应用启动时自动初始化
-- **通信方式**：同进程调用，共享数据库连接
-- **传输层**：支持 stdio（供外部 MCP 客户端）和 in-process（供内部使用）
-- **生命周期**：应用退出时自动清理
+- **启动时机**：应用启动时自动托管；设置页可查看状态。
+- **通信方式**：MCP 子进程通过同一套 Rust 服务函数访问 SQLite、剪贴板和分析能力。
+- **传输层**：stdio。
+- **生命周期**：托管子进程随应用启动和退出；外部客户端进程由客户端管理。
+- **追溯字段**：工具调用返回 `traceId`、`source`、`businessChain`、`permissionDecision`，失败返回 `error.data.hint`。
 
 ### MCP Tools
 
 | 工具名 | 对应 Service | 功能 |
 |--------|-------------|------|
-| `clipboard.capture` | ClipboardService.capture | 采集剪贴板内容 |
-| `clipboard.search` | ClipboardService.search | 搜索历史 |
-| `clipboard.copy` | ClipboardService.copy | 写回剪贴板 |
-| `clipboard.update` | ClipboardService.update | 更新条目 |
-| `clipboard.delete` | ClipboardService.delete | 删除条目 |
-| `clipboard.export` | ClipboardService.export | 导出历史 |
-| `clipboard.import` | ClipboardService.import | 导入历史 |
+| `clipf.capture` | ClipboardService.capture | 采集剪贴板内容 |
+| `clipf.get` | ClipboardService.get | 读取单项 |
+| `clipf.list` | ClipboardService.search | 读取列表 |
+| `clipf.search` | ClipboardService.search | 搜索历史 |
+| `clipf.analyze` | ContentAnalysisService.analyze | 只分析内容 |
+| `clipf.copy` | ClipboardService.copy | 写回剪贴板 |
+| `clipf.update` | ClipboardService.update | 更新条目 |
+| `clipf.delete` | ClipboardService.delete | 删除条目 |
+| `clipf.export` | ClipboardService.export | 导出历史 |
+| `clipf.import` | ClipboardService.import | 导入历史 |
 
 ## 定位策略（聚合 EcoPaste/Maccy/TieZ）
 
@@ -211,4 +215,3 @@ struct NormalizedPosition {
 - **分组快捷键**：列表每 10 项一组，激活组由视口中心决定；`Cmd+0-9` 触发激活组内第 N 项，`Cmd+↑/↓` 切组并焦点跟随新组第一项；纯 `↑/↓` 仍逐项移动。序号 0-9 仅在激活组内显示。
 - **pin 固定**：`PANEL_PINNED` 标志位（对齐 EcoPaste）；所有自动隐藏路径（hide_panel / hide_panel_before_paste / 前端 Escape / 前端失焦）在 pinned 时跳过，面板保持在当前位置。
 - **完成提示**：`completionToast` 状态，聚合复制/删除/批量收藏后 1.2s 短时浮现。
-

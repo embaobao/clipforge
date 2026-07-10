@@ -4483,6 +4483,16 @@ body,
   cursor: pointer;
 }
 
+.agent-mcp-copy-button {
+  color: oklch(0.13 0 0 / 0.72);
+}
+
+.agent-mcp-copy-button:hover,
+.agent-mcp-copy-button:focus-visible {
+  color: oklch(0.12 0 0 / 0.95);
+  background: oklch(1 0 0 / 0.42);
+}
+
 .detail-content {
   min-height: 0;
   overflow: auto;
@@ -6613,7 +6623,8 @@ body,
 }
 
 .kind-chip,
-.source-chip {
+.source-chip,
+.clip-id-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -8541,5 +8552,242 @@ body,
   }
   45% {
     transform: translateY(-2px);
+  }
+}
+
+/* 底部空白区可拖拽：只改变鼠标提示，按钮区保持原点击行为。 */
+.list-footer {
+  cursor: grab;
+}
+
+.list-footer:active {
+  cursor: grabbing;
+}
+
+.list-footer .footer-actions,
+.list-footer .footer-actions *,
+.list-footer .icon-button,
+.footer-profile-trigger {
+  cursor: pointer;
+}
+
+.workspace-crumb-actions .agent-mcp-copy-button,
+.workspace-crumb-actions .detail-edit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 8px !important;
+  color: oklch(0.14 0 0 / 0.82);
+  background: oklch(1 0 0 / 0.42) !important;
+  border: 1px solid oklch(0 0 0 / 0.12) !important;
+  border-radius: var(--cf-radius-md);
+  font-size: 10px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.workspace-crumb-actions .agent-mcp-copy-button:hover,
+.workspace-crumb-actions .agent-mcp-copy-button:focus-visible,
+.workspace-crumb-actions .detail-edit-button:hover,
+.workspace-crumb-actions .detail-edit-button:focus-visible,
+.workspace-crumb-actions .detail-edit-button.active {
+  color: oklch(0.98 0 0 / 0.96);
+  background: oklch(0.15 0 0 / 0.88) !important;
+  border-color: oklch(0.15 0 0 / 0.72) !important;
+  outline: none;
+}
+
+.workspace-crumb-actions .agent-mcp-copy-button.copied {
+  color: oklch(0.12 0 0 / 0.9);
+  background: oklch(0.88 0.16 145 / 0.46) !important;
+  border-color: oklch(0.6 0.16 145 / 0.38) !important;
+}
+
+.json-preview,
+.detail-editor {
+  display: grid;
+  gap: 8px;
+  min-height: 100%;
+  padding: 10px;
+}
+
+.json-preview-toolbar,
+.detail-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.json-preview-toolbar > span,
+.detail-editor-toolbar > span {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  color: oklch(0.12 0 0 / 0.88);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.json-preview-toolbar em,
+.detail-editor-toolbar em {
+  overflow: hidden;
+  color: oklch(0.28 0 0 / 0.56);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.json-preview-toolbar button,
+.detail-editor-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  color: oklch(0.15 0 0 / 0.82);
+  background: oklch(1 0 0 / 0.38);
+  border: 1px solid oklch(0 0 0 / 0.12);
+  border-radius: var(--cf-radius-md);
+  font-size: 10px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.detail-editor-toolbar > div {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.json-preview-toolbar button:hover,
+.detail-editor-toolbar button:hover,
+.detail-editor-toolbar button:focus-visible {
+  color: oklch(0.98 0 0);
+  background: oklch(0.15 0 0 / 0.88);
+}
+
+.detail-editor-toolbar button:disabled {
+  color: oklch(0.28 0 0 / 0.38);
+  background: oklch(1 0 0 / 0.2);
+  cursor: not-allowed;
+}
+
+.json-preview pre {
+  min-height: auto !important;
+  margin: 0 !important;
+  padding: 10px !important;
+  color: oklch(0.96 0 0 / 0.94) !important;
+  background: oklch(0.13 0 0 / 0.94);
+  border: 1px solid oklch(1 0 0 / 0.12);
+  border-radius: 6px;
+  font-family: var(--cf-font-mono);
+  font-size: 11px !important;
+  line-height: 1.55 !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-preview-error,
+.detail-editor-error {
+  margin: 0;
+  padding: 7px 8px;
+  color: oklch(0.34 0.12 28 / 0.92);
+  background: oklch(0.94 0.06 45 / 0.46);
+  border: 1px solid oklch(0.64 0.1 30 / 0.24);
+  border-radius: var(--cf-radius-md);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.detail-editor-textarea {
+  min-height: 260px;
+  resize: vertical;
+  padding: 10px;
+  color: oklch(0.12 0 0 / 0.92);
+  background: oklch(1 0 0 / 0.54);
+  border: 1px solid oklch(0 0 0 / 0.14);
+  border-radius: var(--cf-radius-lg);
+  font-family: var(--cf-font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  outline: none;
+}
+
+.detail-editor-textarea:focus {
+  background: oklch(1 0 0 / 0.68);
+  border-color: oklch(0.18 0 0 / 0.36);
+  box-shadow: 0 0 0 2px oklch(0.15 0 0 / 0.08);
+}
+
+/* 旧 WebKit 兜底：不支持 oklch/color-mix 时才启用，避免透明壳拖拽或颜色声明失效。 */
+@supports not (color: oklch(0.5 0 0)) {
+  .app-shell {
+    height: 100vh !important;
+    color: rgba(18, 18, 18, 0.94) !important;
+    background: rgba(250, 250, 250, var(--cf-panel-bg-opacity, 0.72)) !important;
+    border-color: rgba(0, 0, 0, 0.14) !important;
+    box-shadow:
+      0 20px 54px rgba(0, 0, 0, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.92) !important;
+  }
+
+  .quick-panel,
+  .workspace-crumb,
+  .list-footer,
+  .floating-search-surface,
+  .floating-search-pill,
+  .quick-preview-card,
+  .multi-select-toolbar,
+  .centered-onboarding-tooltip {
+    color: rgba(18, 18, 18, 0.92) !important;
+    background: rgba(255, 255, 255, 0.84) !important;
+    border-color: rgba(0, 0, 0, 0.12) !important;
+  }
+
+  .detail-content,
+  .detail-meta,
+  .workspace-action-strip button,
+  .detail-link-grid button,
+  .clip-context-menu,
+  .footer-profile-menu.dropdown-content,
+  .app-tooltip-card {
+    color: rgba(18, 18, 18, 0.9) !important;
+    background: rgba(255, 255, 255, 0.88) !important;
+    border-color: rgba(0, 0, 0, 0.1) !important;
+  }
+
+  .quick-row,
+  .quick-index,
+  .quick-check,
+  .kind-chip,
+  .source-chip,
+  .clip-id-chip,
+  .detail-edit-button,
+  .agent-mcp-copy-button,
+  .icon-button {
+    color: rgba(18, 18, 18, 0.78) !important;
+    background: rgba(255, 255, 255, 0.42) !important;
+    border-color: rgba(0, 0, 0, 0.1) !important;
+  }
+
+  .icon-button.active,
+  .centered-onboarding-primary {
+    color: #ffffff !important;
+    background: rgba(24, 24, 24, 0.88) !important;
+    border-color: rgba(24, 24, 24, 0.76) !important;
   }
 }

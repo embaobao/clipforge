@@ -105,25 +105,31 @@ Deletion is soft by default. Hard cleanup is controlled by retention settings.
 
 The external API surface is defined in [`src/services/contracts.ts`](src/services/contracts.ts). A minimal round trip is available in [`src/services/example.ts`](src/services/example.ts).
 
-Example tool mapping for future MCP:
+Current MCP tool namespace:
 
 ```text
-clipboard.capture
-clipboard.search
-clipboard.copy
-clipboard.update
-clipboard.delete
-clipboard.export
-clipboard.import
+clipf.capture
+clipf.get
+clipf.list
+clipf.search
+clipf.analyze
+clipf.copy
+clipf.update
+clipf.delete
+clipf.export
+clipf.import
 ```
 
 Read more in [`docs/SERVICE_CONTRACTS.md`](docs/SERVICE_CONTRACTS.md).
+MCP setup examples are in [`docs/MCP_QUICK_START.md`](docs/MCP_QUICK_START.md).
 
 ## Documentation
 
 - [`docs/INTRODUCTION.md`](docs/INTRODUCTION.md) - product overview and principles
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - runtime architecture
 - [`docs/SERVICE_CONTRACTS.md`](docs/SERVICE_CONTRACTS.md) - import/export/sync/MCP contracts
+- [`docs/MCP_QUICK_START.md`](docs/MCP_QUICK_START.md) - MCP stdio and Agent integration
+- [`docs/FEATURE_CATALOG.md`](docs/FEATURE_CATALOG.md) - release manual source catalog
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) - development workflow
 - [`SECURITY.md`](SECURITY.md) - clipboard privacy and reporting
 - [`CHANGELOG.md`](CHANGELOG.md) - release notes

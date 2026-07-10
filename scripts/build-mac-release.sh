@@ -26,7 +26,14 @@ MUST_READ_TARGET="0_安装必读_READ_ME_FIRST_ClipForge.html"
 
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR" "$RELEASE_DIR"
+find "$RELEASE_DIR" -maxdepth 1 \( \
+  -name "${PRODUCT_NAME}_*.dmg" -o \
+  -name "${PRODUCT_NAME}_*.zip" -o \
+  -name "${PRODUCT_NAME}_*_internal-test" -o \
+  -name "CLIPFORGE_MUST_READ.html" \
+\) -exec rm -rf {} +
 
+node scripts/generate-release-manual.mjs
 pnpm tauri build --bundles app
 
 if command -v codesign >/dev/null 2>&1; then
@@ -46,6 +53,7 @@ fi
 
 cp -R "$APP_BUNDLE_PATH" "$STAGING_DIR/"
 cp "$MUST_READ_SOURCE" "${STAGING_DIR}/${MUST_READ_TARGET}"
+cp "$MUST_READ_SOURCE" "${RELEASE_DIR}/CLIPFORGE_MUST_READ.html"
 ln -s /Applications "${STAGING_DIR}/Applications"
 
 rm -f "$OUTPUT_DMG_PATH"

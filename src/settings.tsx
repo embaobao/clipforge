@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  BookOpen,
+  Copy,
   Database,
   ExternalLink,
   Eye,
+  FileDown,
   FileCode,
   Plus,
   RefreshCw,
@@ -14,6 +17,7 @@ import {
   Terminal,
   Trash2,
 } from "lucide-react";
+import { getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 
 interface AppSettings {
   globalShortcut: string;
@@ -142,6 +146,13 @@ interface LogStatsPayload {
   retentionDays: number;
   autoCleanup: boolean;
   intervalMin: number;
+}
+
+interface DiagnosticsExportPayload {
+  path: string;
+  createdAt: number;
+  logCount: number;
+  summary: string;
 }
 
 function formatBytes(bytes: number): string {
@@ -328,6 +339,7 @@ const SECTIONS = [
   { key: "shortcut", label: "快捷键", icon: Terminal },
   { key: "display", label: "面板显示", icon: Eye },
   { key: "integration", label: "集成", icon: Terminal },
+  { key: "manual", label: "使用手册", icon: BookOpen },
   { key: "content", label: "内容识别", icon: FileCode },
   { key: "storage", label: "数据存储", icon: Database },
   { key: "tags", label: "Tag 规则", icon: Tag },
@@ -408,6 +420,22 @@ export function SettingsApp() {
       const result = await invoke<string>("cleanup_app_logs");
       await refreshLogStats();
       setState((prev) => ({ ...prev, status: result }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function exportDiagnosticsBundle() {
+    setState((prev) => ({ ...prev, status: "正在导出排查包…" }));
+    try {
+      const result = await invoke<DiagnosticsExportPayload>("export_diagnostics_bundle", {
+        frontend: getFrontendEnvironmentSnapshot(),
+      });
+      await refreshLogStats();
+      setState((prev) => ({
+        ...prev,
+        status: `${result.summary} 路径：${result.path}`,
+      }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
     }
@@ -496,15 +524,23 @@ export function SettingsApp() {
     }
   }
 
-  async function updateMcp(action: "start" | "stop" | "refresh") {
+  function getMcpCommand() {
+    return state.mcp?.command || "/Applications/ClipForge.app/Contents/MacOS/clipforge --mcp";
+  }
+
+  async function copyMcpCommand(source: string) {
+    const command = getMcpCommand();
     try {
-      const command =
-        action === "start"
-          ? "start_mcp_server"
-          : action === "stop"
-            ? "stop_mcp_server"
-            : "get_mcp_status";
-      const mcp = await invoke<McpStatusPayload>(command);
+      await navigator.clipboard.writeText(command);
+      setState((prev) => ({ ...prev, status: `${source} 接入命令已复制` }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function refreshMcpStatus() {
+    try {
+      const mcp = await invoke<McpStatusPayload>("get_mcp_status");
       setState((prev) => ({ ...prev, mcp, status: mcp.message }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
@@ -730,20 +766,57 @@ export function SettingsApp() {
               </div>
               <div className="setting-card permission-card">
                 <span>MCP Server</span>
-                <strong>{state.mcp?.running ? "运行中" : "未运行"} · {state.mcp?.transport ?? "stdio"}</strong>
-                <p className="path">{state.mcp?.command ?? "加载中…"}</p>
-                <p>{state.mcp?.tools.join(" / ")}</p>
+                <strong>{state.mcp?.running ? "常驻运行中" : "常驻状态未确认"} · {state.mcp?.transport ?? "stdio"}</strong>
+                <p>ClipForge 启动时自动托管 MCP 状态；这里不提供停止入口，避免测试用户误关常驻服务。</p>
+                <div className="command-copy-row">
+                  <code>{getMcpCommand()}</code>
+                  <button className="secondary-button" onClick={() => void copyMcpCommand("MCP")} type="button">
+                    <Copy size={13} />
+                    复制接入命令
+                  </button>
+                </div>
+                <p className="mcp-tool-list">{state.mcp?.tools.join(" / ") || "刷新后显示当前工具列表"}</p>
                 <div className="button-row">
-                  <button className="secondary-button" onClick={() => updateMcp("start")} type="button">
-                    启动
-                  </button>
-                  <button className="secondary-button" onClick={() => updateMcp("stop")} type="button">
-                    停止
-                  </button>
-                  <button className="secondary-button" onClick={() => updateMcp("refresh")} type="button">
+                  <button className="secondary-button" onClick={() => void refreshMcpStatus()} type="button">
+                    <RefreshCw size={13} />
                     刷新
                   </button>
                 </div>
+              </div>
+            </SettingGroup>
+          )}
+
+          {section === "manual" && (
+            <SettingGroup title="使用手册与 MCP 接入">
+              <div className="setting-card permission-card mcp-doc-card">
+                <span>Agent 快速接入</span>
+                <strong>工具命名统一使用 clipf.*，不保留测试期旧别名。</strong>
+                <p>应用启动时会自动托管 MCP 服务状态；外部 Agent / MCP Client 使用 stdio 命令接入。</p>
+                <div className="command-copy-row">
+                  <code>{getMcpCommand()}</code>
+                  <button className="secondary-button" onClick={() => void copyMcpCommand("Agent")} type="button">
+                    <Copy size={13} />
+                    复制接入命令
+                  </button>
+                </div>
+              </div>
+              <div className="setting-card permission-card mcp-doc-card">
+                <span>常用 Agent 指令示例</span>
+                <pre>{`use clipf.list limit=9
+use clipf.get id=clip_xxx
+use clipf.copy id=clip_xxx
+use clipf.search text="github" limit=20
+use clipf.analyze content="https://github.com/embaobao/clipforge"`}</pre>
+              </div>
+              <div className="setting-card permission-card mcp-doc-card">
+                <span>标准 MCP JSON-RPC 示例</span>
+                <pre>{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"clipf.copy","arguments":{"id":"clip_xxx","client":"agent","requestId":"req_001"}}}`}</pre>
+                <p>成功返回固定包含 ok、traceId、tool、source、businessChain、permissionDecision、nextActions、result。</p>
+                <p>失败返回 JSON-RPC error.data，包含 ok=false、traceId、hint、expected，方便 Agent 自动修正参数。</p>
+              </div>
+              <div className="setting-card permission-card mcp-doc-card">
+                <span>当前工具</span>
+                <p>{state.mcp?.tools.join(" / ") || "加载中…"}</p>
               </div>
             </SettingGroup>
           )}
@@ -929,6 +1002,10 @@ export function SettingsApp() {
               <div className="setting-row">
                 <span>手动清理</span>
                 <div className="footer-actions" style={{ gap: 8 }}>
+                  <button onClick={() => void exportDiagnosticsBundle()} type="button">
+                    <FileDown size={13} />
+                    导出排查包
+                  </button>
                   <button onClick={() => void cleanupLogsNow()} type="button">
                     立即清理
                   </button>

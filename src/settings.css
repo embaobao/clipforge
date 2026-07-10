@@ -301,6 +301,48 @@ body,
   word-break: break-all;
 }
 
+.mcp-doc-card pre {
+  max-height: 180px;
+  margin: 2px 0 0;
+  padding: 8px;
+  overflow: auto;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.command-copy-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.command-copy-row code {
+  min-width: 0;
+  padding: 7px 8px;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-tool-list {
+  max-height: 44px;
+  overflow: auto;
+}
+
 .permission-diagnostics {
   display: flex;
   flex-direction: column;

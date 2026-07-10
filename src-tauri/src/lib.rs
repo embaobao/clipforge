@@ -179,6 +179,7 @@ const PASTE_TARGET_CACHE_MAX_AGE_MS: i64 = 12_000;
 static LAST_NATIVE_POSITION_FAILURE_MS: AtomicI64 = AtomicI64::new(0);
 static WRITEBACK_SUPPRESS: AtomicBool = AtomicBool::new(false);
 static ACCESSIBILITY_PROMPTED: AtomicBool = AtomicBool::new(false);
+static ACCESSIBILITY_FIRST_USE_PROMPT_CHECKED: AtomicBool = AtomicBool::new(false);
 static ACCESSIBILITY_STALE_RESET: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default, Clone)]
@@ -440,6 +441,15 @@ struct LogStatsPayload {
     interval_min: u64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticsExportPayload {
+    path: String,
+    created_at: i64,
+    log_count: usize,
+    summary: String,
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ClipboardChangePayload {
@@ -481,6 +491,21 @@ struct McpStatusPayload {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct AnalyzeClipPayload {
+    content: String,
+    kind: String,
+    analysis: ClipAnalysisPayload,
+    tags: Vec<String>,
+}
+
+struct McpToolSpec {
+    name: &'static str,
+    description: &'static str,
+    input_schema: fn() -> Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ExportClipPayload {
     exported_at: i64,
     count: i64,
@@ -515,6 +540,7 @@ struct ImportClipPayload {
 #[serde(rename_all = "camelCase")]
 struct UpdateClipInput {
     id: String,
+    content: Option<String>,
     bucket: Option<String>,
     favorite: Option<bool>,
     pinned: Option<bool>,
@@ -830,6 +856,60 @@ fn log_to_file(level: &str, module: &str, message: &str) {
     if let Ok(line) = build_log_line(level, &format!("[{}] {}", module, message), "") {
         log_writer_send(line);
     }
+}
+
+fn log_environment_snapshot(module: &str) {
+    let settings_path_text = settings_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let database_path_text = database_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let log_path_text = log_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let exe = std::env::current_exe()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let bundle_path = current_app_bundle_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let accessibility = check_accessibility_permission_platform()
+        .map(|payload| payload.status)
+        .unwrap_or_else(|_| "unknown".to_string());
+    let diagnostics = get_accessibility_diagnostics_platform().ok();
+    let (panel_width, panel_height) = resolve_panel_dims();
+    let snapshot = json!({
+        "event": "environment_snapshot",
+        "appVersion": APP_VERSION,
+        "bundleIdentifier": APP_BUNDLE_IDENTIFIER,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "family": std::env::consts::FAMILY,
+        "uname": command_output_optional("uname", &["-a"]),
+        "macos": command_output_optional("sw_vers", &[]),
+        "webkit": webkit_environment_snapshot(),
+        "currentExe": exe,
+        "bundlePath": bundle_path,
+        "settingsPath": settings_path_text,
+        "databasePath": database_path_text,
+        "logPath": log_path_text,
+        "accessibility": accessibility,
+        "signatureIdentifier": diagnostics.as_ref().map(|value| value.code_signature_identifier.clone()).unwrap_or_default(),
+        "signatureKind": diagnostics.as_ref().map(|value| value.signature_kind.clone()).unwrap_or_default(),
+        "cdHash": diagnostics.as_ref().map(|value| value.cd_hash.clone()).unwrap_or_default(),
+        "tccRecordCount": diagnostics.as_ref().map(|value| value.tcc_records.len()).unwrap_or(0),
+        "mcpTools": mcp_tool_names(),
+        "panel": {
+            "width": panel_width,
+            "height": panel_height,
+            "positionStrategy": read_user_settings()
+                .ok()
+                .and_then(|settings| settings.settings.get("positionStrategy").and_then(Value::as_str).map(ToString::to_string))
+                .unwrap_or_else(|| "followCursor".to_string())
+        }
+    });
+    log_to_file("info", module, &snapshot.to_string());
 }
 
 /// 构造一条 JSON 日志行（含时间戳）。非阻塞 log_to_file 与同步的 append_app_log 命令共用。
@@ -1281,6 +1361,66 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let now = now_millis()?;
+    if let Some(content) = input.content {
+        let content = content.trim().to_string();
+        if content.is_empty() {
+            return Err("content is empty".to_string());
+        }
+        let payload_kind = detect_payload_kind(&content);
+        let hash = content_hash(&payload_kind, content.as_bytes());
+        let duplicate_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM clips WHERE content_hash = ?1 AND id <> ?2 LIMIT 1",
+                params![hash, input.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if let Some(duplicate_id) = duplicate_id {
+            return Err(format!("content duplicates existing clip {duplicate_id}"));
+        }
+        let analysis = analyze_clip(&content, "Edit");
+        let tags = default_tags(&analysis, &content).join(",");
+        conn.execute(
+            "UPDATE clips SET
+                content = ?1,
+                content_hash = ?2,
+                kind = ?3,
+                tags = ?4,
+                title = ?5,
+                summary = ?6,
+                url = ?7,
+                host = ?8,
+                payload_kind = ?9,
+                updated_at = ?10
+             WHERE id = ?11 AND deleted_at IS NULL",
+            params![
+                content,
+                hash,
+                analysis_kind_from_payload(&payload_kind),
+                tags,
+                analysis.title,
+                analysis.summary,
+                analysis.url,
+                analysis.host,
+                payload_kind,
+                now,
+                input.id
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        upsert_fts(&conn, &input.id)?;
+        log_to_file(
+            "info",
+            "clip-edit",
+            &format!(
+                "saved id={} chars={} payloadKind={}",
+                input.id,
+                content.chars().count(),
+                payload_kind
+            ),
+        );
+    }
     if let Some(bucket) = input.bucket {
         conn.execute(
             "UPDATE clips SET bucket = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
@@ -1594,6 +1734,145 @@ fn query_app_logs(
     })
 }
 
+fn command_output_optional(program: &str, args: &[&str]) -> String {
+    Command::new(program)
+        .args(args)
+        .output()
+        .map(|output| {
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .trim()
+            .to_string()
+        })
+        .unwrap_or_default()
+}
+
+fn webkit_environment_snapshot() -> Value {
+    json!({
+        "frameworkVersion": command_output_optional(
+            "defaults",
+            &[
+                "read",
+                "/System/Library/Frameworks/WebKit.framework/Resources/Info",
+                "CFBundleShortVersionString"
+            ],
+        ),
+        "frameworkBundleVersion": command_output_optional(
+            "defaults",
+            &[
+                "read",
+                "/System/Library/Frameworks/WebKit.framework/Resources/Info",
+                "CFBundleVersion"
+            ],
+        ),
+        "frameworkPath": "/System/Library/Frameworks/WebKit.framework"
+    })
+}
+
+#[tauri::command]
+fn export_diagnostics_bundle<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    frontend: Option<Value>,
+) -> Result<DiagnosticsExportPayload, String> {
+    log_environment_snapshot("diagnostics");
+    let created_at = now_millis()?;
+    let diagnostics_dir = settings_path()?
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("diagnostics");
+    fs::create_dir_all(&diagnostics_dir).map_err(|error| error.to_string())?;
+    let report_path = diagnostics_dir.join(format!("clipforge-diagnostics-{}.json", created_at));
+
+    let panel = app
+        .get_webview_window("main")
+        .map(|window| panel_trigger_payload(&window, "diagnostics-export", "current", ""));
+    let logs = query_app_logs(None, None, Some(300)).unwrap_or(QueryAppLogPayload {
+        path: log_path()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        items: Vec::new(),
+        limit: 300,
+    });
+    let log_count = logs.items.len();
+    let settings = read_user_settings().ok();
+    let accessibility_prompt_marker = accessibility_prompt_marker_path().ok().map(|path| {
+        let raw = fs::read_to_string(&path).unwrap_or_default();
+        json!({
+            "path": path.to_string_lossy().to_string(),
+            "exists": path.exists(),
+            "content": parse_json5_like(&raw).unwrap_or_else(|_| json!({ "raw": raw })),
+        })
+    });
+
+    let report = json!({
+        "schemaVersion": 1,
+        "createdAt": created_at,
+        "app": {
+            "name": "ClipForge",
+            "version": APP_VERSION,
+            "bundleIdentifier": APP_BUNDLE_IDENTIFIER,
+            "currentExe": std::env::current_exe().map(|path| path.to_string_lossy().to_string()).unwrap_or_default(),
+            "bundlePath": current_app_bundle_path().map(|path| path.to_string_lossy().to_string()).unwrap_or_default()
+        },
+        "platform": {
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "family": std::env::consts::FAMILY,
+            "uname": command_output_optional("uname", &["-a"]),
+            "macos": command_output_optional("sw_vers", &[]),
+            "webkit": webkit_environment_snapshot()
+        },
+        "frontend": frontend,
+        "paths": {
+            "settings": settings_path().map(|path| path.to_string_lossy().to_string()).unwrap_or_default(),
+            "database": database_path().map(|path| path.to_string_lossy().to_string()).unwrap_or_default(),
+            "imageStorage": image_storage_path().map(|path| path.to_string_lossy().to_string()).unwrap_or_default(),
+            "log": log_path().map(|path| path.to_string_lossy().to_string()).unwrap_or_default(),
+            "accessibilityFirstUsePrompt": accessibility_prompt_marker_path().map(|path| path.to_string_lossy().to_string()).unwrap_or_default(),
+            "diagnostics": report_path.to_string_lossy().to_string()
+        },
+        "settings": settings,
+        "accessibility": {
+            "status": check_accessibility_permission_platform().ok(),
+            "diagnostics": get_accessibility_diagnostics_platform().ok(),
+            "firstUsePrompt": accessibility_prompt_marker
+        },
+        "panel": panel,
+        "mcp": get_mcp_status().ok(),
+        "logs": {
+            "stats": get_log_stats().ok(),
+            "recent": logs
+        },
+        "commands": {
+            "resetAccessibility": format!("tccutil reset Accessibility {}", APP_BUNDLE_IDENTIFIER),
+            "removeQuarantine": "xattr -r -d com.apple.quarantine /Applications/ClipForge.app",
+            "mcp": "/Applications/ClipForge.app/Contents/MacOS/clipforge --mcp"
+        },
+        "privacyNote": "This report contains recent ClipForge application logs and may include short clipboard previews recorded by diagnostics logs. It does not export the clipboard database."
+    });
+
+    fs::write(
+        &report_path,
+        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    log_to_file(
+        "info",
+        "diagnostics",
+        &format!("exported diagnostics to {}", report_path.to_string_lossy()),
+    );
+    Ok(DiagnosticsExportPayload {
+        path: report_path.to_string_lossy().to_string(),
+        created_at,
+        log_count,
+        summary: format!("已导出诊断报告，包含 {} 条最近日志。", log_count),
+    })
+}
+
 #[tauri::command]
 fn focused_input_bounds() -> Result<FocusedInputBoundsPayload, String> {
     focused_input_bounds_platform().or_else(|_| {
@@ -1701,6 +1980,10 @@ fn reset_accessibility_permission() -> Result<AccessibilityPermissionPayload, St
 
 #[tauri::command]
 fn start_mcp_server() -> Result<McpStatusPayload, String> {
+    start_mcp_server_with_reason("settings")
+}
+
+fn start_mcp_server_with_reason(reason: &str) -> Result<McpStatusPayload, String> {
     let child_ref = mcp_child();
     let mut child_slot = child_ref.lock().map_err(|error| error.to_string())?;
     if let Some(child) = child_slot.as_mut() {
@@ -1713,7 +1996,7 @@ fn start_mcp_server() -> Result<McpStatusPayload, String> {
                 true,
                 true,
                 "stdio",
-                "MCP server is already running",
+                &format!("MCP server is already running ({reason})"),
             ));
         }
     }
@@ -1726,11 +2009,16 @@ fn start_mcp_server() -> Result<McpStatusPayload, String> {
         .spawn()
         .map_err(|error| error.to_string())?;
     *child_slot = Some(child);
+    log_to_file(
+        "info",
+        "mcp",
+        &format!("MCP server started, reason={}", reason),
+    );
     Ok(mcp_status_payload(
         true,
         true,
         "stdio",
-        "MCP server started",
+        &format!("MCP server started ({reason})"),
     ))
 }
 
@@ -2301,6 +2589,149 @@ fn reset_accessibility_permission_platform() -> Result<AccessibilityPermissionPa
 }
 
 #[cfg(target_os = "macos")]
+fn maybe_prompt_accessibility_on_first_panel<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    reason: &str,
+) {
+    if ACCESSIBILITY_FIRST_USE_PROMPT_CHECKED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app_handle = app.clone();
+    let reason_owned = reason.to_string();
+    thread::spawn(move || {
+        if accessibility_prompt_marker_path()
+            .map(|path| path.exists())
+            .unwrap_or(false)
+        {
+            log_to_file(
+                "debug",
+                "accessibility",
+                "first-use permission prompt skipped: marker exists",
+            );
+            return;
+        }
+
+        let before = match check_accessibility_permission_platform() {
+            Ok(payload) => payload,
+            Err(error) => {
+                log_to_file(
+                    "warn",
+                    "accessibility",
+                    &format!("first-use permission check failed: {}", error),
+                );
+                return;
+            }
+        };
+
+        let (status, message, prompted) = if before.status == "granted" {
+            (
+                before.status,
+                "辅助功能权限已生效，无需首次授权引导。".to_string(),
+                false,
+            )
+        } else {
+            ACCESSIBILITY_PROMPTED.store(true, Ordering::SeqCst);
+            log_to_file(
+                "warn",
+                "accessibility",
+                &format!(
+                    "first-use permission prompt requested, reason={} status_before={}",
+                    reason_owned, before.status
+                ),
+            );
+            match request_accessibility_permission_platform() {
+                Ok(permission) => (permission.status, permission.message, true),
+                Err(error) => ("error".to_string(), error, true),
+            }
+        };
+
+        let created_at = now_millis().unwrap_or_default();
+        let marker = json!({
+            "schemaVersion": 1,
+            "createdAt": created_at,
+            "reason": reason_owned,
+            "prompted": prompted,
+            "status": status.clone(),
+            "message": message.clone(),
+            "bundleIdentifier": APP_BUNDLE_IDENTIFIER,
+            "currentExe": std::env::current_exe().map(|path| path.to_string_lossy().to_string()).unwrap_or_default(),
+            "note": "ClipForge only shows the automatic macOS Accessibility permission prompt once. Use Settings to request/reset it again."
+        });
+        if let Ok(path) = accessibility_prompt_marker_path() {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if let Err(error) = fs::write(
+                &path,
+                serde_json::to_string_pretty(&marker).unwrap_or_else(|_| "{}".to_string()),
+            ) {
+                log_to_file(
+                    "warn",
+                    "accessibility",
+                    &format!("write first-use permission marker failed: {}", error),
+                );
+            }
+        }
+
+        let _ = app_handle.emit(
+            "clipforge://accessibility-first-prompt",
+            json!({
+                "status": status.clone(),
+                "message": message.clone(),
+                "prompted": prompted,
+                "createdAt": created_at,
+            }),
+        );
+
+        if status == "granted" {
+            log_to_file(
+                "info",
+                "accessibility",
+                "first-use permission already granted in current process",
+            );
+            return;
+        }
+
+        for attempt in 1..=60 {
+            thread::sleep(Duration::from_millis(500));
+            if unsafe { AXIsProcessTrusted() != 0 } {
+                log_to_file(
+                    "info",
+                    "accessibility",
+                    &format!(
+                        "first-use permission became active without restart after {}ms",
+                        attempt * 500
+                    ),
+                );
+                let _ = app_handle.emit(
+                    "clipforge://accessibility-first-prompt",
+                    json!({
+                        "status": "granted",
+                        "message": "辅助功能权限已在当前进程生效，可继续粘贴/键入。",
+                        "prompted": prompted,
+                        "createdAt": now_millis().unwrap_or_default(),
+                    }),
+                );
+                return;
+            }
+        }
+
+        log_to_file(
+            "warn",
+            "accessibility",
+            "first-use permission still missing after prompt; if System Settings already shows enabled, restart ClipForge or reset stale TCC record from Settings",
+        );
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn maybe_prompt_accessibility_on_first_panel<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _reason: &str,
+) {
+}
+
+#[cfg(target_os = "macos")]
 fn current_app_bundle_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let macos_dir = exe.parent()?;
@@ -2624,6 +3055,13 @@ fn log_path() -> Result<PathBuf, String> {
         .parent()
         .ok_or_else(|| "settings parent is not available".to_string())?
         .join("clipforge.jsonl"))
+}
+
+fn accessibility_prompt_marker_path() -> Result<PathBuf, String> {
+    Ok(settings_path()?
+        .parent()
+        .ok_or_else(|| "settings parent is not available".to_string())?
+        .join("accessibility-first-use.json"))
 }
 
 fn parse_json5_like(raw: &str) -> Result<Value, String> {
@@ -3940,6 +4378,14 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         ),
     );
     log_runtime_identity();
+    log_environment_snapshot("startup");
+    if let Err(error) = start_mcp_server_with_reason("app-startup") {
+        log_to_file(
+            "warn",
+            "mcp",
+            &format!("auto start MCP server failed: {}", error),
+        );
+    }
     let menu = build_tray_menu(app)?;
     let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("ClipForge")
@@ -4176,6 +4622,7 @@ pub fn run() {
             query_app_logs,
             cleanup_app_logs,
             get_log_stats,
+            export_diagnostics_bundle,
             set_panel_mode,
             open_settings_window,
             show_quick_panel_command,
@@ -4206,6 +4653,7 @@ fn open_panel<R: tauri::Runtime>(
     reason: &str,
 ) -> Result<PanelTriggerPayload, String> {
     if let Some(window) = app.get_webview_window("main") {
+        maybe_prompt_accessibility_on_first_panel(app, reason);
         let strategy = get_strategy_for_source(reason);
         let strategy_clone = strategy.clone();
 
@@ -5424,15 +5872,7 @@ fn mcp_status_payload(
 }
 
 fn mcp_tool_names() -> Vec<&'static str> {
-    vec![
-        "clipboard.capture",
-        "clipboard.search",
-        "clipboard.copy",
-        "clipboard.update",
-        "clipboard.delete",
-        "clipboard.export",
-        "clipboard.import",
-    ]
+    mcp_tool_specs().into_iter().map(|tool| tool.name).collect()
 }
 
 pub fn run_mcp_stdio() -> Result<(), String> {
@@ -5489,91 +5929,233 @@ fn handle_mcp_request(request: Value) -> Option<Value> {
     };
     Some(match response {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err((code, message)) => mcp_error(id, code, &message),
+        Err((code, message)) => mcp_error_with_data(id, code, &message, method, None),
     })
 }
 
 fn mcp_error(id: Value, code: i64, message: &str) -> Value {
+    mcp_error_with_data(id, code, message, "protocol", None)
+}
+
+fn mcp_error_with_data(
+    id: Value,
+    code: i64,
+    message: &str,
+    method: &str,
+    tool: Option<&str>,
+) -> Value {
+    let trace_id = mcp_trace_id();
     json!({
         "jsonrpc": "2.0",
         "id": id,
-        "error": { "code": code, "message": message }
+        "error": {
+            "code": code,
+            "message": message,
+            "data": {
+                "ok": false,
+                "traceId": trace_id,
+                "method": method,
+                "tool": tool.unwrap_or(""),
+                "businessChain": "mcp -> clipforge-service",
+                "hint": mcp_error_hint(message),
+                "expected": "Use tools/list to inspect schemas, then call tools/call with { name: \"clipf.*\", arguments: { ... } }."
+            }
+        }
     })
 }
 
+fn mcp_trace_id() -> String {
+    now_millis()
+        .map(|ts| format!("mcp_{ts}"))
+        .unwrap_or_else(|_| "mcp_unknown".to_string())
+}
+
+fn mcp_error_hint(message: &str) -> &'static str {
+    if message.contains("requires id") {
+        "Provide a valid ClipForge item id, for example {\"id\":\"clip_xxx\"}."
+    } else if message.contains("requires text or id") {
+        "Provide either text or id. Prefer id when operating on an existing clipboard item."
+    } else if message.contains("requires content") {
+        "Provide content as a string."
+    } else if message.contains("requires ids") {
+        "Provide ids as an array, for example {\"ids\":[\"clip_xxx\"]}."
+    } else if message.contains("unknown tool") {
+        "Use the clipf.* tool namespace. Call tools/list before choosing a tool."
+    } else {
+        "Check the tool input schema and retry with the required arguments."
+    }
+}
+
 fn mcp_tools() -> Vec<Value> {
+    mcp_tool_specs()
+        .into_iter()
+        .map(|tool| {
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": (tool.input_schema)(),
+            })
+        })
+        .collect()
+}
+
+fn mcp_tool_specs() -> Vec<McpToolSpec> {
     vec![
-        json!({
-            "name": "clipboard.capture",
-            "description": "Capture current text into ClipForge history.",
-            "inputSchema": {
+        McpToolSpec {
+            name: "clipf.capture",
+            description: "Capture current text into ClipForge history.",
+            input_schema: || json!({
                 "type": "object",
                 "properties": {
                     "content": { "type": "string" },
                     "sourceLabel": { "type": "string" }
                 }
-            }
-        }),
-        json!({
-            "name": "clipboard.search",
-            "description": "Search ClipForge clipboard history.",
-            "inputSchema": {
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.get",
+            description: "Get a ClipForge item by id. Agent instruction example: use clipf.get id=clip_xxx",
+            input_schema: || json!({
+                "type": "object",
+                "properties": { "id": { "type": "string" } },
+                "required": ["id"]
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.list",
+            description: "List recent ClipForge clipboard history. Agent instruction example: use clipf.list limit=9",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "bucket": { "type": "string", "enum": ["all", "history", "archive", "snippet", "trash"] },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+                    "cursor": { "type": "string" }
+                }
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.search",
+            description: "Search ClipForge clipboard history.",
+            input_schema: || json!({
                 "type": "object",
                 "properties": {
                     "text": { "type": "string" },
                     "bucket": { "type": "string", "enum": ["all", "history", "archive", "snippet", "trash"] },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
                 }
-            }
-        }),
-        json!({
-            "name": "clipboard.copy",
-            "description": "Write text to the system clipboard.",
-            "inputSchema": {
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.analyze",
+            description: "Analyze text with ClipForge content detection without writing it to history.",
+            input_schema: || json!({
                 "type": "object",
-                "properties": { "text": { "type": "string" } },
-                "required": ["text"]
-            }
-        }),
-        json!({
-            "name": "clipboard.update",
-            "description": "Update a clipboard item favorite, pinned, note, or bucket.",
-            "inputSchema": {
+                "properties": {
+                    "content": { "type": "string" },
+                    "sourceLabel": { "type": "string" }
+                },
+                "required": ["content"]
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.copy",
+            description: "Copy a ClipForge item by id, or write text to system clipboard. Agent instruction example: use clipf.copy id=clip_xxx",
+            input_schema: || json!({
                 "type": "object",
                 "properties": {
                     "id": { "type": "string" },
+                    "text": { "type": "string" }
+                }
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.update",
+            description: "Update a clipboard item content, favorite, pinned, note, or bucket.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "content": { "type": "string" },
                     "favorite": { "type": "boolean" },
                     "pinned": { "type": "boolean" },
                     "note": { "type": "string" },
                     "bucket": { "type": "string" }
                 },
                 "required": ["id"]
-            }
-        }),
-        json!({
-            "name": "clipboard.delete",
-            "description": "Move clipboard items to trash.",
-            "inputSchema": {
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.delete",
+            description: "Move clipboard items to trash.",
+            input_schema: || json!({
                 "type": "object",
                 "properties": { "ids": { "type": "array", "items": { "type": "string" } } },
                 "required": ["ids"]
-            }
-        }),
-        json!({
-            "name": "clipboard.export",
-            "description": "Export ClipForge history as JSON.",
-            "inputSchema": { "type": "object", "properties": { "includeDeleted": { "type": "boolean" } } }
-        }),
-        json!({
-            "name": "clipboard.import",
-            "description": "Import ClipForge history from JSON items.",
-            "inputSchema": {
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.export",
+            description: "Export ClipForge history as JSON.",
+            input_schema: || json!({ "type": "object", "properties": { "includeDeleted": { "type": "boolean" } } }),
+        },
+        McpToolSpec {
+            name: "clipf.import",
+            description: "Import ClipForge history from JSON items.",
+            input_schema: || json!({
                 "type": "object",
                 "properties": { "items": { "type": "array", "items": { "type": "object" } } },
                 "required": ["items"]
-            }
-        }),
+            }),
+        },
     ]
+}
+
+fn mcp_result_envelope(tool: &str, args: &Value, result: Value) -> Result<Value, (i64, String)> {
+    let trace_id = mcp_trace_id();
+    let source = mcp_source_payload(args);
+    Ok(json!({
+        "ok": true,
+        "traceId": trace_id,
+        "tool": tool,
+        "source": source,
+        "businessChain": "mcp -> clipforge-service -> local-store",
+        "permissionDecision": {
+            "decision": "allow",
+            "reason": "local MCP stdio call with explicit tool arguments"
+        },
+        "redactedFields": [],
+        "nextActions": mcp_next_actions(tool),
+        "result": result,
+    }))
+}
+
+fn mcp_source_payload(args: &Value) -> Value {
+    json!({
+        "surface": "mcp",
+        "client": args.get("client").and_then(Value::as_str).unwrap_or("unknown-agent"),
+        "sourceLabel": args.get("sourceLabel").and_then(Value::as_str).unwrap_or("MCP Agent"),
+        "requestId": args.get("requestId").and_then(Value::as_str).unwrap_or("")
+    })
+}
+
+fn mcp_next_actions(tool: &str) -> Vec<&'static str> {
+    match tool {
+        "clipf.capture" => vec!["clipf.get id=<returned id>", "clipf.copy id=<returned id>"],
+        "clipf.list" | "clipf.search" => vec!["clipf.get id=<item id>", "clipf.copy id=<item id>"],
+        "clipf.get" => vec!["clipf.copy id=<item id>", "clipf.update id=<item id>"],
+        "clipf.analyze" => vec!["clipf.capture content=<text>", "clipf.search text=<keyword>"],
+        "clipf.copy" => vec!["paste in target app", "clipf.update id=<item id> copied=true"],
+        _ => vec!["clipf.list limit=9"],
+    }
+}
+
+fn mcp_content_response(result: Value) -> Result<Value, (i64, String)> {
+    Ok(json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string_pretty(&result).map_err(|error| (-32000, error.to_string()))?
+        }]
+    }))
 }
 
 fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
@@ -5585,8 +6167,20 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    log_to_file(
+        "info",
+        "mcp",
+        &format!(
+            "tool_call start tool={} source={} requestId={}",
+            name,
+            args.get("sourceLabel")
+                .and_then(Value::as_str)
+                .unwrap_or("MCP Agent"),
+            args.get("requestId").and_then(Value::as_str).unwrap_or("")
+        ),
+    );
     let result = match name {
-        "clipboard.capture" => {
+        "clipf.capture" => {
             let content = if let Some(content) = args.get("content").and_then(Value::as_str) {
                 content.to_string()
             } else {
@@ -5594,15 +6188,43 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             };
             let payload = capture_clip_record(
                 content,
-                args.get("sourceLabel")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
+                Some(format!(
+                    "{} via {}",
+                    args.get("sourceLabel")
+                        .and_then(Value::as_str)
+                        .unwrap_or("MCP Agent"),
+                    name
+                )),
                 now_millis().map_err(|error| (-32000, error))?,
             )
             .map_err(|error| (-32000, error))?;
             serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
         }
-        "clipboard.search" => {
+        "clipf.get" => {
+            let id = args
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| (-32602, format!("{name} requires id")))?;
+            let conn = open_clip_db().map_err(|error| (-32000, error))?;
+            init_schema(&conn).map_err(|error| (-32000, error))?;
+            serde_json::to_value(load_clip(&conn, id).map_err(|error| (-32000, error))?)
+                .map_err(|error| (-32000, error.to_string()))?
+        }
+        "clipf.list" => {
+            let payload = query_clip_records(
+                None,
+                args.get("bucket")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                args.get("limit").and_then(Value::as_i64),
+                args.get("cursor")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+            )
+            .map_err(|error| (-32000, error))?;
+            serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
+        }
+        "clipf.search" => {
             let payload = query_clip_records(
                 args.get("text")
                     .and_then(Value::as_str)
@@ -5616,22 +6238,54 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             .map_err(|error| (-32000, error))?;
             serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
         }
-        "clipboard.copy" => {
-            let text = args
-                .get("text")
+        "clipf.analyze" => {
+            let content = args
+                .get("content")
                 .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipboard.copy requires text".to_string()))?;
-            write_platform_clipboard(text).map_err(|error| (-32000, error))?;
-            json!({ "ok": true })
+                .ok_or_else(|| (-32602, "clipf.analyze requires content".to_string()))?;
+            let source_label = args
+                .get("sourceLabel")
+                .and_then(Value::as_str)
+                .unwrap_or("MCP");
+            let analysis = analyze_clip(content, source_label);
+            let payload = AnalyzeClipPayload {
+                content: content.to_string(),
+                kind: analysis_kind(&analysis),
+                tags: default_tags(&analysis, content),
+                analysis,
+            };
+            serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
         }
-        "clipboard.update" => {
+        "clipf.copy" => {
+            let (text, copied_id) = if let Some(id) = args.get("id").and_then(Value::as_str) {
+                let conn = open_clip_db().map_err(|error| (-32000, error))?;
+                init_schema(&conn).map_err(|error| (-32000, error))?;
+                let clip = load_clip(&conn, id).map_err(|error| (-32000, error))?;
+                (clip.content, Some(id.to_string()))
+            } else {
+                (
+                    args.get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| (-32602, format!("{name} requires text or id")))?
+                        .to_string(),
+                    None,
+                )
+            };
+            write_platform_clipboard(&text).map_err(|error| (-32000, error))?;
+            json!({ "ok": true, "id": copied_id, "chars": text.chars().count() })
+        }
+        "clipf.update" => {
             let id = args
                 .get("id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipboard.update requires id".to_string()))?
+                .ok_or_else(|| (-32602, "clipf.update requires id".to_string()))?
                 .to_string();
             let payload = update_clip_record(UpdateClipInput {
                 id,
+                content: args
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 bucket: args
                     .get("bucket")
                     .and_then(Value::as_str)
@@ -5647,11 +6301,11 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             .map_err(|error| (-32000, error))?;
             serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
         }
-        "clipboard.delete" => {
+        "clipf.delete" => {
             let ids = args
                 .get("ids")
                 .and_then(Value::as_array)
-                .ok_or_else(|| (-32602, "clipboard.delete requires ids".to_string()))?
+                .ok_or_else(|| (-32602, "clipf.delete requires ids".to_string()))?
                 .iter()
                 .filter_map(Value::as_str)
                 .map(ToString::to_string)
@@ -5659,16 +6313,16 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             serde_json::to_value(soft_delete_clip_records(ids).map_err(|error| (-32000, error))?)
                 .map_err(|error| (-32000, error.to_string()))?
         }
-        "clipboard.export" => serde_json::to_value(
+        "clipf.export" => serde_json::to_value(
             export_clip_records(args.get("includeDeleted").and_then(Value::as_bool))
                 .map_err(|error| (-32000, error))?,
         )
         .map_err(|error| (-32000, error.to_string()))?,
-        "clipboard.import" => {
+        "clipf.import" => {
             let items_value = args
                 .get("items")
                 .cloned()
-                .ok_or_else(|| (-32602, "clipboard.import requires items".to_string()))?;
+                .ok_or_else(|| (-32602, "clipf.import requires items".to_string()))?;
             let items = serde_json::from_value::<Vec<ImportClipInput>>(items_value)
                 .map_err(|error| (-32602, error.to_string()))?;
             serde_json::to_value(import_clip_records(items).map_err(|error| (-32000, error))?)
@@ -5676,10 +6330,17 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
         }
         _ => return Err((-32602, format!("unknown tool: {name}"))),
     };
-    Ok(json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string_pretty(&result).map_err(|error| (-32000, error.to_string()))?
-        }]
-    }))
+    log_to_file(
+        "info",
+        "mcp",
+        &format!(
+            "tool_call success tool={} source={} requestId={}",
+            name,
+            args.get("sourceLabel")
+                .and_then(Value::as_str)
+                .unwrap_or("MCP Agent"),
+            args.get("requestId").and_then(Value::as_str).unwrap_or("")
+        ),
+    );
+    mcp_content_response(mcp_result_envelope(name, &args, result)?)
 }

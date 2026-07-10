@@ -1,4 +1,4 @@
-export type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment";
+export type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
 export type ClipBucket = "history" | "archive" | "snippet";
 export type ClipSource = "clipboard" | "import" | "sync" | "external";
 export type SyncOperation = "create" | "update" | "delete";
