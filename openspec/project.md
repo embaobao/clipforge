@@ -33,4 +33,5 @@
 | 提案 | 状态 | 说明 |
 |------|------|------|
 | [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | 待实现 | 引入 clipboard-rs，支持图片、文件、HTML/RTF 富文本剪贴板历史 |
+| [context-plugin-agent-runtime](./changes/context-plugin-agent-runtime/proposal.md) | 提案中 | 上下文快照、插件边界、Agent/AG-UI 桥、MCP 工具面与自动升级能力 |
 | [detail-rich-editor-agent-bridge](./changes/detail-rich-editor-agent-bridge/proposal.md) | 提案中 | 详情页 Tiptap 富文本编辑、变量上下文、MCP/Agent 扩展桥 |
