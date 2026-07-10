@@ -1,4 +1,13 @@
 import {
+  ACTIONS,
+  EVENTS,
+  Joyride,
+  STATUS,
+  type EventData,
+  type Step,
+  type TooltipRenderProps,
+} from "react-joyride";
+import {
   Check,
   CheckSquare,
   Clipboard,
@@ -11,7 +20,6 @@ import {
   Pin,
   RotateCcw,
   Search,
-  Settings,
   Square,
   Trash2,
   X,
@@ -32,6 +40,17 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
+import { Avatar, AvatarFallback, AvatarImage } from "./components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
+import clipforgeAppIcon from "../src-tauri/icons/64x64.png";
 import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment";
@@ -155,6 +174,7 @@ type AppSettings = {
   panelPinned: boolean;
   panelWidth: number;
   panelHeight: number;
+  onboardingCompleted: boolean;
 };
 
 type UserSettingsPayload = {
@@ -186,12 +206,22 @@ type QueryClipPayload = {
 
 const ACTIVE_VIEW_KEY = "clipforge.active-view.v1";
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
-const DEFAULT_SHORTCUT =
-  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
-    ? "Command+Shift+V"
-    : "Control+Shift+V";
-const ROW_HEIGHT = 88;
+const DEFAULT_SHORTCUT = "Control+V";
+const ROW_HEIGHT = 36;
 const OVERSCAN = 5;
+const DEFAULT_PANEL_HEIGHT = 400;
+const ONBOARDING_SAMPLE_CONTENT = [
+  "ClipForge 入门样例",
+  "",
+  "这是初始化的演示数据，用来练习剪贴板面板的基础操作：",
+  "- Ctrl+V 唤起面板",
+  "- Enter 或 Cmd+数字粘贴当前项",
+  "- Ctrl/Cmd+F 收藏当前项",
+  "- Delete 删除当前项",
+  "- 右键进入详情，Ctrl/Cmd+J 执行链接跳转或插件快速操作",
+  "",
+  "https://ui.shadcn.com/docs/components/base/dropdown-menu",
+].join("\n");
 const defaultSettings: AppSettings = {
   panelDensity: "dense",
   quickItemLimit: 10,
@@ -213,7 +243,8 @@ const defaultSettings: AppSettings = {
   enableScrollCollapse: true,
   panelPinned: false,
   panelWidth: 420,
-  panelHeight: 450,
+  panelHeight: DEFAULT_PANEL_HEIGHT,
+  onboardingCompleted: false,
 };
 
 function makeId() {
@@ -694,8 +725,17 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
       typeof next.panelPinned === "boolean"
         ? next.panelPinned
         : defaultSettings.panelPinned,
+    onboardingCompleted:
+      typeof next.onboardingCompleted === "boolean"
+        ? next.onboardingCompleted
+        : defaultSettings.onboardingCompleted,
     panelWidth: clampNumber(next.panelWidth, 320, 600, defaultSettings.panelWidth),
-    panelHeight: clampNumber(next.panelHeight, 300, 1000, defaultSettings.panelHeight),
+    panelHeight: clampNumber(
+      [430, 450, 488].includes(next.panelHeight) ? DEFAULT_PANEL_HEIGHT : next.panelHeight,
+      300,
+      1000,
+      defaultSettings.panelHeight,
+    ),
     tagRules: Array.isArray(next.tagRules) ? next.tagRules : defaultSettings.tagRules,
     fuzzySearchEnabled:
       typeof next.fuzzySearchEnabled === "boolean"
@@ -764,20 +804,6 @@ function retagClips(clips: ClipItem[], settings: AppSettings) {
       tags: generateTags(clip.content, settings),
     };
   });
-}
-
-function formatTime(timestamp: number) {
-  const diff = Date.now() - timestamp;
-  const minute = 60 * 1000;
-  if (diff < minute) return "刚刚";
-  if (diff < 60 * minute) return `${Math.floor(diff / minute)} 分钟前`;
-  if (diff < 24 * 60 * minute) return `${Math.floor(diff / (60 * minute))} 小时前`;
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(timestamp);
 }
 
 function getBucketForView(view: ViewKey): ClipBucket | "trash" | null {
@@ -861,7 +887,15 @@ function getItemTooltip(item: ClipItem): AppTooltipContent {
   const source = item.sourceApp?.name || item.analysis.sourceName || "剪贴板历史";
   const title = item.analysis.title || source;
   const description = item.analysis.url ? "链接内容" : item.analysis.attachment ? "附件内容" : source;
-  return { title, description, body: item.content || getClipboardLine(item) };
+  // tooltip 每个可见行都常驻挂载在 DOM（仅 opacity:0）。把整篇大文案塞进 body，
+  // 大文本条目会让打开那一帧布局/提交暴涨 200–340ms、阻塞输入。截断到预览长度即可；
+  // 复制/粘贴走 item.content 本体，不受影响。
+  const fullBody = item.content || getClipboardLine(item);
+  const body =
+    fullBody.length > 600
+      ? `${fullBody.slice(0, 600)}\n…（共 ${fullBody.length} 字，已省略 ${fullBody.length - 600} 字）`
+      : fullBody;
+  return { title, description, body };
 }
 
 function AppTooltip({
@@ -890,6 +924,151 @@ function AppTooltip({
       </div>
     </div>
   );
+}
+
+function ShortcutDemo({ icon, keys, label }: { icon: ReactNode; keys: string[]; label: string }) {
+  return (
+    <div className="onboarding-shortcut-demo">
+      <span className="onboarding-action-icon">{icon}</span>
+      <div className="onboarding-key-chain">
+        {keys.map((key) => (
+          <kbd key={key}>{key}</kbd>
+        ))}
+      </div>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function OnboardingAnchors({ active }: { active: boolean }) {
+  return (
+    <div aria-hidden="true" className={active ? "onboarding-anchors active" : "onboarding-anchors"}>
+      <span className="onboarding-anchor anchor-panel" />
+      <span className="onboarding-anchor anchor-search" />
+      <span className="onboarding-anchor anchor-list" />
+      <span className="onboarding-anchor anchor-index" />
+      <span className="onboarding-anchor anchor-row-action" />
+      <span className="onboarding-anchor anchor-footer" />
+      <span className="onboarding-anchor anchor-pin" />
+    </div>
+  );
+}
+
+function CenteredOnboardingTooltip({
+  backProps,
+  closeProps,
+  index,
+  isLastStep,
+  primaryProps,
+  size,
+  skipProps,
+  step,
+  tooltipProps,
+}: TooltipRenderProps) {
+  return (
+    <div className="centered-onboarding-tooltip" {...tooltipProps}>
+      <button className="centered-onboarding-close" type="button" {...closeProps}>
+        <X size={12} />
+      </button>
+      <div className="centered-onboarding-copy">
+        {step.title ? <strong>{step.title}</strong> : null}
+        <div>{step.content}</div>
+      </div>
+      <div className="centered-onboarding-footer">
+        <span>{index + 1}/{size}</span>
+        <div>
+          {index > 0 ? <button className="centered-onboarding-ghost" type="button" {...backProps} /> : null}
+          {!isLastStep ? <button className="centered-onboarding-ghost" type="button" {...skipProps} /> : null}
+          <button className="centered-onboarding-primary" type="button" {...primaryProps} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function makeOnboardingSteps(mod: string): Step[] {
+  return [
+    {
+      target: ".anchor-panel",
+      placement: "center",
+      title: "快速唤起",
+      content: (
+        <div className="onboarding-step">
+          <p>用默认快捷键打开面板，继续搜索、选择和粘贴。</p>
+          <ShortcutDemo icon={<Clipboard size={12} />} keys={["Ctrl", "V"]} label="默认触发" />
+        </div>
+      ),
+    },
+    {
+      target: ".anchor-search",
+      placement: "center",
+      title: "搜索",
+      content: (
+        <div className="onboarding-step">
+          <p>面板打开后直接输入即可过滤历史内容。</p>
+          <ShortcutDemo icon={<Search size={12} />} keys={["/", "输入"]} label="快速进入搜索" />
+        </div>
+      ),
+    },
+    {
+      target: ".anchor-list",
+      placement: "center",
+      title: "选择和翻页",
+      content: (
+        <div className="onboarding-step">
+          <p>上下键移动当前项；组合键切换 10 项分组。</p>
+          <ShortcutDemo icon={<CheckSquare size={12} />} keys={["↑", "↓"]} label="移动选择" />
+          <ShortcutDemo icon={<History size={12} />} keys={[mod, "↑/↓"]} label="翻页/切换 10 项分组" />
+        </div>
+      ),
+    },
+    {
+      target: ".anchor-index",
+      placement: "center",
+      title: "数字操作",
+      content: (
+        <div className="onboarding-step">
+          <p>当前页的 0-9 可直接触发；Space 只做选中。</p>
+          <ShortcutDemo icon={<Clipboard size={12} />} keys={[mod, "0-9"]} label="粘贴当前页对应项" />
+          <ShortcutDemo icon={<CheckSquare size={12} />} keys={["Space"]} label="选中该项" />
+        </div>
+      ),
+    },
+    {
+      target: ".anchor-row-action",
+      placement: "center",
+      title: "收藏和删除",
+      content: (
+        <div className="onboarding-step">
+          <p>当前项可直接收藏、删除；右键会进入详情，快速操作另用 Ctrl+J。</p>
+          <ShortcutDemo icon={<Heart size={12} />} keys={[mod, "F"]} label="收藏/取消收藏" />
+          <ShortcutDemo icon={<Trash2 size={12} />} keys={["Delete"]} label="删除到垃圾箱" />
+        </div>
+      ),
+    },
+    {
+      target: ".anchor-footer",
+      placement: "center",
+      title: "列表切换",
+      content: (
+        <div className="onboarding-step">
+          <p>历史、收藏、垃圾箱可用底部按钮或 Tab 切换。</p>
+          <ShortcutDemo icon={<History size={12} />} keys={["Tab"]} label="切换导航" />
+        </div>
+      ),
+    },
+    {
+      target: ".anchor-pin",
+      placement: "center",
+      title: "固定窗口",
+      content: (
+        <div className="onboarding-step">
+          <p>需要停留时固定面板，避免失焦后隐藏。</p>
+          <ShortcutDemo icon={<Pin size={12} />} keys={[mod, "P"]} label="固定/取消固定" />
+        </div>
+      ),
+    },
+  ];
 }
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { errorMessage: string | null; resetKey: number }> {
@@ -986,6 +1165,8 @@ function ClipForgeApp() {
   const [isSearchActive, setSearchActive] = useState(false);
   const [nativeStatus, setNativeStatus] = useState("准备监听剪贴板");
   const [completionToast, setCompletionToast] = useState<string | null>(null);
+  const [onboardingRun, setOnboardingRun] = useState(false);
+  const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const completionToastTimerRef = useRef<number | null>(null);
   const showCompletionToast = useCallback((message: string) => {
     setCompletionToast(message);
@@ -1015,9 +1196,32 @@ function ClipForgeApp() {
   const panelFocusGraceUntilRef = useRef(0);
   const blurHideInFlightRef = useRef(false);
   const focusRetryTimersRef = useRef<number[]>([]);
+  const panelShowStartedAtRef = useRef(0);
   const isPanelClosing = usePanelUiStore((state) => state.isClosing);
   const setPanelClosing = usePanelUiStore((state) => state.setClosing);
   const workspaceRoute = useWorkspaceStore((state) => state.route);
+  const onboardingSteps = useMemo(() => makeOnboardingSteps(getShortcutModLabel()), []);
+  const markOnboardingCompleted = useCallback(() => {
+    setOnboardingRun(false);
+    setOnboardingStepIndex(0);
+    setSettings((prev) => ({ ...prev, onboardingCompleted: true }));
+    setNativeStatus("入门引导已完成");
+  }, []);
+  const startOnboarding = useCallback(() => {
+    setOnboardingStepIndex(0);
+    setOnboardingRun(true);
+    setNativeStatus("正在展示快捷键入门引导");
+  }, []);
+  const handleOnboardingEvent = useCallback((data: EventData) => {
+    const { action, index, status, type } = data;
+    if (status === STATUS.FINISHED || status === STATUS.SKIPPED) {
+      markOnboardingCompleted();
+      return;
+    }
+    if (type === EVENTS.STEP_AFTER || type === EVENTS.TARGET_NOT_FOUND) {
+      setOnboardingStepIndex(index + (action === ACTIONS.PREV ? -1 : 1));
+    }
+  }, [markOnboardingCompleted]);
 
   useEffect(() => {
     clipsRef.current = clips;
@@ -1127,6 +1331,8 @@ function ClipForgeApp() {
     appWindow
       .onFocusChanged(({ payload: focused }) => {
         if (focused) {
+          // 失焦淡出途中焦点又回来：恢复可见，避免停在透明态。
+          setIsPanelEntering(true);
           blurHideInFlightRef.current = false;
           cancelHide();
           return;
@@ -1157,6 +1363,7 @@ function ClipForgeApp() {
             logAppError("info", "panel-pin: Rust says pinned, blur hide cancelled");
             return;
           }
+          setIsPanelEntering(false);
           setPanelClosing(true);
           closeTimer = window.setTimeout(() => {
             logAppError("info", "panel-pin: hide executing now");
@@ -1211,14 +1418,32 @@ function ClipForgeApp() {
           limit: 200,
         });
       })
-      .then((payload) => {
+      .then(async (payload) => {
         if (!payload || cancelled || isSettingsWindow) return;
-        const items = payload.items
+        let items = payload.items
           .map((item) => normalizeClip(item, settingsRef.current))
           .filter((item): item is ClipItem => Boolean(item));
+        if (!items.length) {
+          try {
+            const seedPayload = await invoke<CaptureClipPayload>("capture_clip_record", {
+              content: ONBOARDING_SAMPLE_CONTENT,
+              sourceLabel: "ClipForge",
+              observedAt: Date.now(),
+            });
+            const seedItem = normalizeClip(seedPayload.item, settingsRef.current);
+            if (seedItem) {
+              items = [seedItem];
+              setSelectedId(seedItem.id);
+              logAppError("info", "onboarding: seeded intro clip", { id: seedItem.id });
+            }
+          } catch (error) {
+            logAppError("warn", "Seed onboarding clip failed", String(error));
+          }
+        }
+        if (cancelled) return;
         setClips(items);
         clipsRef.current = items;
-        setNextCursor(payload.nextCursor ?? null);
+        setNextCursor(items.length === payload.items.length ? (payload.nextCursor ?? null) : null);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -1234,6 +1459,9 @@ function ClipForgeApp() {
         setSettings(merged);
         if (!isSettingsWindow) {
           setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
+          if (!merged.onboardingCompleted) {
+            window.setTimeout(() => startOnboarding(), 650);
+          }
         }
       })
       .catch(() => {
@@ -1310,7 +1538,11 @@ function ClipForgeApp() {
   const showQuickPanel = useCallback(
     async (reason: "shortcut" | "tray") => {
       blurHideInFlightRef.current = false;
-      panelFocusGraceUntilRef.current = Date.now() + 2400;
+      // 唤起后只在极短窗口内忽略失焦（吸收 show_and_make_key 引发的一瞬 blur→focus 抖动）。
+      // 原值 2400ms 太长：唤起提速后，用户在 2.4s 内点别的窗口，那次 blur 被吞掉、之后不再有
+      // blur，面板就不再自动隐藏。400ms 足以覆盖抖动，又不至于吞掉真实的「点开别处」失焦。
+      panelFocusGraceUntilRef.current = Date.now() + 400;
+      panelShowStartedAtRef.current = Date.now();
       focusRetryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       focusRetryTimersRef.current = [];
       // 先同步把焦点拉到搜索框（若已挂载），赶在下面 setState 引起的重渲染之前。重渲染一旦占用
@@ -1327,7 +1559,6 @@ function ClipForgeApp() {
       setSearchActive(true);
       setIsPanelEntering(true);
       // 唤起面板时强制拉一次最新剪贴板，避免用户在别的 app 复制后到唤起之间漏掉记录
-      window.setTimeout(() => setIsPanelEntering(false), 180);
       // 过去用 [0,30,90,180,320] 五个定时器轮询 focus，会和 Rust 侧 makeFirstResponder
       // 抢焦点，反而拖慢、干扰首次输入。改成 0ms + 60ms 两次，且仅在尚未聚焦到搜索框时再 focus。
       [0, 60].forEach((delay) => {
@@ -1339,6 +1570,8 @@ function ClipForgeApp() {
             logAppError("info", "panel-keyboard: search focus settle", {
               active: document.activeElement === searchRef.current,
               reason,
+              // 从「面板开始唤起」到「输入框可输入」的总耗时（含打开重渲染）。
+              openReadyMs: Date.now() - panelShowStartedAtRef.current,
             });
           }
         }, delay);
@@ -1437,6 +1670,8 @@ function ClipForgeApp() {
           logAppError("info", "panel-pin: hide-quick-panel event ignored, panel pinned");
           return;
         }
+        // Rust 侧隐藏（粘贴 / 托盘切换走 hide_panel）后复位 is-entering，下次唤起才能淡入。
+        setIsPanelEntering(false);
         setPanelClosing(false);
       })
       .then((unlisten) => unlisteners.push(unlisten))
@@ -1613,6 +1848,64 @@ function ClipForgeApp() {
     }
   }
 
+  async function copyText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
+    logAppError("info", "copy-text: invoke start", {
+      source,
+      chars: text.length,
+      selectedId,
+      ...context,
+    });
+    try {
+      await invoke("write_clipboard_text", { text });
+      lastSeenClipboard.current = text.trim();
+      setNativeStatus("已复制代码到系统剪贴板");
+      showCompletionToast("已复制代码");
+      logAppError("info", "copy-text: invoke success", {
+        source,
+        chars: text.length,
+        ...context,
+      });
+    } catch (error) {
+      logAppError("warn", "Copy text failed", { source, error: String(error), ...context });
+      await navigator.clipboard.writeText(text);
+      setNativeStatus("已复制代码到浏览器剪贴板");
+      showCompletionToast("已复制代码");
+    }
+  }
+
+  async function pasteText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
+    const releaseWaitMs = await waitForPasteTriggerRelease(source);
+    if (releaseWaitMs > 0) {
+      logAppError("info", "paste-text: shortcut release settled", {
+        source,
+        releaseWaitMs,
+        ...context,
+      });
+    }
+    logAppError("info", "paste-text: invoke start", {
+      source,
+      chars: text.length,
+      selectedId,
+      ...context,
+    });
+    try {
+      await invoke("paste_clipboard_text", { text, source });
+      setIsPanelEntering(false);
+      lastSeenClipboard.current = text.trim();
+      setNativeStatus("已粘贴代码到当前应用");
+      showCompletionToast("已粘贴代码");
+      logAppError("info", "paste-text: invoke success", {
+        source,
+        chars: text.length,
+        ...context,
+      });
+    } catch (error) {
+      logAppError("warn", "Paste text failed", { source, error: String(error), ...context });
+      await copyText(text, `${source}:fallback-copy`, context);
+      setNativeStatus("粘贴失败，已复制代码到剪贴板");
+    }
+  }
+
   async function pasteClip(item: ClipItem, source = "unknown") {
     const releaseWaitMs = await waitForPasteTriggerRelease(source);
     if (releaseWaitMs > 0) {
@@ -1631,6 +1924,9 @@ function ClipForgeApp() {
     });
     try {
       await invoke("paste_clipboard_text", { text: item.content, source });
+      // 粘贴后面板已被 Rust 隐藏（hide_panel_before_paste 不发 hide-quick-panel），
+      // 这里显式复位 is-entering，否则下次唤起不会淡入。
+      setIsPanelEntering(false);
       lastSeenClipboard.current = item.content.trim();
       markClipCopied(item, "已粘贴到当前应用");
       logAppError("info", "paste-ui: invoke success", { id: item.id, source });
@@ -1775,9 +2071,11 @@ function ClipForgeApp() {
         if (editable && !allowListShortcutFromSearch) return;
         event.preventDefault();
         if (multiSelectMode && selectedInList.length > 0) {
-          void deleteClips(selectedInList.map((item) => item.id));
+          if (activeView === "trash") void hardDeleteClips(selectedInList.map((item) => item.id));
+          else void deleteClips(selectedInList.map((item) => item.id));
         } else if (selectedClip) {
-          void deleteClips([selectedClip.id]);
+          if (activeView === "trash") void hardDeleteClips([selectedClip.id]);
+          else void deleteClips([selectedClip.id]);
         }
         return;
       }
@@ -1799,6 +2097,10 @@ function ClipForgeApp() {
             else next.add(item.id);
             return next;
           });
+          return;
+        }
+        if (activeView === "trash") {
+          void restoreClips([item.id]);
           return;
         }
         void pasteClip(item, "cmd-number");
@@ -1837,6 +2139,7 @@ function ClipForgeApp() {
           return;
         }
         if (!settingsRef.current.panelPinned) {
+          setIsPanelEntering(false);
           invoke("hide_quick_panel_command").catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
         }
         return;
@@ -1864,7 +2167,12 @@ function ClipForgeApp() {
         event.preventDefault();
         if (event.key === "ArrowRight") {
           if (!multiSelectMode && selectedClip) {
-            void runPrimaryOpenAction(selectedClip, "keyboard");
+            logAppError("info", "keyboard-detail", {
+              id: selectedClip.id,
+              hasUrl: Boolean(selectedClip.analysis.url),
+              hasAttachment: Boolean(selectedClip.analysis.attachment),
+            });
+            void navigateWorkspaceDetail(selectedClip.id);
           }
         } else if (workspaceRoute.name !== "list") {
           setMultiPreviewOpen(false);
@@ -1907,7 +2215,10 @@ function ClipForgeApp() {
         const item = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
         if (!item) return;
         event.preventDefault();
-        if (multiSelectMode) void copySelectedClips(selectedInList);
+        if (activeView === "trash") {
+          if (multiSelectMode) void restoreClips(selectedInList.map((clip) => clip.id));
+          else void restoreClips([item.id]);
+        } else if (multiSelectMode) void copySelectedClips(selectedInList);
         else void pasteClip(item, "enter");
         return;
       }
@@ -2105,6 +2416,7 @@ function ClipForgeApp() {
       style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
     >
       <div aria-hidden="true" className="drag-strip" data-tauri-drag-region onPointerDown={handleWindowDrag} />
+      <OnboardingAnchors active={onboardingRun} />
 
       <section className="content-column" onScroll={handleScroll}>
         <GlassSearchBar
@@ -2137,10 +2449,13 @@ function ClipForgeApp() {
             }}
             onCopy={() => copySelectedClips(selectedInList)}
             onDelete={() => deleteClips(selectedInList.map((item) => item.id))}
+            onEmptyTrash={activeView === "trash" ? emptyTrash : undefined}
             onFavorite={() => favoriteSelectedClips(selectedInList)}
+            onRestore={activeView === "trash" ? () => restoreClips(selectedInList.map((item) => item.id)) : undefined}
             onToggleAll={(checked) => {
               setSelectedIds(checked ? new Set(filteredClips.map((item) => item.id)) : new Set());
             }}
+            variant={activeView === "trash" ? "trash" : "default"}
           />
         ) : null}
 
@@ -2156,7 +2471,6 @@ function ClipForgeApp() {
                   hasMore={Boolean(nextCursor)}
                   isLoadingMore={isLoadingMore}
                   multiSelectMode={multiSelectMode}
-                  onCopy={copyClip}
                   onDeleteSelected={() => hardDeleteClips(selectedInList.map((item) => item.id))}
                   onHardDelete={(item) => hardDeleteClips([item.id])}
                   onLoadMore={loadMoreClips}
@@ -2165,6 +2479,11 @@ function ClipForgeApp() {
                   onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
                   onSelect={(item) => {
                     setSelectedId(item.id);
+                  }}
+                  onStartMultiSelect={(id) => {
+                    setMultiSelectMode(true);
+                    setMultiPreviewOpen(false);
+                    setSelectedIds(new Set([id]));
                   }}
                   onToggleSelected={(id) =>
                     setSelectedIds((current) => {
@@ -2190,6 +2509,9 @@ function ClipForgeApp() {
                   selectedIds={selectedIds}
                   onPaste={pasteClip}
                   onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
+                  onFavoriteSelected={() => {
+                    void favoriteSelectedClips(selectedInList);
+                  }}
                   onLoadMore={loadMoreClips}
                   onOpen={(item) => {
                     void runPrimaryOpenAction(item, "click");
@@ -2199,6 +2521,15 @@ function ClipForgeApp() {
                     void navigateWorkspaceAggregate();
                   }}
                   onPointerActive={() => setKeyboardNavigating(false)}
+                  onCopySelected={() => {
+                    void copySelectedClips(selectedInList);
+                  }}
+                  onDelete={(item) => {
+                    void deleteClips([item.id]);
+                  }}
+                  onDeleteSelected={() => {
+                    void deleteClips(selectedInList.map((item) => item.id));
+                  }}
                   onSelect={(item) => {
                     setSelectedId(item.id);
                   }}
@@ -2215,6 +2546,12 @@ function ClipForgeApp() {
                       return next;
                     })
                   }
+                  onClearSelection={() => {
+                    setSelectedIds(new Set());
+                    setMultiSelectMode(false);
+                    setMultiPreviewOpen(false);
+                    void navigateWorkspaceList();
+                  }}
                   activeGroupStart={activeGroupStart}
                   onActiveGroupChange={handleActiveGroupChange}
                   groupScrollTarget={groupScrollTarget}
@@ -2231,7 +2568,9 @@ function ClipForgeApp() {
                     void navigateWorkspaceList();
                   }}
                   onCopy={copyClip}
+                  onCopyText={copyText}
                   onOpen={openClipTarget}
+                  onPasteText={pasteText}
                   quickActions={[
                     ...(clip && canOpenClipTarget(clip)
                       ? [
@@ -2310,6 +2649,7 @@ function ClipForgeApp() {
             logAppError("warn", "Open settings window failed", String(error)),
           );
         }}
+        onStartOnboarding={startOnboarding}
         onViewChange={(view) => {
           setActiveView(view);
           setSelectedIds(new Set());
@@ -2318,6 +2658,92 @@ function ClipForgeApp() {
         }}
         status={nativeStatus}
       />
+      {!isSettingsWindow ? (
+        <Joyride
+          continuous
+          floatingOptions={{
+            hideArrow: true,
+            shiftOptions: { padding: 10 },
+            strategy: "fixed",
+          }}
+          locale={{
+            back: "上一步",
+            close: "关闭",
+            last: "完成",
+            next: "下一步",
+            skip: "跳过",
+          }}
+          onEvent={handleOnboardingEvent}
+          options={{
+            backgroundColor: "oklch(0.985 0 0 / 0.96)",
+            textColor: "oklch(0.22 0 0)",
+            arrowColor: "oklch(0.985 0 0 / 0.96)",
+            overlayColor: "oklch(0 0 0 / 0.08)",
+            primaryColor: "oklch(0.2 0 0)",
+            offset: 6,
+            spotlightPadding: 2,
+            spotlightRadius: 5,
+            width: 220,
+            zIndex: 200,
+          }}
+          run={onboardingRun}
+          stepIndex={onboardingStepIndex}
+          steps={onboardingSteps}
+          tooltipComponent={CenteredOnboardingTooltip}
+          styles={{
+            tooltip: {
+              maxHeight: "calc(100vh - 28px)",
+              overflow: "hidden",
+              padding: "8px 9px",
+            },
+            tooltipContainer: {
+              maxHeight: "calc(100vh - 82px)",
+              overflowY: "auto",
+              padding: 0,
+            },
+            tooltipContent: {
+              padding: "3px 0 0",
+            },
+            tooltipFooter: {
+              alignItems: "center",
+              marginTop: 6,
+              paddingTop: 5,
+            },
+            tooltipFooterSpacer: {
+              flex: "0 1 auto",
+            },
+            buttonBack: {
+              color: "oklch(0.28 0 0 / 0.72)",
+              fontSize: 10,
+              lineHeight: "1",
+              marginRight: 4,
+              padding: "4px 6px",
+            },
+            buttonClose: {
+              color: "oklch(0.28 0 0 / 0.54)",
+              height: 22,
+              right: 5,
+              top: 5,
+              width: 22,
+            },
+            buttonPrimary: {
+              backgroundColor: "oklch(0.18 0 0)",
+              borderRadius: 6,
+              color: "oklch(1 0 0)",
+              fontSize: 10,
+              lineHeight: "1",
+              minHeight: 24,
+              padding: "4px 8px",
+            },
+            buttonSkip: {
+              color: "oklch(0.28 0 0 / 0.54)",
+              fontSize: 10,
+              lineHeight: "1",
+              padding: "4px 6px",
+            },
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -2420,16 +2846,22 @@ function MultiSelectToolbar({
   onClose,
   onCopy,
   onDelete,
+  onEmptyTrash,
   onFavorite,
+  onRestore,
   onToggleAll,
+  variant = "default",
 }: {
   allSelected: boolean;
   count: number;
   onClose: () => void;
   onCopy: () => void;
   onDelete: () => void;
+  onEmptyTrash?: () => void;
   onFavorite: () => void;
+  onRestore?: () => void;
   onToggleAll: (checked: boolean) => void;
+  variant?: "default" | "trash";
 }) {
   return (
     <section className="multi-select-toolbar" aria-label="多选操作台">
@@ -2446,22 +2878,42 @@ function MultiSelectToolbar({
             <input checked={allSelected} onChange={(event) => onToggleAll(event.currentTarget.checked)} type="checkbox" />
             <span>全选</span>
           </label>
-          <button aria-label="聚合复制" className="icon-button subtle" data-tooltip="聚合复制" disabled={count === 0} onClick={onCopy} title="聚合复制" type="button">
-            <Copy size={14} />
-          </button>
-          <button aria-label="批量收藏" className="icon-button subtle" data-tooltip="批量收藏" disabled={count === 0} onClick={onFavorite} title="批量收藏" type="button">
-            <Heart size={14} />
-          </button>
-          <button aria-label="删除" className="icon-button subtle" data-tooltip="删除" disabled={count === 0} onClick={onDelete} title="删除" type="button">
-            <Trash2 size={14} />
-          </button>
+          {variant === "trash" ? (
+            <>
+              <button aria-label="恢复选中" className="icon-button subtle" data-tooltip="恢复选中" disabled={count === 0} onClick={onRestore} title="恢复选中" type="button">
+                <RotateCcw size={14} />
+              </button>
+              <button aria-label="彻底删除选中" className="icon-button subtle" data-tooltip="彻底删除选中" disabled={count === 0} onClick={onDelete} title="彻底删除选中" type="button">
+                <Trash2 size={14} />
+              </button>
+              <button aria-label="清空垃圾箱" className="icon-button subtle danger-icon" data-tooltip="清空垃圾箱" onClick={onEmptyTrash} title="清空垃圾箱" type="button">
+                <Trash2 size={14} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button aria-label="聚合复制" className="icon-button subtle" data-tooltip="聚合复制" disabled={count === 0} onClick={onCopy} title="聚合复制" type="button">
+                <Copy size={14} />
+              </button>
+              <button aria-label="批量收藏" className="icon-button subtle" data-tooltip="批量收藏" disabled={count === 0} onClick={onFavorite} title="批量收藏" type="button">
+                <Heart size={14} />
+              </button>
+              <button aria-label="删除" className="icon-button subtle" data-tooltip="删除" disabled={count === 0} onClick={onDelete} title="删除" type="button">
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
           <button aria-label="关闭多选" className="icon-button subtle" data-tooltip="关闭多选" onClick={onClose} title="关闭多选" type="button">
             <X size={14} />
           </button>
         </div>
       </div>
       <div className="multi-toolbar-hint">
-          <kbd>Space</kbd> 选择 · <kbd>Ctrl/Cmd</kbd>+<kbd>A</kbd> 全选 · <kbd>Ctrl/Cmd</kbd>+<kbd>F</kbd> 收藏 · <kbd>Ctrl/Cmd</kbd>+<kbd>C</kbd> 复制 · <kbd>Esc</kbd> 退出
+        {variant === "trash" ? (
+          <><kbd>Space</kbd> 选择 · <kbd>Ctrl/Cmd</kbd>+<kbd>A</kbd> 全选 · <kbd>Enter</kbd> 恢复 · <kbd>Delete</kbd> 彻底删除 · <kbd>Esc</kbd> 退出</>
+        ) : (
+          <><kbd>Space</kbd> 选择 · <kbd>Ctrl/Cmd</kbd>+<kbd>A</kbd> 全选 · <kbd>Ctrl/Cmd</kbd>+<kbd>F</kbd> 收藏 · <kbd>Ctrl/Cmd</kbd>+<kbd>C</kbd> 复制 · <kbd>Esc</kbd> 退出</>
+        )}
       </div>
     </section>
   );
@@ -2471,12 +2923,14 @@ function BottomDock({
   activeView,
   onDrag,
   onOpenSettings,
+  onStartOnboarding,
   onViewChange,
   status,
 }: {
   activeView: ViewKey;
   onDrag: (event: PointerEvent<HTMLElement>) => void;
   onOpenSettings: () => void;
+  onStartOnboarding: () => void;
   onViewChange: (view: ViewKey) => void;
   status: string;
 }) {
@@ -2514,9 +2968,33 @@ function BottomDock({
         >
           <Trash2 size={13} />
         </button>
-        <button aria-label="设置" className="icon-button subtle" data-tooltip="设置" onClick={onOpenSettings} title="设置" type="button">
-          <Settings size={13} />
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button aria-label="ClipForge 菜单" className="footer-profile-trigger" data-tooltip="菜单" title="菜单" type="button">
+              <Avatar className="footer-profile-avatar">
+                <AvatarImage alt="" src={clipforgeAppIcon} />
+                <AvatarFallback>CF</AvatarFallback>
+              </Avatar>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="footer-profile-menu" side="top" align="end" sideOffset={8}>
+            <DropdownMenuLabel className="footer-profile-label">
+              <span>ClipForge</span>
+              <small>Ctrl+V 唤起</small>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={onOpenSettings}>
+                <span>设置</span>
+                <kbd>,</kbd>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onStartOnboarding}>
+                <span>入门引导</span>
+                <kbd>?</kbd>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </footer>
   );
@@ -2527,7 +3005,7 @@ function StatusLine({ status }: { status: string }) {
     <span className="footer-status">
       {status || (
         <>
-          <kbd>Tab</kbd> 导航 · <kbd>Enter</kbd> 粘贴 · <kbd>Ctrl/Cmd</kbd>+<kbd>F</kbd> 收藏 · <kbd>Ctrl/Cmd</kbd>+<kbd>J</kbd> 详情 · <kbd>Ctrl/Cmd</kbd>+<kbd>P</kbd> 固定
+          <kbd>Tab</kbd> 导航 · <kbd>Enter</kbd> 粘贴 · <kbd>→</kbd> 详情 · <kbd>Ctrl/Cmd</kbd>+<kbd>J</kbd> 打开目标 · <kbd>Ctrl/Cmd</kbd>+<kbd>P</kbd> 固定
         </>
       )}
     </span>
@@ -2541,7 +3019,6 @@ function TrashPanel({
   hasMore,
   isLoadingMore,
   multiSelectMode,
-  onCopy,
   onEmptyTrash,
   onDeleteSelected,
   onHardDelete,
@@ -2550,6 +3027,7 @@ function TrashPanel({
   onRestore,
   onRestoreSelected,
   onSelect,
+  onStartMultiSelect,
   onToggleSelected,
   selectedIds,
   settings,
@@ -2560,7 +3038,6 @@ function TrashPanel({
   hasMore: boolean;
   isLoadingMore: boolean;
   multiSelectMode: boolean;
-  onCopy: (item: ClipItem) => void;
   onEmptyTrash: () => void;
   onDeleteSelected: () => void;
   onHardDelete: (item: ClipItem) => void;
@@ -2569,11 +3046,48 @@ function TrashPanel({
   onRestore: (item: ClipItem) => void;
   onRestoreSelected: () => void;
   onSelect: (item: ClipItem) => void;
+  onStartMultiSelect: (id: string) => void;
   onToggleSelected: (id: string) => void;
   selectedIds: Set<string>;
   settings: AppSettings;
 }) {
   const selectedCount = clips.filter((item) => selectedIds.has(item.id)).length;
+  const [contextMenu, setContextMenu] = useState<{ item: ClipItem; x: number; y: number } | null>(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const openContextMenu = useCallback((event: MouseEvent<HTMLElement>, item: ClipItem) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSelect(item);
+    if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
+    const menuWidth = 204;
+    const menuHeight = multiSelectMode ? 188 : 142;
+    setContextMenu({
+      item,
+      x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
+      y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
+    });
+  }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".clip-context-menu")) return;
+      closeContextMenu();
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") closeContextMenu();
+    };
+    window.addEventListener("pointerdown", close, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.removeEventListener("pointerdown", close, true);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [closeContextMenu, contextMenu]);
+
   if (!clips.length) {
     return (
       <div className="empty-list">
@@ -2585,41 +3099,6 @@ function TrashPanel({
   }
   return (
     <section className="quick-panel">
-      <div className="quick-control-row">
-        <div className="quick-bulk-actions">
-          <button className="danger-button" onClick={onEmptyTrash} type="button">
-            <Trash2 size={14} />
-            <span>清空垃圾箱</span>
-          </button>
-        </div>
-        <div className="quick-bulk-actions" aria-label="垃圾箱批量操作">
-          {multiSelectMode ? (
-            <>
-              <button
-                aria-label="恢复选中"
-                className="icon-button"
-                disabled={selectedCount === 0}
-                onClick={onRestoreSelected}
-                title="恢复选中"
-                type="button"
-              >
-                <RotateCcw size={14} />
-              </button>
-              <button
-                aria-label="彻底删除选中"
-                className="icon-button danger-icon"
-                disabled={selectedCount === 0}
-                onClick={onDeleteSelected}
-                title="彻底删除选中"
-                type="button"
-              >
-                <Trash2 size={14} />
-              </button>
-              <span>{selectedCount}</span>
-            </>
-          ) : null}
-        </div>
-      </div>
       <div className="quick-workspace" onPointerDown={onPointerActive}>
         <VirtualList
           activeId={activeId}
@@ -2627,56 +3106,73 @@ function TrashPanel({
           className="quick-menu"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={56}
+          itemHeight={36}
           items={clips}
           onEndReached={onLoadMore}
-          renderItem={(item) => (
+          groupSize={10}
+          renderItem={(item, index) => (
             <article
               className={[
                 "quick-row",
                 activeId === item.id ? "active" : "",
                 selectedIds.has(item.id) ? "selected" : "",
                 multiSelectMode ? "selecting" : "",
+                index < 10 ? "in-active-group" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
               key={item.id}
               onClick={() => {
                 if (multiSelectMode) {
-                  onToggleSelected(item.id);
-                  return;
-                }
-                onSelect(item);
-              }}
-              onFocus={() => onSelect(item)}
-              onMouseEnter={() => {
-                if (activeId !== item.id) onSelect(item);
-              }}
-              tabIndex={0}
+                onToggleSelected(item.id);
+                return;
+              }
+              onSelect(item);
+              onRestore(item);
+            }}
+            onContextMenu={(event) => openContextMenu(event, item)}
+            onFocus={() => onSelect(item)}
+            tabIndex={0}
             >
-              {multiSelectMode ? (
-                <button
-                  aria-label={selectedIds.has(item.id) ? "取消选择" : "选择"}
-                  className="quick-check"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleSelected(item.id);
-                  }}
-                  type="button"
-                >
-                  {selectedIds.has(item.id) ? <CheckSquare size={14} /> : <Square size={14} />}
-                </button>
+              <button
+                aria-label={selectedIds.has(item.id) ? "取消选择" : "选择此项"}
+                className={selectedIds.has(item.id) ? "quick-index selected" : "quick-index"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelect(item);
+                  if (multiSelectMode) onToggleSelected(item.id);
+                  else onStartMultiSelect(item.id);
+                }}
+                title="选择此项"
+                type="button"
+              >
+              {selectedIds.has(item.id) ? (
+                <Check size={12} />
+              ) : index >= 0 && index <= 9 ? (
+                <span className="quick-index-num">{index}</span>
               ) : (
-                <kbd>
-                  <Trash2 size={12} />
-                </kbd>
+                <Square size={12} />
               )}
-              <div>
-                <strong>
-                  {item.analysis.title}
-                  <span>{formatTime(item.lastSeenAt)}</span>
-                </strong>
-                <p aria-label={getDisplayText(item, settings)}>{getDisplayText(item, settings)}</p>
+              </button>
+              <div className="quick-content">
+                {(() => {
+                  const parts = splitLineForMiddleEllipsis(getDisplayText(item, settings));
+                  if (!parts.split) {
+                    return (
+                      <AppTooltip content={getItemTooltip(item)}>
+                        <p className="quick-line" aria-label={parts.text}>{parts.text}</p>
+                      </AppTooltip>
+                    );
+                  }
+                  return (
+                    <AppTooltip content={getItemTooltip(item)}>
+                      <p className="quick-line quick-line-mid" aria-label={parts.full}>
+                        <span className="ql-head">{parts.head}</span>
+                        <span className="ql-tail">{parts.tail}</span>
+                      </p>
+                    </AppTooltip>
+                  );
+                })()}
               </div>
               <div className="row-actions" onClick={(event) => event.stopPropagation()}>
                 <button
@@ -2687,15 +3183,6 @@ function TrashPanel({
                   type="button"
                 >
                   <RotateCcw size={14} />
-                </button>
-                <button
-                  className="icon-button"
-                  data-tooltip="复制"
-                  onClick={() => onCopy(item)}
-                  title="复制"
-                  type="button"
-                >
-                  <Copy size={14} />
                 </button>
                 <button
                   className="icon-button danger-icon"
@@ -2710,8 +3197,101 @@ function TrashPanel({
             </article>
           )}
         />
+        {contextMenu ? (
+          <TrashContextMenu
+            item={contextMenu.item}
+            multiSelectMode={multiSelectMode}
+            onClose={closeContextMenu}
+            onDeleteSelected={onDeleteSelected}
+            onEmptyTrash={onEmptyTrash}
+            onHardDelete={onHardDelete}
+            onRestore={onRestore}
+            onRestoreSelected={onRestoreSelected}
+            onStartMultiSelect={onStartMultiSelect}
+            selectedCount={selectedCount}
+            x={contextMenu.x}
+            y={contextMenu.y}
+          />
+        ) : null}
       </div>
     </section>
+  );
+}
+
+function TrashContextMenu({
+  item,
+  multiSelectMode,
+  onClose,
+  onDeleteSelected,
+  onEmptyTrash,
+  onHardDelete,
+  onRestore,
+  onRestoreSelected,
+  onStartMultiSelect,
+  selectedCount,
+  x,
+  y,
+}: {
+  item: ClipItem;
+  multiSelectMode: boolean;
+  onClose: () => void;
+  onDeleteSelected: () => void;
+  onEmptyTrash: () => void;
+  onHardDelete: (item: ClipItem) => void;
+  onRestore: (item: ClipItem) => void;
+  onRestoreSelected: () => void;
+  onStartMultiSelect: (id: string) => void;
+  selectedCount: number;
+  x: number;
+  y: number;
+}) {
+  const run = (action: () => void) => {
+    action();
+    onClose();
+  };
+  return (
+    <div
+      aria-label="垃圾箱项目菜单"
+      className="clip-context-menu"
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+      role="menu"
+      style={{ left: x, top: y }}
+    >
+      {multiSelectMode ? (
+        <>
+          <button className="clip-context-item" disabled={selectedCount === 0} onClick={() => run(onRestoreSelected)} role="menuitem" type="button">
+            <span className="clip-context-label"><RotateCcw size={13} />恢复选中</span>
+            <kbd>{selectedCount}</kbd>
+          </button>
+          <button className="clip-context-item" disabled={selectedCount === 0} onClick={() => run(onDeleteSelected)} role="menuitem" type="button">
+            <span className="clip-context-label"><Trash2 size={13} />彻底删除选中</span>
+            <kbd>Del</kbd>
+          </button>
+          <div className="clip-context-separator" role="separator" />
+          <button className="clip-context-item danger" onClick={() => run(onEmptyTrash)} role="menuitem" type="button">
+            <span className="clip-context-label"><Trash2 size={13} />清空垃圾箱</span>
+            <kbd>全部</kbd>
+          </button>
+        </>
+      ) : (
+        <>
+          <button className="clip-context-item" onClick={() => run(() => onRestore(item))} role="menuitem" type="button">
+            <span className="clip-context-label"><RotateCcw size={13} />恢复</span>
+            <kbd>Enter</kbd>
+          </button>
+          <button className="clip-context-item" onClick={() => run(() => onStartMultiSelect(item.id))} role="menuitem" type="button">
+            <span className="clip-context-label"><Square size={13} />选中该项</span>
+            <kbd>Space</kbd>
+          </button>
+          <div className="clip-context-separator" role="separator" />
+          <button className="clip-context-item danger" onClick={() => run(() => onHardDelete(item))} role="menuitem" type="button">
+            <span className="clip-context-label"><Trash2 size={13} />彻底删除</span>
+            <kbd>Del</kbd>
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -2866,14 +3446,19 @@ function QuickPastePanel({
   isLoadingMore,
   multiSelectMode,
   onFavorite,
+  onFavoriteSelected,
   onLoadMore,
   onOpen,
   onOpenAggregate,
   onPointerActive,
   onPaste,
+  onCopySelected,
+  onDelete,
+  onDeleteSelected,
   onSelect,
   onStartMultiSelect,
   onToggleSelected,
+  onClearSelection,
   selectedIds,
   activeGroupStart,
   onActiveGroupChange,
@@ -2889,14 +3474,19 @@ function QuickPastePanel({
   multiSelectMode: boolean;
   selectedIds: Set<string>;
   onFavorite: (item: ClipItem) => void;
+  onFavoriteSelected: () => void;
   onLoadMore: () => void;
   onOpen: (item: ClipItem) => void;
   onOpenAggregate: () => void;
   onPointerActive: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
+  onCopySelected: () => void;
+  onDelete: (item: ClipItem) => void;
+  onDeleteSelected: () => void;
   onSelect: (item: ClipItem) => void;
   onStartMultiSelect: (id: string) => void;
   onToggleSelected: (id: string) => void;
+  onClearSelection: () => void;
   activeGroupStart: number;
   onActiveGroupChange: (groupStart: number) => void;
   groupScrollTarget: number | null;
@@ -2910,23 +3500,23 @@ function QuickPastePanel({
     onSelect(item);
     setSuppressTooltips(true);
     window.setTimeout(() => setSuppressTooltips(false), 900);
-    if (multiSelectMode) {
-      if (!selectedIds.has(item.id)) onToggleSelected(item.id);
-      onOpenAggregate();
-      return;
-    }
-    const menuWidth = 196;
-    const menuHeight = 188;
+    if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
+    const menuWidth = 204;
+    const menuHeight = multiSelectMode ? 190 : 228;
     setContextMenu({
       item,
       x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
       y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
     });
-  }, [multiSelectMode, onOpenAggregate, onSelect, onToggleSelected, selectedIds]);
+  }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
 
   useEffect(() => {
     if (!contextMenu) return;
-    const close = () => closeContextMenu();
+    const close = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".clip-context-menu")) return;
+      closeContextMenu();
+    };
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") closeContextMenu();
     };
@@ -2959,7 +3549,7 @@ function QuickPastePanel({
           className="quick-menu"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={38}
+          itemHeight={36}
           items={clips}
           onEndReached={onLoadMore}
           groupSize={10}
@@ -3062,10 +3652,14 @@ function QuickPastePanel({
             multiSelectMode={multiSelectMode}
             onClose={closeContextMenu}
             onFavorite={onFavorite}
-            onOpen={onOpen}
+            onFavoriteSelected={onFavoriteSelected}
+            onDelete={() => onDelete(contextMenu.item)}
+            onDeleteSelected={onDeleteSelected}
             onOpenAggregate={onOpenAggregate}
             onPaste={onPaste}
+            onCopySelected={onCopySelected}
             onStartMultiSelect={onStartMultiSelect}
+            onClearSelection={onClearSelection}
             selectedCount={selectedIds.size}
             x={contextMenu.x}
             y={contextMenu.y}
@@ -3080,11 +3674,15 @@ function ClipContextMenu({
   item,
   multiSelectMode,
   onClose,
+  onDelete,
+  onDeleteSelected,
   onFavorite,
-  onOpen,
+  onFavoriteSelected,
   onOpenAggregate,
   onPaste,
+  onCopySelected,
   onStartMultiSelect,
+  onClearSelection,
   selectedCount,
   x,
   y,
@@ -3092,11 +3690,15 @@ function ClipContextMenu({
   item: ClipItem;
   multiSelectMode: boolean;
   onClose: () => void;
+  onDelete: () => void;
+  onDeleteSelected: () => void;
   onFavorite: (item: ClipItem) => void;
-  onOpen: (item: ClipItem) => void;
+  onFavoriteSelected: () => void;
   onOpenAggregate: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
+  onCopySelected: () => void;
   onStartMultiSelect: (id: string) => void;
+  onClearSelection: () => void;
   selectedCount: number;
   x: number;
   y: number;
@@ -3115,29 +3717,72 @@ function ClipContextMenu({
       role="menu"
       style={{ left: x, top: y }}
     >
-      <button className="clip-context-item" onClick={() => run(() => onPaste(item, "context-menu"))} role="menuitem" type="button">
-        <span className="clip-context-label"><Clipboard size={13} />粘贴</span>
-        <kbd>Enter</kbd>
-      </button>
-      <button className="clip-context-item" onClick={() => run(() => onFavorite(item))} role="menuitem" type="button">
-        <span className="clip-context-label"><Heart size={13} />{item.favorite ? "取消收藏" : "收藏"}</span>
-        <kbd>{mod}+F</kbd>
-      </button>
-      <button className="clip-context-item" onClick={() => run(() => onOpen(item))} role="menuitem" type="button">
-        <span className="clip-context-label"><ExternalLink size={13} />{item.analysis.url || item.analysis.attachment ? "打开目标" : "进入详情"}</span>
-        <kbd>{mod}+J</kbd>
-      </button>
-      <div className="clip-context-separator" role="separator" />
-      {multiSelectMode && selectedCount > 1 ? (
-        <button className="clip-context-item" onClick={() => run(onOpenAggregate)} role="menuitem" type="button">
-          <span className="clip-context-label"><CheckSquare size={13} />聚合显示</span>
-          <kbd>右键</kbd>
-        </button>
+      {multiSelectMode ? (
+        <>
+          <button className="clip-context-item" onClick={() => run(onOpenAggregate)} role="menuitem" type="button">
+            <span className="clip-context-label"><CheckSquare size={13} />聚合显示</span>
+            <kbd>{selectedCount}</kbd>
+          </button>
+          <button className="clip-context-item" onClick={() => run(onCopySelected)} role="menuitem" type="button">
+            <span className="clip-context-label"><Copy size={13} />复制选中</span>
+            <kbd>{mod}+C</kbd>
+          </button>
+          <button className="clip-context-item" onClick={() => run(onFavoriteSelected)} role="menuitem" type="button">
+            <span className="clip-context-label"><Heart size={13} />收藏选中</span>
+            <kbd>{mod}+F</kbd>
+          </button>
+          <button className="clip-context-item danger" onClick={() => run(onDeleteSelected)} role="menuitem" type="button">
+            <span className="clip-context-label"><Trash2 size={13} />删除选中</span>
+            <kbd>Del</kbd>
+          </button>
+          <div className="clip-context-separator" role="separator" />
+          <button className="clip-context-item" onClick={() => run(onClearSelection)} role="menuitem" type="button">
+            <span className="clip-context-label"><X size={13} />退出多选</span>
+            <kbd>Esc</kbd>
+          </button>
+        </>
       ) : (
-        <button className="clip-context-item" onClick={() => run(() => onStartMultiSelect(item.id))} role="menuitem" type="button">
-          <span className="clip-context-label"><Square size={13} />进入多选</span>
-          <kbd>右键</kbd>
-        </button>
+        <>
+          <button className="clip-context-item" onClick={() => run(() => onPaste(item, "context-menu"))} role="menuitem" type="button">
+            <span className="clip-context-label"><Clipboard size={13} />粘贴</span>
+            <kbd>Enter</kbd>
+          </button>
+          <button
+            className="clip-context-item"
+            onClick={() => run(() => {
+              logAppError("info", "context-menu-detail", {
+                id: item.id,
+                hasUrl: Boolean(item.analysis.url),
+                hasAttachment: Boolean(item.analysis.attachment),
+              });
+              void navigateWorkspaceDetail(item.id);
+            })}
+            role="menuitem"
+            type="button"
+          >
+            <span className="clip-context-label"><FileJson size={13} />进入详情</span>
+            <kbd>→</kbd>
+          </button>
+          {item.analysis.url || item.analysis.attachment ? (
+            <div className="clip-context-item is-hint" role="presentation">
+              <span className="clip-context-label"><ExternalLink size={13} />打开目标</span>
+              <kbd>{mod}+J</kbd>
+            </div>
+          ) : null}
+          <button className="clip-context-item" onClick={() => run(() => onFavorite(item))} role="menuitem" type="button">
+            <span className="clip-context-label"><Heart size={13} />{item.favorite ? "取消收藏" : "收藏"}</span>
+            <kbd>{mod}+F</kbd>
+          </button>
+          <button className="clip-context-item danger" onClick={() => run(onDelete)} role="menuitem" type="button">
+            <span className="clip-context-label"><Trash2 size={13} />删除</span>
+            <kbd>Del</kbd>
+          </button>
+          <div className="clip-context-separator" role="separator" />
+          <button className="clip-context-item" onClick={() => run(() => onStartMultiSelect(item.id))} role="menuitem" type="button">
+            <span className="clip-context-label"><Square size={13} />选中该项</span>
+            <kbd>Space</kbd>
+          </button>
+        </>
       )}
     </div>
   );

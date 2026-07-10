@@ -140,16 +140,16 @@ fn current_source_app_macos() -> Option<SourceAppInfo> {
 
 const QUICK_PANEL_WIDTH: f64 = 420.0;
 const MANAGEMENT_PANEL_WIDTH: f64 = 760.0;
-const QUICK_PANEL_DEFAULT_HEIGHT: f64 = 450.0; // 默认 420×450（约 9 行列表 + 顶部/底部操作区）
-const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 450.0;
+const QUICK_PANEL_DEFAULT_HEIGHT: f64 = 400.0; // 默认 420×400（约 0-8 九项 + 顶部/底部操作区）
+const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 400.0;
 const QUICK_PANEL_MIN_HEIGHT: f64 = 320.0;
 const QUICK_PANEL_MAX_HEIGHT: f64 = 760.0;
 const QUICK_PANEL_MARGIN: f64 = 12.0;
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_BUNDLE_IDENTIFIER: &str = "app.clipforge.desktop";
 
-/// 从用户设置解析面板宽高（默认 420×488；宽 320-600，高 300-1000；0/非法用默认）。
-/// 高度 0 或缺失 = 自适应默认（按分组 10 行的 488）。
+/// 从用户设置解析面板宽高（默认 420×400；宽 320-600，高 300-1000；0/非法用默认）。
+/// 高度 0 或缺失 = 自适应默认（约 0-8 九项）。
 fn resolve_panel_dims() -> (f64, f64) {
     let (mut width, mut height) = (QUICK_PANEL_WIDTH, QUICK_PANEL_DEFAULT_HEIGHT);
     if let Ok(settings) = read_user_settings() {
@@ -160,7 +160,14 @@ fn resolve_panel_dims() -> (f64, f64) {
         }
         if let Some(value) = settings.settings.get("panelHeight").and_then(Value::as_f64) {
             if value >= 300.0 {
-                height = value.clamp(300.0, 1000.0);
+                height = if [430.0, 450.0, 488.0]
+                    .iter()
+                    .any(|legacy| (value - legacy).abs() < f64::EPSILON)
+                {
+                    QUICK_PANEL_DEFAULT_HEIGHT
+                } else {
+                    value.clamp(300.0, 1000.0)
+                };
             }
         }
     }
@@ -870,11 +877,7 @@ fn log_writer_send(line: String) {
                 if let Some(parent) = path.parent() {
                     let _ = fs::create_dir_all(parent);
                 }
-                if let Ok(mut file) = fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                {
+                if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
                     let mut joined = String::with_capacity(buffer.iter().map(|s| s.len()).sum());
                     for piece in buffer.drain(..) {
                         joined.push_str(&piece);
@@ -3674,10 +3677,7 @@ fn simulate_platform_paste() -> Result<String, String> {
 /// 托盘菜单 id（用于切换监听状态后通过 app.tray_by_id 重建菜单刷新文案）。
 const TRAY_ID: &str = "main-tray";
 
-#[cfg(target_os = "macos")]
-const DEFAULT_GLOBAL_SHORTCUT: &str = "Command+Shift+V";
-#[cfg(not(target_os = "macos"))]
-const DEFAULT_GLOBAL_SHORTCUT: &str = "Control+Shift+V";
+const DEFAULT_GLOBAL_SHORTCUT: &str = "Control+V";
 const LEGACY_DEFAULT_GLOBAL_SHORTCUT: &str = "CommandOrControl+Shift+V";
 const FALLBACK_GLOBAL_SHORTCUT: &str = "Control+V";
 
@@ -4409,6 +4409,7 @@ fn set_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, x: f6
     let _ = window.set_position(LogicalPosition::new(x, y));
 }
 
+#[allow(dead_code)] // 原供「显示后用焦点输入框位置覆盖面板定位」的异步线程使用；该线程会引发可见跳动已移除。
 fn compute_panel_position<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
     panel_width: f64,

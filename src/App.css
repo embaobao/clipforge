@@ -244,6 +244,11 @@ button {
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
   clip-path: inset(0 round var(--cf-radius-xl));
   contain: paint;
+  opacity: 0;
+  transform: translateX(8px) scale(0.992);
+  transition:
+    opacity 160ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
   transform-origin: center center;
   will-change: transform, opacity;
   backdrop-filter: blur(30px) saturate(160%);
@@ -277,12 +282,12 @@ button {
 }
 
 .app-shell.is-entering {
-  animation: quick-panel-enter 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  opacity: 1;
+  transform: none;
 }
 
 .app-shell.is-closing {
   pointer-events: none;
-  animation: quick-panel-exit 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
 @keyframes quick-panel-enter {
@@ -2066,6 +2071,108 @@ button {
   background: var(--border);
 }
 
+.footer-profile-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  outline: none;
+  transition:
+    background 0.14s ease,
+    color 0.14s ease,
+    transform 0.14s ease;
+}
+
+.footer-profile-trigger:hover,
+.footer-profile-trigger:focus-visible,
+.footer-profile-trigger[data-state="open"] {
+  color: var(--foreground);
+  background: oklch(0 0 0 / 0.05);
+}
+
+.footer-profile-trigger:active {
+  transform: scale(0.96);
+}
+
+.footer-profile-avatar.avatar {
+  width: 22px;
+  height: 22px;
+  color: oklch(0.24 0 0 / 0.78);
+  background: oklch(1 0 0 / 0.62);
+  border-color: oklch(0 0 0 / 0.1);
+}
+
+.footer-profile-avatar .avatar-fallback {
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.footer-profile-avatar .avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.footer-profile-menu.dropdown-content {
+  min-width: 154px;
+  padding: 5px;
+  border-radius: 9px;
+  background:
+    linear-gradient(180deg, oklch(1 0 0 / 0.95), oklch(0.98 0 0 / 0.9)),
+    oklch(0.99 0 0 / 0.92);
+  border: 1px solid oklch(0 0 0 / 0.11);
+  box-shadow:
+    0 16px 34px oklch(0 0 0 / 0.18),
+    inset 0 1px 0 oklch(1 0 0 / 0.86);
+}
+
+.footer-profile-label.dropdown-label {
+  display: grid;
+  gap: 2px;
+  min-height: auto;
+  padding: 5px 7px 6px;
+  color: var(--foreground);
+  font-size: 11px;
+}
+
+.footer-profile-label small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.footer-profile-menu .dropdown-item {
+  justify-content: space-between;
+  min-height: 27px;
+  padding: 0 7px;
+  color: oklch(0.13 0 0 / 0.9);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.footer-profile-menu .dropdown-item kbd {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 2px 5px;
+  color: oklch(0.18 0 0 / 0.58);
+  background: oklch(0 0 0 / 0.045);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 650;
+}
+
 .hover-card-content {
   width: 300px;
   max-width: calc(100vw - 24px);
@@ -2485,6 +2592,43 @@ button {
   max-width: 280px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.workspace-route-fallback {
+  display: grid;
+  min-height: 240px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.workspace-route-fallback strong {
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.workspace-route-fallback span {
+  max-width: 280px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workspace-route-fallback div {
+  display: flex;
+  gap: 8px;
+}
+
+.workspace-route-fallback button {
+  height: 28px;
+  padding: 0 10px;
+  color: var(--foreground);
+  background: oklch(1 0 0 / 0.72);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
 }
 
 .virtual-list {
@@ -7191,14 +7335,15 @@ body,
   transform: translate(0, 3px);
   transition: opacity 120ms var(--cf-ease-out), transform 120ms var(--cf-ease-out);
   overflow: hidden;
-  backdrop-filter: blur(20px) saturate(1.25);
-  -webkit-backdrop-filter: blur(20px) saturate(1.25);
 }
 
 .quick-content .app-tooltip:hover .app-tooltip-card,
 .quick-content .app-tooltip:focus-within .app-tooltip-card {
   opacity: 1;
   transform: translate(0, 0);
+  /* 背景模糊只在显示时开：原来每行常驻 backdrop-filter 是打开/滚动卡顿来源之一。 */
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
 }
 
 .app-tooltip-main {
@@ -7409,6 +7554,20 @@ body,
 .clip-context-item:focus-visible {
   background: oklch(0 0 0 / 0.055);
   outline: none;
+}
+
+.clip-context-item.is-hint {
+  cursor: default;
+  color: oklch(0.18 0 0 / 0.58);
+}
+
+.clip-context-item.is-hint:hover {
+  background: transparent;
+}
+
+.clip-context-item.danger .clip-context-label svg,
+.clip-context-item.danger:hover {
+  color: oklch(0.52 0.15 28 / 0.9);
 }
 
 .clip-context-label {
@@ -7629,6 +7788,100 @@ body,
   display: none !important;
 }
 
+/* P-FINAL.21 入门引导小面板：功能位置用小锚点标记，说明卡片固定居中。 */
+.onboarding-anchors {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 240;
+  opacity: 0;
+}
+
+.onboarding-anchors.active {
+  opacity: 1;
+}
+
+.onboarding-anchor {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid oklch(0 0 0 / 0.68);
+  border-radius: 999px;
+  background: oklch(1 0 0 / 0.92);
+  box-shadow:
+    0 0 0 2px oklch(1 0 0 / 0.82),
+    0 0 0 4px oklch(0 0 0 / 0.08),
+    0 4px 10px oklch(0 0 0 / 0.2);
+}
+
+.onboarding-anchor::after {
+  position: absolute;
+  inset: -4px;
+  content: "";
+  border: 1px solid oklch(0 0 0 / 0.22);
+  border-radius: inherit;
+  animation: onboarding-anchor-pulse 1.7s ease-in-out infinite;
+}
+
+.anchor-panel {
+  top: 12px;
+  left: 50%;
+}
+
+.anchor-search {
+  top: 18px;
+  left: 32px;
+}
+
+.anchor-list {
+  top: 46%;
+  left: 18px;
+}
+
+.anchor-index {
+  top: 86px;
+  left: 22px;
+}
+
+.anchor-row-action {
+  top: 92px;
+  right: 58px;
+}
+
+.anchor-footer {
+  right: 56px;
+  bottom: 18px;
+}
+
+.anchor-pin {
+  top: 18px;
+  right: 20px;
+}
+
+/* P-FINAL.20 详情页整体滚动，避免长内容被内容卡片或底部 dock 截断。 */
+.app-shell .workspace-detail-page {
+  min-height: 0 !important;
+  height: 100% !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  padding-bottom: calc(var(--cf-dock-height) + 24px) !important;
+  grid-template-rows: auto auto auto auto auto !important;
+  overscroll-behavior: contain;
+}
+
+.app-shell .workspace-detail-page .detail-content {
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.app-shell .workspace-detail-page .detail-content pre,
+.app-shell .workspace-detail-page .markdown-preview,
+.app-shell .workspace-detail-page .link-preview {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
 /* P-FINAL.17 详情页解析渲染：链接/Markdown 提供可读预览和快速复制布局。 */
 .detail-content {
   min-height: 0 !important;
@@ -7699,9 +7952,46 @@ body,
   white-space: pre-wrap;
 }
 
-.markdown-preview .md-code span {
+.markdown-preview .md-code-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
   color: oklch(0.82 0 0 / 0.62);
   font-size: 10px;
+}
+
+.markdown-preview .md-code-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+
+.markdown-preview .md-code-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  gap: 4px;
+  padding: 0 7px;
+  color: oklch(0.97 0 0 / 0.9);
+  background: oklch(1 0 0 / 0.1);
+  border: 1px solid oklch(1 0 0 / 0.14);
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.markdown-preview .md-code-actions button:hover,
+.markdown-preview .md-code-actions button:focus-visible {
+  color: oklch(1 0 0 / 0.98);
+  background: oklch(1 0 0 / 0.16);
+}
+
+.markdown-preview .md-code code {
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .markdown-preview .md-table-row {
@@ -7723,6 +8013,34 @@ body,
 
 .markdown-preview .md-space {
   height: 3px;
+}
+
+.detail-render-fallback {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.detail-render-fallback .panel-fallback {
+  min-height: 150px;
+  padding: 14px;
+  background: oklch(1 0 0 / 0.42);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 8px;
+}
+
+.detail-render-fallback pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  color: oklch(0.16 0 0 / 0.86);
+  background: oklch(1 0 0 / 0.5);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .link-preview-card {
@@ -7769,4 +8087,277 @@ body,
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* P-FINAL.18 列表左右边距再次收紧：列表外侧和行内左右保持等宽。 */
+.app-shell .quick-panel,
+.app-shell.search-active .quick-panel,
+.app-shell:not(.search-active) .quick-panel {
+  padding-right: 4px !important;
+  padding-left: 4px !important;
+}
+
+.app-shell .quick-workspace,
+.app-shell .quick-menu,
+.app-shell .quick-menu.virtual-list {
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+  scrollbar-gutter: auto !important;
+}
+
+.app-shell .quick-menu.virtual-list::-webkit-scrollbar {
+  width: 5px !important;
+}
+
+.app-shell .quick-row {
+  grid-template-columns: 24px minmax(0, 1fr) auto !important;
+  gap: 5px !important;
+  min-height: 36px !important;
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+  padding-top: 2px !important;
+  padding-bottom: 2px !important;
+  padding-right: 4px !important;
+  padding-left: 4px !important;
+}
+
+.app-shell .quick-content {
+  padding-right: 40px !important;
+}
+
+.app-shell .row-actions {
+  right: 2px !important;
+}
+
+.app-shell .quick-index {
+  width: 24px !important;
+  height: 24px !important;
+}
+
+/* P-FINAL.19 首次使用引导：快捷键闭环动画提示。 */
+.onboarding-step {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.onboarding-step p {
+  margin: 0;
+  color: oklch(0.22 0 0 / 0.78);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.onboarding-shortcut-demo {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 6px;
+  background: oklch(0 0 0 / 0.035);
+  border: 1px solid oklch(0 0 0 / 0.07);
+  border-radius: 7px;
+}
+
+.onboarding-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: oklch(0.16 0 0 / 0.72);
+  background: oklch(1 0 0 / 0.68);
+  border: 1px solid oklch(0 0 0 / 0.07);
+  border-radius: 5px;
+}
+
+.onboarding-key-chain {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.onboarding-key-chain kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 19px;
+  padding: 0 6px;
+  color: oklch(0.16 0 0 / 0.86);
+  background: oklch(1 0 0 / 0.86);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 5px;
+  box-shadow: 0 1px 0 oklch(0 0 0 / 0.1);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  animation: onboarding-key-pulse 1.8s ease-in-out infinite;
+}
+
+.onboarding-key-chain kbd:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.onboarding-key-chain kbd:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.onboarding-shortcut-demo span {
+  color: oklch(0.24 0 0 / 0.58);
+  font-size: 10.5px;
+  line-height: 1.25;
+}
+
+.react-joyride__tooltip {
+  border: 1px solid oklch(0 0 0 / 0.08) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 14px 34px oklch(0 0 0 / 0.14) !important;
+}
+
+.react-joyride__tooltip h4 {
+  margin-bottom: 6px !important;
+  font-size: 12px !important;
+  line-height: 1.3 !important;
+}
+
+.react-joyride__tooltip button {
+  min-height: 24px !important;
+  padding: 4px 8px !important;
+  border-radius: 6px !important;
+  font-size: 10px !important;
+}
+
+.centered-onboarding-tooltip {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  z-index: 220;
+  display: grid;
+  gap: 7px;
+  width: min(250px, calc(100vw - 34px));
+  max-height: calc(100vh - 92px);
+  padding: 10px 11px;
+  color: oklch(0.16 0 0 / 0.9);
+  background:
+    linear-gradient(180deg, oklch(1 0 0 / 0.96), oklch(0.98 0 0 / 0.92)),
+    oklch(0.99 0 0 / 0.94);
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 10px;
+  box-shadow:
+    0 14px 34px oklch(0 0 0 / 0.14),
+    inset 0 1px 0 oklch(1 0 0 / 0.9);
+  transform: translate(-50%, -50%) !important;
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+}
+
+.centered-onboarding-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  overflow: auto;
+}
+
+.centered-onboarding-copy > strong {
+  padding-right: 18px;
+  font-size: 13px;
+  font-weight: 720;
+  line-height: 1.3;
+}
+
+.centered-onboarding-close {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: oklch(0.28 0 0 / 0.54);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.centered-onboarding-close svg {
+  pointer-events: none;
+}
+
+.centered-onboarding-close:hover {
+  background: oklch(0 0 0 / 0.05);
+}
+
+.centered-onboarding-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid oklch(0 0 0 / 0.06);
+}
+
+.centered-onboarding-footer > span {
+  color: oklch(0.28 0 0 / 0.5);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.centered-onboarding-footer > div {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.centered-onboarding-ghost,
+.centered-onboarding-primary {
+  min-height: 25px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.centered-onboarding-ghost {
+  color: oklch(0.28 0 0 / 0.62);
+  background: transparent;
+  border: 0;
+}
+
+.centered-onboarding-ghost:hover {
+  background: oklch(0 0 0 / 0.045);
+}
+
+.centered-onboarding-primary {
+  color: oklch(1 0 0);
+  background: oklch(0.18 0 0);
+  border: 1px solid oklch(0 0 0 / 0.08);
+}
+
+@keyframes onboarding-anchor-pulse {
+  0%, 100% {
+    opacity: 0.48;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 0.14;
+    transform: scale(1.18);
+  }
+}
+
+@keyframes onboarding-key-pulse {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  45% {
+    transform: translateY(-2px);
+  }
 }

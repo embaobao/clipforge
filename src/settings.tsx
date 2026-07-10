@@ -35,6 +35,7 @@ interface AppSettings {
   enableScrollCollapse: boolean;
   panelWidth: number;
   panelHeight: number;
+  onboardingCompleted: boolean;
   logMaxSizeMb: number;
   logKeepRatio: number;
   logRetentionDays: number;
@@ -115,10 +116,7 @@ const tagModeLabels: Record<AppSettings["tagMode"], string> = {
   off: "关闭",
 };
 
-const DEFAULT_SHORTCUT =
-  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
-    ? "Command+Shift+V"
-    : "Control+Shift+V";
+const DEFAULT_SHORTCUT = "Control+V";
 
 interface SettingsAppState {
   accessibility: AccessibilityPermissionPayload | null;
@@ -175,7 +173,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   panelBackgroundOpacity: 0.72,
   enableScrollCollapse: true,
   panelWidth: 420,
-  panelHeight: 488,
+  panelHeight: 400,
+  onboardingCompleted: false,
   logMaxSizeMb: 10,
   logKeepRatio: 0.6,
   logRetentionDays: 0,

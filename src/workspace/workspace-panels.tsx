@@ -1,6 +1,7 @@
 import {
   AppWindow,
   BarChart3,
+  Clipboard,
   Copy,
   ExternalLink,
   FileJson,
@@ -10,7 +11,9 @@ import {
   Table2,
   X,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Component } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import type { ClipItem, ClipPayloadKind } from "../App";
 
 function getPayloadKindLabel(kind: ClipPayloadKind): string {
@@ -72,7 +75,9 @@ type ClipDetailWorkspaceProps = {
   links: string[];
   onBack: () => void;
   onCopy: (clip: ClipItem) => void;
+  onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
   onOpen: (clip: ClipItem) => void;
+  onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
   quickActions?: DetailQuickAction[];
 };
 
@@ -92,6 +97,8 @@ type MultiAggregateWorkspaceProps = {
   onExportTable: () => void;
 };
 
+const droppedLinkLogKeys = new Set<string>();
+
 function detectDetailMode(clip: ClipItem) {
   // 详情页先做轻量类型识别，后续解析插件会从这里扩展更完整的渲染能力。
   if (clip.analysis.attachment?.isImage) return "图片";
@@ -105,6 +112,65 @@ function detectDetailMode(clip: ClipItem) {
 
 function isLikelyMarkdown(clip: ClipItem) {
   return clip.kind === "markdown" || clip.analysis.isMarkdown || detectDetailMode(clip) === "Markdown";
+}
+
+function appendWorkspacePanelLog(level: "info" | "warn" | "error", message: string, context: Record<string, unknown>) {
+  let contextText = "";
+  try {
+    contextText = JSON.stringify(context);
+  } catch {
+    contextText = String(context);
+  }
+  void invoke("append_app_log", { level, message, context: contextText }).catch(() => {
+    // Logging must not break clipboard rendering.
+  });
+}
+
+function getDetailRendererName(clip: ClipItem) {
+  if (clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url") return "image-preview";
+  if (clip.analysis.url || clip.kind === "link") return "link-preview";
+  if (isLikelyMarkdown(clip)) return "markdown-preview";
+  return "plain-text";
+}
+
+function getClipRenderDiagnostics(clip: ClipItem, extra: Record<string, unknown> = {}) {
+  return {
+    businessChain: "quick-panel -> workspace-router -> detail-route -> ClipDetailWorkspace -> content-renderer",
+    routePath: "/clip/$clipId",
+    component: "ClipDetailWorkspace",
+    renderer: getDetailRendererName(clip),
+    clipId: clip.id,
+    clipKind: clip.kind,
+    payloadKind: clip.payloadKind,
+    detailMode: detectDetailMode(clip),
+    chars: clip.content.length,
+    lines: clip.content.split(/\r?\n/).length,
+    sourceAppName: clip.sourceApp?.name ?? "",
+    sourceAppBundle: clip.sourceApp?.bundleId ?? "",
+    hasAnalysisUrl: Boolean(clip.analysis.url),
+    hasAttachment: Boolean(clip.analysis.attachment),
+    isMarkdown: clip.analysis.isMarkdown,
+    ...extra,
+  };
+}
+
+function parseHttpUrl(value: string | null | undefined) {
+  if (!value || !/^https?:\/\//i.test(value)) return null;
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function safeHttpUrls(values: string[]) {
+  const seen = new Set<string>();
+  return values.flatMap((value) => {
+    const url = parseHttpUrl(value);
+    if (!url || seen.has(url.href)) return [];
+    seen.add(url.href);
+    return [{ href: url.href, label: url.hostname.replace(/^www\./, "") }];
+  });
 }
 
 function splitMarkdownBlocks(content: string) {
@@ -170,15 +236,18 @@ function renderInlineText(text: string) {
   return parts.map((part, index) => {
     const mdLink = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     if (mdLink) {
+      const url = parseHttpUrl(mdLink[2]);
+      if (!url) return <span key={`${part}-${index}`}>{mdLink[1]}</span>;
       return (
-        <a href={mdLink[2]} key={`${part}-${index}`} onClick={(event) => event.preventDefault()} title={mdLink[2]}>
+        <a href={url.href} key={`${part}-${index}`} onClick={(event) => event.preventDefault()} title={url.href}>
           {mdLink[1]}
         </a>
       );
     }
-    if (/^https?:\/\//i.test(part)) {
+    const url = parseHttpUrl(part);
+    if (url) {
       return (
-        <a href={part} key={`${part}-${index}`} onClick={(event) => event.preventDefault()} title={part}>
+        <a href={url.href} key={`${part}-${index}`} onClick={(event) => event.preventDefault()} title={url.href}>
           {part}
         </a>
       );
@@ -187,7 +256,17 @@ function renderInlineText(text: string) {
   });
 }
 
-function MarkdownPreview({ content }: { content: string }) {
+function MarkdownPreview({
+  clip,
+  content,
+  onCopyCode,
+  onPasteCode,
+}: {
+  clip: ClipItem;
+  content: string;
+  onCopyCode: (text: string, source: string, context?: Record<string, unknown>) => void;
+  onPasteCode: (text: string, source: string, context?: Record<string, unknown>) => void;
+}) {
   const blocks = splitMarkdownBlocks(content);
   return (
     <div className="markdown-preview">
@@ -198,9 +277,30 @@ function MarkdownPreview({ content }: { content: string }) {
           return <Tag key={index}>{renderInlineText(block.text)}</Tag>;
         }
         if (block.type === "code") {
+          const source = `md-code:${clip.id}:${index}`;
+          const context = {
+            businessChain: "quick-panel -> workspace-router -> detail-route -> markdown-preview -> code-block-quick-paste",
+            clipId: clip.id,
+            blockIndex: index,
+            language: block.language || "",
+            chars: block.text.length,
+            lines: block.text ? block.text.split(/\r?\n/).length : 0,
+          };
           return (
             <pre className="md-code" key={index}>
-              {block.language ? <span>{block.language}</span> : null}
+              <span className="md-code-toolbar">
+                <span>{block.language || "code"}</span>
+                <span className="md-code-actions">
+                  <button type="button" onClick={() => onPasteCode(block.text, source, context)}>
+                    <Clipboard size={11} />
+                    粘贴代码
+                  </button>
+                  <button type="button" onClick={() => onCopyCode(block.text, source, context)}>
+                    <Copy size={11} />
+                    复制
+                  </button>
+                </span>
+              </span>
               <code>{block.text}</code>
             </pre>
           );
@@ -220,8 +320,61 @@ function MarkdownPreview({ content }: { content: string }) {
   );
 }
 
+class DetailContentBoundary extends Component<
+  { children: ReactNode; clip: ClipItem; onBack: () => void; onCopy: (clip: ClipItem) => void },
+  { failed: boolean; message: string }
+> {
+  state = { failed: false, message: "" };
+
+  static getDerivedStateFromError(error: Error) {
+    return { failed: true, message: error.message };
+  }
+
+  componentDidUpdate(previous: { clip: ClipItem }) {
+    if (previous.clip.id !== this.props.clip.id && this.state.failed) {
+      this.setState({ failed: false, message: "" });
+    }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Clip detail render failed", error, info.componentStack);
+    appendWorkspacePanelLog(
+      "error",
+      "clip-detail-render-error",
+      getClipRenderDiagnostics(this.props.clip, {
+        errorMessage: error.message,
+        errorName: error.name,
+        componentStack: info.componentStack,
+      }),
+    );
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+
+    return (
+      <div className="detail-render-fallback">
+        <div className="panel-fallback">
+          <FileText size={22} />
+          <strong>当前内容预览失败</strong>
+          <span title={this.state.message}>已切换到原文模式，面板可继续使用。</span>
+          <div className="copy-layout-grid">
+            <button type="button" onClick={() => this.props.onCopy(this.props.clip)}>
+              复制原文
+            </button>
+            <button type="button" onClick={this.props.onBack}>
+              返回列表
+            </button>
+          </div>
+        </div>
+        <pre>{this.props.clip.content}</pre>
+      </div>
+    );
+  }
+}
+
 function LinkPreview({ clip, links, onCopy, onOpen }: { clip: ClipItem; links: string[]; onCopy: (clip: ClipItem) => void; onOpen: (clip: ClipItem) => void }) {
-  const primaryUrl = clip.analysis.url ?? links[0] ?? clip.analysis.attachment?.target;
+  const primaryUrl = parseHttpUrl(clip.analysis.url)?.href ?? parseHttpUrl(links[0])?.href ?? parseHttpUrl(clip.analysis.attachment?.target)?.href;
   return (
     <div className="link-preview">
       {primaryUrl ? (
@@ -244,10 +397,19 @@ function LinkPreview({ clip, links, onCopy, onOpen }: { clip: ClipItem; links: s
   );
 }
 
-export function ClipDetailWorkspace({ clip, links, onBack, onCopy, onOpen, quickActions = [] }: ClipDetailWorkspaceProps) {
+export function ClipDetailWorkspace({
+  clip,
+  links,
+  onBack,
+  onCopy,
+  onCopyText,
+  onOpen,
+  onPasteText,
+  quickActions = [],
+}: ClipDetailWorkspaceProps) {
   if (!clip) {
     return (
-      <section className="workspace-page">
+      <section className="workspace-page workspace-detail-page">
         <WorkspaceCrumb title="详情" onBack={onBack} />
         <div className="workspace-empty">当前内容不存在，返回列表重新选择。</div>
       </section>
@@ -258,9 +420,25 @@ export function ClipDetailWorkspace({ clip, links, onBack, onCopy, onOpen, quick
   const imageUrl = clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url"
     ? clip.analysis.attachment.target
     : null;
+  const safeLinks = safeHttpUrls(links);
+  const droppedLinkCount = links.length - safeLinks.length;
+  const droppedLinkLogKey = `${clip.id}:${links.length}:${safeLinks.length}`;
+
+  if (droppedLinkCount > 0 && !droppedLinkLogKeys.has(droppedLinkLogKey)) {
+    droppedLinkLogKeys.add(droppedLinkLogKey);
+    appendWorkspacePanelLog(
+      "warn",
+      "clip-detail-links-dropped",
+      getClipRenderDiagnostics(clip, {
+        rawLinkCount: links.length,
+        safeLinkCount: safeLinks.length,
+        droppedLinkCount,
+      }),
+    );
+  }
 
   return (
-    <section className="workspace-page">
+    <section className="workspace-page workspace-detail-page">
       <WorkspaceCrumb title="内容详情" subtitle={mode} onBack={onBack}>
         {clip.analysis.url || clip.analysis.attachment ? (
           <button className="icon-button" onClick={() => onOpen(clip)} type="button" aria-label="打开内容">
@@ -301,24 +479,26 @@ export function ClipDetailWorkspace({ clip, links, onBack, onCopy, onOpen, quick
         ))}
       </div>
 
-      <div className="detail-content">
-        {imageUrl ? (
-          <img src={imageUrl} alt={clip.analysis.title} />
-        ) : clip.analysis.url || clip.kind === "link" ? (
-          <LinkPreview clip={clip} links={links} onCopy={onCopy} onOpen={onOpen} />
-        ) : isLikelyMarkdown(clip) ? (
-          <MarkdownPreview content={clip.content} />
-        ) : (
-          <pre>{clip.content}</pre>
-        )}
-      </div>
+      <DetailContentBoundary clip={clip} onBack={onBack} onCopy={onCopy}>
+        <div className="detail-content">
+          {imageUrl ? (
+            <img src={imageUrl} alt={clip.analysis.title} />
+          ) : clip.analysis.url || clip.kind === "link" ? (
+            <LinkPreview clip={clip} links={links} onCopy={onCopy} onOpen={onOpen} />
+          ) : isLikelyMarkdown(clip) ? (
+            <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
+          ) : (
+            <pre>{clip.content}</pre>
+          )}
+        </div>
+      </DetailContentBoundary>
 
-      {links.length ? (
+      {safeLinks.length ? (
         <div className="detail-link-grid" aria-label="链接列表">
-          {links.slice(0, 8).map((url) => (
-            <button key={url} type="button" onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>
+          {safeLinks.slice(0, 8).map((url) => (
+            <button key={url.href} type="button" onClick={() => window.open(url.href, "_blank", "noopener,noreferrer")}>
               <ExternalLink size={12} />
-              <span>{new URL(url).hostname.replace(/^www\./, "")}</span>
+              <span>{url.label}</span>
             </button>
           ))}
         </div>

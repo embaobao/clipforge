@@ -33,4 +33,4 @@
 | 提案 | 状态 | 说明 |
 |------|------|------|
 | [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | 待实现 | 引入 clipboard-rs，支持图片、文件、HTML/RTF 富文本剪贴板历史 |
-
+| [detail-rich-editor-agent-bridge](./changes/detail-rich-editor-agent-bridge/proposal.md) | 提案中 | 详情页 Tiptap 富文本编辑、变量上下文、MCP/Agent 扩展桥 |
