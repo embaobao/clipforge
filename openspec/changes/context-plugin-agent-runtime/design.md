@@ -315,11 +315,12 @@ const openDetailPlugin: ClipForgePluginManifest = {
 
 1. 构造 `ClipboardContextSnapshot`，包含当前 clip、复制来源应用 `sourceApp`、当前前台应用 `activeApp`、触发面和快捷键。
 2. 读取所有启用插件 manifest，过滤 `surface=quick-action/detail` 且 content type 匹配的插件。
-3. 按 `matching.priority`、source app、active app、tag、URL pattern 和用户最近确认记录计算候选。
-4. 如果最高候选是 `builtin.open-link`，直接打开安全链接。
-5. 如果无其它高优先级候选且内容是普通文本，执行 `builtin.open-detail`。
-6. 如果最高候选需要权限确认（如 `runCommand/openApp`），先展示动作预览。
-7. 如果多个候选分数接近，展示紧凑动作菜单，用户选择后记录学习样本。
+3. 调用智能内容解析器，提取可复制、可打开、可下钻的候选片段。
+4. 按 `matching.priority`、source app、active app、tag、URL pattern 和解析候选计算候选 action。
+5. 如果最高候选是 `builtin.open-link`，直接打开安全链接。
+6. 如果无其它高优先级候选且内容是普通文本，执行 `builtin.open-detail`。
+7. 如果最高候选需要权限确认（如 `runCommand/openApp`），先展示动作预览。
+8. 如果多个候选分数接近，展示紧凑动作菜单；第一阶段只记录日志，不做学习。
 
 解析结果：
 
@@ -334,7 +335,9 @@ export type PluginActionResolution = {
     actionId: string;
     priority: number;
     requiresUserConfirmation: boolean;
+    targetCandidateId?: string;
   };
+  parsedTargets: SmartParsedTarget[];
   candidates: Array<{
     pluginId: string;
     actionId: string;
@@ -344,41 +347,39 @@ export type PluginActionResolution = {
 };
 ```
 
-### Agent 学习与插件优先级
+### 智能内容解析
 
-Agent 可以根据用户确认记录提出插件和优先级调整，但不能静默改默认动作：
+智能内容解析只面向“当前内容”，不做长期学习、不自动调整插件优先级。它的目标是预测用户现在最可能想复制、打开或下钻的片段。
 
 ```ts
-export type PluginLearningRecord = {
+export type SmartParsedTarget = {
   id: string;
-  createdAt: number;
-  clipId: string;
-  sourceAppBundleId?: string;
-  activeAppBundleId?: string;
-  payloadKind: string;
-  contentKind: string;
-  selectedPluginId: string;
-  selectedActionId: string;
-  rejectedPluginIds: string[];
-  userConfirmed: boolean;
-};
-
-export type PluginPrioritySuggestion = {
-  pluginId: string;
-  reason: string;
-  matchPatch: Partial<ClipForgePluginManifest["matching"]>;
-  confidence: number;
-  status: "draft" | "pending-confirmation" | "applied";
+  kind:
+    | "url"
+    | "filePath"
+    | "command"
+    | "jsonField"
+    | "codeBlock"
+    | "markdownHeading"
+    | "markdownLink"
+    | "errorBlock"
+    | "plainSummary";
+  label: string;
+  value: string;
+  range?: { start: number; end: number };
+  suggestedActions: Array<"copy" | "open" | "openDetail" | "runPlugin">;
+  confidence: "high" | "medium" | "low";
+  reasons: string[];
 };
 ```
 
 规则：
 
-- 学习来源只来自用户显式选择、执行成功/失败和用户保存的插件草稿。
-- Agent 可生成 `PluginPrioritySuggestion`，由用户确认后写入 manifest 或本地优先级覆盖表。
-- 来源应用和当前应用都可作为匹配条件，例如“从浏览器复制链接且当前在 IDE 时，优先触发 Claude 分析插件”。
-- 优先级更新必须可查看、可禁用、可回滚。
-- 快速面板主路径只读取已编译/缓存后的优先级表，不在快捷键热路径调用 Agent。
+- 解析器第一阶段采用确定性规则：URL、文件路径、shell 命令、JSON path、Markdown 链接/标题、代码块、常见错误块。
+- 解析结果只作为 action 候选输入，不直接执行。
+- Agent 可以通过 MCP 请求解析结果，并基于结果生成插件草稿或建议用户复制某个字段。
+- 不保存跨会话学习权重，不根据用户选择自动改插件优先级。
+- 快速面板热路径只运行轻量同步解析；长文本解析需要有长度上限和超时。
 
 ### 受控脚本插件
 
@@ -491,6 +492,7 @@ type AgentGeneratedClipMetadata = {
 | 工具 | 说明 |
 |------|------|
 | `clipboard.context.get` | 获取当前详情页或编辑会话的脱敏上下文 |
+| `clipboard.content.parse` | 对当前 clip 或指定文本做智能内容解析，返回可复制/可打开/可下钻候选 |
 | `clipboard.plugin.list` | 返回可用插件 manifest 摘要 |
 | `clipboard.plugin.call` | 调用指定插件动作 |
 | `clipboard.editor.context` | 获取编辑器 session 上下文 |
@@ -498,6 +500,8 @@ type AgentGeneratedClipMetadata = {
 | `clipboard.editor.apply_patch` | 用户确认后应用到 draft |
 | `clipboard.editor.suggest_update` | 返回智能建议反吐，不写入 |
 | `clipboard.agent.run` | 以 AG-UI 兼容输入启动 Agent run |
+
+`clipboard.content.parse` 只返回当前输入的解析结果，不写数据库、不记录学习权重、不调整插件优先级。
 
 MCP tool 返回值必须带 `traceId`、`businessChain`、`redactedFields`、`permissionDecision`，方便排障。
 

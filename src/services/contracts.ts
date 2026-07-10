@@ -1,7 +1,40 @@
 export type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
+export type ClipPayloadKind =
+  | "text"
+  | "link"
+  | "markdown"
+  | "code"
+  | "command"
+  | "html"
+  | "file"
+  | "image"
+  | "json"
+  | "chart"
+  | "table";
 export type ClipBucket = "history" | "archive" | "snippet";
 export type ClipSource = "clipboard" | "import" | "sync" | "external";
 export type SyncOperation = "create" | "update" | "delete";
+
+export type ClipboardRepresentationRecord = {
+  format: "text/plain" | "text/html" | "text/rtf" | "image/png" | "application/file-list" | "text/uri-list" | string;
+  storage: "inline" | "file" | "derived" | string;
+  content?: string | null;
+  fileName?: string | null;
+  size?: number | null;
+  hash?: string | null;
+  preferred?: boolean;
+};
+
+export type ClipCaptureContextRecord = {
+  schemaVersion: number;
+  surface: string;
+  sourceLabel: string;
+  sourceApp?: Record<string, unknown> | null;
+  observedAt: number;
+  primaryFormat: string;
+  availableFormats: string[];
+  environment: Record<string, unknown>;
+};
 
 export type AttachmentRecord = {
   name: string;
@@ -41,7 +74,23 @@ export type ClipRecord = {
   lastCopiedAt?: number;
   deletedAt?: number;
   analysis: ClipAnalysisRecord;
-  metadata?: Record<string, string | number | boolean | null>;
+  payloadKind: ClipPayloadKind;
+  primaryFormat: string;
+  availableFormats: string[];
+  representations: ClipboardRepresentationRecord[];
+  plainText: string;
+  searchText?: string | null;
+  subKind?: string | null;
+  width?: number | null;
+  height?: number | null;
+  size?: number | null;
+  fileTypes?: string | null;
+  thumbnailPath?: string | null;
+  imageFile?: string | null;
+  isSensitive: boolean;
+  captureContext: ClipCaptureContextRecord;
+  metadata: Record<string, unknown>;
+  agentContext: Record<string, unknown>;
 };
 
 export type ClipboardCaptureInput = {
@@ -49,6 +98,9 @@ export type ClipboardCaptureInput = {
   source: ClipSource;
   observedAt: number;
   sourceLabel?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  agentContext?: Record<string, unknown>;
 };
 
 export type ClipboardCaptureResult = {

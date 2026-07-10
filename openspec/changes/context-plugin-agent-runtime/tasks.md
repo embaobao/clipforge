@@ -22,8 +22,11 @@
 ## Phase 3：插件 manifest 与动作模型
 
 - [ ] 定义 `ClipForgePluginManifest`
-- [ ] 定义插件 runtime：`builtin/mcp/rpc/panel`
-- [ ] 定义插件 action：`renderPanel/previewPatch/replaceSelection/replaceDocument/copyResult/callAgent`
+- [ ] 定义插件 runtime：`builtin/script/mcp/rpc/panel`
+- [ ] 定义插件 action：`renderPanel/previewPatch/replaceSelection/replaceDocument/copyResult/openUrl/openApp/runCommand/callAgent`
+- [ ] 定义 `SmartParsedTarget` 与智能内容解析器
+- [ ] 支持从 URL、文件路径、命令、JSON 字段、代码块、错误日志、Markdown 链接/标题中提取候选
+- [ ] 将现有 `Ctrl/Cmd+J` 改为调用 Action Resolver，再由 resolver 选择 `builtin.open-link`、`builtin.open-detail` 或插件 action
 - [ ] 定义 `suggestUpdate/updateTags` 动作边界
 - [ ] 实现 manifest 校验器
 - [ ] 实现权限扩大检测
@@ -42,6 +45,7 @@
 
 - [ ] 新增 `clipboard.context.get`
 - [ ] 新增 `clipboard.plugin.list`
+- [ ] 新增 `clipboard.content.parse`
 - [ ] 新增 `clipboard.plugin.call`
 - [ ] 新增 `clipboard.editor.context`
 - [ ] 新增 `clipboard.editor.preview_patch`
@@ -78,6 +82,9 @@
 - [ ] `pnpm build`
 - [ ] `cd src-tauri && cargo check`
 - [ ] 验证快速面板启动不加载插件和 Agent 面板
+- [ ] 验证 `Ctrl/Cmd+J` 链接默认走 `builtin.open-link`
+- [ ] 验证 `Ctrl/Cmd+J` 普通文本默认走 `builtin.open-detail`
+- [ ] 验证智能解析能为 JSON/命令/Markdown/错误日志生成候选但不自动执行
 - [ ] 验证插件错误只降级插件按钮或插件面板
 - [ ] 验证 Agent 错误只降级 Agent 面板
 - [ ] 验证 Agent 生成内容保存后默认带 `AI` tag

@@ -10,6 +10,7 @@ import {
   Pencil,
   RotateCcw,
   Save,
+  Tag,
   Table2,
   X,
 } from "lucide-react";
@@ -80,7 +81,8 @@ type ClipDetailWorkspaceProps = {
   onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
   onOpen: (clip: ClipItem) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
-  onUpdateContent: (clip: ClipItem, content: string) => Promise<ClipItem | void>;
+  onSearchTag: (tag: string) => void;
+  onUpdateContent: (clip: ClipItem, content: string, tags?: string[]) => Promise<ClipItem | void>;
   quickActions?: DetailQuickAction[];
 };
 
@@ -103,6 +105,32 @@ type MultiAggregateWorkspaceProps = {
 };
 
 const droppedLinkLogKeys = new Set<string>();
+
+function normalizeDetailTag(value: string): string | null {
+  const tag = value.trim().replace(/^#/, "").replace(/^tag:/i, "").trim();
+  if (!tag) return null;
+  return tag.slice(0, 32);
+}
+
+function normalizeDetailTags(values: string[]) {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  values.forEach((value) => {
+    const tag = normalizeDetailTag(value);
+    if (!tag) return;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    tags.push(tag);
+  });
+  return tags.slice(0, 12);
+}
+
+function extractDetailHashTags(content: string) {
+  return normalizeDetailTags(
+    Array.from(content.matchAll(/(^|[\s([{])#([\p{L}\p{N}_-]{1,32})/gu)).map((match) => match[2]),
+  );
+}
 
 function detectDetailMode(clip: ClipItem) {
   // 详情页先做轻量类型识别，后续解析插件会从这里扩展更完整的渲染能力。
@@ -470,18 +498,31 @@ function DetailQuickEditor({
   error,
   hasChanges,
   isSaving,
+  suggestedTags,
+  tags,
   onCancel,
   onChange,
+  onTagsChange,
   onSave,
 }: {
   content: string;
   error: string;
   hasChanges: boolean;
   isSaving: boolean;
+  suggestedTags: string[];
+  tags: string[];
   onCancel: () => void;
   onChange: (value: string) => void;
+  onTagsChange: (tags: string[]) => void;
   onSave: () => void;
 }) {
+  const [tagInput, setTagInput] = useState("");
+  const addTag = (value: string) => {
+    const tag = normalizeDetailTag(value);
+    if (!tag) return;
+    onTagsChange(normalizeDetailTags([...tags, tag]));
+    setTagInput("");
+  };
   return (
     <div className="detail-editor">
       <div className="detail-editor-toolbar">
@@ -499,6 +540,44 @@ function DetailQuickEditor({
             {isSaving ? "保存中" : "保存"}
           </button>
         </div>
+      </div>
+      <div className="detail-tag-editor" aria-label="编辑 Tag">
+        <div className="detail-tag-scroll">
+          {tags.map((tag) => (
+            <button
+              aria-label={`删除 Tag ${tag}`}
+              className="detail-tag-chip removable"
+              key={tag}
+              onClick={() => onTagsChange(tags.filter((item) => item !== tag))}
+              type="button"
+            >
+              <Tag size={10} />
+              {tag}
+              <X size={10} />
+            </button>
+          ))}
+          <input
+            aria-label="新增 Tag"
+            className="detail-tag-input"
+            onChange={(event) => setTagInput(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              addTag(tagInput);
+            }}
+            placeholder="#tag"
+            value={tagInput}
+          />
+        </div>
+        {suggestedTags.length ? (
+          <div className="detail-tag-suggestions">
+            {suggestedTags.map((tag) => (
+              <button key={tag} onClick={() => addTag(tag)} type="button">
+                #{tag}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
       <textarea
         aria-label="编辑剪贴板内容"
@@ -548,20 +627,23 @@ export function ClipDetailWorkspace({
   onCopyText,
   onOpen,
   onPasteText,
+  onSearchTag,
   onUpdateContent,
   quickActions = [],
 }: ClipDetailWorkspaceProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
+  const [draftTags, setDraftTags] = useState<string[]>([]);
   const [editError, setEditError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setDraftContent(clip?.content ?? "");
+    setDraftTags(normalizeDetailTags(clip?.tags ?? []));
     setIsEditing(false);
     setEditError("");
     setIsSaving(false);
-  }, [clip?.id, clip?.content]);
+  }, [clip?.id, clip?.content, clip?.tags]);
 
   if (!clip) {
     return (
@@ -576,7 +658,12 @@ export function ClipDetailWorkspace({
   const imageUrl = clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url"
     ? clip.analysis.attachment.target
     : null;
-  const hasDraftChanges = draftContent !== clip.content;
+  const hasDraftChanges =
+    draftContent !== clip.content ||
+    normalizeDetailTags(draftTags).join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
+  const suggestedTags = extractDetailHashTags(draftContent).filter(
+    (tag) => !draftTags.some((current) => current.toLowerCase() === tag.toLowerCase()),
+  );
   const safeLinks = safeHttpUrls(links);
   const droppedLinkCount = links.length - safeLinks.length;
   const droppedLinkLogKey = `${clip.id}:${links.length}:${safeLinks.length}`;
@@ -593,7 +680,7 @@ export function ClipDetailWorkspace({
     setIsSaving(true);
     setEditError("");
     try {
-      await onUpdateContent(clip, draftContent);
+      await onUpdateContent(clip, draftContent, draftTags);
       setIsEditing(false);
     } catch (error) {
       setEditError(`保存失败：${error instanceof Error ? error.message : String(error)}`);
@@ -624,6 +711,7 @@ export function ClipDetailWorkspace({
           className={isEditing ? "detail-edit-button active" : "detail-edit-button"}
           onClick={() => {
             setDraftContent(clip.content);
+            setDraftTags(normalizeDetailTags(clip.tags));
             setEditError("");
             setIsEditing(true);
           }}
@@ -665,6 +753,16 @@ export function ClipDetailWorkspace({
           </span>
         ) : null}
       </div>
+      {clip.tags.length ? (
+        <div className="detail-tag-row" aria-label="Tag 列表">
+          {clip.tags.map((tag) => (
+            <button key={tag} onClick={() => onSearchTag(tag)} type="button">
+              <Tag size={10} />
+              #{tag}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="workspace-action-strip" aria-label="详情快捷操作">
         {quickActions.map((action) => (
@@ -683,8 +781,11 @@ export function ClipDetailWorkspace({
               error={editError}
               hasChanges={hasDraftChanges}
               isSaving={isSaving}
+              suggestedTags={suggestedTags}
+              tags={draftTags}
               onCancel={() => {
                 setDraftContent(clip.content);
+                setDraftTags(normalizeDetailTags(clip.tags));
                 setEditError("");
                 setIsEditing(false);
               }}
@@ -692,6 +793,7 @@ export function ClipDetailWorkspace({
                 setDraftContent(value);
                 if (editError) setEditError("");
               }}
+              onTagsChange={setDraftTags}
               onSave={saveDraftContent}
             />
           ) : imageUrl ? (

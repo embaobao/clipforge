@@ -8,6 +8,7 @@ import {
   Eye,
   FileDown,
   FileCode,
+  FileImage,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -16,6 +17,7 @@ import {
   Tag,
   Terminal,
   Trash2,
+  UploadCloud,
 } from "lucide-react";
 import { getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 
@@ -46,6 +48,14 @@ interface AppSettings {
   logRetentionDays: number;
   logAutoCleanup: boolean;
   logCleanupIntervalMin: number;
+  captureTextEnabled: boolean;
+  captureHtmlEnabled: boolean;
+  captureRtfEnabled: boolean;
+  captureImageEnabled: boolean;
+  captureFileEnabled: boolean;
+  captureSensitiveEnabled: boolean;
+  imageMaxSizeMb: number;
+  textMaxSizeMb: number;
 }
 
 interface AccessibilityPermissionPayload {
@@ -103,6 +113,19 @@ interface McpStatusPayload {
   message: string;
 }
 
+interface UpdateCheckState {
+  status: "idle" | "checking" | "available" | "latest" | "downloading" | "ready" | "failed";
+  currentVersion: string;
+  availableVersion?: string;
+  channel: "stable" | "prerelease";
+  lastCheckedAt?: number;
+  ignoredVersion?: string;
+  releaseNotes?: string;
+  downloadProgress?: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 const densityLabels: Record<AppSettings["panelDensity"], string> = {
   dense: "紧凑",
   normal: "标准",
@@ -134,6 +157,7 @@ interface SettingsAppState {
   settings: AppSettings;
   status: string;
   logStats: LogStatsPayload | null;
+  update: UpdateCheckState | null;
 }
 
 interface LogStatsPayload {
@@ -193,6 +217,14 @@ const DEFAULT_SETTINGS: AppSettings = {
   logRetentionDays: 0,
   logAutoCleanup: true,
   logCleanupIntervalMin: 10,
+  captureTextEnabled: true,
+  captureHtmlEnabled: true,
+  captureRtfEnabled: true,
+  captureImageEnabled: true,
+  captureFileEnabled: true,
+  captureSensitiveEnabled: false,
+  imageMaxSizeMb: 25,
+  textMaxSizeMb: 5,
 };
 
 function SettingGroup({ children, title }: { children: React.ReactNode; title: string }) {
@@ -341,7 +373,9 @@ const SECTIONS = [
   { key: "integration", label: "集成", icon: Terminal },
   { key: "manual", label: "使用手册", icon: BookOpen },
   { key: "content", label: "内容识别", icon: FileCode },
+  { key: "capture", label: "采集", icon: FileImage },
   { key: "storage", label: "数据存储", icon: Database },
+  { key: "update", label: "更新", icon: UploadCloud },
   { key: "tags", label: "Tag 规则", icon: Tag },
 ] as const;
 
@@ -361,12 +395,13 @@ export function SettingsApp() {
     settings: DEFAULT_SETTINGS,
     status: "",
     logStats: null,
+    update: null,
   });
 
   useEffect(() => {
     void (async () => {
       try {
-        const [settings, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, mcp, logStats] = await Promise.all([
+        const [settings, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, mcp, logStats, update] = await Promise.all([
           invoke<AppSettings>("get_clipforge_settings"),
           invoke<string>("get_clipforge_config_path"),
           invoke<string>("get_clipforge_database_path"),
@@ -375,6 +410,7 @@ export function SettingsApp() {
           invoke<PanelTriggerPayload>("get_panel_trigger_status"),
           invoke<McpStatusPayload>("get_mcp_status"),
           invoke<LogStatsPayload>("get_log_stats"),
+          invoke<UpdateCheckState>("check_update"),
         ]);
         setState({
           accessibility,
@@ -386,6 +422,7 @@ export function SettingsApp() {
           panel,
           settings: { ...DEFAULT_SETTINGS, ...settings },
           logStats,
+          update,
           status: "",
         });
       } catch (error) {
@@ -542,6 +579,20 @@ export function SettingsApp() {
     try {
       const mcp = await invoke<McpStatusPayload>("get_mcp_status");
       setState((prev) => ({ ...prev, mcp, status: mcp.message }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function checkUpdateNow() {
+    setState((prev) => ({
+      ...prev,
+      update: prev.update ? { ...prev.update, status: "checking" } : prev.update,
+      status: "正在检查更新…",
+    }));
+    try {
+      const update = await invoke<UpdateCheckState>("check_update");
+      setState((prev) => ({ ...prev, update, status: update.errorMessage || "更新状态已刷新" }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
     }
@@ -887,6 +938,60 @@ use clipf.analyze content="https://github.com/embaobao/clipforge"`}</pre>
             </SettingGroup>
           )}
 
+          {section === "capture" && (
+            <SettingGroup title="采集设置">
+              <ToggleSetting
+                checked={state.settings.captureTextEnabled}
+                label="文本"
+                onChange={(captureTextEnabled) => updateSettings({ captureTextEnabled })}
+              />
+              <ToggleSetting
+                checked={state.settings.captureHtmlEnabled}
+                label="HTML"
+                onChange={(captureHtmlEnabled) => updateSettings({ captureHtmlEnabled })}
+              />
+              <ToggleSetting
+                checked={state.settings.captureRtfEnabled}
+                label="RTF"
+                onChange={(captureRtfEnabled) => updateSettings({ captureRtfEnabled })}
+              />
+              <ToggleSetting
+                checked={state.settings.captureImageEnabled}
+                label="图片"
+                onChange={(captureImageEnabled) => updateSettings({ captureImageEnabled })}
+              />
+              <ToggleSetting
+                checked={state.settings.captureFileEnabled}
+                label="文件"
+                onChange={(captureFileEnabled) => updateSettings({ captureFileEnabled })}
+              />
+              <ToggleSetting
+                checked={state.settings.captureSensitiveEnabled}
+                label="敏感内容"
+                onChange={(captureSensitiveEnabled) => updateSettings({ captureSensitiveEnabled })}
+              />
+              <NumberSetting
+                label="图片上限 MB"
+                max={1024}
+                min={1}
+                onChange={(imageMaxSizeMb) => updateSettings({ imageMaxSizeMb })}
+                value={state.settings.imageMaxSizeMb}
+              />
+              <NumberSetting
+                label="文本上限 MB"
+                max={100}
+                min={1}
+                onChange={(textMaxSizeMb) => updateSettings({ textMaxSizeMb })}
+                value={state.settings.textMaxSizeMb}
+              />
+              <div className="setting-card permission-card">
+                <span>多类型模型</span>
+                <strong>每条记录都保存格式、上下文和扩展 JSON。</strong>
+                <p>当前字段已为图片、文件、HTML/RTF 与 AI 生成内容统一预留，不再走旧纯文本模型。</p>
+              </div>
+            </SettingGroup>
+          )}
+
           {section === "storage" && (
             <>
             <SettingGroup title="数据存储">
@@ -1022,6 +1127,34 @@ use clipf.analyze content="https://github.com/embaobao/clipforge"`}</pre>
               ) : null}
             </SettingGroup>
             </>
+          )}
+
+          {section === "update" && (
+            <SettingGroup title="更新检查">
+              <div className="setting-card permission-card">
+                <span>当前版本</span>
+                <strong>{state.update?.currentVersion ?? "0.1.0"} · {state.update?.channel ?? "stable"}</strong>
+                <p>
+                  {state.update?.status === "latest"
+                    ? "已是最新版本。"
+                    : state.update?.status === "available"
+                      ? `发现 ${state.update.availableVersion}`
+                      : state.update?.errorMessage || "可手动刷新更新状态。"}
+                </p>
+                <div className="button-row">
+                  <button className="secondary-button" onClick={() => void checkUpdateNow()} type="button">
+                    <RefreshCw size={13} />
+                    检查更新
+                  </button>
+                </div>
+              </div>
+              {state.update?.lastCheckedAt ? (
+                <div className="setting-row">
+                  <span>最近检查</span>
+                  <strong className="path">{new Date(state.update.lastCheckedAt).toLocaleString()}</strong>
+                </div>
+              ) : null}
+            </SettingGroup>
           )}
 
           {section === "tags" && (

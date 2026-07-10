@@ -10,6 +10,7 @@ import {
 import {
   Check,
   CheckSquare,
+  Bot,
   Clipboard,
   Copy,
   ExternalLink,
@@ -40,6 +41,7 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
+import { ClipboardAgentPanel } from "./agent-panel";
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { Avatar, AvatarFallback, AvatarImage } from "./components/ui/avatar";
 import {
@@ -56,6 +58,7 @@ import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
 export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "file" | "image" | "json" | "chart" | "table";
+type ClipTypeFilter = "all" | ClipPayloadKind;
 type ClipBucket = "history" | "archive" | "snippet";
 
 type SourceAppInfo = {
@@ -65,22 +68,44 @@ type SourceAppInfo = {
   iconBase64?: string;
 };
 type ViewKey = "history" | "favorites" | "trash";
+type PanelSurface = "clipboard" | "agent";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
 type SearchSuggestion =
   | { id: string; label: string; hint: string; kind: "all"; typeFilter: "all" }
   | { id: string; label: string; hint: string; kind: "favorite" }
-  | { id: string; label: string; hint: string; kind: "type"; typeFilter: ClipKind }
+  | { id: string; label: string; hint: string; kind: "type"; typeFilter: ClipPayloadKind }
   | { id: string; label: string; hint: string; kind: "saved"; tag: string };
 
 type ParsedSearchCommand = {
   handled: boolean;
   queryText: string;
-  typeFilter: "all" | ClipKind;
+  typeFilter: ClipTypeFilter;
   filterFavorite: boolean;
   tag: string | null;
   label: string | null;
+};
+
+export type ClipboardRepresentation = {
+  format: "text/plain" | "text/html" | "text/rtf" | "image/png" | "application/file-list" | "text/uri-list" | string;
+  storage: "inline" | "file" | "derived" | string;
+  content?: string | null;
+  fileName?: string | null;
+  size?: number | null;
+  hash?: string | null;
+  preferred?: boolean;
+};
+
+export type ClipCaptureContext = {
+  schemaVersion: number;
+  surface: string;
+  sourceLabel: string;
+  sourceApp?: Record<string, unknown> | null;
+  observedAt: number;
+  primaryFormat: string;
+  availableFormats: string[];
+  environment: Record<string, unknown>;
 };
 
 type ContentSource =
@@ -131,6 +156,23 @@ export type ClipItem = {
   copyCount: number;
   analysis: ClipAnalysis;
   payloadKind: ClipPayloadKind;
+  contentHash: string;
+  primaryFormat: string;
+  availableFormats: string[];
+  representations: ClipboardRepresentation[];
+  plainText: string;
+  searchText?: string | null;
+  subKind?: string | null;
+  width?: number | null;
+  height?: number | null;
+  size?: number | null;
+  fileTypes?: string | null;
+  thumbnailPath?: string | null;
+  imageFile?: string | null;
+  isSensitive?: boolean;
+  captureContext: ClipCaptureContext;
+  metadata: Record<string, unknown>;
+  agentContext: Record<string, unknown>;
   sourceApp?: SourceAppInfo;
   deletedAt?: number | null;
 };
@@ -184,6 +226,14 @@ type AppSettings = {
   logRetentionDays: number;
   logAutoCleanup: boolean;
   logCleanupIntervalMin: number;
+  captureTextEnabled: boolean;
+  captureHtmlEnabled: boolean;
+  captureRtfEnabled: boolean;
+  captureImageEnabled: boolean;
+  captureFileEnabled: boolean;
+  captureSensitiveEnabled: boolean;
+  imageMaxSizeMb: number;
+  textMaxSizeMb: number;
 };
 
 type UserSettingsPayload = {
@@ -267,6 +317,14 @@ const defaultSettings: AppSettings = {
   logRetentionDays: 0,
   logAutoCleanup: true,
   logCleanupIntervalMin: 10,
+  captureTextEnabled: true,
+  captureHtmlEnabled: true,
+  captureRtfEnabled: true,
+  captureImageEnabled: true,
+  captureFileEnabled: true,
+  captureSensitiveEnabled: false,
+  imageMaxSizeMb: 25,
+  textMaxSizeMb: 5,
 };
 
 function makeId() {
@@ -275,6 +333,32 @@ function makeId() {
 
 function normalizeSearch(value: string) {
   return value.trim().toLowerCase();
+}
+
+export function normalizeTagName(value: string): string | null {
+  const tag = value.trim().replace(/^#/, "").replace(/^tag:/i, "").trim();
+  if (!tag) return null;
+  return tag.slice(0, 32);
+}
+
+export function normalizeTagList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  values.forEach((value) => {
+    const tag = normalizeTagName(value);
+    if (!tag) return;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    tags.push(tag);
+  });
+  return tags.slice(0, 12);
+}
+
+export function extractHashTags(content: string): string[] {
+  return normalizeTagList(
+    Array.from(content.matchAll(/(^|[\s([{])#([\p{L}\p{N}_-]{1,32})/gu)).map((match) => match[2]),
+  );
 }
 
 function middleEllipsis(value: string, head = 34, tail = 14) {
@@ -578,6 +662,37 @@ function getTypeTags(analysis: ClipAnalysis): string[] {
   return ["文本"];
 }
 
+function getPayloadKindFromFormat(primaryFormat: string, fallback: ClipPayloadKind): ClipPayloadKind {
+  if (primaryFormat === "image/png") return "image";
+  if (primaryFormat === "application/file-list") return "file";
+  if (primaryFormat === "text/html") return "html";
+  if (primaryFormat === "text/rtf") return "html";
+  if (primaryFormat === "text/uri-list") return "link";
+  return fallback;
+}
+
+function getPrimaryFormatForPayload(payloadKind: ClipPayloadKind) {
+  if (payloadKind === "image") return "image/png";
+  if (payloadKind === "file") return "application/file-list";
+  if (payloadKind === "html") return "text/html";
+  return "text/plain";
+}
+
+function createTextRepresentation(content: string, payloadKind: ClipPayloadKind): ClipboardRepresentation[] {
+  return [
+    {
+      format: getPrimaryFormatForPayload(payloadKind),
+      storage: "inline",
+      content,
+      size: new Blob([content]).size,
+      preferred: true,
+    },
+    ...(payloadKind === "html"
+      ? [{ format: "text/plain", storage: "derived", content: content.replace(/<[^>]+>/g, " "), preferred: false }]
+      : []),
+  ];
+}
+
 function getSearchHaystack(item: ClipItem) {
   return [
     item.content,
@@ -636,16 +751,18 @@ function getSearchSuggestionToken(suggestion: SearchSuggestion) {
   if (suggestion.kind === "all") return "@全部";
   if (suggestion.kind === "favorite") return "@收藏";
   if (suggestion.kind === "saved") return `@${suggestion.label}`;
-  const tokenMap: Record<ClipKind, string> = {
+  const tokenMap: Record<ClipPayloadKind, string> = {
     text: "@文本",
     code: "@代码",
     link: "@链接",
     markdown: "@Markdown",
     command: "@命令",
-    attachment: "@文件",
     json: "@JSON",
     chart: "@图表",
     table: "@表格",
+    html: "@HTML",
+    file: "@文件",
+    image: "@图片",
   };
   return tokenMap[suggestion.typeFilter];
 }
@@ -655,16 +772,18 @@ function getSearchSuggestionAliases(suggestion: SearchSuggestion) {
   if (suggestion.kind === "all") return [label, "all", "全部", "全部内容"];
   if (suggestion.kind === "favorite") return [label, "fav", "favorite", "favorites", "star", "收藏"];
   if (suggestion.kind === "saved") return [label, suggestion.tag.toLowerCase()];
-  const aliasMap: Record<ClipKind, string[]> = {
+  const aliasMap: Record<ClipPayloadKind, string[]> = {
     text: ["text", "txt", "文本"],
     code: ["code", "代码"],
     link: ["link", "url", "links", "链接"],
     markdown: ["md", "markdown"],
     command: ["cmd", "command", "shell", "命令"],
-    attachment: ["file", "files", "attachment", "image", "img", "文件", "图片", "资源"],
     json: ["json", "结构化"],
     chart: ["chart", "图表"],
     table: ["table", "表格", "tsv", "csv"],
+    html: ["html", "富文本"],
+    file: ["file", "files", "文件", "路径"],
+    image: ["image", "img", "图片"],
   };
   return [label, ...aliasMap[suggestion.typeFilter]];
 }
@@ -689,6 +808,19 @@ function parseSearchCommand(rawQuery: string, suggestions: SearchSuggestion[]): 
     label: null,
   };
   const trimmedStart = rawQuery.trimStart();
+  if (trimmedStart.startsWith("#")) {
+    const body = trimmedStart.slice(1);
+    const [, token = "", rest = ""] = body.match(/^([^\s]*)\s*(.*)$/) ?? [];
+    const tag = normalizeTagName(token);
+    return {
+      handled: true,
+      queryText: rest,
+      typeFilter: "all",
+      filterFavorite: false,
+      tag,
+      label: tag ? `#${tag}` : null,
+    };
+  }
   if (!trimmedStart.startsWith("@")) return fallback;
 
   const body = trimmedStart.slice(1);
@@ -723,6 +855,8 @@ function createClip(content: string, settings: AppSettings): ClipItem {
   const now = Date.now();
   const analysis = analyzeContent(content);
   const kind = detectKind(content);
+  const payloadKind = kind === "attachment" ? (analysis.attachment?.isImage ? "image" : "file") : (kind as ClipPayloadKind);
+  const primaryFormat = getPrimaryFormatForPayload(payloadKind);
   return {
     id: makeId(),
     content,
@@ -736,7 +870,31 @@ function createClip(content: string, settings: AppSettings): ClipItem {
     tags: generateTags(content, settings),
     copyCount: 0,
     analysis,
-    payloadKind: kind === "attachment" ? (analysis.attachment?.isImage ? "image" : "file") : (kind as ClipPayloadKind),
+    payloadKind,
+    contentHash: `${payloadKind}:${now}`,
+    primaryFormat,
+    availableFormats: [primaryFormat],
+    representations: createTextRepresentation(content, payloadKind),
+    plainText: content,
+    searchText: content,
+    subKind: payloadKind === "html" ? "html" : null,
+    size: new Blob([content]).size,
+    fileTypes: null,
+    thumbnailPath: null,
+    imageFile: null,
+    isSensitive: false,
+    captureContext: {
+      schemaVersion: 1,
+      surface: "frontend",
+      sourceLabel: analysis.sourceName,
+      sourceApp: null,
+      observedAt: now,
+      primaryFormat,
+      availableFormats: [primaryFormat],
+      environment: {},
+    },
+    metadata: {},
+    agentContext: {},
   };
 }
 
@@ -794,6 +952,17 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
       typeof next.pinyinSearchEnabled === "boolean"
         ? next.pinyinSearchEnabled
         : defaultSettings.pinyinSearchEnabled,
+    captureTextEnabled: typeof next.captureTextEnabled === "boolean" ? next.captureTextEnabled : defaultSettings.captureTextEnabled,
+    captureHtmlEnabled: typeof next.captureHtmlEnabled === "boolean" ? next.captureHtmlEnabled : defaultSettings.captureHtmlEnabled,
+    captureRtfEnabled: typeof next.captureRtfEnabled === "boolean" ? next.captureRtfEnabled : defaultSettings.captureRtfEnabled,
+    captureImageEnabled: typeof next.captureImageEnabled === "boolean" ? next.captureImageEnabled : defaultSettings.captureImageEnabled,
+    captureFileEnabled: typeof next.captureFileEnabled === "boolean" ? next.captureFileEnabled : defaultSettings.captureFileEnabled,
+    captureSensitiveEnabled:
+      typeof next.captureSensitiveEnabled === "boolean"
+        ? next.captureSensitiveEnabled
+        : defaultSettings.captureSensitiveEnabled,
+    imageMaxSizeMb: clampNumber(next.imageMaxSizeMb, 1, 1024, defaultSettings.imageMaxSizeMb),
+    textMaxSizeMb: clampNumber(next.textMaxSizeMb, 1, 100, defaultSettings.textMaxSizeMb),
     globalShortcut: !globalShortcut || globalShortcut === LEGACY_DEFAULT_SHORTCUT ? DEFAULT_SHORTCUT : globalShortcut,
   };
 }
@@ -814,10 +983,21 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
   const kind = validKinds.includes(raw.kind as ClipKind) ? (raw.kind as ClipKind) : detectedKind;
   const payloadKind =
     typeof raw.payloadKind === "string"
-      ? (raw.payloadKind as ClipPayloadKind)
+      ? getPayloadKindFromFormat(raw.primaryFormat ?? "", raw.payloadKind as ClipPayloadKind)
       : kind === "attachment"
         ? (analysis.attachment?.isImage ? "image" : "file")
         : (kind as ClipPayloadKind);
+  const primaryFormat =
+    typeof raw.primaryFormat === "string" && raw.primaryFormat
+      ? raw.primaryFormat
+      : getPrimaryFormatForPayload(payloadKind);
+  const availableFormats = Array.isArray(raw.availableFormats) && raw.availableFormats.length
+    ? raw.availableFormats.filter((format): format is string => typeof format === "string")
+    : [primaryFormat];
+  const representations = Array.isArray(raw.representations) && raw.representations.length
+    ? raw.representations
+    : createTextRepresentation(raw.content, payloadKind);
+  const tags = Array.isArray(raw.tags) ? normalizeTagList(raw.tags) : normalizeTagList(generateTags(raw.content, settings));
   return {
     id: typeof raw.id === "string" ? raw.id : makeId(),
     content: raw.content,
@@ -832,10 +1012,36 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
         ? raw.bucket
         : "history",
     favorite: Boolean(raw.favorite),
-    tags: generateTags(raw.content, settings),
+    tags,
     copyCount: typeof raw.copyCount === "number" ? raw.copyCount : 0,
     analysis,
     payloadKind,
+    contentHash: typeof raw.contentHash === "string" ? raw.contentHash : `${payloadKind}:${raw.id ?? createdAt}`,
+    primaryFormat,
+    availableFormats,
+    representations,
+    plainText: typeof raw.plainText === "string" ? raw.plainText : raw.content,
+    searchText: typeof raw.searchText === "string" ? raw.searchText : raw.content,
+    subKind: typeof raw.subKind === "string" ? raw.subKind : null,
+    width: typeof raw.width === "number" ? raw.width : null,
+    height: typeof raw.height === "number" ? raw.height : null,
+    size: typeof raw.size === "number" ? raw.size : new Blob([raw.content]).size,
+    fileTypes: typeof raw.fileTypes === "string" ? raw.fileTypes : null,
+    thumbnailPath: typeof raw.thumbnailPath === "string" ? raw.thumbnailPath : null,
+    imageFile: typeof raw.imageFile === "string" ? raw.imageFile : null,
+    isSensitive: Boolean(raw.isSensitive),
+    captureContext: raw.captureContext ?? {
+      schemaVersion: 1,
+      surface: "clipboard",
+      sourceLabel: raw.source ?? analysis.sourceName,
+      sourceApp: null,
+      observedAt: lastSeenAt,
+      primaryFormat,
+      availableFormats,
+      environment: {},
+    },
+    metadata: raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {},
+    agentContext: raw.agentContext && typeof raw.agentContext === "object" ? raw.agentContext : {},
     sourceApp: raw.sourceApp,
   };
 }
@@ -852,7 +1058,7 @@ function retagClips(clips: ClipItem[], settings: AppSettings) {
       analysis,
       source: analysis.sourceName,
       kind: detectKind(clip.content),
-      tags: generateTags(clip.content, settings),
+      tags: normalizeTagList(clip.tags.length ? clip.tags : generateTags(clip.content, settings)),
     };
   });
 }
@@ -1199,9 +1405,10 @@ function ClipForgeApp() {
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [query, setQuery] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [activeTypeFilter, setActiveTypeFilter] = useState<"all" | ClipKind>("all");
+  const [activeTypeFilter, setActiveTypeFilter] = useState<ClipTypeFilter>("all");
   const [filterFavorite, setFilterFavorite] = useState(false);
   const [activeView, setActiveView] = useState<ViewKey>("history");
+  const [activeSurface, setActiveSurface] = useState<PanelSurface>("clipboard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [multiSelectMode, setMultiSelectMode] = useState(false);
@@ -1653,6 +1860,7 @@ function ClipForgeApp() {
       // 未挂载时为 no-op，后面的 [0,60] 兜底会接管。
       searchRef.current?.focus();
       setActiveView("history");
+      setActiveSurface("clipboard");
       setSelectedIds(new Set());
       setMultiSelectMode(false);
       setQuery("");
@@ -1795,12 +2003,14 @@ function ClipForgeApp() {
 
   const baseSearchSuggestions = useMemo<SearchSuggestion[]>(() => {
     const visible = clips.filter((item) => !item.deletedAt);
-    const countKind = (kind: ClipKind) => visible.filter((item) => item.kind === kind).length;
+    const countKind = (kind: ClipPayloadKind) => visible.filter((item) => item.payloadKind === kind).length;
     const base: SearchSuggestion[] = [
       { id: "all", label: "全部内容", hint: `${visible.length}`, kind: "all", typeFilter: "all" },
       { id: "favorite", label: "收藏", hint: `${visible.filter((item) => item.favorite).length}`, kind: "favorite" },
       { id: "link", label: "链接", hint: `${countKind("link")}`, kind: "type", typeFilter: "link" },
-      { id: "attachment", label: "文件", hint: `${countKind("attachment")}`, kind: "type", typeFilter: "attachment" },
+      { id: "file", label: "文件", hint: `${countKind("file")}`, kind: "type", typeFilter: "file" },
+      { id: "image", label: "图片", hint: `${countKind("image")}`, kind: "type", typeFilter: "image" },
+      { id: "html", label: "HTML", hint: `${countKind("html")}`, kind: "type", typeFilter: "html" },
       { id: "code", label: "代码", hint: `${countKind("code")}`, kind: "type", typeFilter: "code" },
       { id: "json", label: "JSON", hint: `${countKind("json")}`, kind: "type", typeFilter: "json" },
       { id: "command", label: "命令", hint: `${countKind("command")}`, kind: "type", typeFilter: "command" },
@@ -1844,11 +2054,12 @@ function ClipForgeApp() {
       ? settings.tagRules.find((rule) => rule.label.trim() === effectiveActiveTag)
       : undefined;
     return bucketSource.filter((item) => {
-      if (effectiveTypeFilter !== "all" && item.kind !== effectiveTypeFilter) return false;
+      if (effectiveTypeFilter !== "all" && item.payloadKind !== effectiveTypeFilter) return false;
       if (effectiveFilterFavorite && !item.favorite && !isFavoriteView(activeView)) return false;
       const matchesQuery = effectiveQuery.trim() ? matchesSearchTerm(item, effectiveQuery, settings) : true;
       const matchesTag = effectiveActiveTag
-        ? item.tags.includes(effectiveActiveTag) || Boolean(activeSavedSearch && matchesSavedSearch(item, activeSavedSearch, settings))
+        ? item.tags.some((tag) => tag.toLowerCase() === effectiveActiveTag.toLowerCase()) ||
+          Boolean(activeSavedSearch && matchesSavedSearch(item, activeSavedSearch, settings))
         : true;
       return matchesQuery && matchesTag;
     });
@@ -1877,12 +2088,29 @@ function ClipForgeApp() {
   const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
     const token = query.trim();
     if (!isSearchActive) return [];
-    if (!token || !token.startsWith("@")) return baseSearchSuggestions.slice(0, 6);
+    if (!token || (!token.startsWith("@") && !token.startsWith("#"))) return baseSearchSuggestions.slice(0, 6);
+    if (token.startsWith("#")) {
+      const tagToken = normalizeSearch(token.slice(1));
+      const tagCounts = new Map<string, { label: string; count: number }>();
+      clips.forEach((clip) => {
+        if (clip.deletedAt) return;
+        clip.tags.forEach((tag) => {
+          const key = tag.toLowerCase();
+          const current = tagCounts.get(key) ?? { label: tag, count: 0 };
+          current.count += 1;
+          tagCounts.set(key, current);
+        });
+      });
+      return Array.from(tagCounts.entries())
+        .filter(([key]) => !tagToken || key.includes(tagToken))
+        .slice(0, 8)
+        .map(([, value]) => ({ id: `tag:${value.label}`, label: value.label, hint: `${value.count}`, kind: "saved", tag: value.label }));
+    }
     const commandToken = token.slice(0, token.search(/\s/) > -1 ? token.search(/\s/) : token.length);
     return baseSearchSuggestions
       .filter((item) => matchesSearchSuggestionToken(item, commandToken))
       .slice(0, 8);
-  }, [baseSearchSuggestions, isSearchActive, query]);
+  }, [baseSearchSuggestions, clips, isSearchActive, query]);
 
   const aggregatePreview = useMemo(() => {
     return selectedInList.map((item) => item.content.trim()).filter(Boolean).join("\n\n");
@@ -1895,7 +2123,8 @@ function ClipForgeApp() {
 
   const handleSearchChange = useCallback((value: string) => {
     setQuery(value);
-    if (!value.trimStart().startsWith("@")) {
+    const token = value.trimStart();
+    if (!token.startsWith("@") && !token.startsWith("#")) {
       setActiveTag(null);
       setFilterFavorite(false);
       setActiveTypeFilter("all");
@@ -1912,6 +2141,8 @@ function ClipForgeApp() {
     setActiveTypeFilter("all");
     if (suggestion.kind === "all") {
       setQuery("");
+    } else if (suggestion.kind === "saved") {
+      setQuery(`#${suggestion.tag} `);
     } else {
       setQuery(`${getSearchSuggestionToken(suggestion)} `);
     }
@@ -1919,13 +2150,22 @@ function ClipForgeApp() {
     window.setTimeout(() => searchRef.current?.focus(), 0);
   }
 
+  function searchByTag(tag: string) {
+    const normalized = normalizeTagName(tag);
+    if (!normalized) return;
+    setQuery(`#${normalized} `);
+    setActiveTag(null);
+    setFilterFavorite(false);
+    setActiveTypeFilter("all");
+    setSearchActive(true);
+    void navigateWorkspaceList();
+    window.setTimeout(() => searchRef.current?.focus(), 0);
+  }
+
   function markClipCopied(item: ClipItem, status: string) {
     const now = Date.now();
     setLastCopiedId(item.id);
     setNativeStatus(status);
-    invoke("update_clip_record", { input: { id: item.id, copied: true } }).catch((error) =>
-      logAppError("warn", "Update copied state failed", String(error)),
-    );
     setSelectedId(item.id);
     setClips((current) => {
       const base = current.find((clip) => clip.id === item.id) ?? item;
@@ -1954,13 +2194,76 @@ function ClipForgeApp() {
 
   async function copyClip(item: ClipItem) {
     try {
-      await invoke("write_clipboard_text", { text: item.content });
+      const payload = await invoke<Partial<ClipItem>>("write_clipboard_item", {
+        input: { id: item.id, pasteMode: "rich", source: "ui" },
+      });
+      const normalized = normalizeClip(payload, settingsRef.current);
       lastSeenClipboard.current = item.content.trim();
-      markClipCopied(item, "已复制到系统剪贴板");
+      if (normalized) {
+        setClips((current) => {
+          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+          clipsRef.current = next;
+          return next;
+        });
+      }
+      markClipCopied(normalized ?? item, "已复制到系统剪贴板");
     } catch {
       await navigator.clipboard.writeText(item.content);
       markClipCopied(item, "已复制到浏览器剪贴板");
     }
+  }
+
+  async function captureStandardTextClip(
+    text: string,
+    source: string,
+    context: Record<string, unknown> = {},
+    extraTags: string[] = [],
+  ) {
+    const payload = await invoke<CaptureClipPayload>("capture_clip_record", {
+      content: text,
+      sourceLabel: source,
+      observedAt: Date.now(),
+    });
+    let normalized = normalizeClip(payload.item, settingsRef.current);
+    if (!normalized) {
+      throw new Error("capture returned an empty item");
+    }
+
+    const inferredTags = /(^|[\s:_-])(ai|agent|mcp|assistant)([\s:_-]|$)/i.test(source)
+      ? ["AI"]
+      : [];
+    const nextTags = normalizeTagList([
+      ...normalized.tags,
+      ...extractHashTags(text),
+      ...extraTags,
+      ...inferredTags,
+    ]);
+    const metadata = {
+      ...normalized.metadata,
+      clipforgeContext: {
+        source,
+        ...context,
+      },
+    };
+    if (
+      nextTags.join("\n").toLowerCase() !== normalized.tags.join("\n").toLowerCase() ||
+      Object.keys(context).length > 0
+    ) {
+      const updated = await invoke<Partial<ClipItem>>("update_clip_record", {
+        input: { id: normalized.id, tags: nextTags, metadata },
+      });
+      normalized = normalizeClip(updated, settingsRef.current) ?? { ...normalized, tags: nextTags, metadata };
+    }
+
+    setClips((current) => {
+      const existing = current.some((clip) => clip.id === normalized.id);
+      const next = existing
+        ? current.map((clip) => (clip.id === normalized.id ? normalized : clip))
+        : [normalized, ...current].slice(0, settingsRef.current.maxStoredItems);
+      clipsRef.current = next;
+      return next;
+    });
+    return normalized;
   }
 
   async function copyText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
@@ -1971,7 +2274,18 @@ function ClipForgeApp() {
       ...context,
     });
     try {
-      await invoke("write_clipboard_text", { text });
+      const item = await captureStandardTextClip(text, source, context);
+      const payload = await invoke<Partial<ClipItem>>("write_clipboard_item", {
+        input: { id: item.id, pasteMode: "rich", source },
+      });
+      const normalized = normalizeClip(payload, settingsRef.current);
+      if (normalized) {
+        setClips((current) => {
+          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+          clipsRef.current = next;
+          return next;
+        });
+      }
       lastSeenClipboard.current = text.trim();
       setNativeStatus("已复制代码到系统剪贴板");
       showCompletionToast("已复制代码");
@@ -2004,7 +2318,18 @@ function ClipForgeApp() {
       ...context,
     });
     try {
-      await invoke("paste_clipboard_text", { text, source });
+      const item = await captureStandardTextClip(text, source, context);
+      const payload = await invoke<Partial<ClipItem>>("paste_clipboard_item", {
+        input: { id: item.id, pasteMode: "rich", source },
+      });
+      const normalized = normalizeClip(payload, settingsRef.current);
+      if (normalized) {
+        setClips((current) => {
+          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+          clipsRef.current = next;
+          return next;
+        });
+      }
       setIsPanelEntering(false);
       lastSeenClipboard.current = text.trim();
       setNativeStatus("已粘贴代码到当前应用");
@@ -2038,12 +2363,22 @@ function ClipForgeApp() {
       selectedId,
     });
     try {
-      await invoke("paste_clipboard_text", { text: item.content, source });
+      const payload = await invoke<Partial<ClipItem>>("paste_clipboard_item", {
+        input: { id: item.id, pasteMode: "rich", source },
+      });
+      const normalized = normalizeClip(payload, settingsRef.current);
       // 粘贴后面板已被 Rust 隐藏（hide_panel_before_paste 不发 hide-quick-panel），
       // 这里显式复位 is-entering，否则下次唤起不会淡入。
       setIsPanelEntering(false);
       lastSeenClipboard.current = item.content.trim();
-      markClipCopied(item, "已粘贴到当前应用");
+      if (normalized) {
+        setClips((current) => {
+          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+          clipsRef.current = next;
+          return next;
+        });
+      }
+      markClipCopied(normalized ?? item, "已粘贴到当前应用");
       logAppError("info", "paste-ui: invoke success", { id: item.id, source });
     } catch (error) {
       logAppError("warn", "Paste clip failed", String(error));
@@ -2074,7 +2409,23 @@ function ClipForgeApp() {
     }
     const text = items.map((item) => item.content).join("\n\n");
     try {
-      await invoke("write_clipboard_text", { text });
+      const aggregate = await captureStandardTextClip(
+        text,
+        "ui:multi-select-aggregate",
+        { itemIds: items.map((item) => item.id), itemCount: items.length },
+        ["聚合"],
+      );
+      const payload = await invoke<Partial<ClipItem>>("write_clipboard_item", {
+        input: { id: aggregate.id, pasteMode: "rich", source: "ui:multi-select-aggregate" },
+      });
+      const normalized = normalizeClip(payload, settingsRef.current);
+      if (normalized) {
+        setClips((current) => {
+          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+          clipsRef.current = next;
+          return next;
+        });
+      }
       lastSeenClipboard.current = text.trim();
       setNativeStatus(`已聚合复制 ${items.length} 条`);
     } catch {
@@ -2118,6 +2469,15 @@ function ClipForgeApp() {
       const quickItems = filteredClips;
       const key = event.key.toLowerCase();
       const currentItem = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
+
+      if (activeSurface === "agent") {
+        if (event.key === "Escape" && !editable) {
+          event.preventDefault();
+          setActiveSurface("clipboard");
+          window.setTimeout(() => searchRef.current?.focus(), 0);
+        }
+        return;
+      }
 
       if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
@@ -2367,6 +2727,7 @@ function ClipForgeApp() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     activeView,
+    activeSurface,
     filteredClips,
     focusSearch,
     isMultiPreviewOpen,
@@ -2443,11 +2804,77 @@ function ClipForgeApp() {
     });
   }
 
-  async function updateClipContent(item: ClipItem, content: string) {
+  async function saveAgentResultAsClip(
+    content: string,
+    context: { sourceClipId?: string; conversationId: string },
+  ) {
+    if (!content.trim()) {
+      setNativeStatus("Agent 结果为空，未保存");
+      return;
+    }
+    try {
+      const payload = await invoke<CaptureClipPayload>("capture_clip_record", {
+        content,
+        sourceLabel: "ClipForge Agent",
+        observedAt: Date.now(),
+      });
+      let normalized = normalizeClip(payload.item, settingsRef.current);
+      if (normalized) {
+        const tags = normalizeTagList([...normalized.tags, "AI"]);
+        const metadata = {
+          ...normalized.metadata,
+          provenance: {
+            generatedBy: "agent",
+            sourceClipId: context.sourceClipId ?? null,
+            conversationId: context.conversationId,
+            createdAt: Date.now(),
+          },
+        };
+        try {
+          const updatedPayload = await invoke<Partial<ClipItem>>("update_clip_record", {
+            input: {
+              id: normalized.id,
+              tags,
+              metadata,
+              agentContext: {
+                generatedBy: "agent",
+                sourceClipId: context.sourceClipId ?? null,
+                conversationId: context.conversationId,
+              },
+            },
+          });
+          normalized = normalizeClip(updatedPayload, settingsRef.current) ?? { ...normalized, tags, metadata };
+        } catch (error) {
+          logAppError("warn", "agent-result: metadata update failed", String(error));
+          normalized = { ...normalized, tags, metadata };
+        }
+        const savedItem = normalized;
+        setClips((current) => {
+          const next = [savedItem, ...current.filter((clip) => clip.id !== savedItem.id)].slice(
+            0,
+            settingsRef.current.maxStoredItems,
+          );
+          clipsRef.current = next;
+          return next;
+        });
+        setSelectedId(savedItem.id);
+      }
+      setActiveSurface("clipboard");
+      setActiveView("history");
+      setNativeStatus("已保存 Agent 结果为剪贴板条目");
+      showCompletionToast("已保存 Agent 结果");
+    } catch (error) {
+      logAppError("warn", "agent-result: save failed", String(error));
+      setNativeStatus("保存 Agent 结果失败，查看日志");
+    }
+  }
+
+  async function updateClipContent(item: ClipItem, content: string, tags?: string[]) {
     const payload = await invoke<Partial<ClipItem>>("update_clip_record", {
       input: {
         id: item.id,
         content,
+        tags: tags ? normalizeTagList(tags) : undefined,
       },
     });
     const normalized = normalizeClip(payload, settingsRef.current);
@@ -2463,6 +2890,7 @@ function ClipForgeApp() {
       id: normalized.id,
       payloadKind: normalized.payloadKind,
       chars: normalized.content.length,
+      tags: normalized.tags,
     });
     return normalized;
   }
@@ -2536,6 +2964,20 @@ function ClipForgeApp() {
     if (shouldReselect) setSelectedId(nextSelectedId);
   }
 
+  async function archiveAgentSourceClip(item: ClipItem) {
+    updateClip(item.id, { bucket: "archive" });
+    setNativeStatus("已归档 Agent 来源条目");
+    showCompletionToast("已归档来源");
+  }
+
+  async function favoriteAgentSourceClip(item: ClipItem) {
+    if (!item.favorite) {
+      updateClip(item.id, { favorite: true });
+    }
+    setNativeStatus("已收藏 Agent 来源条目");
+    showCompletionToast("已收藏来源");
+  }
+
   async function emptyTrash() {
     const trashIds = clips.filter((item) => item.deletedAt).map((item) => item.id);
     if (!trashIds.length) {
@@ -2576,7 +3018,18 @@ function ClipForgeApp() {
           suggestions={searchSuggestions}
         />
 
-        {multiSelectMode ? (
+        <PanelSurfaceTabs
+          activeSurface={activeSurface}
+          agentContextCount={selectedClip ? 1 : 0}
+          onChange={(surface) => {
+            setActiveSurface(surface);
+            if (surface === "clipboard") {
+              window.setTimeout(() => searchRef.current?.focus(), 0);
+            }
+          }}
+        />
+
+        {activeSurface === "clipboard" && multiSelectMode ? (
           <MultiSelectToolbar
             allSelected={selectedInList.length > 0 && selectedInList.length === filteredClips.length}
             count={selectedInList.length}
@@ -2598,7 +3051,24 @@ function ClipForgeApp() {
           />
         ) : null}
 
-        <PanelContentBoundary resetKey={`workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}>
+        <PanelContentBoundary resetKey={`${activeSurface}:workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}>
+          {activeSurface === "agent" ? (
+            <ClipboardAgentPanel
+              activeClip={selectedClip}
+              allClips={clips}
+              filteredClips={filteredClips}
+              selectedClips={selectedInList}
+              query={query}
+              onArchiveClip={archiveAgentSourceClip}
+              onBackToClipboard={() => {
+                setActiveSurface("clipboard");
+                window.setTimeout(() => searchRef.current?.focus(), 0);
+              }}
+              onCopyResult={(text) => copyText(text, "agent-result", { sourceClipId: selectedClip?.id })}
+              onFavoriteClip={favoriteAgentSourceClip}
+              onSaveResult={saveAgentResultAsClip}
+            />
+          ) : (
           <WorkspaceRouterProvider
             renderList={() =>
               activeView === "trash" ? (
@@ -2710,6 +3180,7 @@ function ClipForgeApp() {
                   onCopyText={copyText}
                   onOpen={openClipTarget}
                   onPasteText={pasteText}
+                  onSearchTag={searchByTag}
                   onUpdateContent={updateClipContent}
                   quickActions={[
                     ...(clip && canOpenClipTarget(clip)
@@ -2726,6 +3197,15 @@ function ClipForgeApp() {
                       : []),
                     ...(clip
                       ? [
+                          {
+                            id: "ask-agent",
+                            label: "询问 Agent",
+                            icon: <Bot size={13} />,
+                            onSelect: () => {
+                              setSelectedId(clip.id);
+                              setActiveSurface("agent");
+                            },
+                          },
                           {
                             id: "copy",
                             label: "复制内容",
@@ -2770,6 +3250,7 @@ function ClipForgeApp() {
               />
             )}
           />
+          )}
         </PanelContentBoundary>
       </section>
 
@@ -2890,6 +3371,42 @@ function ClipForgeApp() {
         />
       ) : null}
     </main>
+  );
+}
+
+function PanelSurfaceTabs({
+  activeSurface,
+  agentContextCount,
+  onChange,
+}: {
+  activeSurface: PanelSurface;
+  agentContextCount: number;
+  onChange: (surface: PanelSurface) => void;
+}) {
+  return (
+    <nav className="panel-surface-tabs" aria-label="面板模式">
+      <button
+        aria-selected={activeSurface === "clipboard"}
+        className={activeSurface === "clipboard" ? "active" : ""}
+        onClick={() => onChange("clipboard")}
+        role="tab"
+        type="button"
+      >
+        <Clipboard size={13} />
+        <span>剪贴板</span>
+      </button>
+      <button
+        aria-selected={activeSurface === "agent"}
+        className={activeSurface === "agent" ? "active" : ""}
+        onClick={() => onChange("agent")}
+        role="tab"
+        type="button"
+      >
+        <Bot size={13} />
+        <span>Agent</span>
+        {agentContextCount ? <em>{agentContextCount}</em> : null}
+      </button>
+    </nav>
   );
 }
 

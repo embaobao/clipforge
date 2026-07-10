@@ -23,16 +23,19 @@ function hashContent(content: string) {
 function createRecord(input: ClipboardCaptureInput): ClipRecord {
   const now = input.observedAt;
   const contentHash = hashContent(input.content);
+  const kind = /^https?:\/\//.test(input.content.trim()) ? "link" : "text";
+  const primaryFormat = "text/plain";
+  const sourceLabel = input.sourceLabel ?? "Clipboard";
   return {
     id: `clip_${contentHash}`,
     content: input.content,
     contentHash,
-    kind: /^https?:\/\//.test(input.content.trim()) ? "link" : "text",
+    kind,
     bucket: "history",
     source: input.source,
-    sourceLabel: input.sourceLabel ?? "Clipboard",
+    sourceLabel,
     favorite: false,
-    tags: [],
+    tags: input.tags ?? [],
     copyCount: 0,
     createdAt: now,
     updatedAt: now,
@@ -44,6 +47,41 @@ function createRecord(input: ClipboardCaptureInput): ClipRecord {
       summary: input.content.replace(/\s+/g, " ").slice(0, 96),
       isMarkdown: false,
     },
+    payloadKind: kind,
+    primaryFormat,
+    availableFormats: [primaryFormat],
+    representations: [
+      {
+        format: primaryFormat,
+        storage: "inline",
+        content: input.content,
+        size: input.content.length,
+        hash: contentHash,
+        preferred: true,
+      },
+    ],
+    plainText: input.content,
+    searchText: input.content,
+    subKind: null,
+    width: null,
+    height: null,
+    size: input.content.length,
+    fileTypes: null,
+    thumbnailPath: null,
+    imageFile: null,
+    isSensitive: false,
+    captureContext: {
+      schemaVersion: 1,
+      surface: input.source,
+      sourceLabel,
+      sourceApp: null,
+      observedAt: now,
+      primaryFormat,
+      availableFormats: [primaryFormat],
+      environment: {},
+    },
+    metadata: input.metadata ?? {},
+    agentContext: input.agentContext ?? {},
   };
 }
 

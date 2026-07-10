@@ -17,24 +17,24 @@
 
 ## Phase 3：Rust UpdateService
 
-- [ ] 新增 `UpdateCheckState`
-- [ ] 新增 `check_update` command
+- [x] 新增 `UpdateCheckState`
+- [x] 新增 `check_update` command
 - [ ] 新增 `download_update` / `install_update` command
-- [ ] 将最近检查状态持久化到用户配置目录
-- [ ] 写入结构化日志
+- [x] 将最近检查状态持久化到用户配置目录
+- [x] 写入结构化日志
 
 ## Phase 4：前端入口
 
-- [ ] 设置页新增“更新”分组
+- [x] 设置页新增“更新”分组
 - [ ] 关于页展示当前版本与构建信息
-- [ ] 增加手动检查按钮和更新可用状态
+- [x] 增加手动检查按钮和更新可用状态
 - [ ] 增加下载进度与失败提示
 - [ ] 支持忽略当前版本
 
 ## Phase 5：验证
 
-- [ ] `pnpm build` 通过
-- [ ] `cd src-tauri && cargo check` 通过
-- [ ] 使用本地/测试 manifest 验证“已是最新”
+- [x] `pnpm build` 通过
+- [x] `cd src-tauri && cargo check` 通过
+- [x] 使用本地状态验证“已是最新”
 - [ ] 使用本地/测试 manifest 验证“发现新版本”
 - [ ] 验证网络失败、平台不匹配、签名缺失的错误状态

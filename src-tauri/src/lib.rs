@@ -303,11 +303,37 @@ struct SourceAppPayload {
     icon_base64: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardRepresentationPayload {
+    format: String,
+    storage: String,
+    content: Option<String>,
+    file_name: Option<String>,
+    size: Option<i64>,
+    hash: Option<String>,
+    preferred: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CaptureContextPayload {
+    schema_version: i64,
+    surface: String,
+    source_label: String,
+    source_app: Option<Value>,
+    observed_at: i64,
+    primary_format: String,
+    available_formats: Vec<String>,
+    environment: Value,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClipItemPayload {
     id: String,
     content: String,
+    content_hash: String,
     created_at: i64,
     updated_at: i64,
     last_seen_at: i64,
@@ -320,6 +346,22 @@ struct ClipItemPayload {
     copy_count: i64,
     analysis: ClipAnalysisPayload,
     payload_kind: String,
+    primary_format: String,
+    available_formats: Vec<String>,
+    representations: Vec<ClipboardRepresentationPayload>,
+    plain_text: String,
+    search_text: Option<String>,
+    sub_kind: Option<String>,
+    width: Option<i64>,
+    height: Option<i64>,
+    size: Option<i64>,
+    file_types: Option<String>,
+    thumbnail_path: Option<String>,
+    image_file: Option<String>,
+    is_sensitive: bool,
+    capture_context: CaptureContextPayload,
+    metadata: Value,
+    agent_context: Value,
     source_app: Option<SourceAppPayload>,
 }
 
@@ -336,6 +378,21 @@ struct QueryClipPayload {
     items: Vec<ClipItemPayload>,
     next_cursor: Option<String>,
     limit: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCheckState {
+    status: String,
+    current_version: String,
+    available_version: Option<String>,
+    channel: String,
+    last_checked_at: Option<i64>,
+    ignored_version: Option<String>,
+    release_notes: Option<String>,
+    download_progress: Option<f64>,
+    error_code: Option<String>,
+    error_message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -541,11 +598,22 @@ struct ImportClipPayload {
 struct UpdateClipInput {
     id: String,
     content: Option<String>,
+    tags: Option<Vec<String>>,
     bucket: Option<String>,
     favorite: Option<bool>,
     pinned: Option<bool>,
     note: Option<String>,
+    metadata: Option<Value>,
+    agent_context: Option<Value>,
     copied: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClipboardItemCommandInput {
+    id: String,
+    paste_mode: Option<String>,
+    source: Option<String>,
 }
 
 #[tauri::command]
@@ -558,13 +626,6 @@ fn read_clipboard_text() -> Result<ClipboardPayload, String> {
     }
 }
 
-#[tauri::command]
-fn write_clipboard_text(text: String) -> Result<(), String> {
-    suppress_writeback_for(Duration::from_millis(450));
-    write_platform_clipboard(&text)
-}
-
-#[tauri::command]
 fn paste_clipboard_text<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     text: String,
@@ -670,6 +731,86 @@ fn paste_clipboard_text<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+fn write_clipboard_item(input: ClipboardItemCommandInput) -> Result<ClipItemPayload, String> {
+    let conn = open_clip_db()?;
+    init_schema(&conn)?;
+    let item = load_clip(&conn, &input.id)?;
+    let text = text_for_paste_mode(&item, input.paste_mode.as_deref());
+    suppress_writeback_for(Duration::from_millis(450));
+    write_platform_clipboard(&text)?;
+    update_clip_record(UpdateClipInput {
+        id: item.id.clone(),
+        content: None,
+        tags: None,
+        bucket: None,
+        favorite: None,
+        pinned: None,
+        note: None,
+        metadata: None,
+        agent_context: None,
+        copied: Some(true),
+    })?;
+    log_to_file(
+        "info",
+        "clipboard-write",
+        &format!(
+            "id={} primaryFormat={} pasteMode={}",
+            item.id,
+            item.primary_format,
+            input.paste_mode.unwrap_or_else(|| "rich".to_string())
+        ),
+    );
+    load_clip(&conn, &item.id)
+}
+
+#[tauri::command]
+fn paste_clipboard_item<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    input: ClipboardItemCommandInput,
+) -> Result<ClipItemPayload, String> {
+    let conn = open_clip_db()?;
+    init_schema(&conn)?;
+    let item = load_clip(&conn, &input.id)?;
+    let text = text_for_paste_mode(&item, input.paste_mode.as_deref());
+    paste_clipboard_text(app, text, input.source.clone())?;
+    update_clip_record(UpdateClipInput {
+        id: item.id.clone(),
+        content: None,
+        tags: None,
+        bucket: None,
+        favorite: None,
+        pinned: None,
+        note: None,
+        metadata: None,
+        agent_context: None,
+        copied: Some(true),
+    })?;
+    log_to_file(
+        "info",
+        "clipboard-paste",
+        &format!(
+            "id={} primaryFormat={} pasteMode={} source={}",
+            item.id,
+            item.primary_format,
+            input.paste_mode.unwrap_or_else(|| "rich".to_string()),
+            input.source.unwrap_or_else(|| "unknown".to_string())
+        ),
+    );
+    load_clip(&conn, &item.id)
+}
+
+fn text_for_paste_mode(item: &ClipItemPayload, paste_mode: Option<&str>) -> String {
+    match paste_mode.unwrap_or("rich") {
+        "plain" | "filesAsPaths" | "files-as-paths" => item
+            .search_text
+            .clone()
+            .filter(|text| !text.trim().is_empty())
+            .unwrap_or_else(|| item.plain_text.clone()),
+        _ => item.content.clone(),
+    }
+}
+
+#[tauri::command]
 fn init_clip_database() -> Result<DbInitPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
@@ -680,6 +821,41 @@ fn init_clip_database() -> Result<DbInitPayload, String> {
         path: database_path()?.to_string_lossy().to_string(),
         schema_version: version,
     })
+}
+
+#[tauri::command]
+fn check_update() -> Result<UpdateCheckState, String> {
+    let now = now_millis()?;
+    let state = UpdateCheckState {
+        status: "latest".to_string(),
+        current_version: env!("CARGO_PKG_VERSION").to_string(),
+        available_version: None,
+        channel: "stable".to_string(),
+        last_checked_at: Some(now),
+        ignored_version: None,
+        release_notes: None,
+        download_progress: None,
+        error_code: None,
+        error_message: None,
+    };
+    let path = settings_path()?
+        .parent()
+        .ok_or_else(|| "settings parent is not available".to_string())?
+        .join("update-state.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&state).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    log_to_file(
+        "info",
+        "update-check",
+        &format!("status=latest currentVersion={}", state.current_version),
+    );
+    Ok(state)
 }
 
 #[tauri::command]
@@ -720,9 +896,30 @@ fn capture_clip_record(
 
     let id = format!("clip_{hash}_{observed_at}");
     let payload_kind = detect_payload_kind(&content);
-    let analysis = analyze_clip(&content, source_label.as_deref().unwrap_or("Clipboard"));
-    let tags = default_tags(&analysis, &content).join(",");
+    let primary_format = primary_format_from_payload(&payload_kind).to_string();
+    let available_formats = vec![primary_format.clone()];
+    let representations = build_representations(&content, &payload_kind);
+    let representations_json = json_string(&representations)?;
+    let available_formats_json = json_string(&available_formats)?;
+    let source_label_value = source_label.unwrap_or_else(|| "Clipboard".to_string());
+    let analysis = analyze_clip(&content, &source_label_value);
+    let mut default_tag_values = default_tags(&analysis, &content);
+    if source_label_value.to_lowercase().contains("agent")
+        || source_label_value.to_lowercase().contains("mcp")
+        || source_label_value.to_lowercase().contains("ai")
+    {
+        default_tag_values.push("AI".to_string());
+    }
+    let tags = normalize_tags(default_tag_values).join(",");
     let source_app = current_source_app();
+    let capture_context = make_capture_context(
+        &source_label_value,
+        source_app.as_ref(),
+        observed_at,
+        &primary_format,
+        &available_formats,
+    );
+    let capture_context_json = json_string(&capture_context)?;
     let source_app_name = source_app.as_ref().map(|s| s.name.as_str()).unwrap_or("");
     let source_app_bundle = source_app
         .as_ref()
@@ -735,16 +932,25 @@ fn capture_clip_record(
     let source_app_icon = source_app.as_ref().and_then(|s| s.icon_base64.as_deref());
     conn.execute(
         "INSERT INTO clips (
-            id, content, content_hash, kind, bucket, source, source_label, favorite, tags,
+            id, content, content_hash, primary_format, available_formats, representations_json,
+            plain_text, search_text, sub_kind, size, capture_context_json, metadata_json, agent_context_json,
+            kind, bucket, source, source_label, favorite, tags,
             copy_count, created_at, updated_at, last_seen_at, title, summary, url, host, payload_kind,
             source_app_name, source_app_bundle, source_app_executable, source_app_icon
-        ) VALUES (?1, ?2, ?3, ?4, 'history', 'clipboard', ?5, 0, ?6, 0, ?7, ?7, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?9, ?10, '{}', '{}', ?11, 'history', 'clipboard', ?12, 0, ?13, 0, ?14, ?14, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
         params![
             id,
             content,
             hash,
+            primary_format,
+            available_formats_json,
+            representations_json,
+            content,
+            if payload_kind == "html" { Some("html".to_string()) } else { None },
+            content.as_bytes().len() as i64,
+            capture_context_json,
             analysis_kind_from_payload(&payload_kind),
-            source_label.unwrap_or_else(|| "Clipboard".to_string()),
+            source_label_value,
             tags,
             observed_at,
             analysis.title,
@@ -771,82 +977,11 @@ fn capture_clip_record_internal(
     content: &str,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
-    let content = content.trim();
-    if content.is_empty() {
-        return Err("content is empty".to_string());
-    }
-    let payload_kind = detect_payload_kind(content);
-    let hash = content_hash(&payload_kind, content.as_bytes());
-    let existing_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM clips WHERE content_hash = ?1 AND deleted_at IS NULL LIMIT 1",
-            params![hash],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-
-    if let Some(id) = existing_id {
-        conn.execute(
-            "UPDATE clips SET last_seen_at = ?1, updated_at = ?1 WHERE id = ?2",
-            params![observed_at, id],
-        )
-        .map_err(|error| error.to_string())?;
-        let item = load_clip(&conn, &id)?;
-        return Ok(CaptureClipPayload {
-            status: "promoted".to_string(),
-            item,
-        });
-    }
-
-    let id = format!("clip_{hash}_{observed_at}");
-    let analysis = analyze_clip(content, "Clipboard");
-    let tags = default_tags(&analysis, content).join(",");
-    let source_app = current_source_app();
-    let source_app_name = source_app.as_ref().map(|s| s.name.as_str()).unwrap_or("");
-    let source_app_bundle = source_app
-        .as_ref()
-        .map(|s| s.bundle_id.as_str())
-        .unwrap_or("");
-    let source_app_executable = source_app
-        .as_ref()
-        .map(|s| s.executable_path.as_str())
-        .unwrap_or("");
-    let source_app_icon = source_app.as_ref().and_then(|s| s.icon_base64.as_deref());
-    conn.execute(
-        "INSERT INTO clips (
-            id, content, content_hash, kind, bucket, source, source_label, favorite, tags,
-            copy_count, created_at, updated_at, last_seen_at, title, summary, url, host, payload_kind,
-            source_app_name, source_app_bundle, source_app_executable, source_app_icon
-        ) VALUES (?1, ?2, ?3, ?4, 'history', 'clipboard', ?5, 0, ?6, 0, ?7, ?7, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-        params![
-            id,
-            content,
-            hash,
-            analysis_kind(&analysis),
-            "Clipboard",
-            tags,
-            observed_at,
-            analysis.title,
-            analysis.summary,
-            analysis.url,
-            analysis.host,
-            payload_kind,
-            source_app_name,
-            source_app_bundle,
-            source_app_executable,
-            source_app_icon
-        ],
+    capture_clip_record(
+        content.to_string(),
+        Some("Clipboard".to_string()),
+        observed_at,
     )
-    .map_err(|error| error.to_string())?;
-    upsert_fts(&conn, &id)?;
-    let item = load_clip(&conn, &id)?;
-    Ok(CaptureClipPayload {
-        status: "created".to_string(),
-        item,
-    })
 }
 
 fn log_to_file(level: &str, module: &str, message: &str) {
@@ -1368,6 +1503,28 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
         }
         let payload_kind = detect_payload_kind(&content);
         let hash = content_hash(&payload_kind, content.as_bytes());
+        let primary_format = primary_format_from_payload(&payload_kind).to_string();
+        let available_formats = vec![primary_format.clone()];
+        let available_formats_json = json_string(&available_formats)?;
+        let representations = build_representations(&content, &payload_kind);
+        let representations_json = json_string(&representations)?;
+        let tags = if let Some(tags) = input.tags.clone() {
+            normalize_tags(tags)
+        } else {
+            let existing: Option<String> = conn
+                .query_row(
+                    "SELECT tags FROM clips WHERE id = ?1 AND deleted_at IS NULL",
+                    params![input.id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| error.to_string())?;
+            existing
+                .unwrap_or_default()
+                .split(',')
+                .map(ToString::to_string)
+                .collect()
+        };
         let duplicate_id: Option<String> = conn
             .query_row(
                 "SELECT id FROM clips WHERE content_hash = ?1 AND id <> ?2 LIMIT 1",
@@ -1380,25 +1537,37 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
             return Err(format!("content duplicates existing clip {duplicate_id}"));
         }
         let analysis = analyze_clip(&content, "Edit");
-        let tags = default_tags(&analysis, &content).join(",");
         conn.execute(
             "UPDATE clips SET
                 content = ?1,
                 content_hash = ?2,
-                kind = ?3,
-                tags = ?4,
-                title = ?5,
-                summary = ?6,
-                url = ?7,
-                host = ?8,
-                payload_kind = ?9,
-                updated_at = ?10
-             WHERE id = ?11 AND deleted_at IS NULL",
+                primary_format = ?3,
+                available_formats = ?4,
+                representations_json = ?5,
+                plain_text = ?6,
+                search_text = ?6,
+                sub_kind = ?7,
+                size = ?8,
+                kind = ?9,
+                tags = ?10,
+                title = ?11,
+                summary = ?12,
+                url = ?13,
+                host = ?14,
+                payload_kind = ?15,
+                updated_at = ?16
+             WHERE id = ?17 AND deleted_at IS NULL",
             params![
                 content,
                 hash,
+                primary_format,
+                available_formats_json,
+                representations_json,
+                content,
+                if payload_kind == "html" { Some("html".to_string()) } else { None },
+                content.as_bytes().len() as i64,
                 analysis_kind_from_payload(&payload_kind),
-                tags,
+                tags.join(","),
                 analysis.title,
                 analysis.summary,
                 analysis.url,
@@ -1420,6 +1589,14 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
                 payload_kind
             ),
         );
+    }
+    if let Some(tags) = input.tags {
+        conn.execute(
+            "UPDATE clips SET tags = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+            params![normalize_tags(tags).join(","), now, input.id],
+        )
+        .map_err(|error| error.to_string())?;
+        upsert_fts(&conn, &input.id)?;
     }
     if let Some(bucket) = input.bucket {
         conn.execute(
@@ -1446,6 +1623,20 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
         conn.execute(
             "UPDATE clips SET note = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![note, now, input.id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if let Some(metadata) = input.metadata {
+        conn.execute(
+            "UPDATE clips SET metadata_json = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+            params![json_string(&metadata)?, now, input.id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if let Some(agent_context) = input.agent_context {
+        conn.execute(
+            "UPDATE clips SET agent_context_json = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
+            params![json_string(&agent_context)?, now, input.id],
         )
         .map_err(|error| error.to_string())?;
     }
@@ -3119,12 +3310,41 @@ fn open_clip_db() -> Result<Connection, String> {
 }
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap_or(0);
+    if version < 2 {
+        conn.execute_batch(
+            "
+            DROP TABLE IF EXISTS clip_fts;
+            DROP TABLE IF EXISTS clips;
+            DROP TABLE IF EXISTS clip_semantic_index;
+            ",
+        )
+        .map_err(|error| error.to_string())?;
+    }
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS clips (
             id TEXT PRIMARY KEY,
             content TEXT NOT NULL,
             content_hash TEXT NOT NULL,
+            primary_format TEXT NOT NULL,
+            available_formats TEXT NOT NULL DEFAULT '[]',
+            representations_json TEXT NOT NULL DEFAULT '[]',
+            plain_text TEXT NOT NULL DEFAULT '',
+            search_text TEXT,
+            sub_kind TEXT,
+            width INTEGER,
+            height INTEGER,
+            size INTEGER,
+            file_types TEXT,
+            thumbnail_path TEXT,
+            image_file TEXT,
+            is_sensitive INTEGER NOT NULL DEFAULT 0,
+            capture_context_json TEXT NOT NULL DEFAULT '{}',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            agent_context_json TEXT NOT NULL DEFAULT '{}',
             kind TEXT NOT NULL,
             bucket TEXT NOT NULL,
             source TEXT NOT NULL,
@@ -3153,7 +3373,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_clips_content_hash ON clips(content_hash);
         CREATE INDEX IF NOT EXISTS idx_clips_recent ON clips(deleted_at, last_seen_at DESC);
         CREATE INDEX IF NOT EXISTS idx_clips_bucket_recent ON clips(bucket, deleted_at, last_seen_at DESC);
-        CREATE VIRTUAL TABLE IF NOT EXISTS clip_fts USING fts5(id UNINDEXED, content, title, summary, tags);
+        CREATE VIRTUAL TABLE IF NOT EXISTS clip_fts USING fts5(id UNINDEXED, content, plain_text, search_text, title, summary, tags);
         CREATE TABLE IF NOT EXISTS folders (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -3181,33 +3401,10 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             updated_at INTEGER NOT NULL,
             FOREIGN KEY(clip_id) REFERENCES clips(id) ON DELETE CASCADE
         );
-        PRAGMA user_version = 1;
+        PRAGMA user_version = 2;
         ",
     )
     .map_err(|error| error.to_string())?;
-    ensure_column(conn, "clips", "note", "TEXT NOT NULL DEFAULT ''")?;
-    ensure_column(conn, "clips", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(
-        conn,
-        "clips",
-        "payload_kind",
-        "TEXT NOT NULL DEFAULT 'text'",
-    )?;
-    ensure_column(conn, "clips", "use_count", "INTEGER NOT NULL DEFAULT 1")?;
-    ensure_column(conn, "clips", "source_app_name", "TEXT NOT NULL DEFAULT ''")?;
-    ensure_column(
-        conn,
-        "clips",
-        "source_app_bundle",
-        "TEXT NOT NULL DEFAULT ''",
-    )?;
-    ensure_column(
-        conn,
-        "clips",
-        "source_app_executable",
-        "TEXT NOT NULL DEFAULT ''",
-    )?;
-    ensure_column(conn, "clips", "source_app_icon", "TEXT")?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_pinned_recent ON clips(pinned DESC, last_seen_at DESC)", [])
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -3239,17 +3436,120 @@ fn ensure_column(
 }
 
 fn content_hash(kind: &str, content: &[u8]) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in kind
-        .as_bytes()
-        .iter()
-        .chain([b':'].iter())
-        .chain(content.iter())
-    {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(kind.as_bytes());
+    hasher.update(b":");
+    hasher.update(content);
+    hasher.finalize().to_hex().to_string()
+}
+
+fn primary_format_from_payload(payload_kind: &str) -> &'static str {
+    match payload_kind {
+        "image" => "image/png",
+        "file" => "application/file-list",
+        "html" => "text/html",
+        _ => "text/plain",
     }
-    format!("{hash:016x}")
+}
+
+fn payload_kind_from_primary_format(primary_format: &str, fallback: &str) -> String {
+    match primary_format {
+        "image/png" => "image".to_string(),
+        "application/file-list" => "file".to_string(),
+        "text/html" | "text/rtf" => "html".to_string(),
+        "text/uri-list" => "link".to_string(),
+        _ => fallback.to_string(),
+    }
+}
+
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw_tag in tags {
+        let trimmed = raw_tag.trim().trim_start_matches('#').trim();
+        let tag = trimmed
+            .strip_prefix("tag:")
+            .or_else(|| trimmed.strip_prefix("TAG:"))
+            .unwrap_or(trimmed)
+            .trim()
+            .chars()
+            .take(32)
+            .collect::<String>();
+        if tag.is_empty() {
+            continue;
+        }
+        if out
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&tag))
+        {
+            continue;
+        }
+        out.push(tag);
+        if out.len() >= 12 {
+            break;
+        }
+    }
+    out
+}
+
+fn build_representations(content: &str, payload_kind: &str) -> Vec<ClipboardRepresentationPayload> {
+    let primary_format = primary_format_from_payload(payload_kind).to_string();
+    let size = content.as_bytes().len() as i64;
+    let hash = content_hash(&primary_format, content.as_bytes());
+    vec![ClipboardRepresentationPayload {
+        format: primary_format,
+        storage: "inline".to_string(),
+        content: Some(content.to_string()),
+        file_name: None,
+        size: Some(size),
+        hash: Some(hash),
+        preferred: true,
+    }]
+}
+
+fn json_string<T: Serialize>(value: &T) -> Result<String, String> {
+    serde_json::to_string(value).map_err(|error| error.to_string())
+}
+
+fn parse_json_value(raw: String) -> Value {
+    serde_json::from_str(&raw).unwrap_or_else(|_| json!({}))
+}
+
+fn parse_json_vec_string(raw: String) -> Vec<String> {
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn parse_representations(raw: String) -> Vec<ClipboardRepresentationPayload> {
+    serde_json::from_str(&raw).unwrap_or_default()
+}
+
+fn make_capture_context(
+    source_label: &str,
+    source_app: Option<&SourceAppInfo>,
+    observed_at: i64,
+    primary_format: &str,
+    available_formats: &[String],
+) -> CaptureContextPayload {
+    CaptureContextPayload {
+        schema_version: 1,
+        surface: "clipboard".to_string(),
+        source_label: source_label.to_string(),
+        source_app: source_app.map(|app| {
+            json!({
+                "name": app.name,
+                "bundleId": app.bundle_id,
+                "executablePath": app.executable_path,
+                "hasIcon": app.icon_base64.is_some(),
+            })
+        }),
+        observed_at,
+        primary_format: primary_format.to_string(),
+        available_formats: available_formats.to_vec(),
+        environment: json!({
+            "platform": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "appVersion": env!("CARGO_PKG_VERSION"),
+        }),
+    }
 }
 
 fn detect_payload_kind(content: &str) -> String {
@@ -3398,6 +3698,19 @@ fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
     if content.contains('\n') {
         tags.push("多行".to_string());
     }
+    for token in content.split_whitespace() {
+        let tag = token
+            .trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    '#' | ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\''
+                )
+            })
+            .trim_start_matches('#');
+        if token.starts_with('#') && !tag.is_empty() {
+            tags.push(tag.to_string());
+        }
+    }
     tags
 }
 
@@ -3412,8 +3725,8 @@ fn upsert_fts(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM clip_fts WHERE id = ?1", params![id])
         .map_err(|error| error.to_string())?;
     conn.execute(
-        "INSERT INTO clip_fts(id, content, title, summary, tags)
-         SELECT id, content, title, summary, tags FROM clips WHERE id = ?1 AND deleted_at IS NULL",
+        "INSERT INTO clip_fts(id, content, plain_text, search_text, title, summary, tags)
+         SELECT id, content, plain_text, COALESCE(search_text, plain_text), title, summary, tags FROM clips WHERE id = ?1 AND deleted_at IS NULL",
         params![id],
     )
     .map_err(|error| error.to_string())?;
@@ -3422,23 +3735,41 @@ fn upsert_fts(conn: &Connection, id: &str) -> Result<(), String> {
 
 fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
     conn.query_row(
-        "SELECT id, content, kind, bucket, source_label, favorite, tags, copy_count,
+        "SELECT id, content, content_hash, primary_format, available_formats, representations_json,
+                plain_text, search_text, sub_kind, width, height, size, file_types, thumbnail_path,
+                image_file, is_sensitive, capture_context_json, metadata_json, agent_context_json,
+                kind, bucket, source_label, favorite, tags, copy_count,
                 created_at, updated_at, last_seen_at, last_copied_at, title, summary, url, host,
                 source_app_name, source_app_bundle, source_app_executable, source_app_icon, payload_kind
          FROM clips WHERE id = ?1",
         params![id],
         |row| {
-            let tags_raw: String = row.get(6)?;
-            let title: String = row.get(12)?;
-            let summary: String = row.get(13)?;
-            let url: Option<String> = row.get(14)?;
-            let host: Option<String> = row.get(15)?;
-            let source: String = row.get(4)?;
-            let source_app_name: String = row.get(16)?;
-            let source_app_bundle: String = row.get(17)?;
-            let source_app_executable: String = row.get(18)?;
-            let source_app_icon: Option<String> = row.get(19)?;
-            let payload_kind: String = row.get(20)?;
+            let tags_raw: String = row.get(23)?;
+            let title: String = row.get(29)?;
+            let summary: String = row.get(30)?;
+            let url: Option<String> = row.get(31)?;
+            let host: Option<String> = row.get(32)?;
+            let source: String = row.get(21)?;
+            let source_app_name: String = row.get(33)?;
+            let source_app_bundle: String = row.get(34)?;
+            let source_app_executable: String = row.get(35)?;
+            let source_app_icon: Option<String> = row.get(36)?;
+            let primary_format: String = row.get(3)?;
+            let payload_kind_raw: String = row.get(37)?;
+            let payload_kind = payload_kind_from_primary_format(&primary_format, &payload_kind_raw);
+            let available_formats = parse_json_vec_string(row.get(4)?);
+            let representations = parse_representations(row.get(5)?);
+            let capture_context = serde_json::from_str::<CaptureContextPayload>(&row.get::<_, String>(16)?)
+                .unwrap_or_else(|_| CaptureContextPayload {
+                    schema_version: 1,
+                    surface: "clipboard".to_string(),
+                    source_label: source.clone(),
+                    source_app: None,
+                    observed_at: row.get::<_, i64>(27).unwrap_or_default(),
+                    primary_format: primary_format.clone(),
+                    available_formats: available_formats.clone(),
+                    environment: json!({}),
+                });
             let is_markdown = summary.contains("```") || payload_kind == "markdown";
             let source_app = if source_app_name.is_empty() {
                 None
@@ -3453,20 +3784,21 @@ fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
             Ok(ClipItemPayload {
                 id: row.get(0)?,
                 content: row.get(1)?,
-                kind: row.get(2)?,
-                bucket: row.get(3)?,
+                content_hash: row.get(2)?,
+                kind: row.get(19)?,
+                bucket: row.get(20)?,
                 source: source.clone(),
-                favorite: row.get::<_, i64>(5)? == 1,
+                favorite: row.get::<_, i64>(22)? == 1,
                 tags: tags_raw
                     .split(',')
                     .filter(|tag| !tag.is_empty())
                     .map(ToString::to_string)
                     .collect(),
-                copy_count: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-                last_seen_at: row.get(10)?,
-                last_copied_at: row.get(11)?,
+                copy_count: row.get(24)?,
+                created_at: row.get(25)?,
+                updated_at: row.get(26)?,
+                last_seen_at: row.get(27)?,
+                last_copied_at: row.get(28)?,
                 analysis: ClipAnalysisPayload {
                     source_name: source,
                     badge: if url.is_some() { "URL" } else { "T" }.to_string(),
@@ -3477,6 +3809,22 @@ fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
                     is_markdown,
                 },
                 payload_kind,
+                primary_format,
+                available_formats,
+                representations,
+                plain_text: row.get(6)?,
+                search_text: row.get(7)?,
+                sub_kind: row.get(8)?,
+                width: row.get(9)?,
+                height: row.get(10)?,
+                size: row.get(11)?,
+                file_types: row.get(12)?,
+                thumbnail_path: row.get(13)?,
+                image_file: row.get(14)?,
+                is_sensitive: row.get::<_, i64>(15)? == 1,
+                capture_context,
+                metadata: parse_json_value(row.get(17)?),
+                agent_context: parse_json_value(row.get(18)?),
                 source_app,
             })
         },
@@ -4598,9 +4946,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             read_clipboard_text,
-            write_clipboard_text,
-            paste_clipboard_text,
+            write_clipboard_item,
+            paste_clipboard_item,
             init_clip_database,
+            check_update,
             capture_clip_record,
             query_clip_records,
             soft_delete_clip_records,
@@ -6059,12 +6408,13 @@ fn mcp_tool_specs() -> Vec<McpToolSpec> {
         },
         McpToolSpec {
             name: "clipf.copy",
-            description: "Copy a ClipForge item by id, or write text to system clipboard. Agent instruction example: use clipf.copy id=clip_xxx",
+            description: "Copy a standardized ClipForge item by id, or capture text first and then copy the generated item. Agent instruction example: use clipf.copy id=clip_xxx",
             input_schema: || json!({
                 "type": "object",
                 "properties": {
                     "id": { "type": "string" },
-                    "text": { "type": "string" }
+                    "text": { "type": "string" },
+                    "pasteMode": { "type": "string", "enum": ["rich", "plain", "filesAsPaths"] }
                 }
             }),
         },
@@ -6076,9 +6426,12 @@ fn mcp_tool_specs() -> Vec<McpToolSpec> {
                 "properties": {
                     "id": { "type": "string" },
                     "content": { "type": "string" },
+                    "tags": { "type": "array", "items": { "type": "string" } },
                     "favorite": { "type": "boolean" },
                     "pinned": { "type": "boolean" },
                     "note": { "type": "string" },
+                    "metadata": { "type": "object" },
+                    "agentContext": { "type": "object" },
                     "bucket": { "type": "string" }
                 },
                 "required": ["id"]
@@ -6257,22 +6610,54 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
         }
         "clipf.copy" => {
-            let (text, copied_id) = if let Some(id) = args.get("id").and_then(Value::as_str) {
-                let conn = open_clip_db().map_err(|error| (-32000, error))?;
-                init_schema(&conn).map_err(|error| (-32000, error))?;
-                let clip = load_clip(&conn, id).map_err(|error| (-32000, error))?;
-                (clip.content, Some(id.to_string()))
+            let conn = open_clip_db().map_err(|error| (-32000, error))?;
+            init_schema(&conn).map_err(|error| (-32000, error))?;
+            let item = if let Some(id) = args.get("id").and_then(Value::as_str) {
+                load_clip(&conn, id).map_err(|error| (-32000, error))?
             } else {
-                (
-                    args.get("text")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| (-32602, format!("{name} requires text or id")))?
-                        .to_string(),
-                    None,
+                let text = args
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| (-32602, format!("{name} requires text or id")))?
+                    .to_string();
+                capture_clip_record(
+                    text,
+                    Some(format!(
+                        "{} via {}",
+                        args.get("sourceLabel")
+                            .and_then(Value::as_str)
+                            .unwrap_or("MCP Agent"),
+                        name
+                    )),
+                    now_millis().map_err(|error| (-32000, error))?,
                 )
+                .map_err(|error| (-32000, error))?
+                .item
             };
+            let paste_mode = args.get("pasteMode").and_then(Value::as_str);
+            let text = text_for_paste_mode(&item, paste_mode);
+            suppress_writeback_for(Duration::from_millis(450));
             write_platform_clipboard(&text).map_err(|error| (-32000, error))?;
-            json!({ "ok": true, "id": copied_id, "chars": text.chars().count() })
+            let updated = update_clip_record(UpdateClipInput {
+                id: item.id.clone(),
+                content: None,
+                tags: None,
+                bucket: None,
+                favorite: None,
+                pinned: None,
+                note: None,
+                metadata: None,
+                agent_context: None,
+                copied: Some(true),
+            })
+            .map_err(|error| (-32000, error))?;
+            json!({
+                "ok": true,
+                "id": updated.id,
+                "primaryFormat": updated.primary_format,
+                "availableFormats": updated.available_formats,
+                "chars": text.chars().count()
+            })
         }
         "clipf.update" => {
             let id = args
@@ -6286,6 +6671,13 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
                     .get("content")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
+                tags: args.get("tags").and_then(Value::as_array).map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect()
+                }),
                 bucket: args
                     .get("bucket")
                     .and_then(Value::as_str)
@@ -6296,6 +6688,8 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
                     .get("note")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
+                metadata: args.get("metadata").cloned(),
+                agent_context: args.get("agentContext").cloned(),
                 copied: None,
             })
             .map_err(|error| (-32000, error))?;

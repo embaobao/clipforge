@@ -5,11 +5,11 @@
 - [ ] 在 `src-tauri/Cargo.toml` 添加 `clipboard-rs` 与 `blake3` 依赖
 - [ ] 创建 `src-tauri/src/clipboard/mod.rs` 模块入口
 - [ ] 定义 `ClipboardRepresentation`、`ClipboardCapture`、`TextPayload`、`ImagePayload`、`FilesPayload`（`clipboard/payload.rs`）
-- [ ] 扩展 `ClipItemPayload` JSON 结构：新增 `contentHash`、`primaryFormat`、`availableFormats`、`plainText`、`searchText`、`subKind`、`width`、`height`、`size`、`fileTypes`、`thumbnailPath`、`imageFile`
-- [ ] 数据库迁移：为 `clips` 表添加 `content_hash`、`primary_format`、`representations_json`、`plain_text`、`search_text`、`sub_kind`、`width`、`height`、`size`、`file_types`、`image_file`、`is_sensitive` 列
-- [ ] 编写迁移脚本回填存量 `content_hash`（默认用 `id`）、`plain_text/search_text`（默认用 `content`）和 text/plain representation
-- [ ] 更新 `init_schema` 中新建表的 DDL，包含上述新列
-- [ ] 更新 FTS5 触发器，优先同步 `search_text/plain_text` 字段而不是图片文件名
+- [x] 扩展 `ClipItemPayload` JSON 结构：新增 `contentHash`、`primaryFormat`、`availableFormats`、`plainText`、`searchText`、`subKind`、`width`、`height`、`size`、`fileTypes`、`thumbnailPath`、`imageFile`
+- [x] 按“不做兼容处理”改为 schema v2 删库重建：`clips` 表包含 `content_hash`、`primary_format`、`representations_json`、`plain_text`、`search_text`、`sub_kind`、`width`、`height`、`size`、`file_types`、`image_file`、`is_sensitive` 等列
+- [ ] 编写迁移脚本回填存量 `content_hash`（当前方向已取消兼容迁移，后续归档提案时删除或改写此项）
+- [x] 更新 `init_schema` 中新建表的 DDL，包含上述新列
+- [x] 更新 FTS5 同步字段，优先同步 `search_text/plain_text` 字段
 
 ## Phase 2：剪贴板读取
 
@@ -35,7 +35,7 @@
 ## Phase 4：采集与入库
 
 - [ ] 实现 `clipboard::ingest::build_item()`，将 `ClipboardCapture` 转为 `ClipItem`
-- [ ] 文本入库：`content/plain_text/search_text` 存纯文本，`representations_json` 包含 text/plain
+- [x] 文本入库：`content/plain_text/search_text` 存纯文本，`representations_json` 包含 text/plain
 - [ ] HTML / RTF 入库：保存 html/rtf representation，同时保留 text/plain fallback
 - [ ] 图片入库：调用 `ImageStore::store()`，`content` 存文件名，`representations_json` 包含 image/png 文件 representation
 - [ ] 文件入库：`content` 存换行路径，`representations_json` 包含 application/file-list，`search_text` 存文件名
@@ -55,8 +55,8 @@
 - [ ] 文件写回：Rich 写 `ctx.set_files()`，Plain/FilesAsPaths 写路径文本
 - [ ] 图片 Plain 动作第一阶段不可用，前端禁用并显示原因
 - [ ] 实现 `clipboard::guard::WritebackGuard`，抑制写回回环
-- [ ] 升级 `write_clipboard_text` 为 `write_clipboard_item`
-- [ ] 升级 `paste_clipboard_text` 为 `paste_clipboard_item`
+- [x] 升级前端写入入口为 `write_clipboard_item`
+- [x] 升级前端粘贴入口为 `paste_clipboard_item`
 - [ ] 写回日志包含 `clipId`、`primaryFormat`、`availableFormats`、`pasteMode`、`writtenFormats`、`guardHash`
 
 ## Phase 6：监听升级
@@ -70,7 +70,7 @@
 
 ## Phase 7：前端适配
 
-- [ ] 扩展 `src/services/contracts.ts` 中的 `ClipItem` 类型
+- [x] 扩展 `src/services/contracts.ts` 中的 `ClipItem` 类型
 - [ ] 新增 `src/services/clipboard.ts`：封装 `readClipboard` / `writeClipboard` / `pasteClipboard` / `getImagePath`，参数使用 `PasteMode`
 - [ ] 快速面板保持高密度虚拟列表行高，不引入 48px 图片卡片
 - [ ] 图片行：使用 `convertFileSrc(thumbnailPath)` 显示 24-28px 缩略图或图标
@@ -81,10 +81,10 @@
 
 ## Phase 8：设置与配置
 
-- [ ] 在设置面板新增「采集设置」分组
-- [ ] 文本 / HTML / RTF / 图片 / 文件启用开关
-- [ ] 图片大小上限、文本大小上限输入
-- [ ] 敏感内容采集开关
+- [x] 在设置面板新增「采集设置」分组
+- [x] 文本 / HTML / RTF / 图片 / 文件启用开关
+- [x] 图片大小上限、文本大小上限输入
+- [x] 敏感内容采集开关
 - [ ] 将设置持久化到现有 user settings JSON
 
 ## Phase 9：迁移与清理
@@ -92,13 +92,13 @@
 - [ ] 删除 `lib.rs` 中旧的 `read_platform_clipboard` / `write_platform_clipboard` / `read_command` / `write_command` shell 命令实现
 - [ ] 删除 `poll_clipboard_change` 旧监听实现
 - [ ] 删除旧的 `ClipboardPayload { text }` 单一文本结构
-- [ ] 更新 `tauri::generate_handler!` 中的命令注册
-- [ ] 确保 `init_clip_database` 与 `capture_clip_record` 命令仍向前端暴露
+- [x] 更新 `tauri::generate_handler!` 中的命令注册
+- [x] 确保 `init_clip_database` 与 `capture_clip_record` 命令仍向前端暴露
 
 ## Phase 10：验证
 
-- [ ] `pnpm build` 通过
-- [ ] `cd src-tauri && cargo check` 通过
+- [x] `pnpm build` 通过
+- [x] `cd src-tauri && cargo check` 通过
 - [ ] `cargo test` 中新增 `ImageStore` 与 `detect` 单元测试通过
 - [ ] `pnpm tauri dev` 验证文本复制仍正常
 - [ ] `pnpm tauri dev` 验证浏览器 HTML 复制后 Rich/Plain 写回均符合预期

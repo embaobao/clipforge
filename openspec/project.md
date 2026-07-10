@@ -40,6 +40,7 @@
 | [content-smart-format-decoder](./changes/content-smart-format-decoder/proposal.md) | P3 小功能提案 | 智能识别代码、JSON、URL/Base64/JWT/Unicode/HTML entity，并提供格式化、补齐和解码动作 |
 | [context-plugin-agent-runtime](./changes/context-plugin-agent-runtime/proposal.md) | 提案中 | 上下文快照、插件边界、Agent 智能建议反吐、AG-UI 桥、MCP 工具面与自动升级能力 |
 | [detail-rich-editor-agent-bridge](./changes/detail-rich-editor-agent-bridge/proposal.md) | 提案中 | 详情页紧凑编辑、tag 快速编辑、`#tag` 建议、AI 建议回填、后续 Tiptap 富文本编辑 |
+| [clipboard-agent-panel](./changes/clipboard-agent-panel/proposal.md) | P4 提案中 | 悬浮面板内 Agent 工作页：用剪贴板上下文集合、私域 skill 和受控工具完成分析、管理与结果回填 |
 
 ## 建议推进顺序
 
@@ -48,3 +49,4 @@
 3. P1：再完成格式支持，先落 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md)，再补 [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md)。
 4. P2：搜索增强依托格式字段推进，完成 [search-filter-tags-filetypes](./changes/search-filter-tags-filetypes/proposal.md)，其中 `#tag` 与详情页 tag 跳转可先用现有 tags 字段铺垫。
 5. P3：最后做 [content-smart-format-decoder](./changes/content-smart-format-decoder/proposal.md)，按 JSON 格式化/补齐和常用解码小功能逐步交付。
+6. P4：在上下文快照、智能解析和详情页回填边界稳定后，再推进 [clipboard-agent-panel](./changes/clipboard-agent-panel/proposal.md)，只做 Agent 调用服务，不做 Agent 管理平台。
