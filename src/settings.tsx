@@ -6,6 +6,9 @@ import {
   Eye,
   FileCode,
   Plus,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
   Settings,
   Tag,
   Terminal,
@@ -42,6 +45,31 @@ interface AppSettings {
 interface AccessibilityPermissionPayload {
   canReadFocusedInput: boolean;
   status: "granted" | "missing" | "denied" | "unsupported";
+  message: string;
+}
+
+interface TccAccessibilityRecordPayload {
+  database: string;
+  client: string;
+  clientType: number;
+  authValue: number;
+  authLabel: string;
+  csreqSummary: string;
+  lastModified: string;
+}
+
+interface AccessibilityDiagnosticsPayload {
+  trusted: boolean;
+  expectedBundleIdentifier: string;
+  executablePath: string;
+  appBundlePath: string;
+  codeSignatureIdentifier: string;
+  signatureKind: string;
+  teamIdentifier: string;
+  cdHash: string;
+  designatedRequirement: string;
+  tccRecords: TccAccessibilityRecordPayload[];
+  tccQueryError?: string | null;
   message: string;
 }
 
@@ -87,10 +115,14 @@ const tagModeLabels: Record<AppSettings["tagMode"], string> = {
   off: "关闭",
 };
 
-
+const DEFAULT_SHORTCUT =
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
+    ? "Command+Shift+V"
+    : "Control+Shift+V";
 
 interface SettingsAppState {
   accessibility: AccessibilityPermissionPayload | null;
+  accessibilityDiagnostics: AccessibilityDiagnosticsPayload | null;
   configPath: string;
   configStatus: string;
   databasePath: string;
@@ -120,7 +152,7 @@ function formatBytes(bytes: number): string {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  globalShortcut: "Command+Shift+V",
+  globalShortcut: DEFAULT_SHORTCUT,
   panelDensity: "normal",
   contentDisplayMode: "summary",
   quickItemLimit: 12,
@@ -307,6 +339,7 @@ export function SettingsApp() {
   const [recording, setRecording] = useState(false);
   const [state, setState] = useState<SettingsAppState>({
     accessibility: null,
+    accessibilityDiagnostics: null,
     configPath: "",
     configStatus: "加载中…",
     databasePath: "",
@@ -320,17 +353,19 @@ export function SettingsApp() {
   useEffect(() => {
     void (async () => {
       try {
-        const [settings, configPath, databasePath, accessibility, panel, mcp, logStats] = await Promise.all([
+        const [settings, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, mcp, logStats] = await Promise.all([
           invoke<AppSettings>("get_clipforge_settings"),
           invoke<string>("get_clipforge_config_path"),
           invoke<string>("get_clipforge_database_path"),
           invoke<AccessibilityPermissionPayload>("check_accessibility_permission"),
+          invoke<AccessibilityDiagnosticsPayload>("get_accessibility_diagnostics"),
           invoke<PanelTriggerPayload>("get_panel_trigger_status"),
           invoke<McpStatusPayload>("get_mcp_status"),
           invoke<LogStatsPayload>("get_log_stats"),
         ]);
         setState({
           accessibility,
+          accessibilityDiagnostics,
           configPath,
           configStatus: "配置已同步到 JSON5",
           databasePath,
@@ -395,9 +430,48 @@ export function SettingsApp() {
     updateSettings({ tagRules: next });
   }
 
+  async function refreshAccessibilityStatus() {
+    try {
+      const [accessibility, accessibilityDiagnostics] = await Promise.all([
+        invoke<AccessibilityPermissionPayload>("check_accessibility_permission"),
+        invoke<AccessibilityDiagnosticsPayload>("get_accessibility_diagnostics"),
+      ]);
+      setState((prev) => ({
+        ...prev,
+        accessibility,
+        accessibilityDiagnostics,
+        status: accessibilityDiagnostics.message,
+      }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
   async function openAccessibilitySettings() {
     try {
-      await invoke("request_accessibility_permission");
+      const accessibility = await invoke<AccessibilityPermissionPayload>("request_accessibility_permission");
+      const accessibilityDiagnostics = await invoke<AccessibilityDiagnosticsPayload>("get_accessibility_diagnostics");
+      setState((prev) => ({
+        ...prev,
+        accessibility,
+        accessibilityDiagnostics,
+        status: accessibilityDiagnostics.message,
+      }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function resetAccessibilityPermission() {
+    try {
+      const accessibility = await invoke<AccessibilityPermissionPayload>("reset_accessibility_permission");
+      const accessibilityDiagnostics = await invoke<AccessibilityDiagnosticsPayload>("get_accessibility_diagnostics");
+      setState((prev) => ({
+        ...prev,
+        accessibility,
+        accessibilityDiagnostics,
+        status: "已重置 ClipForge 辅助功能授权记录，请在系统设置中重新勾选当前应用。",
+      }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
     }
@@ -509,11 +583,59 @@ export function SettingsApp() {
                   {state.accessibility?.message ??
                     "启动时自动检查，用于读取当前输入控件位置。"}
                 </p>
-                {state.accessibility?.status === "missing" ? (
-                  <button className="secondary-button" onClick={openAccessibilitySettings} type="button">
-                    打开系统设置
-                  </button>
+                {state.accessibilityDiagnostics ? (
+                  <div className="permission-diagnostics">
+                    <div>
+                      <span>当前进程</span>
+                      <strong>{state.accessibilityDiagnostics.trusted ? "trusted" : "missing"}</strong>
+                    </div>
+                    <div>
+                      <span>Bundle ID</span>
+                      <code>{state.accessibilityDiagnostics.expectedBundleIdentifier}</code>
+                    </div>
+                    <div>
+                      <span>签名 ID</span>
+                      <code>{state.accessibilityDiagnostics.codeSignatureIdentifier || "unknown"}</code>
+                    </div>
+                    <div>
+                      <span>签名类型</span>
+                      <code>{state.accessibilityDiagnostics.signatureKind || "unknown"}</code>
+                    </div>
+                    <p className="path">{state.accessibilityDiagnostics.appBundlePath || state.accessibilityDiagnostics.executablePath}</p>
+                    {state.accessibilityDiagnostics.tccRecords.length > 0 ? (
+                      <div className="tcc-records">
+                        {state.accessibilityDiagnostics.tccRecords.map((record) => (
+                          <p key={`${record.client}:${record.lastModified}`}>
+                            <span>{record.database}</span>
+                            <code>{record.client}</code>
+                            <span>{record.authLabel}</span>
+                            <span>{record.csreqSummary}</span>
+                            <span>{record.lastModified}</span>
+                          </p>
+                        ))}
+                      </div>
+                    ) : (
+                      <p>未找到当前 ClipForge 的 TCC 授权记录。</p>
+                    )}
+                    {state.accessibilityDiagnostics.tccQueryError ? (
+                      <p>TCC 查询失败：{state.accessibilityDiagnostics.tccQueryError}</p>
+                    ) : null}
+                  </div>
                 ) : null}
+                <div className="button-row">
+                  <button className="secondary-button" onClick={openAccessibilitySettings} type="button">
+                    <ShieldCheck size={13} />
+                    请求权限
+                  </button>
+                  <button className="secondary-button" onClick={refreshAccessibilityStatus} type="button">
+                    <RefreshCw size={13} />
+                    刷新状态
+                  </button>
+                  <button className="secondary-button" onClick={resetAccessibilityPermission} type="button">
+                    <RotateCcw size={13} />
+                    重置后重试
+                  </button>
+                </div>
               </div>
             </SettingGroup>
           )}

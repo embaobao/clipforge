@@ -1363,7 +1363,7 @@ button {
   border-radius: var(--cf-radius-md);
 }
 
-.quick-bulk-actions span {
+.quick-bulk-actions > span {
   min-width: 16px;
   color: var(--muted);
   font-size: 11px;
@@ -6741,4 +6741,1032 @@ body,
 .app-shell.multi-selecting .quick-row .quick-index.selected svg {
   width: 11px;
   height: 11px;
+}
+
+/* 透明窗口壳 + 实体内容容器：
+   窗口层保持透明，主容器自行承担背景、阴影和圆角，避免内容直接贴满窗口边缘。 */
+.app-shell {
+  border-radius: 18px !important;
+  background: oklch(0.985 0 0 / var(--cf-panel-bg-opacity)) !important;
+  box-shadow:
+    0 20px 54px oklch(0 0 0 / 0.18),
+    inset 0 1px 0 oklch(1 0 0 / 0.92) !important;
+  clip-path: inset(0 round 18px) !important;
+}
+
+/* P-FINAL.7 降低控件视觉噪音：搜索未激活更轻、行内操作透明、选中态去四角框。 */
+.app-shell:not(.search-active) .floating-search-pill {
+  color: oklch(0.18 0 0 / 0.58) !important;
+  background: oklch(1 0 0 / 0.14) !important;
+  border-color: oklch(1 0 0 / 0.18) !important;
+  box-shadow: none !important;
+  opacity: 0.58 !important;
+  backdrop-filter: blur(10px) saturate(1.15) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(1.15) !important;
+}
+
+.app-shell:not(.search-active) .floating-search-pill:hover,
+.app-shell:not(.search-active) .floating-search-pill:focus-visible {
+  opacity: 0.82 !important;
+  background: oklch(1 0 0 / 0.24) !important;
+}
+
+.app-shell.search-active .floating-search-surface {
+  background: oklch(1 0 0 / 0.28) !important;
+  border-color: oklch(1 0 0 / 0.24) !important;
+  box-shadow: 0 5px 14px oklch(0 0 0 / 0.06) !important;
+}
+
+.app-shell .quick-row {
+  min-height: 38px !important;
+  padding: 3px 8px !important;
+  border-radius: 8px !important;
+}
+
+.app-shell .quick-row:hover {
+  background: oklch(0 0 0 / 0.03) !important;
+}
+
+.app-shell .quick-row.active,
+.app-shell .quick-row.selected {
+  background: oklch(0 0 0 / 0.025) !important;
+  border: 1px dashed oklch(0.1 0 0 / 0.26) !important;
+  border-radius: 8px !important;
+}
+
+.app-shell .quick-row.active::after,
+.app-shell .quick-row.selected::after {
+  display: none !important;
+}
+
+.app-shell .quick-content {
+  padding-right: 54px !important;
+}
+
+.app-shell .quick-line {
+  font-size: 12px !important;
+  line-height: 1.28 !important;
+}
+
+.app-shell .row-actions {
+  right: 6px !important;
+  gap: 1px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.app-shell .quick-row:hover .row-actions,
+.app-shell .quick-row.active .row-actions,
+.app-shell .quick-row:focus-within .row-actions {
+  opacity: 0.72 !important;
+}
+
+.app-shell .quick-row:hover .row-actions:hover,
+.app-shell .quick-row:focus-within .row-actions:focus-within {
+  opacity: 1 !important;
+}
+
+.app-shell .row-actions.has-favorite {
+  opacity: 0.3 !important;
+}
+
+.app-shell .quick-row:hover .row-actions.has-favorite,
+.app-shell .quick-row.active .row-actions.has-favorite,
+.app-shell .quick-row:focus-within .row-actions.has-favorite {
+  opacity: 0.72 !important;
+}
+
+.app-shell .row-actions .icon-button,
+.app-shell .quick-fav {
+  width: 24px !important;
+  min-height: 24px !important;
+  color: oklch(0.16 0 0 / 0.52) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.app-shell .row-actions .icon-button:hover,
+.app-shell .row-actions .icon-button:focus-visible,
+.app-shell .quick-fav:hover,
+.app-shell .quick-fav:focus-visible {
+  color: oklch(0.1 0 0 / 0.88) !important;
+  background: oklch(0 0 0 / 0.045) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.app-shell .quick-fav.faved {
+  color: oklch(0.18 0 0 / 0.6) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.app-shell .quick-index {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 8px !important;
+}
+
+/* P-FINAL.8 未激活搜索不再遮挡列表：收成 pin 左侧的小图标按钮。 */
+.app-shell:not(.search-active) .toolbar {
+  top: 4px !important;
+  right: 32px !important;
+  left: auto !important;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: none !important;
+}
+
+.app-shell.search-active .toolbar {
+  top: 0 !important;
+  right: 32px !important;
+  left: 6px !important;
+  width: auto !important;
+  height: 28px !important;
+  padding: 2px 0 0 !important;
+  pointer-events: auto !important;
+}
+
+.app-shell:not(.search-active) .floating-search-pill {
+  width: 24px !important;
+  min-width: 24px !important;
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: oklch(0.18 0 0 / 0.5) !important;
+  background: oklch(1 0 0 / 0.12) !important;
+  border: 1px solid oklch(1 0 0 / 0.16) !important;
+  border-radius: 999px !important;
+  box-shadow: 0 2px 8px oklch(0 0 0 / 0.06) !important;
+  opacity: 0.52 !important;
+  pointer-events: auto !important;
+}
+
+.app-shell:not(.search-active) .floating-search-pill span,
+.app-shell:not(.search-active) .floating-search-pill kbd {
+  display: none !important;
+}
+
+.app-shell:not(.search-active) .floating-search-pill svg {
+  width: 13px !important;
+  height: 13px !important;
+  margin: 0 !important;
+}
+
+.app-shell:not(.search-active) .floating-search-pill:hover,
+.app-shell:not(.search-active) .floating-search-pill:focus-visible {
+  color: oklch(0.12 0 0 / 0.82) !important;
+  opacity: 0.86 !important;
+  background: oklch(1 0 0 / 0.24) !important;
+}
+
+.app-shell.search-active .floating-search-surface {
+  min-height: 26px !important;
+  padding: 1px 4px !important;
+}
+
+.app-shell.search-active .search-wrap,
+.app-shell .search-wrap {
+  min-height: 24px !important;
+  height: 24px !important;
+  align-items: center !important;
+}
+
+.app-shell.search-active .search-wrap input,
+.app-shell:not(.search-active) .search-wrap input {
+  height: 24px !important;
+  min-height: 24px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 24px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.app-shell.search-active .search-wrap input::placeholder,
+.app-shell:not(.search-active) .search-wrap input::placeholder {
+  line-height: 24px !important;
+}
+
+/* P-FINAL.9 顶部固定操作区：搜索始终是输入框，pin 与输入框并排，主题与底部操作一致。 */
+.app-shell .toolbar,
+.app-shell.search-active .toolbar,
+.app-shell:not(.search-active) .toolbar {
+  top: 4px !important;
+  right: 34px !important;
+  left: 8px !important;
+  width: auto !important;
+  height: 26px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: stretch !important;
+  pointer-events: auto !important;
+}
+
+.app-shell .floating-search-pill {
+  display: none !important;
+}
+
+.app-shell .floating-search-surface,
+.app-shell.search-active .floating-search-surface,
+.app-shell:not(.search-active) .floating-search-surface {
+  width: 100% !important;
+  min-height: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.app-shell .search-wrap,
+.app-shell.search-active .search-wrap,
+.app-shell:not(.search-active) .search-wrap {
+  width: 100% !important;
+  min-height: 26px !important;
+  height: 26px !important;
+  padding: 0 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  background: oklch(1 0 0 / 0.22) !important;
+  border: 1px solid oklch(0 0 0 / 0.08) !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+}
+
+.app-shell .search-wrap:focus-within {
+  background: oklch(1 0 0 / 0.36) !important;
+  border-color: oklch(0 0 0 / 0.14) !important;
+}
+
+.app-shell .search-wrap .input-addon-start,
+.app-shell.search-active .search-wrap .input-addon-start {
+  width: 16px !important;
+  height: 26px !important;
+  color: oklch(0.18 0 0 / 0.52) !important;
+}
+
+.app-shell .search-wrap .input-addon-start svg,
+.app-shell.search-active .search-wrap .input-addon-start svg {
+  width: 13px !important;
+  height: 13px !important;
+}
+
+.app-shell .search-wrap input,
+.app-shell.search-active .search-wrap input,
+.app-shell:not(.search-active) .search-wrap input {
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 4px !important;
+  line-height: 24px !important;
+  color: oklch(0.13 0 0 / 0.9) !important;
+  font-size: 12px !important;
+  display: block !important;
+}
+
+.app-shell .search-wrap input::placeholder,
+.app-shell.search-active .search-wrap input::placeholder,
+.app-shell:not(.search-active) .search-wrap input::placeholder {
+  color: oklch(0.22 0 0 / 0.44) !important;
+  line-height: 24px !important;
+}
+
+.app-shell .search-wrap .icon-button,
+.app-shell.search-active .search-wrap .icon-button,
+.app-shell:not(.search-active) .search-wrap .icon-button {
+  width: 20px !important;
+  min-height: 20px !important;
+  color: oklch(0.18 0 0 / 0.52) !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.app-shell .panel-pin-fab {
+  position: fixed !important;
+  top: 4px !important;
+  right: 6px !important;
+  bottom: auto !important;
+  left: auto !important;
+  z-index: 80 !important;
+  width: 26px !important;
+  height: 26px !important;
+  color: oklch(0.18 0 0 / 0.52) !important;
+  background: oklch(1 0 0 / 0.22) !important;
+  border: 1px solid oklch(0 0 0 / 0.08) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.app-shell .panel-pin-fab:hover,
+.app-shell .panel-pin-fab:focus-visible {
+  color: oklch(0.12 0 0 / 0.84) !important;
+  background: oklch(1 0 0 / 0.22) !important;
+  transform: none !important;
+}
+
+.app-shell .panel-pin-fab.active {
+  color: oklch(0.98 0 0) !important;
+  background: oklch(0.16 0 0 / 0.82) !important;
+  border-color: oklch(0.16 0 0 / 0.18) !important;
+}
+
+.app-shell .quick-panel,
+.app-shell.search-active .quick-panel,
+.app-shell:not(.search-active) .quick-panel {
+  padding-top: 32px !important;
+}
+
+.app-shell .list-footer .icon-button,
+.app-shell .footer-actions .icon-button {
+  color: oklch(0.18 0 0 / 0.58) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.app-shell .list-footer .icon-button:hover,
+.app-shell .footer-actions .icon-button:hover {
+  color: oklch(0.12 0 0 / 0.86) !important;
+  background: oklch(1 0 0 / 0.22) !important;
+}
+
+.app-shell .list-footer .icon-button.active,
+.app-shell .footer-actions .icon-button.active {
+  color: oklch(0.98 0 0) !important;
+  background: oklch(0.16 0 0 / 0.82) !important;
+}
+
+/* P-FINAL.10 键盘优先约束：tooltip 使用卡片形态，快捷键恒定在底部区域。 */
+.app-tooltip,
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  position: absolute;
+  z-index: 90;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  max-width: 260px;
+  min-width: 0;
+  padding: 8px 9px;
+  color: oklch(0.14 0 0 / 0.88);
+  background:
+    linear-gradient(180deg, oklch(1 0 0 / 0.94), oklch(0.98 0 0 / 0.9)),
+    oklch(0.99 0 0 / 0.92);
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 10px;
+  box-shadow:
+    0 14px 30px oklch(0 0 0 / 0.18),
+    inset 0 1px 0 oklch(1 0 0 / 0.88);
+  content: attr(data-tooltip);
+  font-size: 11px;
+  font-weight: 520;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translate(-50%, 3px);
+  transition: opacity 120ms var(--cf-ease-out), transform 120ms var(--cf-ease-out);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.quick-content .app-tooltip {
+  display: block;
+  min-width: 0;
+}
+
+.app-tooltip-card {
+  position: absolute;
+  z-index: 95;
+  left: 0;
+  bottom: calc(100% + 6px);
+  width: calc(100vw - 78px);
+  max-width: calc(100vw - 78px);
+  min-width: 220px;
+  padding: 9px;
+  color: oklch(0.15 0 0 / 0.9);
+  background:
+    linear-gradient(180deg, oklch(1 0 0 / 0.94), oklch(0.98 0 0 / 0.9)),
+    oklch(0.99 0 0 / 0.92);
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 10px;
+  box-shadow:
+    0 14px 30px oklch(0 0 0 / 0.18),
+    inset 0 1px 0 oklch(1 0 0 / 0.88);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(0, 3px);
+  transition: opacity 120ms var(--cf-ease-out), transform 120ms var(--cf-ease-out);
+  overflow: hidden;
+  backdrop-filter: blur(20px) saturate(1.25);
+  -webkit-backdrop-filter: blur(20px) saturate(1.25);
+}
+
+.quick-content .app-tooltip:hover .app-tooltip-card,
+.quick-content .app-tooltip:focus-within .app-tooltip-card {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+.app-tooltip-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 0 1px 8px;
+}
+
+.app-tooltip-main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: oklch(0.12 0 0 / 0.92);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-tooltip-main span {
+  overflow: hidden;
+  color: oklch(0.28 0 0 / 0.64);
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-tooltip-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  padding-top: 7px;
+  border-top: 1px solid oklch(0 0 0 / 0.07);
+}
+
+.app-tooltip-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: oklch(0.18 0 0 / 0.66);
+  font-size: 10.5px;
+  line-height: 1;
+}
+
+.app-tooltip-shortcut-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: oklch(0.16 0 0 / 0.62);
+}
+
+.app-tooltip-shortcut kbd {
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  padding: 0 5px;
+  color: oklch(0.12 0 0 / 0.78);
+  background: oklch(0 0 0 / 0.045);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.app-shell .row-actions [data-tooltip]::after,
+.app-shell .footer-actions [data-tooltip]::after,
+.app-shell .search-wrap [data-tooltip]::after {
+  right: 0;
+  left: auto;
+  max-width: calc(100vw - 28px);
+  transform: translate(0, 3px);
+}
+
+.app-shell .row-actions [data-tooltip]:hover::after,
+.app-shell .row-actions [data-tooltip]:focus-visible::after,
+.app-shell .footer-actions [data-tooltip]:hover::after,
+.app-shell .footer-actions [data-tooltip]:focus-visible::after,
+.app-shell .search-wrap [data-tooltip]:hover::after,
+.app-shell .search-wrap [data-tooltip]:focus-visible::after {
+  transform: translate(0, 0);
+}
+
+.app-shell .panel-pin-fab[data-tooltip]::after {
+  right: 0;
+  left: auto;
+  max-width: calc(100vw - 28px);
+  transform: translate(0, 3px);
+}
+
+.app-shell .panel-pin-fab[data-tooltip]:hover::after,
+.app-shell .panel-pin-fab[data-tooltip]:focus-visible::after {
+  transform: translate(0, 0);
+}
+
+.quick-source-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  border-radius: 4px;
+  opacity: 0.72;
+}
+
+.quick-source-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: oklch(0.18 0 0 / 0.58);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+/* P-FINAL.11 多选态不再为旧顶部工具条预留空白。 */
+.app-shell.multi-selecting .quick-panel,
+.app-shell.multi-selecting.search-active .quick-panel,
+.app-shell.multi-selecting:not(.search-active) .quick-panel {
+  padding-top: 32px !important;
+  padding-bottom: calc(var(--cf-dock-height) + 78px) !important;
+}
+
+.app-shell.multi-selecting .multi-select-toolbar {
+  right: 6px !important;
+  bottom: 6px !important;
+  left: 6px !important;
+}
+
+/* P-FINAL.12 列表密度和左右边距对齐：取消旧滚动条预留 gutter，行内留白收紧。 */
+.app-shell .quick-panel,
+.app-shell.search-active .quick-panel,
+.app-shell:not(.search-active) .quick-panel {
+  padding-right: 6px !important;
+  padding-left: 6px !important;
+}
+
+.app-shell .quick-menu.virtual-list {
+  padding-right: 0 !important;
+  padding-left: 0 !important;
+  scrollbar-gutter: auto !important;
+}
+
+.app-shell .quick-menu.virtual-list::-webkit-scrollbar {
+  width: 6px !important;
+}
+
+.app-shell .quick-row {
+  margin-right: 0 !important;
+  margin-left: 0 !important;
+  padding-right: 6px !important;
+  padding-left: 6px !important;
+}
+
+.app-shell .quick-content {
+  padding-right: 48px !important;
+}
+
+.app-shell .row-actions {
+  right: 4px !important;
+}
+
+/* P-FINAL.13 右键菜单承载快捷键：tooltip 只做轻量提示。 */
+.clip-context-menu {
+  position: fixed;
+  z-index: 120;
+  display: grid;
+  gap: 2px;
+  width: 196px;
+  padding: 6px;
+  color: oklch(0.13 0 0 / 0.9);
+  background:
+    linear-gradient(180deg, oklch(1 0 0 / 0.95), oklch(0.98 0 0 / 0.91)),
+    oklch(0.99 0 0 / 0.92);
+  border: 1px solid oklch(0 0 0 / 0.11);
+  border-radius: 10px;
+  box-shadow:
+    0 16px 34px oklch(0 0 0 / 0.2),
+    inset 0 1px 0 oklch(1 0 0 / 0.9);
+  backdrop-filter: blur(22px) saturate(1.3);
+  -webkit-backdrop-filter: blur(22px) saturate(1.3);
+}
+
+.clip-context-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 6px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.clip-context-item:hover,
+.clip-context-item:focus-visible {
+  background: oklch(0 0 0 / 0.055);
+  outline: none;
+}
+
+.clip-context-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-context-label svg {
+  flex: 0 0 auto;
+  color: oklch(0.18 0 0 / 0.62);
+}
+
+.clip-context-item kbd {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 2px 5px;
+  color: oklch(0.18 0 0 / 0.58);
+  background: oklch(0 0 0 / 0.045);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.clip-context-separator {
+  height: 1px;
+  margin: 4px 3px;
+  background: oklch(0 0 0 / 0.07);
+}
+
+/* P-FINAL.14 tooltip 自动避让：列表项统一向下，按钮短提示黑底并向窗口内展开。 */
+.app-shell [data-tooltip]::after {
+  top: calc(100% + 7px) !important;
+  bottom: auto !important;
+  width: max-content !important;
+  max-width: min(160px, calc(100vw - 22px)) !important;
+  min-width: 0 !important;
+  padding: 5px 8px !important;
+  color: oklch(0.98 0 0 / 0.96) !important;
+  background: oklch(0.12 0 0 / 0.92) !important;
+  border: 1px solid oklch(1 0 0 / 0.1) !important;
+  border-radius: 7px !important;
+  box-shadow: 0 10px 24px oklch(0 0 0 / 0.2) !important;
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+
+.app-shell .row-actions [data-tooltip]::after,
+.app-shell .panel-pin-fab[data-tooltip]::after,
+.app-shell .search-wrap [data-tooltip]::after {
+  right: 0 !important;
+  left: auto !important;
+  transform: translate(0, 3px) !important;
+}
+
+.app-shell .row-actions [data-tooltip]:hover::after,
+.app-shell .row-actions [data-tooltip]:focus-visible::after,
+.app-shell .panel-pin-fab[data-tooltip]:hover::after,
+.app-shell .panel-pin-fab[data-tooltip]:focus-visible::after,
+.app-shell .search-wrap [data-tooltip]:hover::after,
+.app-shell .search-wrap [data-tooltip]:focus-visible::after {
+  transform: translate(0, 0) !important;
+}
+
+.app-shell .footer-actions [data-tooltip]::after,
+.app-shell .list-footer [data-tooltip]::after {
+  top: auto !important;
+  bottom: calc(100% + 7px) !important;
+  right: 0 !important;
+  left: auto !important;
+  transform: translate(0, 3px) !important;
+}
+
+.app-shell .footer-actions [data-tooltip]:hover::after,
+.app-shell .footer-actions [data-tooltip]:focus-visible::after,
+.app-shell .list-footer [data-tooltip]:hover::after,
+.app-shell .list-footer [data-tooltip]:focus-visible::after {
+  transform: translate(0, 0) !important;
+}
+
+.quick-content .app-tooltip .app-tooltip-card {
+  top: calc(100% + 6px) !important;
+  bottom: auto !important;
+  width: min(260px, calc(100vw - 76px)) !important;
+  max-width: min(260px, calc(100vw - 76px)) !important;
+  min-width: 0 !important;
+  color: oklch(0.98 0 0 / 0.95) !important;
+  background: oklch(0.12 0 0 / 0.92) !important;
+  border-color: oklch(1 0 0 / 0.1) !important;
+  box-shadow: 0 12px 26px oklch(0 0 0 / 0.22) !important;
+}
+
+.quick-content .app-tooltip .app-tooltip-main {
+  padding: 0 !important;
+}
+
+.quick-content .app-tooltip .app-tooltip-main strong {
+  color: oklch(0.98 0 0 / 0.95) !important;
+}
+
+.quick-content .app-tooltip .app-tooltip-main span {
+  color: oklch(0.86 0 0 / 0.72) !important;
+}
+
+/* P-FINAL.15 快捷编号外统一显示 checkbox，选中态贴近全选 checkbox 的轻量样式。 */
+.app-shell .quick-index {
+  color: oklch(0.18 0 0 / 0.58) !important;
+  background: oklch(1 0 0 / 0.42) !important;
+  border: 1px solid oklch(0 0 0 / 0.1) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .quick-index:hover,
+.app-shell .quick-index:focus-visible {
+  color: oklch(0.12 0 0 / 0.82) !important;
+  background: oklch(1 0 0 / 0.62) !important;
+  border-color: oklch(0 0 0 / 0.16) !important;
+}
+
+.app-shell .quick-index.selected {
+  color: oklch(0.12 0 0 / 0.78) !important;
+  background: oklch(1 0 0 / 0.72) !important;
+  border: 1px solid oklch(0 0 0 / 0.24) !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+.app-shell .quick-index.selected svg {
+  width: 12px !important;
+  height: 12px !important;
+  stroke-width: 2 !important;
+}
+
+/* P-FINAL.16 列表 tooltip 用于全量预览：延迟触发、可进入、正文区域滚动。 */
+.quick-content .app-tooltip {
+  cursor: default;
+}
+
+.quick-content .app-tooltip .app-tooltip-card {
+  top: calc(100% + 2px) !important;
+  bottom: auto !important;
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) !important;
+  gap: 7px !important;
+  width: min(320px, calc(100vw - 76px)) !important;
+  max-width: min(320px, calc(100vw - 76px)) !important;
+  max-height: 188px !important;
+  padding: 9px !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+  user-select: text !important;
+  transition:
+    opacity 140ms var(--cf-ease-out),
+    transform 140ms var(--cf-ease-out) !important;
+  transition-delay: 0ms !important;
+}
+
+.quick-content .app-tooltip:hover .app-tooltip-card,
+.quick-content .app-tooltip:focus-within .app-tooltip-card {
+  pointer-events: auto !important;
+  transition-delay: 450ms !important;
+}
+
+.quick-content .app-tooltip .app-tooltip-main {
+  gap: 2px !important;
+  min-height: 0 !important;
+  padding: 0 0 7px !important;
+  border-bottom: 1px solid oklch(1 0 0 / 0.12) !important;
+}
+
+.quick-content .app-tooltip .app-tooltip-main strong,
+.quick-content .app-tooltip .app-tooltip-main span {
+  white-space: nowrap !important;
+}
+
+.app-tooltip-body {
+  min-height: 0;
+  max-height: 128px;
+  overflow: auto;
+  padding-right: 3px;
+  color: oklch(0.95 0 0 / 0.9);
+  font-size: 10.5px;
+  font-weight: 430;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app-tooltip-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.app-tooltip-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-tooltip-body::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 0.26);
+  border-radius: 999px;
+}
+
+.quick-panel.suppress-tooltips .app-tooltip-card,
+.quick-panel.suppress-tooltips [data-tooltip]::after {
+  display: none !important;
+}
+
+/* P-FINAL.17 详情页解析渲染：链接/Markdown 提供可读预览和快速复制布局。 */
+.detail-content {
+  min-height: 0 !important;
+  overflow: auto !important;
+}
+
+.markdown-preview,
+.link-preview {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  color: oklch(0.12 0 0 / 0.9);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4 {
+  margin: 2px 0 4px;
+  color: oklch(0.1 0 0 / 0.92);
+  font-weight: 720;
+  line-height: 1.25;
+}
+
+.markdown-preview h1 { font-size: 16px; }
+.markdown-preview h2 { font-size: 14px; }
+.markdown-preview h3,
+.markdown-preview h4 { font-size: 13px; }
+
+.markdown-preview p,
+.markdown-preview blockquote {
+  margin: 0;
+}
+
+.markdown-preview a,
+.link-preview a {
+  color: oklch(0.28 0.08 255 / 0.88);
+  text-decoration: none;
+}
+
+.markdown-preview blockquote {
+  padding: 6px 8px;
+  color: oklch(0.22 0 0 / 0.72);
+  background: oklch(1 0 0 / 0.34);
+  border-left: 2px solid oklch(0 0 0 / 0.22);
+  border-radius: 4px;
+}
+
+.markdown-preview .md-list::before {
+  margin-right: 7px;
+  color: oklch(0.18 0 0 / 0.55);
+  content: "•";
+}
+
+.markdown-preview .md-code {
+  display: grid;
+  gap: 5px;
+  min-height: auto;
+  margin: 0;
+  padding: 8px;
+  color: oklch(0.95 0 0 / 0.92);
+  background: oklch(0.13 0 0 / 0.94);
+  border: 1px solid oklch(1 0 0 / 0.1);
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.markdown-preview .md-code span {
+  color: oklch(0.82 0 0 / 0.62);
+  font-size: 10px;
+}
+
+.markdown-preview .md-table-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  overflow: hidden;
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 5px;
+}
+
+.markdown-preview .md-table-row span {
+  min-width: 0;
+  padding: 5px 7px;
+  overflow: hidden;
+  border-right: 1px solid oklch(0 0 0 / 0.07);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-preview .md-space {
+  height: 3px;
+}
+
+.link-preview-card {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  background: oklch(1 0 0 / 0.38);
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 7px;
+}
+
+.link-preview-card div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.link-preview-card strong,
+.link-preview-card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-preview-card span {
+  color: oklch(0.28 0 0 / 0.62);
+  font-size: 11px;
+}
+
+.link-preview button,
+.copy-layout-grid button {
+  min-height: 26px;
+  padding: 0 8px;
+  color: oklch(0.14 0 0 / 0.86);
+  background: oklch(1 0 0 / 0.4);
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.copy-layout-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }

@@ -4,6 +4,7 @@ import {
   Clipboard,
   Copy,
   ExternalLink,
+  FileJson,
   Heart,
   History,
   Inbox,
@@ -22,9 +23,10 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
-import type { CSSProperties, ErrorInfo, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
+import type { CSSProperties, ErrorInfo, MouseEvent, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
 import {
   WorkspaceRouterProvider,
+  navigateWorkspaceAggregate,
   navigateWorkspaceDetail,
   navigateWorkspaceList,
 } from "./routes/workspace-router";
@@ -184,7 +186,10 @@ type QueryClipPayload = {
 
 const ACTIVE_VIEW_KEY = "clipforge.active-view.v1";
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
-const DEFAULT_SHORTCUT = "Control+V";
+const DEFAULT_SHORTCUT =
+  typeof navigator !== "undefined" && /Mac/i.test(navigator.platform)
+    ? "Command+Shift+V"
+    : "Control+Shift+V";
 const ROW_HEIGHT = 88;
 const OVERSCAN = 5;
 const defaultSettings: AppSettings = {
@@ -208,7 +213,7 @@ const defaultSettings: AppSettings = {
   enableScrollCollapse: true,
   panelPinned: false,
   panelWidth: 420,
-  panelHeight: 488,
+  panelHeight: 450,
 };
 
 function makeId() {
@@ -815,6 +820,78 @@ function logAppError(level: "info" | "warn" | "error", message: string, context?
   });
 }
 
+function waitForPasteTriggerRelease(source: string): Promise<number> {
+  if (source !== "cmd-number") return Promise.resolve(0);
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let finished = false;
+    let timer = 0;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timer);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", finish, true);
+      resolve(Date.now() - started);
+    };
+    const onKeyUp = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Meta" || event.key === "Control" || (!event.metaKey && !event.ctrlKey)) {
+        finish();
+      }
+    };
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", finish, true);
+    // 原上限 280ms 偏长，叠加 Rust 侧粘贴路径会让 Cmd+数字 粘贴明显延迟、甚至被当成「没触发」。
+    // 120ms 足以等到修饰键释放（首个 keyup 即 resolve），同时把整体延迟压下来。
+    timer = window.setTimeout(finish, 120);
+  });
+}
+
+function getShortcutModLabel() {
+  return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "Cmd" : "Ctrl";
+}
+
+type AppTooltipContent = {
+  title: string;
+  description: string;
+  body: string;
+};
+
+function getItemTooltip(item: ClipItem): AppTooltipContent {
+  const source = item.sourceApp?.name || item.analysis.sourceName || "剪贴板历史";
+  const title = item.analysis.title || source;
+  const description = item.analysis.url ? "链接内容" : item.analysis.attachment ? "附件内容" : source;
+  return { title, description, body: item.content || getClipboardLine(item) };
+}
+
+function AppTooltip({
+  children,
+  content,
+}: {
+  children: ReactNode;
+  content: AppTooltipContent;
+}) {
+  return (
+    <div className="app-tooltip">
+      {children}
+      <div
+        className="app-tooltip-card"
+        onClick={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+        role="tooltip"
+      >
+        <div className="app-tooltip-main">
+          <strong>{content.title}</strong>
+          <span>{content.description}</span>
+        </div>
+        <div className="app-tooltip-body">{content.body}</div>
+      </div>
+    </div>
+  );
+}
+
 class AppErrorBoundary extends Component<{ children: ReactNode }, { errorMessage: string | null; resetKey: number }> {
   state = { errorMessage: null, resetKey: 0 };
 
@@ -935,6 +1012,9 @@ function ClipForgeApp() {
   const lastSeenClipboard = useRef("");
   const searchRef = useRef<HTMLInputElement | null>(null);
   const scrollAccelRef = useRef<number | null>(null);
+  const panelFocusGraceUntilRef = useRef(0);
+  const blurHideInFlightRef = useRef(false);
+  const focusRetryTimersRef = useRef<number[]>([]);
   const isPanelClosing = usePanelUiStore((state) => state.isClosing);
   const setPanelClosing = usePanelUiStore((state) => state.setClosing);
   const workspaceRoute = useWorkspaceStore((state) => state.route);
@@ -1027,6 +1107,8 @@ function ClipForgeApp() {
   useEffect(() => {
     return () => {
       if (scrollAccelRef.current) window.clearInterval(scrollAccelRef.current);
+      focusRetryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      focusRetryTimersRef.current = [];
     };
   }, []);
 
@@ -1045,11 +1127,21 @@ function ClipForgeApp() {
     appWindow
       .onFocusChanged(({ payload: focused }) => {
         if (focused) {
+          blurHideInFlightRef.current = false;
           cancelHide();
           return;
         }
+        if (Date.now() < panelFocusGraceUntilRef.current) {
+          logAppError("info", "panel-pin: blur ignored during focus grace window");
+          return;
+        }
+        if (blurHideInFlightRef.current) {
+          logAppError("info", "panel-pin: blur ignored, hide already in flight");
+          return;
+        }
         cancelHide();
-        logAppError("info", "panel-pin: blur detected, scheduling hide in 180ms");
+        blurHideInFlightRef.current = true;
+        logAppError("info", "panel-pin: blur detected, scheduling hide in 60ms");
         hideTimer = window.setTimeout(async () => {
           // EcoPaste 式：隐藏决策以 Rust 的 PANEL_PINNED 为唯一权威源。
           // 前端 settingsRef 可能与 Rust 不同步（重启 / 跨窗口写入），且 appWindow.hide()
@@ -1061,16 +1153,18 @@ function ClipForgeApp() {
             logAppError("warn", "is_panel_pinned_command failed, assume not pinned", String(error));
           }
           if (pinned) {
+            blurHideInFlightRef.current = false;
             logAppError("info", "panel-pin: Rust says pinned, blur hide cancelled");
             return;
           }
           setPanelClosing(true);
           closeTimer = window.setTimeout(() => {
             logAppError("info", "panel-pin: hide executing now");
-            appWindow.hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
-            setPanelClosing(false);
+            invoke("hide_quick_panel_command")
+              .catch((error) => logAppError("warn", "Hide quick panel failed", String(error)))
+              .finally(() => setPanelClosing(false));
           }, 180);
-        }, 180);
+        }, 60);
       })
       .catch((error) => logAppError("warn", "Register focus listener failed", String(error)));
     return cancelHide;
@@ -1215,9 +1309,18 @@ function ClipForgeApp() {
 
   const showQuickPanel = useCallback(
     async (reason: "shortcut" | "tray") => {
+      blurHideInFlightRef.current = false;
+      panelFocusGraceUntilRef.current = Date.now() + 2400;
+      focusRetryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      focusRetryTimersRef.current = [];
+      // 先同步把焦点拉到搜索框（若已挂载），赶在下面 setState 引起的重渲染之前。重渲染一旦占用
+      // 主线程，60ms 的 focus 定时器就会晚到——这正是「面板出来后要等一下才能打字」的体感来源。
+      // 未挂载时为 no-op，后面的 [0,60] 兜底会接管。
+      searchRef.current?.focus();
       setActiveView("history");
       setSelectedIds(new Set());
       setMultiSelectMode(false);
+      setQuery("");
       setActiveTag(null);
       setActiveTypeFilter("all");
       setFilterFavorite(false);
@@ -1225,13 +1328,28 @@ function ClipForgeApp() {
       setIsPanelEntering(true);
       // 唤起面板时强制拉一次最新剪贴板，避免用户在别的 app 复制后到唤起之间漏掉记录
       window.setTimeout(() => setIsPanelEntering(false), 180);
-      window.setTimeout(() => {
-        searchRef.current?.focus();
-        setNativeStatus(reason === "tray" ? "面板已聚焦，可搜索或方向键选择" : "快捷面板已聚焦");
-      }, 20);
+      // 过去用 [0,30,90,180,320] 五个定时器轮询 focus，会和 Rust 侧 makeFirstResponder
+      // 抢焦点，反而拖慢、干扰首次输入。改成 0ms + 60ms 两次，且仅在尚未聚焦到搜索框时再 focus。
+      [0, 60].forEach((delay) => {
+        const timer = window.setTimeout(() => {
+          if (document.activeElement !== searchRef.current) {
+            searchRef.current?.focus();
+          }
+          if (delay === 60) {
+            logAppError("info", "panel-keyboard: search focus settle", {
+              active: document.activeElement === searchRef.current,
+              reason,
+            });
+          }
+        }, delay);
+        focusRetryTimersRef.current.push(timer);
+      });
+      setNativeStatus(reason === "tray" ? "面板已聚焦，可搜索或方向键选择" : "快捷面板已聚焦");
+      // 后台监听线程每 100ms 已在采集，这里只是兜底；延后到 300ms，避免与「唤起后立即输入」
+      // 抢主线程——setClips 触发的重渲染会吞掉最初几个按键，造成「面板出来后要等一下才能打字」。
       window.setTimeout(() => {
         void captureClipboard("manual");
-      }, 40);
+      }, 300);
     },
     [captureClipboard],
   );
@@ -1319,11 +1437,7 @@ function ClipForgeApp() {
           logAppError("info", "panel-pin: hide-quick-panel event ignored, panel pinned");
           return;
         }
-        setPanelClosing(true);
-        window.setTimeout(() => {
-          appWindow.hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
-          setPanelClosing(false);
-        }, 160);
+        setPanelClosing(false);
       })
       .then((unlisten) => unlisteners.push(unlisten))
       .catch((error) => logAppError("warn", "Register quick panel hide listener failed", String(error)));
@@ -1480,6 +1594,14 @@ function ClipForgeApp() {
     window.setTimeout(() => setLastCopiedId(null), 1000);
   }
 
+  const togglePanelPinned = useCallback(() => {
+    const nextPinned = !settingsRef.current.panelPinned;
+    setSettings((prev) => ({ ...prev, panelPinned: nextPinned }));
+    invoke("set_panel_pinned_command", { pinned: nextPinned }).catch((error) =>
+      logAppError("warn", "Toggle panel pin failed", String(error)),
+    );
+  }, []);
+
   async function copyClip(item: ClipItem) {
     try {
       await invoke("write_clipboard_text", { text: item.content });
@@ -1491,11 +1613,27 @@ function ClipForgeApp() {
     }
   }
 
-  async function pasteClip(item: ClipItem) {
+  async function pasteClip(item: ClipItem, source = "unknown") {
+    const releaseWaitMs = await waitForPasteTriggerRelease(source);
+    if (releaseWaitMs > 0) {
+      logAppError("info", "paste-ui: shortcut release settled", {
+        id: item.id,
+        source,
+        releaseWaitMs,
+      });
+    }
+    logAppError("info", "paste-ui: invoke start", {
+      id: item.id,
+      source,
+      kind: item.kind,
+      chars: item.content.length,
+      selectedId,
+    });
     try {
-      await invoke("paste_clipboard_text", { text: item.content });
+      await invoke("paste_clipboard_text", { text: item.content, source });
       lastSeenClipboard.current = item.content.trim();
       markClipCopied(item, "已粘贴到当前应用");
+      logAppError("info", "paste-ui: invoke success", { id: item.id, source });
     } catch (error) {
       logAppError("warn", "Paste clip failed", String(error));
       await copyClip(item);
@@ -1565,11 +1703,76 @@ function ClipForgeApp() {
 
       const target = event.target as HTMLElement | null;
       const editable = target?.closest("input, textarea, select, [contenteditable='true']");
+      const allowListShortcutFromSearch = editable === searchRef.current && !query.trim();
       const quickItems = filteredClips;
+      const key = event.key.toLowerCase();
+      const currentItem = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
+
+      if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        const views: ViewKey[] = ["history", "favorites", "trash"];
+        const currentIndex = Math.max(0, views.indexOf(activeView));
+        const nextIndex = event.shiftKey
+          ? (currentIndex - 1 + views.length) % views.length
+          : (currentIndex + 1) % views.length;
+        setActiveView(views[nextIndex]);
+        setSelectedIds(new Set());
+        setMultiSelectMode(false);
+        setMultiPreviewOpen(false);
+        void navigateWorkspaceList();
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "p") {
+        event.preventDefault();
+        togglePanelPinned();
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "f") {
+        event.preventDefault();
+        if (multiSelectMode && selectedInList.length > 0) {
+          void favoriteSelectedClips(selectedInList);
+        } else if (currentItem && activeView !== "trash") {
+          updateClip(currentItem.id, { favorite: !currentItem.favorite });
+          showCompletionToast(currentItem.favorite ? "已取消收藏" : "已收藏");
+        }
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "j") {
+        event.preventDefault();
+        if (currentItem && !multiSelectMode) {
+          void runPrimaryOpenAction(currentItem, "shortcut");
+        }
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "a") {
+        if (editable && !allowListShortcutFromSearch) return;
+        if (!quickItems.length) return;
+        event.preventDefault();
+        setMultiSelectMode(true);
+        setSelectedIds(new Set(quickItems.map((item) => item.id)));
+        setSelectedId((current) => current ?? quickItems[0]?.id ?? null);
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "c") {
+        if (editable && !allowListShortcutFromSearch) return;
+        if (!currentItem) return;
+        event.preventDefault();
+        if (multiSelectMode) {
+          void copySelectedClips(selectedInList);
+        } else {
+          void copyClip(currentItem);
+        }
+        return;
+      }
 
       // 删除选中项：Ctrl+X 或 Delete（不处于编辑态时）
-      if ((event.ctrlKey && event.key.toLowerCase() === "x") || event.key === "Delete") {
-        if (editable) return;
+      if (((event.metaKey || event.ctrlKey) && !event.altKey && key === "x") || event.key === "Delete") {
+        if (editable && !allowListShortcutFromSearch) return;
         event.preventDefault();
         if (multiSelectMode && selectedInList.length > 0) {
           void deleteClips(selectedInList.map((item) => item.id));
@@ -1598,7 +1801,7 @@ function ClipForgeApp() {
           });
           return;
         }
-        void pasteClip(item);
+        void pasteClip(item, "cmd-number");
         return;
       }
 
@@ -1634,7 +1837,7 @@ function ClipForgeApp() {
           return;
         }
         if (!settingsRef.current.panelPinned) {
-          getCurrentWindow().hide().catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
+          invoke("hide_quick_panel_command").catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
         }
         return;
       }
@@ -1661,7 +1864,7 @@ function ClipForgeApp() {
         event.preventDefault();
         if (event.key === "ArrowRight") {
           if (!multiSelectMode && selectedClip) {
-            void navigateWorkspaceDetail(selectedClip.id);
+            void runPrimaryOpenAction(selectedClip, "keyboard");
           }
         } else if (workspaceRoute.name !== "list") {
           setMultiPreviewOpen(false);
@@ -1705,7 +1908,7 @@ function ClipForgeApp() {
         if (!item) return;
         event.preventDefault();
         if (multiSelectMode) void copySelectedClips(selectedInList);
-        else void pasteClip(item);
+        else void pasteClip(item, "enter");
         return;
       }
 
@@ -1727,12 +1930,17 @@ function ClipForgeApp() {
       }
 
       if ((event.key === "/" || event.key.length === 1) && !editable && !multiSelectMode) {
+        event.preventDefault();
         focusSearch();
+        if (event.key !== "/" && event.key.length === 1) {
+          setQuery((current) => `${current}${event.key}`);
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
+    activeView,
     filteredClips,
     focusSearch,
     isMultiPreviewOpen,
@@ -1742,6 +1950,8 @@ function ClipForgeApp() {
     selectedId,
     selectedInList,
     searchSuggestions,
+    showCompletionToast,
+    togglePanelPinned,
     workspaceRoute.name,
   ]);
 
@@ -1769,6 +1979,26 @@ function ClipForgeApp() {
     }
   }
 
+  function canOpenClipTarget(item: ClipItem) {
+    return Boolean(item.analysis.attachment || item.analysis.url);
+  }
+
+  async function runPrimaryOpenAction(item: ClipItem, source: "shortcut" | "keyboard" | "click" | "context-menu" | "detail") {
+    setSelectedId(item.id);
+    if (canOpenClipTarget(item)) {
+      logAppError("info", "quick-action: open target", {
+        id: item.id,
+        source,
+        targetType: item.analysis.attachment?.targetType ?? "url",
+        target: item.analysis.attachment?.target ?? item.analysis.url,
+      });
+      await openClipTarget(item);
+      return;
+    }
+    logAppError("info", "quick-action: open detail", { id: item.id, source });
+    await navigateWorkspaceDetail(item.id);
+  }
+
   function updateClip(id: string, next: Partial<ClipItem>) {
     const updatedAt = Date.now();
     invoke("update_clip_record", {
@@ -1789,6 +2019,15 @@ function ClipForgeApp() {
 
   async function deleteClips(ids: string[]) {
     const now = Date.now();
+    // 删除后锚定到「被删项当前位置的下一项」；若已是最后一项则锚定上一项；都没有则不锚定。
+    // 旧实现一律 setSelectedId(null)，导致 selectedClip 回退到 filteredClips[0] = 第一条。
+    const deleteIndex = filteredClips.findIndex((item) => ids.includes(item.id));
+    const remaining = filteredClips.filter((item) => !ids.includes(item.id));
+    const nextSelectedId =
+      deleteIndex >= 0 && remaining.length > 0
+        ? (remaining[Math.min(deleteIndex, remaining.length - 1)]?.id ?? null)
+        : null;
+    const shouldReselect = selectedId != null && ids.includes(selectedId);
     try {
       await invoke("soft_delete_clip_records", { ids });
       setNativeStatus(`已移入垃圾箱 ${ids.length} 条`);
@@ -1804,7 +2043,7 @@ function ClipForgeApp() {
     );
     setSelectedIds(new Set());
     setMultiSelectMode(false);
-    if (selectedId && ids.includes(selectedId)) setSelectedId(null);
+    if (shouldReselect) setSelectedId(nextSelectedId);
   }
 
   async function restoreClips(ids: string[]) {
@@ -1826,6 +2065,13 @@ function ClipForgeApp() {
   }
 
   async function hardDeleteClips(ids: string[]) {
+    const deleteIndex = filteredClips.findIndex((item) => ids.includes(item.id));
+    const remaining = filteredClips.filter((item) => !ids.includes(item.id));
+    const nextSelectedId =
+      deleteIndex >= 0 && remaining.length > 0
+        ? (remaining[Math.min(deleteIndex, remaining.length - 1)]?.id ?? null)
+        : null;
+    const shouldReselect = selectedId != null && ids.includes(selectedId);
     try {
       await invoke("hard_delete_clip_records", { ids });
       setNativeStatus(`已彻底删除 ${ids.length} 条`);
@@ -1837,6 +2083,19 @@ function ClipForgeApp() {
     setClips((current) => current.filter((item) => !ids.includes(item.id)));
     setSelectedIds(new Set());
     setMultiSelectMode(false);
+    if (shouldReselect) setSelectedId(nextSelectedId);
+  }
+
+  async function emptyTrash() {
+    const trashIds = clips.filter((item) => item.deletedAt).map((item) => item.id);
+    if (!trashIds.length) {
+      setNativeStatus("垃圾箱已经为空");
+      return;
+    }
+    if (!window.confirm(`确认清空垃圾箱吗？将彻底删除 ${trashIds.length} 条记录，且无法恢复。`)) {
+      return;
+    }
+    await hardDeleteClips(trashIds);
   }
 
   return (
@@ -1850,7 +2109,6 @@ function ClipForgeApp() {
       <section className="content-column" onScroll={handleScroll}>
         <GlassSearchBar
           inputRef={searchRef}
-          isActive={isSearchActive || query.length > 0}
           onApplySuggestion={applySearchSuggestion}
           onBlur={closeSearchIfEmpty}
           onChange={handleSearchChange}
@@ -1861,7 +2119,7 @@ function ClipForgeApp() {
             setActiveTypeFilter("all");
             searchRef.current?.focus();
           }}
-          onFocus={() => setSearchActive(true)}
+          onFocus={focusSearch}
           parsedSearchCommand={parsedSearchCommand}
           query={query}
           suggestions={searchSuggestions}
@@ -1894,6 +2152,7 @@ function ClipForgeApp() {
                   activeId={selectedClip?.id ?? null}
                   autoScroll={keyboardNavigating}
                   clips={filteredClips}
+                  onEmptyTrash={emptyTrash}
                   hasMore={Boolean(nextCursor)}
                   isLoadingMore={isLoadingMore}
                   multiSelectMode={multiSelectMode}
@@ -1932,9 +2191,12 @@ function ClipForgeApp() {
                   onPaste={pasteClip}
                   onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
                   onLoadMore={loadMoreClips}
-                  onOpen={openClipTarget}
-                  onOpenDetail={(item) => {
-                    void navigateWorkspaceDetail(item.id);
+                  onOpen={(item) => {
+                    void runPrimaryOpenAction(item, "click");
+                  }}
+                  onOpenAggregate={() => {
+                    setMultiPreviewOpen(true);
+                    void navigateWorkspaceAggregate();
                   }}
                   onPointerActive={() => setKeyboardNavigating(false)}
                   onSelect={(item) => {
@@ -1970,6 +2232,40 @@ function ClipForgeApp() {
                   }}
                   onCopy={copyClip}
                   onOpen={openClipTarget}
+                  quickActions={[
+                    ...(clip && canOpenClipTarget(clip)
+                      ? [
+                          {
+                            id: "open-target",
+                            label: clip.analysis.attachment?.targetType === "path" ? "打开资源" : "打开链接",
+                            icon: <ExternalLink size={13} />,
+                            onSelect: () => {
+                              void openClipTarget(clip);
+                            },
+                          },
+                        ]
+                      : []),
+                    ...(clip
+                      ? [
+                          {
+                            id: "copy",
+                            label: "复制内容",
+                            icon: <Copy size={13} />,
+                            onSelect: () => {
+                              void copyClip(clip);
+                            },
+                          },
+                          {
+                            id: "parse",
+                            label: "解析",
+                            icon: <FileJson size={13} />,
+                            onSelect: () => {
+                              setNativeStatus("解析插件接口已预留");
+                            },
+                          },
+                        ]
+                      : []),
+                  ]}
                 />
               );
             }}
@@ -1996,14 +2292,9 @@ function ClipForgeApp() {
       <button
         aria-label={settings.panelPinned ? "取消固定窗体" : "固定窗体"}
         className={`panel-pin-fab${settings.panelPinned ? " active" : ""}`}
-        onClick={() => {
-          const nextPinned = !settings.panelPinned;
-          setSettings((prev) => ({ ...prev, panelPinned: nextPinned }));
-          invoke("set_panel_pinned_command", { pinned: nextPinned }).catch((error) =>
-            logAppError("warn", "Toggle panel pin failed", String(error)),
-          );
-        }}
-        title="固定窗体"
+        data-tooltip="固定窗体"
+        onClick={togglePanelPinned}
+        title={`固定窗体 (${getShortcutModLabel()}+P)`}
         type="button"
       >
         <Pin size={12} />
@@ -2033,7 +2324,6 @@ function ClipForgeApp() {
 
 function GlassSearchBar({
   inputRef,
-  isActive,
   onApplySuggestion,
   onBlur,
   onChange,
@@ -2044,7 +2334,6 @@ function GlassSearchBar({
   suggestions,
 }: {
   inputRef: RefObject<HTMLInputElement | null>;
-  isActive: boolean;
   onApplySuggestion: (suggestion: SearchSuggestion) => void;
   onBlur: () => void;
   onChange: (value: string) => void;
@@ -2054,24 +2343,6 @@ function GlassSearchBar({
   query: string;
   suggestions: SearchSuggestion[];
 }) {
-  if (!isActive) {
-    return (
-      <header className="toolbar">
-        <button
-          aria-label="开始搜索"
-          className="floating-search-pill"
-          onClick={onFocus}
-          onFocus={onFocus}
-          type="button"
-        >
-          <Search size={13} />
-          <span>搜索剪贴板</span>
-          <kbd>/</kbd>
-        </button>
-      </header>
-    );
-  }
-
   return (
     <header className="toolbar">
       <div className="floating-search-surface">
@@ -2091,7 +2362,7 @@ function GlassSearchBar({
             value={query}
           />
           {query ? (
-            <button aria-label="清空搜索" className="icon-button subtle" onClick={onClear} type="button">
+            <button aria-label="清空搜索" className="icon-button subtle" data-tooltip="清空搜索" onClick={onClear} type="button">
               <X size={14} />
             </button>
           ) : null}
@@ -2171,26 +2442,26 @@ function MultiSelectToolbar({
           <span className="multi-toolbar-count">{count > 0 ? `${count} 项` : "点击项目选择"}</span>
         </div>
         <div className="multi-toolbar-actions">
-          <label className="multi-select-all" title="全选/取消全选">
+          <label className="multi-select-all" data-tooltip="全选/取消全选" title="全选/取消全选">
             <input checked={allSelected} onChange={(event) => onToggleAll(event.currentTarget.checked)} type="checkbox" />
             <span>全选</span>
           </label>
-          <button aria-label="聚合复制" className="icon-button subtle" disabled={count === 0} onClick={onCopy} title="聚合复制" type="button">
+          <button aria-label="聚合复制" className="icon-button subtle" data-tooltip="聚合复制" disabled={count === 0} onClick={onCopy} title="聚合复制" type="button">
             <Copy size={14} />
           </button>
-          <button aria-label="批量收藏" className="icon-button subtle" disabled={count === 0} onClick={onFavorite} title="批量收藏" type="button">
+          <button aria-label="批量收藏" className="icon-button subtle" data-tooltip="批量收藏" disabled={count === 0} onClick={onFavorite} title="批量收藏" type="button">
             <Heart size={14} />
           </button>
-          <button aria-label="删除" className="icon-button subtle" disabled={count === 0} onClick={onDelete} title="删除" type="button">
+          <button aria-label="删除" className="icon-button subtle" data-tooltip="删除" disabled={count === 0} onClick={onDelete} title="删除" type="button">
             <Trash2 size={14} />
           </button>
-          <button aria-label="关闭多选" className="icon-button subtle" onClick={onClose} title="关闭多选" type="button">
+          <button aria-label="关闭多选" className="icon-button subtle" data-tooltip="关闭多选" onClick={onClose} title="关闭多选" type="button">
             <X size={14} />
           </button>
         </div>
       </div>
       <div className="multi-toolbar-hint">
-        <kbd>Space</kbd> 选择 · <kbd>Ctrl</kbd>+<kbd>X</kbd> 删除 · <kbd>Esc</kbd> 退出
+          <kbd>Space</kbd> 选择 · <kbd>Ctrl/Cmd</kbd>+<kbd>A</kbd> 全选 · <kbd>Ctrl/Cmd</kbd>+<kbd>F</kbd> 收藏 · <kbd>Ctrl/Cmd</kbd>+<kbd>C</kbd> 复制 · <kbd>Esc</kbd> 退出
       </div>
     </section>
   );
@@ -2216,6 +2487,7 @@ function BottomDock({
         <button
           aria-label="历史"
           className={activeView === "history" ? "icon-button active" : "icon-button subtle"}
+          data-tooltip="历史"
           onClick={() => onViewChange("history")}
           title="历史"
           type="button"
@@ -2225,6 +2497,7 @@ function BottomDock({
         <button
           aria-label="收藏"
           className={activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
+          data-tooltip="收藏"
           onClick={() => onViewChange("favorites")}
           title="收藏"
           type="button"
@@ -2234,13 +2507,14 @@ function BottomDock({
         <button
           aria-label="垃圾箱"
           className={activeView === "trash" ? "icon-button active" : "icon-button subtle"}
+          data-tooltip="垃圾箱"
           onClick={() => onViewChange("trash")}
           title="垃圾箱"
           type="button"
         >
           <Trash2 size={13} />
         </button>
-        <button aria-label="设置" className="icon-button subtle" onClick={onOpenSettings} title="设置" type="button">
+        <button aria-label="设置" className="icon-button subtle" data-tooltip="设置" onClick={onOpenSettings} title="设置" type="button">
           <Settings size={13} />
         </button>
       </div>
@@ -2253,7 +2527,7 @@ function StatusLine({ status }: { status: string }) {
     <span className="footer-status">
       {status || (
         <>
-          <kbd>Space</kbd> 多选 · <kbd>Enter</kbd> 粘贴 · <kbd>→</kbd> 详情 · <kbd>/</kbd> 搜索
+          <kbd>Tab</kbd> 导航 · <kbd>Enter</kbd> 粘贴 · <kbd>Ctrl/Cmd</kbd>+<kbd>F</kbd> 收藏 · <kbd>Ctrl/Cmd</kbd>+<kbd>J</kbd> 详情 · <kbd>Ctrl/Cmd</kbd>+<kbd>P</kbd> 固定
         </>
       )}
     </span>
@@ -2268,6 +2542,7 @@ function TrashPanel({
   isLoadingMore,
   multiSelectMode,
   onCopy,
+  onEmptyTrash,
   onDeleteSelected,
   onHardDelete,
   onLoadMore,
@@ -2286,6 +2561,7 @@ function TrashPanel({
   isLoadingMore: boolean;
   multiSelectMode: boolean;
   onCopy: (item: ClipItem) => void;
+  onEmptyTrash: () => void;
   onDeleteSelected: () => void;
   onHardDelete: (item: ClipItem) => void;
   onLoadMore: () => void;
@@ -2310,7 +2586,12 @@ function TrashPanel({
   return (
     <section className="quick-panel">
       <div className="quick-control-row">
-        <div />
+        <div className="quick-bulk-actions">
+          <button className="danger-button" onClick={onEmptyTrash} type="button">
+            <Trash2 size={14} />
+            <span>清空垃圾箱</span>
+          </button>
+        </div>
         <div className="quick-bulk-actions" aria-label="垃圾箱批量操作">
           {multiSelectMode ? (
             <>
@@ -2400,6 +2681,7 @@ function TrashPanel({
               <div className="row-actions" onClick={(event) => event.stopPropagation()}>
                 <button
                   className="icon-button"
+                  data-tooltip="恢复"
                   onClick={() => onRestore(item)}
                   title="恢复"
                   type="button"
@@ -2408,6 +2690,7 @@ function TrashPanel({
                 </button>
                 <button
                   className="icon-button"
+                  data-tooltip="复制"
                   onClick={() => onCopy(item)}
                   title="复制"
                   type="button"
@@ -2416,6 +2699,7 @@ function TrashPanel({
                 </button>
                 <button
                   className="icon-button danger-icon"
+                  data-tooltip="彻底删除"
                   onClick={() => onHardDelete(item)}
                   title="彻底删除"
                   type="button"
@@ -2584,7 +2868,7 @@ function QuickPastePanel({
   onFavorite,
   onLoadMore,
   onOpen,
-  onOpenDetail,
+  onOpenAggregate,
   onPointerActive,
   onPaste,
   onSelect,
@@ -2607,9 +2891,9 @@ function QuickPastePanel({
   onFavorite: (item: ClipItem) => void;
   onLoadMore: () => void;
   onOpen: (item: ClipItem) => void;
-  onOpenDetail: (item: ClipItem) => void;
+  onOpenAggregate: () => void;
   onPointerActive: () => void;
-  onPaste: (item: ClipItem) => void;
+  onPaste: (item: ClipItem, source?: string) => void;
   onSelect: (item: ClipItem) => void;
   onStartMultiSelect: (id: string) => void;
   onToggleSelected: (id: string) => void;
@@ -2617,6 +2901,45 @@ function QuickPastePanel({
   onActiveGroupChange: (groupStart: number) => void;
   groupScrollTarget: number | null;
 }) {
+  const [contextMenu, setContextMenu] = useState<{ item: ClipItem; x: number; y: number } | null>(null);
+  const [suppressTooltips, setSuppressTooltips] = useState(false);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const openContextMenu = useCallback((event: MouseEvent<HTMLElement>, item: ClipItem) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSelect(item);
+    setSuppressTooltips(true);
+    window.setTimeout(() => setSuppressTooltips(false), 900);
+    if (multiSelectMode) {
+      if (!selectedIds.has(item.id)) onToggleSelected(item.id);
+      onOpenAggregate();
+      return;
+    }
+    const menuWidth = 196;
+    const menuHeight = 188;
+    setContextMenu({
+      item,
+      x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
+      y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
+    });
+  }, [multiSelectMode, onOpenAggregate, onSelect, onToggleSelected, selectedIds]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => closeContextMenu();
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") closeContextMenu();
+    };
+    window.addEventListener("pointerdown", close, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.removeEventListener("pointerdown", close, true);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [closeContextMenu, contextMenu]);
+
   if (!clips.length) {
     return (
       <div className="empty-list">
@@ -2628,7 +2951,7 @@ function QuickPastePanel({
   }
 
   return (
-    <section className="quick-panel">
+    <section className={suppressTooltips ? "quick-panel suppress-tooltips" : "quick-panel"}>
       <div className="quick-workspace" onPointerDown={onPointerActive}>
         <VirtualList
           activeId={activeId}
@@ -2636,7 +2959,7 @@ function QuickPastePanel({
           className="quick-menu"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={40}
+          itemHeight={38}
           items={clips}
           onEndReached={onLoadMore}
           groupSize={10}
@@ -2661,19 +2984,10 @@ function QuickPastePanel({
                 return;
               }
               onSelect(item);
-              onPaste(item);
+              onPaste(item, "click");
             }}
             onContextMenu={(event) => {
-              event.preventDefault();
-              if (multiSelectMode) {
-                // 进入详情前不要 onSelect(item)：selectedId 在 PanelContentBoundary 的
-                // resetKey 里，改动会让 WorkspaceRouterProvider 重挂、TanStack Router
-                // 回到 "/"，把刚 navigate 的详情路由冲掉（renderDetail 用路由参数，不依赖 selectedId）。
-                onOpenDetail(item);
-              } else {
-                onSelect(item);
-                onStartMultiSelect(item.id);
-              }
+              openContextMenu(event, item);
             }}
             onFocus={() => onSelect(item)}
             tabIndex={0}
@@ -2690,32 +3004,45 @@ function QuickPastePanel({
               title={multiSelectMode ? "切换选择" : "进入多选"}
               type="button"
             >
-              {selectedIds.has(item.id) ? <Check size={12} /> : copiedId === item.id ? <Check size={12} /> : index - activeGroupStart >= 0 && index - activeGroupStart <= 9 ? <span className="quick-index-num">{index - activeGroupStart}</span> : null}
+              {selectedIds.has(item.id) ? (
+                <Check size={12} />
+              ) : copiedId === item.id ? (
+                <Check size={12} />
+              ) : index - activeGroupStart >= 0 && index - activeGroupStart <= 9 ? (
+                <span className="quick-index-num">{index - activeGroupStart}</span>
+              ) : (
+                <Square size={12} />
+              )}
             </button>
             <div className="quick-content">
               {(() => {
                 const parts = splitLineForMiddleEllipsis(getClipboardLine(item));
                 if (!parts.split) {
                   return (
-                    <p className="quick-line" aria-label={parts.text}>{parts.text}</p>
+                    <AppTooltip content={getItemTooltip(item)}>
+                      <p className="quick-line" aria-label={parts.text}>{parts.text}</p>
+                    </AppTooltip>
                   );
                 }
                 return (
-                  <p className="quick-line quick-line-mid" aria-label={parts.full} title={parts.full}>
-                    <span className="ql-head">{parts.head}</span>
-                    <span className="ql-tail">{parts.tail}</span>
-                  </p>
+                  <AppTooltip content={getItemTooltip(item)}>
+                    <p className="quick-line quick-line-mid" aria-label={parts.full}>
+                      <span className="ql-head">{parts.head}</span>
+                      <span className="ql-tail">{parts.tail}</span>
+                    </p>
+                  </AppTooltip>
                 );
               })()}
             </div>
             <div className={item.favorite ? "row-actions has-favorite" : "row-actions"} onClick={(event) => event.stopPropagation()}>
               {item.analysis.url || item.analysis.attachment ? (
-                <button className="icon-button" onClick={() => onOpen(item)} title="打开链接" type="button">
+                <button className="icon-button" data-tooltip="打开链接" onClick={() => onOpen(item)} title="打开链接" type="button">
                   <ExternalLink size={14} />
                 </button>
               ) : null}
               <button
                 className={item.favorite ? "quick-fav faved" : "quick-fav"}
+                data-tooltip={item.favorite ? "取消收藏" : "收藏"}
                 onClick={(event) => {
                   event.stopPropagation();
                   onFavorite(item);
@@ -2729,8 +3056,90 @@ function QuickPastePanel({
           </article>
           )}
         />
+        {contextMenu ? (
+          <ClipContextMenu
+            item={contextMenu.item}
+            multiSelectMode={multiSelectMode}
+            onClose={closeContextMenu}
+            onFavorite={onFavorite}
+            onOpen={onOpen}
+            onOpenAggregate={onOpenAggregate}
+            onPaste={onPaste}
+            onStartMultiSelect={onStartMultiSelect}
+            selectedCount={selectedIds.size}
+            x={contextMenu.x}
+            y={contextMenu.y}
+          />
+        ) : null}
       </div>
     </section>
+  );
+}
+
+function ClipContextMenu({
+  item,
+  multiSelectMode,
+  onClose,
+  onFavorite,
+  onOpen,
+  onOpenAggregate,
+  onPaste,
+  onStartMultiSelect,
+  selectedCount,
+  x,
+  y,
+}: {
+  item: ClipItem;
+  multiSelectMode: boolean;
+  onClose: () => void;
+  onFavorite: (item: ClipItem) => void;
+  onOpen: (item: ClipItem) => void;
+  onOpenAggregate: () => void;
+  onPaste: (item: ClipItem, source?: string) => void;
+  onStartMultiSelect: (id: string) => void;
+  selectedCount: number;
+  x: number;
+  y: number;
+}) {
+  const mod = getShortcutModLabel();
+  const run = (action: () => void) => {
+    action();
+    onClose();
+  };
+  return (
+    <div
+      aria-label="剪贴板项目菜单"
+      className="clip-context-menu"
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+      role="menu"
+      style={{ left: x, top: y }}
+    >
+      <button className="clip-context-item" onClick={() => run(() => onPaste(item, "context-menu"))} role="menuitem" type="button">
+        <span className="clip-context-label"><Clipboard size={13} />粘贴</span>
+        <kbd>Enter</kbd>
+      </button>
+      <button className="clip-context-item" onClick={() => run(() => onFavorite(item))} role="menuitem" type="button">
+        <span className="clip-context-label"><Heart size={13} />{item.favorite ? "取消收藏" : "收藏"}</span>
+        <kbd>{mod}+F</kbd>
+      </button>
+      <button className="clip-context-item" onClick={() => run(() => onOpen(item))} role="menuitem" type="button">
+        <span className="clip-context-label"><ExternalLink size={13} />{item.analysis.url || item.analysis.attachment ? "打开目标" : "进入详情"}</span>
+        <kbd>{mod}+J</kbd>
+      </button>
+      <div className="clip-context-separator" role="separator" />
+      {multiSelectMode && selectedCount > 1 ? (
+        <button className="clip-context-item" onClick={() => run(onOpenAggregate)} role="menuitem" type="button">
+          <span className="clip-context-label"><CheckSquare size={13} />聚合显示</span>
+          <kbd>右键</kbd>
+        </button>
+      ) : (
+        <button className="clip-context-item" onClick={() => run(() => onStartMultiSelect(item.id))} role="menuitem" type="button">
+          <span className="clip-context-label"><Square size={13} />进入多选</span>
+          <kbd>右键</kbd>
+        </button>
+      )}
+    </div>
   );
 }
 

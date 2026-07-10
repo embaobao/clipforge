@@ -6,7 +6,9 @@
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build:web": "tsc && vite build",
+    "build": "bash ./scripts/build-mac-release.sh",
+    "build:mac-release": "bash ./scripts/build-mac-release.sh",
     "preview": "vite preview",
     "tauri": "tauri"
   },

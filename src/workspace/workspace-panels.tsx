@@ -7,10 +7,10 @@ import {
   FileText,
   Image,
   RotateCcw,
-  Search,
   Table2,
   X,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { ClipItem, ClipPayloadKind } from "../App";
 
 function getPayloadKindLabel(kind: ClipPayloadKind): string {
@@ -73,6 +73,15 @@ type ClipDetailWorkspaceProps = {
   onBack: () => void;
   onCopy: (clip: ClipItem) => void;
   onOpen: (clip: ClipItem) => void;
+  quickActions?: DetailQuickAction[];
+};
+
+export type DetailQuickAction = {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  onSelect: () => void;
+  disabled?: boolean;
 };
 
 type MultiAggregateWorkspaceProps = {
@@ -94,7 +103,148 @@ function detectDetailMode(clip: ClipItem) {
   return "文本";
 }
 
-export function ClipDetailWorkspace({ clip, links, onBack, onCopy, onOpen }: ClipDetailWorkspaceProps) {
+function isLikelyMarkdown(clip: ClipItem) {
+  return clip.kind === "markdown" || clip.analysis.isMarkdown || detectDetailMode(clip) === "Markdown";
+}
+
+function splitMarkdownBlocks(content: string) {
+  const blocks: Array<{ type: string; text: string; language?: string; level?: number; cells?: string[] }> = [];
+  const lines = content.split(/\r?\n/);
+  let code: string[] = [];
+  let language = "";
+  let inCode = false;
+  for (const line of lines) {
+    const fence = line.match(/^```(\w+)?\s*$/);
+    if (fence) {
+      if (inCode) {
+        blocks.push({ type: "code", text: code.join("\n"), language });
+        code = [];
+        language = "";
+        inCode = false;
+      } else {
+        inCode = true;
+        language = fence[1] ?? "";
+      }
+      continue;
+    }
+    if (inCode) {
+      code.push(line);
+      continue;
+    }
+    if (!line.trim()) {
+      blocks.push({ type: "space", text: "" });
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      blocks.push({ type: "heading", text: heading[2], level: heading[1].length });
+      continue;
+    }
+    if (/^\|.+\|$/.test(line.trim())) {
+      const cells = line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+      if (!cells.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+        blocks.push({ type: "table-row", text: line, cells });
+      }
+      continue;
+    }
+    if (/^>\s+/.test(line)) {
+      blocks.push({ type: "quote", text: line.replace(/^>\s+/, "") });
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      blocks.push({ type: "list", text: line.replace(/^[-*]\s+/, "") });
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      blocks.push({ type: "list", text: line.replace(/^\d+\.\s+/, "") });
+      continue;
+    }
+    blocks.push({ type: "paragraph", text: line });
+  }
+  if (code.length) blocks.push({ type: "code", text: code.join("\n"), language });
+  return blocks;
+}
+
+function renderInlineText(text: string) {
+  const parts = text.split(/(\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s<>"')\]]+)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    const mdLink = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (mdLink) {
+      return (
+        <a href={mdLink[2]} key={`${part}-${index}`} onClick={(event) => event.preventDefault()} title={mdLink[2]}>
+          {mdLink[1]}
+        </a>
+      );
+    }
+    if (/^https?:\/\//i.test(part)) {
+      return (
+        <a href={part} key={`${part}-${index}`} onClick={(event) => event.preventDefault()} title={part}>
+          {part}
+        </a>
+      );
+    }
+    return <span key={`${part}-${index}`}>{part}</span>;
+  });
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  const blocks = splitMarkdownBlocks(content);
+  return (
+    <div className="markdown-preview">
+      {blocks.map((block, index) => {
+        if (block.type === "space") return <div className="md-space" key={index} />;
+        if (block.type === "heading") {
+          const Tag = `h${Math.min(block.level ?? 2, 4)}` as "h1" | "h2" | "h3" | "h4";
+          return <Tag key={index}>{renderInlineText(block.text)}</Tag>;
+        }
+        if (block.type === "code") {
+          return (
+            <pre className="md-code" key={index}>
+              {block.language ? <span>{block.language}</span> : null}
+              <code>{block.text}</code>
+            </pre>
+          );
+        }
+        if (block.type === "quote") return <blockquote key={index}>{renderInlineText(block.text)}</blockquote>;
+        if (block.type === "list") return <p className="md-list" key={index}>{renderInlineText(block.text)}</p>;
+        if (block.type === "table-row") {
+          return (
+            <div className="md-table-row" key={index}>
+              {block.cells?.map((cell, cellIndex) => <span key={`${index}-${cellIndex}`}>{renderInlineText(cell)}</span>)}
+            </div>
+          );
+        }
+        return <p key={index}>{renderInlineText(block.text)}</p>;
+      })}
+    </div>
+  );
+}
+
+function LinkPreview({ clip, links, onCopy, onOpen }: { clip: ClipItem; links: string[]; onCopy: (clip: ClipItem) => void; onOpen: (clip: ClipItem) => void }) {
+  const primaryUrl = clip.analysis.url ?? links[0] ?? clip.analysis.attachment?.target;
+  return (
+    <div className="link-preview">
+      {primaryUrl ? (
+        <div className="link-preview-card">
+          <ExternalLink size={16} />
+          <div>
+            <strong>{clip.analysis.title || primaryUrl}</strong>
+            <span>{primaryUrl}</span>
+          </div>
+          <button type="button" onClick={() => onOpen(clip)}>打开</button>
+          <button type="button" onClick={() => navigator.clipboard.writeText(primaryUrl)}>复制链接</button>
+        </div>
+      ) : null}
+      <pre>{clip.content}</pre>
+      <div className="copy-layout-grid">
+        <button type="button" onClick={() => onCopy(clip)}>复制全文</button>
+        {primaryUrl ? <button type="button" onClick={() => navigator.clipboard.writeText(primaryUrl)}>只复制链接</button> : null}
+      </div>
+    </div>
+  );
+}
+
+export function ClipDetailWorkspace({ clip, links, onBack, onCopy, onOpen, quickActions = [] }: ClipDetailWorkspaceProps) {
   if (!clip) {
     return (
       <section className="workspace-page">
@@ -143,24 +293,21 @@ export function ClipDetailWorkspace({ clip, links, onBack, onCopy, onOpen }: Cli
       </div>
 
       <div className="workspace-action-strip" aria-label="详情快捷操作">
-        {/* 当前是动作槽占位：后续接入插件后可在这里执行搜索、模板填充和结构化解析。 */}
-        <button type="button">
-          <Search size={13} />
-          Google
-        </button>
-        <button type="button">
-          <FileText size={13} />
-          模板
-        </button>
-        <button type="button">
-          <FileJson size={13} />
-          解析
-        </button>
+        {quickActions.map((action) => (
+          <button disabled={action.disabled} key={action.id} onClick={action.onSelect} type="button">
+            {action.icon}
+            {action.label}
+          </button>
+        ))}
       </div>
 
       <div className="detail-content">
         {imageUrl ? (
           <img src={imageUrl} alt={clip.analysis.title} />
+        ) : clip.analysis.url || clip.kind === "link" ? (
+          <LinkPreview clip={clip} links={links} onCopy={onCopy} onOpen={onOpen} />
+        ) : isLikelyMarkdown(clip) ? (
+          <MarkdownPreview content={clip.content} />
         ) : (
           <pre>{clip.content}</pre>
         )}

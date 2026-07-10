@@ -16,6 +16,10 @@ dist-ssr
 src-tauri/target
 src-tauri/*.log
 
+# 本地发布产物（DMG/zip/staging 等）——由 scripts/build-mac-release.sh 生成，不入库。
+# 注意：release-assets/ 是源资源（tauri.conf.json 引用），需要提交，不要忽略。
+release/
+
 # Local indexes
 .codegraph/
 

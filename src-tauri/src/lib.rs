@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -14,8 +14,10 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+#[cfg(target_os = "macos")]
+use tauri_nspanel::objc2_app_kit::{NSResponder, NSWindow as AppKitNSWindow};
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{
     tauri_panel, CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt,
@@ -138,11 +140,13 @@ fn current_source_app_macos() -> Option<SourceAppInfo> {
 
 const QUICK_PANEL_WIDTH: f64 = 420.0;
 const MANAGEMENT_PANEL_WIDTH: f64 = 760.0;
-const QUICK_PANEL_DEFAULT_HEIGHT: f64 = 488.0; // 默认 420×488（适配 0-9 分组的约 10 行）
-const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 488.0;
+const QUICK_PANEL_DEFAULT_HEIGHT: f64 = 450.0; // 默认 420×450（约 9 行列表 + 顶部/底部操作区）
+const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 450.0;
 const QUICK_PANEL_MIN_HEIGHT: f64 = 320.0;
 const QUICK_PANEL_MAX_HEIGHT: f64 = 760.0;
 const QUICK_PANEL_MARGIN: f64 = 12.0;
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const APP_BUNDLE_IDENTIFIER: &str = "app.clipforge.desktop";
 
 /// 从用户设置解析面板宽高（默认 420×488；宽 320-600，高 300-1000；0/非法用默认）。
 /// 高度 0 或缺失 = 自适应默认（按分组 10 行的 488）。
@@ -164,8 +168,11 @@ fn resolve_panel_dims() -> (f64, f64) {
 }
 const FOCUS_PREFETCH_INTERVAL_MS: u64 = 250;
 const FOCUS_CACHE_MAX_AGE_MS: i64 = 600;
+const PASTE_TARGET_CACHE_MAX_AGE_MS: i64 = 12_000;
 static LAST_NATIVE_POSITION_FAILURE_MS: AtomicI64 = AtomicI64::new(0);
 static WRITEBACK_SUPPRESS: AtomicBool = AtomicBool::new(false);
+static ACCESSIBILITY_PROMPTED: AtomicBool = AtomicBool::new(false);
+static ACCESSIBILITY_STALE_RESET: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default, Clone)]
 struct CachedFocusBounds {
@@ -211,6 +218,10 @@ pub struct NormalizedPosition {
 
 static FOCUS_BOUNDS_CACHE: std::sync::OnceLock<Arc<Mutex<CachedFocusBounds>>> =
     std::sync::OnceLock::new();
+static PASTE_TARGET_BOUNDS_CACHE: std::sync::OnceLock<Arc<Mutex<CachedFocusBounds>>> =
+    std::sync::OnceLock::new();
+static PASTE_TARGET_APP_BUNDLE_CACHE: std::sync::OnceLock<Arc<Mutex<String>>> =
+    std::sync::OnceLock::new();
 static MCP_CHILD: std::sync::OnceLock<Arc<Mutex<Option<Child>>>> = std::sync::OnceLock::new();
 static PANEL_LAST_POSITION: std::sync::OnceLock<Arc<Mutex<Option<NormalizedPosition>>>> =
     std::sync::OnceLock::new();
@@ -223,10 +234,20 @@ fn focus_bounds_cache() -> Arc<Mutex<CachedFocusBounds>> {
         .clone()
 }
 
-fn mcp_child() -> Arc<Mutex<Option<Child>>> {
-    MCP_CHILD
-        .get_or_init(|| Arc::new(Mutex::new(None)))
+fn paste_target_bounds_cache() -> Arc<Mutex<CachedFocusBounds>> {
+    PASTE_TARGET_BOUNDS_CACHE
+        .get_or_init(|| Arc::new(Mutex::new(CachedFocusBounds::default())))
         .clone()
+}
+
+fn paste_target_app_bundle_cache() -> Arc<Mutex<String>> {
+    PASTE_TARGET_APP_BUNDLE_CACHE
+        .get_or_init(|| Arc::new(Mutex::new(String::new())))
+        .clone()
+}
+
+fn mcp_child() -> Arc<Mutex<Option<Child>>> {
+    MCP_CHILD.get_or_init(|| Arc::new(Mutex::new(None))).clone()
 }
 
 fn panel_last_position() -> Arc<Mutex<Option<NormalizedPosition>>> {
@@ -333,6 +354,35 @@ struct NativeBounds {
 struct AccessibilityPermissionPayload {
     status: String,
     can_read_focused_input: bool,
+    message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TccAccessibilityRecordPayload {
+    database: String,
+    client: String,
+    client_type: i64,
+    auth_value: i64,
+    auth_label: String,
+    csreq_summary: String,
+    last_modified: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessibilityDiagnosticsPayload {
+    trusted: bool,
+    expected_bundle_identifier: String,
+    executable_path: String,
+    app_bundle_path: String,
+    code_signature_identifier: String,
+    signature_kind: String,
+    team_identifier: String,
+    cd_hash: String,
+    designated_requirement: String,
+    tcc_records: Vec<TccAccessibilityRecordPayload>,
+    tcc_query_error: Option<String>,
     message: String,
 }
 
@@ -483,12 +533,105 @@ fn write_clipboard_text(text: String) -> Result<(), String> {
 fn paste_clipboard_text<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     text: String,
+    source: Option<String>,
 ) -> Result<(), String> {
+    let trigger_source = source.unwrap_or_else(|| "unknown".to_string());
+    let char_count = text.chars().count();
+    let line_count = text.lines().count().max(1);
+    let fingerprint = content_hash("paste", text.as_bytes());
+    // osascript 级诊断（frontmost_app_for_log / focused_ui_for_log）每次都要 fork osascript，
+    // 在 IPC 线程上累计 80~230ms/次，是粘贴卡顿的主因之一。默认走轻量日志；仅在
+    // CLIPFORGE_VERBOSE_PASTE=1 时才输出完整诊断。
+    if paste_verbose_diagnostics() {
+        log_to_file(
+            "info",
+            "paste",
+            &format!(
+                "start source={} chars={} lines={} hash={} frontmost={} accessibility={}",
+                trigger_source,
+                char_count,
+                line_count,
+                &fingerprint[..8],
+                frontmost_app_for_log(),
+                paste_accessibility_status_for_log()
+            ),
+        );
+    } else {
+        log_to_file(
+            "info",
+            "paste",
+            &format!(
+                "start source={} chars={} lines={} hash={} accessibility={}",
+                trigger_source,
+                char_count,
+                line_count,
+                &fingerprint[..8],
+                paste_accessibility_status_for_log()
+            ),
+        );
+    }
+    ensure_paste_accessibility_permission()?;
     suppress_writeback_for(Duration::from_millis(700));
     write_platform_clipboard(&text)?;
     hide_panel_before_paste(&app);
-    thread::sleep(Duration::from_millis(60));
-    simulate_platform_paste()
+    // 面板已 hide，焦点释放通常很快；原 420ms 预算过大、经常空等，缩到 140ms。
+    let waited_ms = wait_for_panel_release_before_paste(&app, Duration::from_millis(140));
+    let restore_details = restore_paste_target_focus();
+    // 点击已移除（见 click_paste_target_bounds），activate 后给目标 App 一个短焦点回收窗口即可，
+    // 不再硬等 90ms。
+    thread::sleep(Duration::from_millis(40));
+    let settle_ms = paste_settle_delay_ms(&trigger_source);
+    if settle_ms > 0 {
+        thread::sleep(Duration::from_millis(settle_ms));
+    }
+    if paste_verbose_diagnostics() {
+        log_to_file(
+            "info",
+            "paste",
+            &format!(
+                "before simulated paste source={} waitedMs={} restoreFocus={} settleMs={} frontmost={} focusedUi={} panelState={}",
+                trigger_source,
+                waited_ms,
+                restore_details,
+                settle_ms,
+                frontmost_app_for_log(),
+                focused_ui_for_log(),
+                panel_state_for_log(&app)
+            ),
+        );
+    } else {
+        log_to_file(
+            "debug",
+            "paste",
+            &format!(
+                "before simulated paste source={} waitedMs={} restoreFocus={} settleMs={}",
+                trigger_source, waited_ms, restore_details, settle_ms
+            ),
+        );
+    }
+    match simulate_platform_paste() {
+        Ok(simulation_details) => {
+            log_to_file(
+                "info",
+                "paste",
+                &format!(
+                    "simulated Cmd+V posted source={} hash={} {}",
+                    trigger_source,
+                    &fingerprint[..8],
+                    simulation_details
+                ),
+            );
+            Ok(())
+        }
+        Err(error) => {
+            log_to_file(
+                "warn",
+                "paste",
+                &format!("simulated paste failed: {}", error),
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -546,8 +689,14 @@ fn capture_clip_record(
     let tags = default_tags(&analysis, &content).join(",");
     let source_app = current_source_app();
     let source_app_name = source_app.as_ref().map(|s| s.name.as_str()).unwrap_or("");
-    let source_app_bundle = source_app.as_ref().map(|s| s.bundle_id.as_str()).unwrap_or("");
-    let source_app_executable = source_app.as_ref().map(|s| s.executable_path.as_str()).unwrap_or("");
+    let source_app_bundle = source_app
+        .as_ref()
+        .map(|s| s.bundle_id.as_str())
+        .unwrap_or("");
+    let source_app_executable = source_app
+        .as_ref()
+        .map(|s| s.executable_path.as_str())
+        .unwrap_or("");
     let source_app_icon = source_app.as_ref().and_then(|s| s.icon_base64.as_deref());
     conn.execute(
         "INSERT INTO clips (
@@ -583,7 +732,10 @@ fn capture_clip_record(
     })
 }
 
-fn capture_clip_record_internal(content: &str, observed_at: i64) -> Result<CaptureClipPayload, String> {
+fn capture_clip_record_internal(
+    content: &str,
+    observed_at: i64,
+) -> Result<CaptureClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let content = content.trim();
@@ -619,8 +771,14 @@ fn capture_clip_record_internal(content: &str, observed_at: i64) -> Result<Captu
     let tags = default_tags(&analysis, content).join(",");
     let source_app = current_source_app();
     let source_app_name = source_app.as_ref().map(|s| s.name.as_str()).unwrap_or("");
-    let source_app_bundle = source_app.as_ref().map(|s| s.bundle_id.as_str()).unwrap_or("");
-    let source_app_executable = source_app.as_ref().map(|s| s.executable_path.as_str()).unwrap_or("");
+    let source_app_bundle = source_app
+        .as_ref()
+        .map(|s| s.bundle_id.as_str())
+        .unwrap_or("");
+    let source_app_executable = source_app
+        .as_ref()
+        .map(|s| s.executable_path.as_str())
+        .unwrap_or("");
     let source_app_icon = source_app.as_ref().and_then(|s| s.icon_base64.as_deref());
     conn.execute(
         "INSERT INTO clips (
@@ -657,11 +815,80 @@ fn capture_clip_record_internal(content: &str, observed_at: i64) -> Result<Captu
 }
 
 fn log_to_file(level: &str, module: &str, message: &str) {
-    let _ = append_app_log(
-        normalize_log_level(level),
-        format!("[{}] {}", module, message),
-        None,
-    );
+    // 非阻塞：只把格式化好的日志行投递给后台写线程，绝不在调用线程（往往是 IPC / 粘贴 /
+    // 唤起热路径）上做 fs::OpenOptions + write_all。show/hide/copy/paste 每次都产生若干条
+    // 日志，同步落盘是整体「停顿感」的主要来源之一。
+    if let Ok(line) = build_log_line(level, &format!("[{}] {}", module, message), "") {
+        log_writer_send(line);
+    }
+}
+
+/// 构造一条 JSON 日志行（含时间戳）。非阻塞 log_to_file 与同步的 append_app_log 命令共用。
+fn build_log_line(level: &str, message: &str, context: &str) -> Result<String, String> {
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis() as i64;
+    let entry = json!({
+        "tsMs": timestamp_ms,
+        "level": normalize_log_level(level),
+        "message": message,
+        "context": context,
+    });
+    Ok(format!(
+        "{}\n",
+        serde_json::to_string(&entry).map_err(|error| error.to_string())?
+    ))
+}
+
+/// 后台日志写线程的发送端（OnceLock + Mutex，因为 mpsc::Sender 不是 Sync）。
+/// 首次发送时 spawn 一个专用线程，批量异步落盘，把所有文件 I/O 移出热路径。
+static LOG_WRITER_TX: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<String>>> =
+    std::sync::OnceLock::new();
+
+fn log_writer_send(line: String) {
+    let mutex = LOG_WRITER_TX.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        thread::spawn(move || {
+            let mut buffer: Vec<String> = Vec::with_capacity(64);
+            while let Ok(pending) = rx.recv() {
+                buffer.push(pending);
+                // 抽干当前已就绪的行，批量写一次，减少 open/write 系统调用次数。
+                while buffer.len() < 256 {
+                    match rx.try_recv() {
+                        Ok(more) => buffer.push(more),
+                        Err(_) => break,
+                    }
+                }
+                let path = match log_path() {
+                    Ok(path) => path,
+                    Err(_) => {
+                        buffer.clear();
+                        continue;
+                    }
+                };
+                if let Some(parent) = path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if let Ok(mut file) = fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                {
+                    let mut joined = String::with_capacity(buffer.iter().map(|s| s.len()).sum());
+                    for piece in buffer.drain(..) {
+                        joined.push_str(&piece);
+                    }
+                    let _ = file.write_all(joined.as_bytes());
+                }
+                buffer.clear();
+            }
+        });
+        std::sync::Mutex::new(tx)
+    });
+    if let Ok(sender) = mutex.lock() {
+        let _ = sender.send(line);
+    }
 }
 
 fn cleanup_logs_if_needed() {
@@ -769,7 +996,13 @@ fn cleanup_app_logs() -> Result<String, String> {
 
     Ok(format!(
         "log cleaned: {} -> {} bytes, {} -> {} lines (maxSize={}MB keepRatio={} retentionDays={})",
-        file_size, new_size, original_lines, entries.len(), cfg.max_size_mb, cfg.keep_ratio, cfg.retention_days
+        file_size,
+        new_size,
+        original_lines,
+        entries.len(),
+        cfg.max_size_mb,
+        cfg.keep_ratio,
+        cfg.retention_days
     ))
 }
 
@@ -990,7 +1223,9 @@ fn hard_delete_clip_records(ids: Vec<String>) -> Result<HardDeleteClipPayload, S
         conn.execute("DELETE FROM clips WHERE id = ?1", params![id])
             .map_err(|error| error.to_string())?;
     }
-    Ok(HardDeleteClipPayload { hard_deleted_ids: ids })
+    Ok(HardDeleteClipPayload {
+        hard_deleted_ids: ids,
+    })
 }
 
 #[tauri::command]
@@ -1077,21 +1312,18 @@ fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(
         return Ok(());
     }
 
-    let window = WebviewWindowBuilder::new(
-        &app,
-        "settings",
-        WebviewUrl::App("settings.html".into()),
-    )
-    .title("ClipForge 设置")
-    .inner_size(720.0, 600.0)
-    .min_inner_size(640.0, 480.0)
-    .resizable(true)
-    .decorations(true)
-    .transparent(false)
-    .always_on_top(false)
-    .visible_on_all_workspaces(false)
-    .build()
-    .map_err(|error| error.to_string())?;
+    let window =
+        WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+            .title("ClipForge 设置")
+            .inner_size(720.0, 600.0)
+            .min_inner_size(640.0, 480.0)
+            .resizable(true)
+            .decorations(true)
+            .transparent(false)
+            .always_on_top(false)
+            .visible_on_all_workspaces(false)
+            .build()
+            .map_err(|error| error.to_string())?;
 
     let _ = window.set_size(LogicalSize::new(720.0, 600.0));
     let _ = window.set_always_on_top(false);
@@ -1167,10 +1399,32 @@ fn get_image_storage_path() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn update_clipforge_settings(input: Value) -> Result<Value, String> {
+fn update_clipforge_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    input: Value,
+) -> Result<Value, String> {
     let mut current = read_user_settings()?.settings;
     merge_json_object(&mut current, input);
     write_user_settings(current.clone())?;
+    sync_global_shortcut_registration(&app);
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        match build_tray_menu(&app) {
+            Ok(menu) => {
+                if let Err(error) = tray.set_menu(Some(menu)) {
+                    log_to_file(
+                        "warn",
+                        "tray",
+                        &format!("set_menu after settings update failed: {}", error),
+                    );
+                }
+            }
+            Err(error) => log_to_file(
+                "warn",
+                "tray",
+                &format!("rebuild menu after settings update failed: {}", error),
+            ),
+        }
+    }
     Ok(current)
 }
 
@@ -1193,24 +1447,13 @@ fn append_app_log(
     message: String,
     context: Option<String>,
 ) -> Result<String, String> {
+    // 这是前端可调用的命令（设置页日志查看/清理用到），保持同步语义并返回路径。
+    // 内部高频日志走 log_to_file（非阻塞后台线程，见 log_writer_send）。
+    let line = build_log_line(&level, &message, &context.unwrap_or_default())?;
     let path = log_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let timestamp_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis() as i64;
-    let entry = json!({
-        "tsMs": timestamp_ms,
-        "level": normalize_log_level(&level),
-        "message": message,
-        "context": context.unwrap_or_default(),
-    });
-    let line = format!(
-        "{}\n",
-        serde_json::to_string(&entry).map_err(|error| error.to_string())?
-    );
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1329,7 +1572,12 @@ fn release_focus_command<R: tauri::Runtime>(
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window is not available".to_string())?;
-    Ok(panel_trigger_payload(&window, "release-focus", "hidden", ""))
+    Ok(panel_trigger_payload(
+        &window,
+        "release-focus",
+        "hidden",
+        "",
+    ))
 }
 
 #[tauri::command]
@@ -1358,12 +1606,31 @@ fn request_accessibility_permission() -> Result<AccessibilityPermissionPayload, 
 }
 
 #[tauri::command]
+fn get_accessibility_diagnostics() -> Result<AccessibilityDiagnosticsPayload, String> {
+    get_accessibility_diagnostics_platform()
+}
+
+#[tauri::command]
+fn reset_accessibility_permission() -> Result<AccessibilityPermissionPayload, String> {
+    reset_accessibility_permission_platform()
+}
+
+#[tauri::command]
 fn start_mcp_server() -> Result<McpStatusPayload, String> {
     let child_ref = mcp_child();
     let mut child_slot = child_ref.lock().map_err(|error| error.to_string())?;
     if let Some(child) = child_slot.as_mut() {
-        if child.try_wait().map_err(|error| error.to_string())?.is_none() {
-            return Ok(mcp_status_payload(true, true, "stdio", "MCP server is already running"));
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Ok(mcp_status_payload(
+                true,
+                true,
+                "stdio",
+                "MCP server is already running",
+            ));
         }
     }
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -1375,7 +1642,12 @@ fn start_mcp_server() -> Result<McpStatusPayload, String> {
         .spawn()
         .map_err(|error| error.to_string())?;
     *child_slot = Some(child);
-    Ok(mcp_status_payload(true, true, "stdio", "MCP server started"))
+    Ok(mcp_status_payload(
+        true,
+        true,
+        "stdio",
+        "MCP server started",
+    ))
 }
 
 #[tauri::command]
@@ -1387,7 +1659,12 @@ fn stop_mcp_server() -> Result<McpStatusPayload, String> {
         let _ = child.wait();
     }
     *child_slot = None;
-    Ok(mcp_status_payload(true, false, "stdio", "MCP server stopped"))
+    Ok(mcp_status_payload(
+        true,
+        false,
+        "stdio",
+        "MCP server stopped",
+    ))
 }
 
 #[tauri::command]
@@ -1395,14 +1672,26 @@ fn get_mcp_status() -> Result<McpStatusPayload, String> {
     let child_ref = mcp_child();
     let mut child_slot = child_ref.lock().map_err(|error| error.to_string())?;
     let running = if let Some(child) = child_slot.as_mut() {
-        child.try_wait().map_err(|error| error.to_string())?.is_none()
+        child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
     } else {
         false
     };
     if !running {
         *child_slot = None;
     }
-    Ok(mcp_status_payload(true, running, "stdio", if running { "MCP server running" } else { "MCP server idle" }))
+    Ok(mcp_status_payload(
+        true,
+        running,
+        "stdio",
+        if running {
+            "MCP server running"
+        } else {
+            "MCP server idle"
+        },
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -1443,6 +1732,223 @@ fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> 
         }
     }
     payload
+}
+
+#[cfg(target_os = "macos")]
+fn snapshot_paste_target_bounds(reason: &str, fallback_point: Option<(f64, f64)>) {
+    let target_app = frontmost_app_identity();
+    if let Some((_, bundle_id)) = &target_app {
+        if let Ok(mut slot) = paste_target_app_bundle_cache().lock() {
+            *slot = bundle_id.clone();
+        }
+    } else if let Ok(mut slot) = paste_target_app_bundle_cache().lock() {
+        slot.clear();
+    }
+    let target_app_log = target_app
+        .as_ref()
+        .map(|(name, bundle_id)| format!("{}|{}", name, bundle_id))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let payload = native_focused_input_bounds().ok();
+    let Some(bounds) = payload else {
+        if let Some((x, y)) = fallback_point {
+            let cache = CachedFocusBounds {
+                x,
+                y,
+                width: 1.0,
+                height: 1.0,
+                source: "cursor-fallback".to_string(),
+                valid: true,
+                updated_at: now_millis().unwrap_or(0),
+            };
+            if let Ok(mut slot) = paste_target_bounds_cache().lock() {
+                *slot = cache;
+            }
+            log_to_file(
+                "info",
+                "paste-focus",
+                &format!(
+                    "snapshot fallback reason={} source=cursor-fallback point=({},{}) frontmost={}",
+                    reason, x, y, target_app_log
+                ),
+            );
+        } else {
+            if let Ok(mut slot) = paste_target_bounds_cache().lock() {
+                *slot = CachedFocusBounds::default();
+            }
+            log_to_file(
+                "debug",
+                "paste-focus",
+                &format!(
+                    "snapshot skipped reason={} no focused bounds frontmost={}",
+                    reason, target_app_log
+                ),
+            );
+        }
+        return;
+    };
+    let valid = bounds.width > 0.0 && bounds.height > 0.0 && bounds.source != "fallback";
+    if !valid {
+        if let Ok(mut slot) = paste_target_bounds_cache().lock() {
+            *slot = CachedFocusBounds::default();
+        }
+        log_to_file(
+            "debug",
+            "paste-focus",
+            &format!(
+                "snapshot skipped reason={} invalid bounds=({},{},{},{}) source={} frontmost={}",
+                reason,
+                bounds.x,
+                bounds.y,
+                bounds.width,
+                bounds.height,
+                bounds.source,
+                target_app_log
+            ),
+        );
+        return;
+    }
+    let cache = CachedFocusBounds {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height,
+        source: bounds.source.to_string(),
+        valid: true,
+        updated_at: now_millis().unwrap_or(0),
+    };
+    if let Ok(mut slot) = paste_target_bounds_cache().lock() {
+        *slot = cache.clone();
+    }
+    log_to_file(
+        "info",
+        "paste-focus",
+        &format!(
+            "snapshot reason={} source={} bounds=({},{},{},{}) point=({},{}) frontmost={}",
+            reason,
+            bounds.source,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            paste_target_click_point(&cache).0,
+            paste_target_click_point(&cache).1,
+            target_app_log
+        ),
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+fn snapshot_paste_target_bounds(_reason: &str, _fallback_point: Option<(f64, f64)>) {}
+
+#[cfg(target_os = "macos")]
+fn restore_paste_target_focus() -> String {
+    let activation = activate_paste_target_app();
+    let cache = match paste_target_bounds_cache().lock() {
+        Ok(cache) => cache.clone(),
+        Err(error) => return format!("restore=lock-failed {} error={}", activation, error),
+    };
+    if !cache.valid {
+        return format!("restore=skipped reason=no-valid-target {}", activation);
+    }
+    let age_ms = now_millis().unwrap_or(0) - cache.updated_at;
+    if age_ms > PASTE_TARGET_CACHE_MAX_AGE_MS {
+        return format!(
+            "restore=skipped reason=stale ageMs={} {}",
+            age_ms, activation
+        );
+    }
+    // 点击已禁用（见 click_paste_target_bounds 的说明）；这里仅 activate 恢复焦点，
+    // 仍保留一次调用以维持调用链，并记录快照坐标供排查。
+    let click_result = click_paste_target_bounds(&cache);
+    if let Err(error) = click_result {
+        return format!(
+            "restore=failed source={} ageMs={} {} error={}",
+            cache.source, age_ms, activation, error
+        );
+    }
+    format!(
+        "restore=activate-only source={} ageMs={} {} bounds=({},{},{},{})",
+        cache.source, age_ms, activation, cache.x, cache.y, cache.width, cache.height
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn frontmost_app_identity() -> Option<(String, String)> {
+    let script = r#"
+tell application "System Events"
+  set frontApp to first application process whose frontmost is true
+  return (name of frontApp) & "|" & (bundle identifier of frontApp)
+end tell
+"#;
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (name, bundle_id) = raw.split_once('|')?;
+    if bundle_id.trim().is_empty() || bundle_id.trim() == APP_BUNDLE_IDENTIFIER {
+        return None;
+    }
+    Some((name.trim().to_string(), bundle_id.trim().to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn activate_paste_target_app() -> String {
+    let bundle_id = match paste_target_app_bundle_cache().lock() {
+        Ok(value) => value.clone(),
+        Err(error) => return format!("activate=lock-failed error={}", error),
+    };
+    if bundle_id.trim().is_empty() {
+        return "activate=skipped reason=no-target-app".to_string();
+    }
+    let escaped = bundle_id.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("tell application id \"{}\" to activate", escaped);
+    match Command::new("osascript").arg("-e").arg(script).output() {
+        Ok(output) if output.status.success() => format!("activate=ok bundle={}", bundle_id),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr)
+                .trim()
+                .replace('\n', " ");
+            format!(
+                "activate=failed bundle={} status={} error={}",
+                bundle_id, output.status, stderr
+            )
+        }
+        Err(error) => format!("activate=failed bundle={} error={}", bundle_id, error),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn restore_paste_target_focus() -> String {
+    "restore=unsupported".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn paste_target_click_point(cache: &CachedFocusBounds) -> (f64, f64) {
+    if cache.source == "cursor-fallback" {
+        return (cache.x, cache.y);
+    }
+    let x = if cache.source == "focused-caret" {
+        cache.x + (cache.width / 2.0).clamp(1.0, 8.0)
+    } else {
+        cache.x + (cache.width / 2.0)
+    };
+    let y = cache.y + (cache.height / 2.0).clamp(1.0, cache.height.max(1.0));
+    (x, y)
+}
+
+#[cfg(target_os = "macos")]
+fn click_paste_target_bounds(_cache: &CachedFocusBounds) -> Result<(), String> {
+    // 故意不再合成鼠标点击。旧实现会在【快照后最多 12 秒】的屏幕坐标上 post 真实左键点击，
+    // 期间用户切窗 / 滚动 / 弹层，点击就会落到错误控件（提交 / 删除 / 链接 / 其它 App），
+    // 不可逆且有数据风险。目标输入框的键盘焦点改由 activate_paste_target_app() 恢复
+    // （activate 会把焦点交回该 App 面板出现前最后聚焦的控件）。保留签名以最小化改动面。
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1517,7 +2023,10 @@ fn parse_native_bounds(raw: &str, source: &'static str) -> Option<NativeBounds> 
     })
 }
 
-fn parse_native_bounds_with_source(raw: &str, fallback_source: &'static str) -> Option<NativeBounds> {
+fn parse_native_bounds_with_source(
+    raw: &str,
+    fallback_source: &'static str,
+) -> Option<NativeBounds> {
     let trimmed = raw.trim();
     let source = if trimmed.ends_with(",focused-caret") {
         "focused-caret"
@@ -1546,7 +2055,8 @@ fn check_accessibility_permission_platform() -> Result<AccessibilityPermissionPa
         Ok(AccessibilityPermissionPayload {
             status: "missing".to_string(),
             can_read_focused_input: false,
-            message: "未获得辅助功能权限。主面板会快速显示在当前屏幕右侧，不再等待输入位置探测。".to_string(),
+            message: "未获得辅助功能权限。主面板会快速显示在当前屏幕右侧，不再等待输入位置探测。"
+                .to_string(),
         })
     }
 }
@@ -1576,9 +2086,12 @@ fn open_accessibility_settings_platform() -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn request_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
-    let prompt_key = unsafe { core_foundation::string::CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt) };
+    let prompt_key = unsafe {
+        core_foundation::string::CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt)
+    };
     let prompt_value = CFBoolean::true_value();
-    let options = CFDictionary::from_CFType_pairs(&[(prompt_key.as_CFType(), prompt_value.as_CFType())]);
+    let options =
+        CFDictionary::from_CFType_pairs(&[(prompt_key.as_CFType(), prompt_value.as_CFType())]);
     let trusted = unsafe { AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef()) != 0 };
     if trusted {
         Ok(AccessibilityPermissionPayload {
@@ -1591,7 +2104,8 @@ fn request_accessibility_permission_platform() -> Result<AccessibilityPermission
         Ok(AccessibilityPermissionPayload {
             status: "missing".to_string(),
             can_read_focused_input: false,
-            message: "已请求 macOS 辅助功能授权。请在系统设置中勾选 ClipForge 或当前 dev 进程。".to_string(),
+            message: "已请求 macOS 辅助功能授权。请在系统设置中勾选 ClipForge 或当前 dev 进程。"
+                .to_string(),
         })
     }
 }
@@ -1599,6 +2113,357 @@ fn request_accessibility_permission_platform() -> Result<AccessibilityPermission
 #[cfg(not(target_os = "macos"))]
 fn request_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
     check_accessibility_permission_platform()
+}
+
+#[cfg(target_os = "macos")]
+fn get_accessibility_diagnostics_platform() -> Result<AccessibilityDiagnosticsPayload, String> {
+    let trusted = unsafe { AXIsProcessTrusted() != 0 };
+    let executable_path = std::env::current_exe()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let app_bundle_path = current_app_bundle_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let target_for_codesign = if app_bundle_path.is_empty() {
+        executable_path.clone()
+    } else {
+        app_bundle_path.clone()
+    };
+    let signature_output =
+        command_output_for_log("codesign", &["-dv", "--verbose=4", &target_for_codesign])
+            .unwrap_or_default();
+    let requirement_output =
+        command_output_for_log("codesign", &["-d", "-r-", &target_for_codesign])
+            .unwrap_or_default();
+    let code_signature_identifier = parse_codesign_field(&signature_output, "Identifier");
+    let signature_kind = parse_codesign_field(&signature_output, "Signature");
+    let team_identifier = parse_codesign_field(&signature_output, "TeamIdentifier");
+    let cd_hash = parse_codesign_field(&signature_output, "CDHash");
+    let designated_requirement = requirement_output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("# designated => "))
+        .unwrap_or_default()
+        .to_string();
+    let (tcc_records, tcc_query_error) = query_accessibility_tcc_records();
+    let message = if trusted {
+        "当前运行的 ClipForge 已获得辅助功能权限。".to_string()
+    } else if tcc_records.is_empty() {
+        "当前运行的 ClipForge 未在 macOS 辅助功能授权库中找到匹配记录。请确认系统设置里勾选的是这里显示的当前应用路径。".to_string()
+    } else {
+        "检测到 ClipForge 相关授权记录，但当前进程仍未被系统信任；通常是旧构建/旧路径/旧签名残留，需要重置后重新授权。".to_string()
+    };
+    Ok(AccessibilityDiagnosticsPayload {
+        trusted,
+        expected_bundle_identifier: APP_BUNDLE_IDENTIFIER.to_string(),
+        executable_path,
+        app_bundle_path,
+        code_signature_identifier,
+        signature_kind,
+        team_identifier,
+        cd_hash,
+        designated_requirement,
+        tcc_records,
+        tcc_query_error,
+        message,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn get_accessibility_diagnostics_platform() -> Result<AccessibilityDiagnosticsPayload, String> {
+    Ok(AccessibilityDiagnosticsPayload {
+        trusted: false,
+        expected_bundle_identifier: APP_BUNDLE_IDENTIFIER.to_string(),
+        executable_path: std::env::current_exe()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        app_bundle_path: String::new(),
+        code_signature_identifier: "unsupported".to_string(),
+        signature_kind: "unsupported".to_string(),
+        team_identifier: "unsupported".to_string(),
+        cd_hash: String::new(),
+        designated_requirement: String::new(),
+        tcc_records: Vec::new(),
+        tcc_query_error: None,
+        message: "当前平台不使用 macOS TCC 辅助功能授权。".to_string(),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn reset_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
+    let status = Command::new("tccutil")
+        .args(["reset", "Accessibility", APP_BUNDLE_IDENTIFIER])
+        .status()
+        .map_err(|error| error.to_string())?;
+    if !status.success() {
+        return Err(format!(
+            "tccutil reset Accessibility {} failed: {}",
+            APP_BUNDLE_IDENTIFIER, status
+        ));
+    }
+    log_to_file(
+        "info",
+        "accessibility",
+        &format!(
+            "reset Accessibility permission for {}",
+            APP_BUNDLE_IDENTIFIER
+        ),
+    );
+    request_accessibility_permission_platform()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn reset_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
+    check_accessibility_permission_platform()
+}
+
+#[cfg(target_os = "macos")]
+fn current_app_bundle_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let macos_dir = exe.parent()?;
+    if macos_dir.file_name()?.to_string_lossy() != "MacOS" {
+        return None;
+    }
+    let contents_dir = macos_dir.parent()?;
+    if contents_dir.file_name()?.to_string_lossy() != "Contents" {
+        return None;
+    }
+    contents_dir.parent().map(PathBuf::from)
+}
+
+#[cfg(target_os = "macos")]
+fn command_output_for_log(program: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| error.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Ok(format!("{}{}", stdout, stderr))
+}
+
+#[cfg(target_os = "macos")]
+fn parse_codesign_field(output: &str, key: &str) -> String {
+    let prefix = format!("{}=", key);
+    output
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix(&prefix)
+                .map(|value| value.to_string())
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn query_accessibility_tcc_records() -> (Vec<TccAccessibilityRecordPayload>, Option<String>) {
+    let mut records = Vec::new();
+    let mut errors = Vec::new();
+    for (database, path) in accessibility_tcc_database_paths() {
+        match query_accessibility_tcc_records_from_db(&database, &path) {
+            Ok(mut next) => records.append(&mut next),
+            Err(error) => errors.push(format!("{}: {}", database, error)),
+        }
+    }
+    let error = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join("; "))
+    };
+    (records, error)
+}
+
+#[cfg(target_os = "macos")]
+fn accessibility_tcc_database_paths() -> Vec<(String, PathBuf)> {
+    let mut paths = Vec::new();
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        paths.push((
+            "user".to_string(),
+            home.join("Library")
+                .join("Application Support")
+                .join("com.apple.TCC")
+                .join("TCC.db"),
+        ));
+    }
+    paths.push((
+        "system".to_string(),
+        PathBuf::from("/Library")
+            .join("Application Support")
+            .join("com.apple.TCC")
+            .join("TCC.db"),
+    ));
+    paths
+}
+
+#[cfg(target_os = "macos")]
+fn query_accessibility_tcc_records_from_db(
+    database: &str,
+    path: &PathBuf,
+) -> Result<Vec<TccAccessibilityRecordPayload>, String> {
+    let conn = match Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(conn) => conn,
+        Err(error) => return Err(format!("{}: {}", path.display(), error)),
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT client, client_type, auth_value, length(csreq), hex(csreq), datetime(last_modified, 'unixepoch') \
+         FROM access \
+         WHERE service = 'kTCCServiceAccessibility' \
+           AND (lower(client) LIKE '%clipforge%' OR client = ?1) \
+         ORDER BY last_modified DESC \
+         LIMIT 12",
+    ) {
+        Ok(stmt) => stmt,
+        Err(error) => return Err(error.to_string()),
+    };
+    let rows = match stmt.query_map([APP_BUNDLE_IDENTIFIER], |row| {
+        let auth_value: i64 = row.get(2)?;
+        let csreq_len: Option<i64> = row.get(3)?;
+        let csreq_hex: Option<String> = row.get(4)?;
+        Ok(TccAccessibilityRecordPayload {
+            database: database.to_string(),
+            client: row.get(0)?,
+            client_type: row.get(1)?,
+            auth_value,
+            auth_label: tcc_auth_label(auth_value).to_string(),
+            csreq_summary: summarize_tcc_csreq(
+                csreq_len.unwrap_or(0),
+                csreq_hex.as_deref().unwrap_or(""),
+            ),
+            last_modified: row.get(5)?,
+        })
+    }) {
+        Ok(rows) => rows,
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut records = Vec::new();
+    for row in rows {
+        match row {
+            Ok(record) => records.push(record),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(records)
+}
+
+#[cfg(target_os = "macos")]
+fn summarize_tcc_csreq(byte_len: i64, hex: &str) -> String {
+    let normalized = hex.trim().to_ascii_lowercase();
+    if normalized.is_empty() || byte_len <= 0 {
+        return "none".to_string();
+    }
+    if normalized.starts_with("fade0c0000000028000000010000000800000014") && normalized.len() >= 80
+    {
+        return format!("cdhash {}", &normalized[40..80]);
+    }
+    let identifier_hex = APP_BUNDLE_IDENTIFIER
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+    if normalized.contains(&identifier_hex) {
+        return format!("identifier {}", APP_BUNDLE_IDENTIFIER);
+    }
+    format!("blob {} bytes", byte_len)
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)] // 保留供 get_accessibility_diagnostics 只读诊断使用；已从粘贴热路径移除自动调用
+fn current_code_signature_cd_hash() -> Option<String> {
+    let executable_path = std::env::current_exe().ok()?;
+    let target_for_codesign = current_app_bundle_path().unwrap_or(executable_path);
+    let output = command_output_for_log(
+        "codesign",
+        &["-dv", "--verbose=4", &target_for_codesign.to_string_lossy()],
+    )
+    .ok()?;
+    let cd_hash = parse_codesign_field(&output, "CDHash").to_ascii_lowercase();
+    if cd_hash.is_empty() {
+        None
+    } else {
+        Some(cd_hash)
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)] // 保留供只读诊断使用；不再在粘贴路径自动触发（避免清掉自身授权）
+fn stale_accessibility_cdhash_record(
+    current_cd_hash: &str,
+) -> Option<TccAccessibilityRecordPayload> {
+    if current_cd_hash.is_empty() {
+        return None;
+    }
+    let (records, _) = query_accessibility_tcc_records();
+    records.into_iter().find(|record| {
+        record.auth_value == 2
+            && record.csreq_summary.starts_with("cdhash ")
+            && !record.csreq_summary.ends_with(current_cd_hash)
+    })
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)] // 仅保留给设置页「显式重置权限」调用；粘贴热路径不再自动 reset（会清掉自身授权）
+fn reset_stale_accessibility_permission(
+    record: &TccAccessibilityRecordPayload,
+    current_cd_hash: &str,
+) {
+    if ACCESSIBILITY_STALE_RESET.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    log_to_file(
+        "warn",
+        "accessibility",
+        &format!(
+            "stale TCC Accessibility record detected: db={} client={} auth={} csreq={} currentCdHash={}; resetting bundle id once",
+            record.database, record.client, record.auth_label, record.csreq_summary, current_cd_hash
+        ),
+    );
+    match Command::new("tccutil")
+        .args(["reset", "Accessibility", APP_BUNDLE_IDENTIFIER])
+        .status()
+    {
+        Ok(status) if status.success() => {
+            log_to_file(
+                "info",
+                "accessibility",
+                &format!(
+                    "stale Accessibility permission reset for {}",
+                    APP_BUNDLE_IDENTIFIER
+                ),
+            );
+        }
+        Ok(status) => {
+            log_to_file(
+                "warn",
+                "accessibility",
+                &format!(
+                    "stale Accessibility permission reset failed for {}: {}",
+                    APP_BUNDLE_IDENTIFIER, status
+                ),
+            );
+        }
+        Err(error) => {
+            log_to_file(
+                "warn",
+                "accessibility",
+                &format!(
+                    "stale Accessibility permission reset command failed: {}",
+                    error
+                ),
+            );
+        }
+    }
+}
+
+fn tcc_auth_label(value: i64) -> &'static str {
+    match value {
+        0 => "denied",
+        1 => "unknown",
+        2 => "allowed",
+        3 => "limited",
+        _ => "unknown",
+    }
 }
 
 fn normalize_log_level(value: &str) -> String {
@@ -1800,18 +2665,38 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     .map_err(|error| error.to_string())?;
     ensure_column(conn, "clips", "note", "TEXT NOT NULL DEFAULT ''")?;
     ensure_column(conn, "clips", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "clips", "payload_kind", "TEXT NOT NULL DEFAULT 'text'")?;
+    ensure_column(
+        conn,
+        "clips",
+        "payload_kind",
+        "TEXT NOT NULL DEFAULT 'text'",
+    )?;
     ensure_column(conn, "clips", "use_count", "INTEGER NOT NULL DEFAULT 1")?;
     ensure_column(conn, "clips", "source_app_name", "TEXT NOT NULL DEFAULT ''")?;
-    ensure_column(conn, "clips", "source_app_bundle", "TEXT NOT NULL DEFAULT ''")?;
-    ensure_column(conn, "clips", "source_app_executable", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(
+        conn,
+        "clips",
+        "source_app_bundle",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "clips",
+        "source_app_executable",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
     ensure_column(conn, "clips", "source_app_icon", "TEXT")?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_pinned_recent ON clips(pinned DESC, last_seen_at DESC)", [])
         .map_err(|error| error.to_string())?;
     Ok(())
 }
 
-fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str) -> Result<(), String> {
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
     let mut stmt = conn
         .prepare(&format!("PRAGMA table_info({table})"))
         .map_err(|error| error.to_string())?;
@@ -1823,14 +2708,22 @@ fn ensure_column(conn: &Connection, table: &str, column: &str, definition: &str)
             return Ok(());
         }
     }
-    conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])
-        .map_err(|error| error.to_string())?;
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
 fn content_hash(kind: &str, content: &[u8]) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in kind.as_bytes().iter().chain([b':'].iter()).chain(content.iter()) {
+    for byte in kind
+        .as_bytes()
+        .iter()
+        .chain([b':'].iter())
+        .chain(content.iter())
+    {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
@@ -1840,10 +2733,16 @@ fn content_hash(kind: &str, content: &[u8]) -> String {
 fn detect_payload_kind(content: &str) -> String {
     let trimmed = content.trim();
     let lower = trimmed.to_lowercase();
-    if lower.starts_with("<!doctype html") || lower.starts_with("<html") || lower.contains("<body") {
+    if lower.starts_with("<!doctype html") || lower.starts_with("<html") || lower.contains("<body")
+    {
         return "html".to_string();
     }
-    if lower.starts_with("file://") || (trimmed.lines().all(|line| line.starts_with('/') || line.starts_with("~/")) && trimmed.contains('.')) {
+    if lower.starts_with("file://")
+        || (trimmed
+            .lines()
+            .all(|line| line.starts_with('/') || line.starts_with("~/"))
+            && trimmed.contains('.'))
+    {
         return "file".to_string();
     }
     if ["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"]
@@ -1858,7 +2757,11 @@ fn detect_payload_kind(content: &str) -> String {
     if looks_like_chart_data(trimmed) {
         return "chart".to_string();
     }
-    if trimmed.contains('\t') || trimmed.lines().any(|line| line.starts_with('|') && line.ends_with('|')) {
+    if trimmed.contains('\t')
+        || trimmed
+            .lines()
+            .any(|line| line.starts_with('|') && line.ends_with('|'))
+    {
         return "table".to_string();
     }
     if trimmed.starts_with('#') || trimmed.contains("```") || trimmed.contains("\n- ") {
@@ -1874,16 +2777,33 @@ fn looks_like_chart_data(content: &str) -> bool {
     }
     // CSV with header and numeric columns
     if lines.iter().all(|line| line.split(',').count() >= 2) {
-        let numeric_cells = lines[1..].iter().flat_map(|line| line.split(',')).filter(|cell| cell.trim().parse::<f64>().is_ok()).count();
-        let total_cells = lines[1..].iter().map(|line| line.split(',').count()).sum::<usize>();
+        let numeric_cells = lines[1..]
+            .iter()
+            .flat_map(|line| line.split(','))
+            .filter(|cell| cell.trim().parse::<f64>().is_ok())
+            .count();
+        let total_cells = lines[1..]
+            .iter()
+            .map(|line| line.split(',').count())
+            .sum::<usize>();
         if total_cells > 0 && numeric_cells >= total_cells / 2 {
             return true;
         }
     }
     // Pipe-separated table with numeric data
-    if lines.iter().all(|line| line.starts_with('|') && line.ends_with('|')) {
-        let numeric_cells = lines[1..].iter().flat_map(|line| line.split('|')).filter(|cell| cell.trim().parse::<f64>().is_ok()).count();
-        let total_cells = lines[1..].iter().map(|line| line.split('|').count().saturating_sub(2)).sum::<usize>();
+    if lines
+        .iter()
+        .all(|line| line.starts_with('|') && line.ends_with('|'))
+    {
+        let numeric_cells = lines[1..]
+            .iter()
+            .flat_map(|line| line.split('|'))
+            .filter(|cell| cell.trim().parse::<f64>().is_ok())
+            .count();
+        let total_cells = lines[1..]
+            .iter()
+            .map(|line| line.split('|').count().saturating_sub(2))
+            .sum::<usize>();
         if total_cells > 0 && numeric_cells >= total_cells / 2 {
             return true;
         }
@@ -2089,7 +3009,10 @@ fn export_items(conn: &Connection, include_deleted: bool) -> Result<Vec<Value>, 
     Ok(items)
 }
 
-fn import_items(conn: &Connection, items: Vec<ImportClipInput>) -> Result<ImportClipPayload, String> {
+fn import_items(
+    conn: &Connection,
+    items: Vec<ImportClipInput>,
+) -> Result<ImportClipPayload, String> {
     let mut imported = 0;
     let mut skipped = 0;
     for item in items {
@@ -2101,9 +3024,7 @@ fn import_items(conn: &Connection, items: Vec<ImportClipInput>) -> Result<Import
         let now = now_millis()?;
         let payload_kind = detect_payload_kind(&content);
         let hash = content_hash(&payload_kind, content.as_bytes());
-        let id = item
-            .id
-            .unwrap_or_else(|| format!("clip_{hash}_{now}"));
+        let id = item.id.unwrap_or_else(|| format!("clip_{hash}_{now}"));
         let analysis = analyze_clip(&content, item.source_label.as_deref().unwrap_or("Import"));
         let tags = item
             .tags
@@ -2167,10 +3088,7 @@ fn read_platform_clipboard() -> Result<String, String> {
         if let Ok(text) = read_command("pbpaste", &[]) {
             return Ok(text);
         }
-        return read_command(
-            "osascript",
-            &["-e", "the clipboard as «class utf8»"],
-        );
+        return read_command("osascript", &["-e", "the clipboard as «class utf8»"]);
     }
 
     #[cfg(target_os = "windows")]
@@ -2325,16 +3243,276 @@ fn should_skip_writeback() -> bool {
 }
 
 #[cfg(target_os = "macos")]
+fn paste_accessibility_status_for_log() -> String {
+    if unsafe { AXIsProcessTrusted() != 0 } {
+        "granted".to_string()
+    } else {
+        "missing".to_string()
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn paste_accessibility_status_for_log() -> String {
+    "unsupported".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn ensure_paste_accessibility_permission() -> Result<(), String> {
+    if unsafe { AXIsProcessTrusted() != 0 } {
+        return Ok(());
+    }
+    // 注意：绝不在粘贴热路径上自动 `tccutil reset`。那会清掉 ClipForge 自己的辅助功能授权，
+    // 之后 AXIsProcessTrusted() 持续为 false，导致每次粘贴都被这里 abort —— 自我放大成
+    // 永久粘贴失败，直到用户重新授权并重启。stale cdhash 的只读检测 / 显式重置只在
+    // get_accessibility_diagnostics 与手动「重置权限」里进行。
+    if ACCESSIBILITY_PROMPTED.swap(true, Ordering::SeqCst) {
+        log_to_file(
+            "warn",
+            "paste",
+            "macOS accessibility permission still missing; prompt already requested in this process",
+        );
+        return Err(
+            "macOS 辅助功能权限仍未对当前 ClipForge 生效。请在系统设置 > 隐私与安全性 > 辅助功能中勾选当前 ClipForge，然后重启 ClipForge 或在设置页刷新状态。".to_string(),
+        );
+    }
+    log_to_file(
+        "warn",
+        "paste",
+        "macOS accessibility permission missing before paste; requesting permission prompt",
+    );
+    let permission = request_accessibility_permission_platform()?;
+    if permission.status == "granted" {
+        return Ok(());
+    }
+    Err(format!(
+        "macOS 辅助功能权限未开启，系统会拦截自动粘贴按键。请在系统设置 > 隐私与安全性 > 辅助功能中允许 ClipForge 后重试。status={}",
+        permission.status
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_paste_accessibility_permission() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn frontmost_app_for_log() -> String {
+    let script = r#"
+tell application "System Events"
+    set frontApp to first application process whose frontmost is true
+    set appName to name of frontApp
+    set bundleId to bundle identifier of frontApp
+    return appName & "|" & bundleId
+end tell
+"#;
+    let output = Command::new("osascript").arg("-e").arg(script).output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if raw.is_empty() {
+                "unknown".to_string()
+            } else {
+                raw
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                "unavailable".to_string()
+            } else {
+                format!("unavailable:{}", stderr.replace('\n', " "))
+            }
+        }
+        Err(error) => format!("unavailable:{}", error),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn frontmost_app_for_log() -> String {
+    "unsupported".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn focused_ui_for_log() -> String {
+    let script = r#"
+tell application "System Events"
+    set frontApp to first application process whose frontmost is true
+    set appName to name of frontApp
+    set bundleId to bundle identifier of frontApp
+    try
+        set focusedElement to value of attribute "AXFocusedUIElement" of frontApp
+        set roleValue to ""
+        set subroleValue to ""
+        set titleValue to ""
+        try
+            set roleValue to value of attribute "AXRole" of focusedElement
+        end try
+        try
+            set subroleValue to value of attribute "AXSubrole" of focusedElement
+        end try
+        try
+            set titleValue to value of attribute "AXTitle" of focusedElement
+        end try
+        return appName & "|" & bundleId & "|role=" & roleValue & "|subrole=" & subroleValue & "|title=" & titleValue
+    on error errMsg
+        return appName & "|" & bundleId & "|focusError=" & errMsg
+    end try
+end tell
+"#;
+    let output = Command::new("osascript").arg("-e").arg(script).output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if raw.is_empty() {
+                "unknown".to_string()
+            } else {
+                raw.replace('\n', " ")
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                "unavailable".to_string()
+            } else {
+                format!("unavailable:{}", stderr.replace('\n', " "))
+            }
+        }
+        Err(error) => format!("unavailable:{}", error),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focused_ui_for_log() -> String {
+    "unsupported".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn panel_state_for_log<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
+    if let Ok(panel) = app.get_webview_panel("main") {
+        return format!("panelVisible={}", panel.is_visible());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        return format!(
+            "windowVisible={} focused={}",
+            window.is_visible().unwrap_or(false),
+            window.is_focused().unwrap_or(false)
+        );
+    }
+    "unavailable".to_string()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn panel_state_for_log<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
+    if let Some(window) = app.get_webview_window("main") {
+        return format!(
+            "windowVisible={} focused={}",
+            window.is_visible().unwrap_or(false),
+            window.is_focused().unwrap_or(false)
+        );
+    }
+    "unavailable".to_string()
+}
+
+fn wait_for_panel_release_before_paste<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    timeout: Duration,
+) -> u128 {
+    if is_panel_pinned() {
+        return 0;
+    }
+    let started = std::time::Instant::now();
+    loop {
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            return elapsed.as_millis();
+        }
+        let released = panel_released_for_paste(app);
+        if released {
+            return elapsed.as_millis();
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn panel_released_for_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    if let Ok(panel) = app.get_webview_panel("main") {
+        if panel.is_visible() {
+            return false;
+        }
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        return !window.is_focused().unwrap_or(false);
+    }
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+fn panel_released_for_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    if let Some(window) = app.get_webview_window("main") {
+        return !window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(false);
+    }
+    true
+}
+
+/// 粘贴热路径是否输出 osascript 级诊断（frontmost/focusedUi 每次 fork osascript ~80-230ms）。
+/// 默认关闭；排查时设环境变量 CLIPFORGE_VERBOSE_PASTE=1 开启。
+fn paste_verbose_diagnostics() -> bool {
+    std::env::var("CLIPFORGE_VERBOSE_PASTE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn paste_settle_delay_ms(source: &str) -> u64 {
+    match source {
+        "cmd-number" => 50,
+        "enter" => 40,
+        "click" => 30,
+        _ => 40,
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if is_panel_pinned() {
+        log_to_file(
+            "info",
+            "paste",
+            "hide before paste skipped because panel is pinned",
+        );
         return;
     }
     if let Ok(panel) = app.get_webview_panel("main") {
+        log_to_file(
+            "debug",
+            "paste",
+            &format!(
+                "hide panel before paste: visibleBefore={}",
+                panel.is_visible()
+            ),
+        );
         panel.resign_key_window();
         panel.hide();
+        log_to_file(
+            "debug",
+            "paste",
+            &format!(
+                "hide panel before paste: visibleAfter={}",
+                panel.is_visible()
+            ),
+        );
         return;
     }
     if let Some(window) = app.get_webview_window("main") {
+        log_to_file(
+            "debug",
+            "paste",
+            &format!(
+                "hide window before paste fallback: visibleBefore={} focusedBefore={}",
+                window.is_visible().unwrap_or(false),
+                window.is_focused().unwrap_or(false)
+            ),
+        );
         let _ = window.hide();
     }
 }
@@ -2342,32 +3520,125 @@ fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 #[cfg(not(target_os = "macos"))]
 fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if is_panel_pinned() {
+        log_to_file(
+            "info",
+            "paste",
+            "hide before paste skipped because panel is pinned",
+        );
         return;
     }
     if let Some(window) = app.get_webview_window("main") {
+        log_to_file(
+            "debug",
+            "paste",
+            &format!(
+                "hide window before paste: visibleBefore={} focusedBefore={}",
+                window.is_visible().unwrap_or(false),
+                window.is_focused().unwrap_or(false)
+            ),
+        );
         let _ = window.hide();
     }
 }
 
 #[cfg(target_os = "macos")]
-fn simulate_platform_paste() -> Result<(), String> {
+fn simulate_platform_paste() -> Result<String, String> {
+    let mut errors = Vec::new();
+    match simulate_cg_event_paste(CGEventTapLocation::HID, "HID") {
+        Ok(details) => return Ok(details),
+        Err(error) => errors.push(error),
+    }
+    match simulate_cg_event_paste(CGEventTapLocation::Session, "Session") {
+        Ok(details) => return Ok(details),
+        Err(error) => errors.push(error),
+    }
+    match simulate_system_events_paste() {
+        Ok(details) => Ok(details),
+        Err(error) => {
+            errors.push(error);
+            Err(errors.join("; "))
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn simulate_system_events_paste() -> Result<String, String> {
+    let script = r#"tell application "System Events" to keystroke "v" using command down"#;
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|error| format!("system-events paste spawn failed: {}", error))?;
+    if output.status.success() {
+        return Ok("method=system-events sequence=keystroke-command-v".to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr)
+        .trim()
+        .replace('\n', " ");
+    if stderr.is_empty() {
+        Err(format!("system-events paste exited with {}", output.status))
+    } else {
+        Err(format!(
+            "system-events paste exited with {}: {}",
+            output.status, stderr
+        ))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn simulate_cg_event_paste(tap: CGEventTapLocation, tap_label: &str) -> Result<String, String> {
+    const KEY_COMMAND: u16 = 0x37;
     const KEY_V: u16 = 0x09;
     let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
         .map_err(|_| "create CGEventSource failed".to_string())?;
-    let key_down = CGEvent::new_keyboard_event(source.clone(), KEY_V, true)
-        .map_err(|_| "create paste key-down event failed".to_string())?;
-    key_down.set_flags(CGEventFlags::CGEventFlagCommand);
-    key_down.post(CGEventTapLocation::HID);
 
-    let key_up = CGEvent::new_keyboard_event(source, KEY_V, false)
-        .map_err(|_| "create paste key-up event failed".to_string())?;
-    key_up.set_flags(CGEventFlags::CGEventFlagCommand);
-    key_up.post(CGEventTapLocation::HID);
+    post_keyboard_event(
+        &source,
+        KEY_COMMAND,
+        true,
+        CGEventFlags::CGEventFlagCommand,
+        tap,
+    )?;
+    thread::sleep(Duration::from_millis(12));
+    post_keyboard_event(&source, KEY_V, true, CGEventFlags::CGEventFlagCommand, tap)?;
+    thread::sleep(Duration::from_millis(24));
+    post_keyboard_event(&source, KEY_V, false, CGEventFlags::CGEventFlagCommand, tap)?;
+    thread::sleep(Duration::from_millis(12));
+    post_keyboard_event(
+        &source,
+        KEY_COMMAND,
+        false,
+        CGEventFlags::CGEventFlagNull,
+        tap,
+    )?;
+
+    Ok(format!(
+        "method=cg-event tap={} sequence=command-down,v-down,v-up,command-up",
+        tap_label
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn post_keyboard_event(
+    source: &CGEventSource,
+    keycode: u16,
+    key_down: bool,
+    flags: CGEventFlags,
+    tap: CGEventTapLocation,
+) -> Result<(), String> {
+    let event = CGEvent::new_keyboard_event(source.clone(), keycode, key_down).map_err(|_| {
+        format!(
+            "create key event failed keycode={} down={}",
+            keycode, key_down
+        )
+    })?;
+    event.set_flags(flags);
+    event.post(tap);
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn simulate_platform_paste() -> Result<(), String> {
+fn simulate_platform_paste() -> Result<String, String> {
     Command::new("powershell")
         .args([
             "-NoProfile",
@@ -2378,7 +3649,7 @@ fn simulate_platform_paste() -> Result<(), String> {
         .map_err(|error| error.to_string())
         .and_then(|status| {
             if status.success() {
-                Ok(())
+                Ok("simulator=powershell".to_string())
             } else {
                 Err(format!("powershell paste exited with {status}"))
             }
@@ -2386,14 +3657,14 @@ fn simulate_platform_paste() -> Result<(), String> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn simulate_platform_paste() -> Result<(), String> {
+fn simulate_platform_paste() -> Result<String, String> {
     for (program, args) in [
         ("wtype", vec!["-M", "ctrl", "v", "-m", "ctrl"]),
         ("xdotool", vec!["key", "ctrl+v"]),
     ] {
         if let Ok(status) = Command::new(program).args(args).status() {
             if status.success() {
-                return Ok(());
+                return Ok(format!("simulator={}", program));
             }
         }
     }
@@ -2403,11 +3674,143 @@ fn simulate_platform_paste() -> Result<(), String> {
 /// 托盘菜单 id（用于切换监听状态后通过 app.tray_by_id 重建菜单刷新文案）。
 const TRAY_ID: &str = "main-tray";
 
+#[cfg(target_os = "macos")]
+const DEFAULT_GLOBAL_SHORTCUT: &str = "Command+Shift+V";
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_GLOBAL_SHORTCUT: &str = "Control+Shift+V";
+const LEGACY_DEFAULT_GLOBAL_SHORTCUT: &str = "CommandOrControl+Shift+V";
+const FALLBACK_GLOBAL_SHORTCUT: &str = "Control+V";
+
+fn normalize_global_shortcut_value(raw: Option<&str>) -> String {
+    let shortcut = raw.unwrap_or_default().trim();
+    if shortcut.is_empty() || shortcut.eq_ignore_ascii_case(LEGACY_DEFAULT_GLOBAL_SHORTCUT) {
+        DEFAULT_GLOBAL_SHORTCUT.to_string()
+    } else {
+        shortcut.to_string()
+    }
+}
+
+fn current_global_shortcut_value() -> String {
+    read_user_settings()
+        .ok()
+        .and_then(|settings| {
+            settings
+                .settings
+                .get("globalShortcut")
+                .and_then(Value::as_str)
+                .map(|value| value.to_string())
+        })
+        .map(|value| normalize_global_shortcut_value(Some(&value)))
+        .unwrap_or_else(|| DEFAULT_GLOBAL_SHORTCUT.to_string())
+}
+
+fn registered_global_shortcuts() -> Vec<String> {
+    let configured = read_user_settings()
+        .ok()
+        .and_then(|settings| {
+            settings
+                .settings
+                .get("globalShortcut")
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_string())
+        })
+        .unwrap_or_default();
+    let primary = normalize_global_shortcut_value(Some(&configured));
+    let mut shortcuts = vec![
+        primary,
+        DEFAULT_GLOBAL_SHORTCUT.to_string(),
+        FALLBACK_GLOBAL_SHORTCUT.to_string(),
+    ];
+
+    shortcuts.sort();
+    shortcuts.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    shortcuts
+}
+
+fn sync_global_shortcut_registration<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let shortcuts = registered_global_shortcuts();
+    if let Err(error) = app.global_shortcut().unregister_all() {
+        let _ = append_app_log(
+            "warn".to_string(),
+            "Unregister global shortcuts failed".to_string(),
+            Some(error.to_string()),
+        );
+    }
+
+    for shortcut in &shortcuts {
+        let shortcut_label = shortcut.clone();
+        let pressed_label = shortcut.clone();
+        if let Err(error) =
+            app.global_shortcut()
+                .on_shortcut(shortcut.as_str(), move |app, _shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        log_to_file("debug", "shortcut", &format!("pressed {}", pressed_label));
+                        toggle_quick_panel(app, "shortcut");
+                    }
+                })
+        {
+            let _ = append_app_log(
+                "warn".to_string(),
+                "Register global shortcut failed".to_string(),
+                Some(format!("{}: {}", shortcut_label, error)),
+            );
+        }
+    }
+
+    log_to_file(
+        "info",
+        "shortcut",
+        &format!("registered shortcuts: {}", shortcuts.join(", ")),
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn log_runtime_identity() {
+    match get_accessibility_diagnostics_platform() {
+        Ok(diagnostics) => {
+            let tcc_summary = diagnostics
+                .tcc_records
+                .iter()
+                .map(|record| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        record.database, record.client, record.auth_label, record.csreq_summary
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            log_to_file(
+                "info",
+                "startup",
+                &format!(
+                    "runtime identity bundleId={} signatureId={} signatureKind={} cdHash={} trusted={} appPath={} tccRecords={} tccError={}",
+                    diagnostics.expected_bundle_identifier,
+                    diagnostics.code_signature_identifier,
+                    diagnostics.signature_kind,
+                    diagnostics.cd_hash,
+                    diagnostics.trusted,
+                    diagnostics.app_bundle_path,
+                    tcc_summary,
+                    diagnostics.tcc_query_error.unwrap_or_default()
+                ),
+            );
+        }
+        Err(error) => log_to_file(
+            "warn",
+            "startup",
+            &format!("runtime identity diagnostics failed: {}", error),
+        ),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn log_runtime_identity() {}
+
 /// 构建托盘右键菜单。监听开关的文案随 LISTEN_PAUSED 当前状态变化，
 /// 因此切换后调用方需 set_menu 重建以刷新显示。
 fn build_tray_menu<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> Result<Menu<R>, String> {
     let open_quick = MenuItemBuilder::with_id("open_quick", "打开快捷面板")
-        .accelerator("Ctrl+V")
+        .accelerator(&current_global_shortcut_value())
         .build(manager)
         .map_err(|e| e.to_string())?;
     let preferences = MenuItemBuilder::with_id("preferences", "偏好设置…")
@@ -2431,16 +3834,32 @@ fn build_tray_menu<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> Result<Menu
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
         configure_quick_panel_window(&window);
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(panel) = app.get_webview_panel("main") {
+                panel.hide();
+            } else {
+                let _ = window.hide();
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = window.hide();
+        }
     }
+    let app_handle = app.handle().clone();
+    sync_global_shortcut_registration(&app_handle);
+    log_to_file(
+        "info",
+        "startup",
+        &format!(
+            "ClipForge {} starting, activationPolicy=Accessory, shortcut={}",
+            APP_VERSION,
+            current_global_shortcut_value()
+        ),
+    );
+    log_runtime_identity();
     let menu = build_tray_menu(app)?;
-    let quick_shortcut = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyV);
-    if let Err(error) = app.global_shortcut().register(quick_shortcut) {
-        let _ = append_app_log(
-            "warn".to_string(),
-            "Register global shortcut failed".to_string(),
-            Some(error.to_string()),
-        );
-    }
     let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("ClipForge")
         .menu(&menu)
@@ -2471,7 +3890,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                                 log_to_file("warn", "tray", &format!("set_menu failed: {}", e));
                             }
                         }
-                        Err(e) => log_to_file("warn", "tray", &format!("rebuild menu failed: {}", e)),
+                        Err(e) => {
+                            log_to_file("warn", "tray", &format!("rebuild menu failed: {}", e))
+                        }
                     }
                 }
             }
@@ -2498,9 +3919,17 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 否则重启后前端读到 panelPinned=true（黑按钮）但 Rust PANEL_PINNED 仍为 false，
     // 任何走 Rust hide_panel 的路径（托盘/快捷键 toggle/命令）会误隐藏已固定面板。
     if let Ok(settings) = read_user_settings() {
-        if let Some(pinned) = settings.settings.get("panelPinned").and_then(Value::as_bool) {
+        if let Some(pinned) = settings
+            .settings
+            .get("panelPinned")
+            .and_then(Value::as_bool)
+        {
             PANEL_PINNED.store(pinned, Ordering::Relaxed);
-            log_to_file("debug", "panel-pin", &format!("restored pinned={} from settings on startup", pinned));
+            log_to_file(
+                "debug",
+                "panel-pin",
+                &format!("restored pinned={} from settings on startup", pinned),
+            );
         }
     }
 
@@ -2513,7 +3942,11 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let mut last_log_time = std::time::Instant::now();
         let mut last_cleanup_tick = std::time::Instant::now();
         let mut last_cleanup_run = std::time::Instant::now();
-        log_to_file("info", "clipboard-monitor", "background monitor started, interval=100ms");
+        log_to_file(
+            "info",
+            "clipboard-monitor",
+            "background monitor started, interval=100ms",
+        );
         loop {
             std::thread::sleep(std::time::Duration::from_millis(100));
 
@@ -2543,26 +3976,46 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     if !trimmed.is_empty() && trimmed != last_text {
                         let now = now_millis().unwrap_or(0);
                         let char_count = trimmed.chars().count();
-                        log_to_file("info", "clipboard-monitor", &format!("detected change, {} chars, ts={}", char_count, now));
+                        log_to_file(
+                            "info",
+                            "clipboard-monitor",
+                            &format!("detected change, {} chars, ts={}", char_count, now),
+                        );
                         last_text = trimmed.to_string();
                         consecutive_errors = 0;
-                        
+
                         match capture_clip_record_internal(trimmed, now) {
                             Ok(payload) => {
-                                log_to_file("debug", "clipboard-monitor", &format!("recorded: status={}, id={}", payload.status, payload.item.id));
+                                log_to_file(
+                                    "debug",
+                                    "clipboard-monitor",
+                                    &format!(
+                                        "recorded: status={}, id={}",
+                                        payload.status, payload.item.id
+                                    ),
+                                );
                                 let payload_json = ClipboardChangePayload {
                                     change_count: now,
                                     has_change: true,
                                     preview: Some(trimmed.chars().take(40).collect()),
                                     preview_len: Some(trimmed.chars().count() as i64),
                                 };
-                                let emit_result = app_handle.emit("clipboard-changed", payload_json);
+                                let emit_result =
+                                    app_handle.emit("clipboard-changed", payload_json);
                                 if let Err(e) = emit_result {
-                                log_to_file("warn", "clipboard-monitor", &format!("emit clipboard-changed failed: {}", e));
-                            }
+                                    log_to_file(
+                                        "warn",
+                                        "clipboard-monitor",
+                                        &format!("emit clipboard-changed failed: {}", e),
+                                    );
+                                }
                             }
                             Err(e) => {
-                                log_to_file("error", "clipboard-monitor", &format!("capture failed: {}", e));
+                                log_to_file(
+                                    "error",
+                                    "clipboard-monitor",
+                                    &format!("capture failed: {}", e),
+                                );
                             }
                         }
                     }
@@ -2572,7 +4025,11 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     if consecutive_errors <= 3 || consecutive_errors % 100 == 0 {
                         let elapsed = last_log_time.elapsed().as_secs();
                         if elapsed > 60 || consecutive_errors <= 3 {
-                            log_to_file("warn", "clipboard-monitor", &format!("read error ({}): {}", consecutive_errors, e));
+                            log_to_file(
+                                "warn",
+                                "clipboard-monitor",
+                                &format!("read error ({}): {}", consecutive_errors, e),
+                            );
                             last_log_time = std::time::Instant::now();
                         }
                     }
@@ -2586,7 +4043,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let quick_shortcut = Shortcut::new(Some(Modifiers::CONTROL), Code::KeyV);
     start_focus_prefetch_thread();
     let mut builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
@@ -2596,15 +4052,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_positioner::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, shortcut, event| {
-                    if shortcut == &quick_shortcut && event.state() == ShortcutState::Pressed {
-                        toggle_quick_panel(app, "shortcut");
-                    }
-                })
-                .build(),
-        )
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -2661,6 +4109,8 @@ pub fn run() {
             check_accessibility_permission,
             open_accessibility_settings,
             request_accessibility_permission,
+            get_accessibility_diagnostics,
+            reset_accessibility_permission,
             poll_clipboard_change,
             start_mcp_server,
             stop_mcp_server,
@@ -2684,11 +4134,31 @@ fn open_panel<R: tauri::Runtime>(
         let cursor_monitor = monitor_for_logical_point(&window, cx, cy)
             .map(|m| get_monitor_id(&m))
             .unwrap_or_default();
-        let acc = check_accessibility_permission_platform().map(|a| a.status).unwrap_or_default();
-        log_to_file("debug", "panel-position", &format!(
+        let acc = check_accessibility_permission_platform()
+            .map(|a| a.status)
+            .unwrap_or_default();
+        log_to_file(
+            "debug",
+            "panel-position",
+            &format!(
             "open_panel: source={} strategy={:?} cursor=({},{}) cursor_monitor={} accessibility={}",
-            reason, strategy, cx, cy, cursor_monitor, acc
-        ));
+                reason, strategy, cx, cy, cursor_monitor, acc
+            ),
+        );
+        // 粘贴目标快照只用于「粘贴时 activate 目标 App」所需的 bundle id，且其内部会
+        // fork osascript（frontmost_app_identity + native_focused_input_bounds）。放到后台
+        // 线程执行，避免在唤起热路径上阻塞——用户从面板出现到选中条目通常 >100ms，足够缓存就绪。
+        {
+            let reason_owned = reason.to_string();
+            let fallback = if cx >= 0.0 && cy >= 0.0 {
+                Some((cx, cy))
+            } else {
+                None
+            };
+            thread::spawn(move || {
+                snapshot_paste_target_bounds(&reason_owned, fallback);
+            });
+        }
 
         // 宽高可由用户设置覆盖（默认 420×488）。
         let (panel_width, panel_h) = resolve_panel_dims();
@@ -2699,74 +4169,36 @@ fn open_panel<R: tauri::Runtime>(
         let _ = window.set_size(LogicalSize::new(panel_width, panel_height));
 
         // 2. 同步应用定位策略（单次定位，不重复）
-        let position_source: String = match apply_position_strategy(&window, strategy, panel_width, panel_height) {
-            Some((x, y)) => {
-                set_panel_position(&window, x, y);
-                format!("sync-{:?}", strategy_clone)
-            }
-            None => {
-                // 策略失败时用 fallback 居中
-                if let Some((fx, fy, _)) = panel_position(&window, panel_width, panel_height) {
-                    set_panel_position(&window, fx, fy);
+        let position_source: String =
+            match apply_position_strategy(&window, strategy, panel_width, panel_height) {
+                Some((x, y)) => {
+                    set_panel_position(&window, x, y);
+                    format!("sync-{:?}", strategy_clone)
                 }
-                format!("fallback-{:?}", strategy_clone)
-            }
-        };
+                None => {
+                    // 策略失败时用 fallback 居中
+                    if let Some((fx, fy, _)) = panel_position(&window, panel_width, panel_height) {
+                        set_panel_position(&window, fx, fy);
+                    }
+                    format!("fallback-{:?}", strategy_clone)
+                }
+            };
 
         // 3. 显示窗口
         show_panel_window(app, &window);
         let _ = window.emit("clipforge://show-quick-panel", reason);
 
-        // 4. 后台异步尝试聚焦输入框定位：仅当聚焦信息有效且与光标【同屏】时才覆盖同步结果。
-        let window_label = window.label().to_string();
-        let app_handle = app.clone();
-        thread::spawn(move || {
-            let payload = focused_input_bounds_platform().ok();
-            let Some(w) = app_handle.get_webview_window(&window_label) else {
-                return;
-            };
-            let Some(bounds) = payload else {
-                return;
-            };
-            let valid = bounds.width > 0.0 && bounds.height > 0.0 && bounds.source != "fallback";
-            if !valid {
-                return;
-            }
-            // 一致性校验(H5)：仅当焦点输入框所在屏 == 当前光标所在屏才覆盖。
-            // 否则保留同步 FollowCursor/激活窗体的结果，避免把面板从光标屏拉到另一块屏。
-            let focus_center_x = bounds.x + bounds.width / 2.0;
-            let focus_center_y = bounds.y + bounds.height / 2.0;
-            let focus_monitor = monitor_for_logical_point(&w, focus_center_x, focus_center_y);
-            let cursor_monitor =
-                cursor_logical_point(&w).and_then(|(cx, cy)| monitor_for_logical_point(&w, cx, cy));
-            let same_screen = match (focus_monitor, cursor_monitor) {
-                (Some(a), Some(b)) => get_monitor_id(&a) == get_monitor_id(&b),
-                _ => false,
-            };
-            if !same_screen {
-                log_to_file(
-                    "info",
-                    "panel-position",
-                    "async focus override skipped: focus screen != cursor screen",
-                );
-                return;
-            }
-            let cache = CachedFocusBounds {
-                x: bounds.x,
-                y: bounds.y,
-                width: bounds.width,
-                height: bounds.height,
-                source: bounds.source.clone(),
-                valid: true,
-                updated_at: now_millis().unwrap_or(0),
-            };
-            if let Some((x, y, height)) = compute_panel_position(&w, panel_width, &cache) {
-                let _ = w.set_size(LogicalSize::new(panel_width, height));
-                set_panel_position(&w, x, y);
-            }
-        });
+        // 不再在显示后用焦点输入框位置【覆盖】定位：那条 osascript 异步路径会在面板已可见时
+        // 再次 set_panel_position，造成「先出现在光标处、再跳到输入框处」的可见跳动（用户反映像
+        // bug 一样闪烁）。按需求：触发那一刻位置确定即可（上面的同步 apply_position_strategy），
+        // 显示之后不再移动面板，消除闪烁。
 
-        Ok(panel_trigger_payload(&window, reason, &position_source, &format!("{:?}", strategy_clone)))
+        Ok(panel_trigger_payload(
+            &window,
+            reason,
+            &position_source,
+            &format!("{:?}", strategy_clone),
+        ))
     } else {
         Err("main window is not available".to_string())
     }
@@ -2796,7 +4228,9 @@ fn async_position_debounced<R: tauri::Runtime>(
         thread::sleep(std::time::Duration::from_millis(10));
 
         if let Some(window) = app.get_webview_window(&window_label) {
-            if let Some((x, y)) = apply_position_strategy(&window, strategy, panel_width, panel_height) {
+            if let Some((x, y)) =
+                apply_position_strategy(&window, strategy, panel_width, panel_height)
+            {
                 let _ = set_panel_position(&window, x, y);
             }
         }
@@ -2853,7 +4287,29 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    if window.is_visible().unwrap_or(false) {
+    let visible = window.is_visible().unwrap_or(false);
+    let focused = window.is_focused().unwrap_or(false);
+    let panel_visible = app
+        .get_webview_panel("main")
+        .ok()
+        .map(|panel| panel.is_visible())
+        .unwrap_or(false);
+    // 诊断「需要按两下才触发」：记录每次 toggle 的决策依据（show/hide）与当时的可见/聚焦状态。
+    // 若用户反映第一次按下没反应，看这条日志即可判断是走了 hide 分支（可见性误判）还是
+    // show 分支后焦点没进来（非激活 NSPanel 的 key-window 问题）。
+    log_to_file(
+        "info",
+        "panel-toggle",
+        &format!(
+            "toggle reason={} decision={} windowVisible={} windowFocused={} panelVisible={}",
+            reason,
+            if visible { "hide" } else { "show" },
+            visible,
+            focused,
+            panel_visible
+        ),
+    );
+    if visible {
         let _ = hide_panel(app, reason);
     } else {
         show_quick_panel(app, reason);
@@ -2870,7 +4326,11 @@ fn is_panel_pinned() -> bool {
 #[tauri::command]
 fn set_panel_pinned_command(pinned: bool) -> Result<bool, String> {
     PANEL_PINNED.store(pinned, Ordering::Relaxed);
-    log_to_file("info", "panel-pin", &format!("set pinned = {} (stay-in-place)", pinned));
+    log_to_file(
+        "info",
+        "panel-pin",
+        &format!("set pinned = {} (stay-in-place)", pinned),
+    );
     Ok(pinned)
 }
 
@@ -2902,18 +4362,22 @@ fn panel_trigger_payload<R: tauri::Runtime>(
 ) -> PanelTriggerPayload {
     let position = window.outer_position().ok();
     let size = window.outer_size().ok();
-    let accessibility = check_accessibility_permission_platform().unwrap_or(AccessibilityPermissionPayload {
-        status: "unsupported".to_string(),
-        can_read_focused_input: false,
-        message: "accessibility status unavailable".to_string(),
-    });
+    let accessibility =
+        check_accessibility_permission_platform().unwrap_or(AccessibilityPermissionPayload {
+            status: "unsupported".to_string(),
+            can_read_focused_input: false,
+            message: "accessibility status unavailable".to_string(),
+        });
     PanelTriggerPayload {
         visible: window.is_visible().unwrap_or(false),
         focused: window.is_focused().unwrap_or(false),
         x: position.as_ref().map(|value| value.x as f64).unwrap_or(0.0),
         y: position.as_ref().map(|value| value.y as f64).unwrap_or(0.0),
         width: size.as_ref().map(|value| value.width as f64).unwrap_or(0.0),
-        height: size.as_ref().map(|value| value.height as f64).unwrap_or(0.0),
+        height: size
+            .as_ref()
+            .map(|value| value.height as f64)
+            .unwrap_or(0.0),
         source: source.to_string(),
         position_source: position_source.to_string(),
         focused_input_source: focused_input_source.to_string(),
@@ -2963,10 +4427,10 @@ fn compute_panel_position<R: tauri::Runtime>(
             let work_area = monitor.work_area();
             let position = work_area.position.to_logical::<f64>(scale);
             let size = work_area.size.to_logical::<f64>(scale);
-            focus_x >= position.x &&
-                focus_x < position.x + size.width &&
-                focus_y >= position.y &&
-                focus_y < position.y + size.height
+            focus_x >= position.x
+                && focus_x < position.x + size.width
+                && focus_y >= position.y
+                && focus_y < position.y + size.height
         })
         .or_else(|| window.current_monitor().ok().flatten())?;
 
@@ -2975,7 +4439,8 @@ fn compute_panel_position<R: tauri::Runtime>(
     let position = work_area.position.to_logical::<f64>(target_scale);
     let size = work_area.size.to_logical::<f64>(target_scale);
     let max_height = (size.height - QUICK_PANEL_MARGIN * 2.0).min(QUICK_PANEL_MAX_HEIGHT);
-    let panel_height = resolve_panel_dims().1
+    let panel_height = resolve_panel_dims()
+        .1
         .min(max_height.max(QUICK_PANEL_MIN_HEIGHT))
         .max(QUICK_PANEL_MIN_HEIGHT);
 
@@ -3026,6 +4491,7 @@ fn configure_platform_quick_panel<R: tauri::Runtime>(window: &tauri::WebviewWind
         Ok(panel) => {
             panel.set_level(quick_panel_level());
             panel.set_style_mask(StyleMask::empty().nonactivating_panel().resizable().into());
+            sync_nonactivating_panel_focus_tag(&panel);
             panel.set_collection_behavior(
                 CollectionBehavior::new()
                     .full_screen_auxiliary()
@@ -3034,6 +4500,17 @@ fn configure_platform_quick_panel<R: tauri::Runtime>(window: &tauri::WebviewWind
             );
             panel.set_hides_on_deactivate(false);
             panel.set_works_when_modal(true);
+            log_to_file(
+                "info",
+                "panel-focus",
+                &format!(
+                    "configured mac panel: canBecomeKey={} canBecomeMain={} hidesOnDeactivate={} fullScreenAuxiliary=true version={}",
+                    panel.can_become_key_window(),
+                    panel.can_become_main_window(),
+                    panel.hides_on_deactivate(),
+                    APP_VERSION
+                ),
+            );
         }
         Err(error) => {
             let _ = append_app_log(
@@ -3049,6 +4526,31 @@ fn configure_platform_quick_panel<R: tauri::Runtime>(window: &tauri::WebviewWind
 fn configure_platform_quick_panel<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) {}
 
 #[cfg(target_os = "macos")]
+fn sync_nonactivating_panel_focus_tag<R: tauri::Runtime>(panel: &Arc<dyn tauri_nspanel::Panel<R>>) {
+    unsafe {
+        let raw_panel = panel.as_ref().as_panel();
+        let responds: bool = tauri_nspanel::objc2::msg_send![
+            raw_panel,
+            respondsToSelector: tauri_nspanel::objc2::sel!(_setPreventsActivation:)
+        ];
+        if !responds {
+            log_to_file(
+                "warn",
+                "panel-focus",
+                "_setPreventsActivation: unavailable; nonactivating keyboard focus may fail",
+            );
+            return;
+        }
+        let _: () = tauri_nspanel::objc2::msg_send![raw_panel, _setPreventsActivation: true];
+        log_to_file(
+            "debug",
+            "panel-focus",
+            "synced nonactivating preventsActivation=true",
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn show_panel_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     window: &tauri::WebviewWindow<R>,
@@ -3060,9 +4562,51 @@ fn show_panel_window<R: tauri::Runtime>(
         // 二次唤起时 NSPanel 已 resign_key，show_and_make_key 后再补一次 webview 级
         // set_focus，确保键盘事件能进面板（修复「第二次触发不聚焦、快捷键不生效」）。
         let _ = window.set_focus();
+        focus_webview_for_input(window);
+        log_to_file(
+            "info",
+            "panel-focus",
+            &format!(
+                "show panel: panelVisible={} windowVisible={} focused={} canBecomeKey={} hidesOnDeactivate={}",
+                panel.is_visible(),
+                window.is_visible().unwrap_or(false),
+                window.is_focused().unwrap_or(false),
+                panel.can_become_key_window(),
+                panel.hides_on_deactivate()
+            ),
+        );
     } else {
         let _ = window.show();
         let _ = window.set_focus();
+        log_to_file(
+            "warn",
+            "panel-focus",
+            &format!(
+                "show panel fallback window path: visible={} focused={}",
+                window.is_visible().unwrap_or(false),
+                window.is_focused().unwrap_or(false)
+            ),
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn focus_webview_for_input<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    if let Err(error) = window.with_webview(|webview| unsafe {
+        let ns_window: &AppKitNSWindow = &*webview.ns_window().cast::<AppKitNSWindow>();
+        let webview_responder: &NSResponder = &*webview.inner().cast::<NSResponder>();
+        let accepted = ns_window.makeFirstResponder(Some(webview_responder));
+        log_to_file(
+            "debug",
+            "panel-focus",
+            &format!("makeFirstResponder(WKWebView) accepted={}", accepted),
+        );
+    }) {
+        log_to_file(
+            "warn",
+            "panel-focus",
+            &format!("focus WKWebView failed: {}", error),
+        );
     }
 }
 
@@ -3110,11 +4654,21 @@ fn panel_position<R: tauri::Runtime>(
         let final_x = x.clamp(min_x, max_x.max(min_x));
         let final_y = y.clamp(min_y, max_y.max(min_y));
 
-        log_to_file("debug", "panel-position", &format!(
-            "fallback: monitor=({},{}) size=({},{}) scale={}, result=({},{}) height={}",
-            position.x, position.y, size.width, size.height, scale,
-            final_x, final_y, panel_height
-        ));
+        log_to_file(
+            "debug",
+            "panel-position",
+            &format!(
+                "fallback: monitor=({},{}) size=({},{}) scale={}, result=({},{}) height={}",
+                position.x,
+                position.y,
+                size.width,
+                size.height,
+                scale,
+                final_x,
+                final_y,
+                panel_height
+            ),
+        );
 
         Some((final_x, final_y, panel_height))
     }
@@ -3127,7 +4681,9 @@ fn mark_native_position_failure() {
 }
 
 fn get_monitor_id(monitor: &tauri::Monitor) -> String {
-    monitor.name().map_or("primary".to_string(), |v| v.to_string())
+    monitor
+        .name()
+        .map_or("primary".to_string(), |v| v.to_string())
 }
 
 /// 返回当前鼠标在【全局逻辑点】坐标系下的位置（主屏左上为原点）。
@@ -3180,9 +4736,16 @@ fn monitor_for_logical_point<R: tauri::Runtime>(
     y: f64,
 ) -> Option<tauri::Monitor> {
     if let Some(monitor) = window.monitor_from_point(x, y).ok().flatten() {
-        log_to_file("debug", "panel-position", &format!(
-            "monitor_pick: point=({},{}) -> {} [monitor_from_point]", x, y, get_monitor_id(&monitor)
-        ));
+        log_to_file(
+            "debug",
+            "panel-position",
+            &format!(
+                "monitor_pick: point=({},{}) -> {} [monitor_from_point]",
+                x,
+                y,
+                get_monitor_id(&monitor)
+            ),
+        );
         return Some(monitor);
     }
     if let Ok(monitors) = window.available_monitors() {
@@ -3196,9 +4759,16 @@ fn monitor_for_logical_point<R: tauri::Runtime>(
                 && y >= position.y
                 && y < position.y + size.height
             {
-                log_to_file("debug", "panel-position", &format!(
-                    "monitor_pick: point=({},{}) -> {} [work_area-containment]", x, y, get_monitor_id(&monitor)
-                ));
+                log_to_file(
+                    "debug",
+                    "panel-position",
+                    &format!(
+                        "monitor_pick: point=({},{}) -> {} [work_area-containment]",
+                        x,
+                        y,
+                        get_monitor_id(&monitor)
+                    ),
+                );
                 return Some(monitor);
             }
         }
@@ -3206,10 +4776,16 @@ fn monitor_for_logical_point<R: tauri::Runtime>(
     // 关键失败模式：光标点不落在任何显示器（缝隙/越界/混合 DPI 单位异常）。
     // 用 warn 标出，便于在日志里直接定位「为何选了 primary 而不是光标屏」。
     let primary = window.primary_monitor().ok().flatten();
-    log_to_file("warn", "panel-position", &format!(
-        "monitor_pick: point=({},{}) -> {} [PRIMARY FALLBACK: cursor not on any monitor]",
-        x, y, primary.as_ref().map(get_monitor_id).unwrap_or_default()
-    ));
+    log_to_file(
+        "warn",
+        "panel-position",
+        &format!(
+            "monitor_pick: point=({},{}) -> {} [PRIMARY FALLBACK: cursor not on any monitor]",
+            x,
+            y,
+            primary.as_ref().map(get_monitor_id).unwrap_or_default()
+        ),
+    );
     primary
 }
 
@@ -3242,11 +4818,22 @@ fn position_follow_cursor<R: tauri::Runtime>(
     let x = cursor_x.clamp(min_x, max_x.max(min_x));
     let y = cursor_y.clamp(min_y, max_y.max(min_y));
 
-    log_to_file("debug", "panel-position", &format!(
-        "followCursor: cursor=({},{}) monitor=({},{}) size=({},{}) scale={} result=({},{})",
-        cursor_x, cursor_y, monitor_pos.x, monitor_pos.y,
-        monitor_size.width, monitor_size.height, scale, x, y
-    ));
+    log_to_file(
+        "debug",
+        "panel-position",
+        &format!(
+            "followCursor: cursor=({},{}) monitor=({},{}) size=({},{}) scale={} result=({},{})",
+            cursor_x,
+            cursor_y,
+            monitor_pos.x,
+            monitor_pos.y,
+            monitor_size.width,
+            monitor_size.height,
+            scale,
+            x,
+            y
+        ),
+    );
 
     Some((x, y))
 }
@@ -3265,17 +4852,19 @@ fn position_center<R: tauri::Runtime>(
     let x = monitor_pos.x + (monitor_size.width - panel_width) / 2.0;
     let y = monitor_pos.y + (monitor_size.height - panel_height) / 2.0;
 
-    log_to_file("debug", "panel-position", &format!(
-        "center: monitor=({},{}) size=({},{}) result=({},{})",
-        monitor_pos.x, monitor_pos.y, monitor_size.width, monitor_size.height, x, y
-    ));
+    log_to_file(
+        "debug",
+        "panel-position",
+        &format!(
+            "center: monitor=({},{}) size=({},{}) result=({},{})",
+            monitor_pos.x, monitor_pos.y, monitor_size.width, monitor_size.height, x, y
+        ),
+    );
 
     Some((x, y))
 }
 
-fn position_tray_center<R: tauri::Runtime>(
-    window: &tauri::WebviewWindow<R>,
-) -> Result<(), String> {
+fn position_tray_center<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         if let Ok(script) = read_command(
@@ -3302,15 +4891,15 @@ fn position_tray_center<R: tauri::Runtime>(
                             (s.width as f64 / sf, s.height as f64 / sf, sf)
                         })
                         .unwrap_or((1920.0, 1080.0, 1.0));
-                    
+
                     let is_bottom = dock_y > screen_height / 2.0;
                     let is_right = dock_x > screen_width / 2.0;
                     let is_left = !is_right;
-                    
+
                     let win_size = window.inner_size().ok();
                     let win_width = win_size.map(|s| s.width as f64).unwrap_or(460.0);
                     let win_height = win_size.map(|s| s.height as f64).unwrap_or(680.0);
-                    
+
                     let x = if is_left {
                         dock_w + 10.0
                     } else if is_right {
@@ -3318,13 +4907,13 @@ fn position_tray_center<R: tauri::Runtime>(
                     } else {
                         dock_x + dock_w / 2.0 - win_width / 2.0
                     };
-                    
+
                     let y = if is_bottom {
                         dock_y - win_height - 10.0
                     } else {
                         dock_h + 10.0
                     };
-                    
+
                     window.set_position(tauri::LogicalPosition::new(x, y))
                         .map_err(|e| format!("Move window to tray center failed: {}", e))?;
                     log_to_file("debug", "panel-position", &format!(
@@ -3336,11 +4925,16 @@ fn position_tray_center<R: tauri::Runtime>(
             }
         }
     }
-    
+
     use tauri_plugin_positioner::{Position, WindowExt};
-    window.move_window(Position::BottomCenter)
+    window
+        .move_window(Position::BottomCenter)
         .map_err(|e| format!("Move window to tray center failed: {}", e))?;
-    log_to_file("debug", "panel-position", "trayCenter: positioner fallback called");
+    log_to_file(
+        "debug",
+        "panel-position",
+        "trayCenter: positioner fallback called",
+    );
     Ok(())
 }
 
@@ -3396,7 +4990,11 @@ fn position_window_center<R: tauri::Runtime>(
         }
     }
 
-    log_to_file("debug", "panel-position", "windowCenter: no front window found");
+    log_to_file(
+        "debug",
+        "panel-position",
+        "windowCenter: no front window found",
+    );
     None
 }
 
@@ -3414,7 +5012,11 @@ fn position_last_position<R: tauri::Runtime>(
         .or_else(|| get_current_monitor_from_cursor(window));
 
     let Some(monitor) = target_monitor else {
-        log_to_file("warn", "panel-position", "lastPosition: no matching monitor found, fallback to center");
+        log_to_file(
+            "warn",
+            "panel-position",
+            "lastPosition: no matching monitor found, fallback to center",
+        );
         return position_center(window, panel_width, panel_height);
     };
 
@@ -3434,18 +5036,32 @@ fn position_last_position<R: tauri::Runtime>(
     let final_x = x.clamp(min_x, max_x.max(min_x));
     let final_y = y.clamp(min_y, max_y.max(min_y));
 
-    log_to_file("debug", "panel-position", &format!(
-        "lastPosition: normalized=({},{}) monitor=({},{}) size=({},{}) result=({},{})",
-        last_pos.x, last_pos.y, monitor_pos.x, monitor_pos.y,
-        monitor_size.width, monitor_size.height, final_x, final_y
-    ));
+    log_to_file(
+        "debug",
+        "panel-position",
+        &format!(
+            "lastPosition: normalized=({},{}) monitor=({},{}) size=({},{}) result=({},{})",
+            last_pos.x,
+            last_pos.y,
+            monitor_pos.x,
+            monitor_pos.y,
+            monitor_size.width,
+            monitor_size.height,
+            final_x,
+            final_y
+        ),
+    );
 
     Some((final_x, final_y))
 }
 
 fn save_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     let Ok(position) = window.outer_position() else {
-        log_to_file("warn", "panel-position", "save: failed to get window position");
+        log_to_file(
+            "warn",
+            "panel-position",
+            "save: failed to get window position",
+        );
         return;
     };
 
@@ -3468,7 +5084,11 @@ fn save_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
         })
         .or_else(|| get_current_monitor_from_cursor(window));
     let Some(monitor) = monitor else {
-        log_to_file("warn", "panel-position", "save: failed to resolve panel monitor");
+        log_to_file(
+            "warn",
+            "panel-position",
+            "save: failed to resolve panel monitor",
+        );
         return;
     };
 
@@ -3490,12 +5110,24 @@ fn save_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
             monitor_id: Some(get_monitor_id(&monitor)),
         });
 
-        log_to_file("debug", "panel-position", &format!(
-            "save: position=({},{}) normalized=({},{}) monitor={}",
-            logical_x, logical_y, normalized_x, normalized_y, get_monitor_id(&monitor)
-        ));
+        log_to_file(
+            "debug",
+            "panel-position",
+            &format!(
+                "save: position=({},{}) normalized=({},{}) monitor={}",
+                logical_x,
+                logical_y,
+                normalized_x,
+                normalized_y,
+                get_monitor_id(&monitor)
+            ),
+        );
     } else {
-        log_to_file("warn", "panel-position", "save: failed to lock last position cache");
+        log_to_file(
+            "warn",
+            "panel-position",
+            "save: failed to lock last position cache",
+        );
     }
 }
 
@@ -3521,7 +5153,8 @@ fn active_window_frame_logical() -> Option<(f64, f64, f64, f64)> {
         if raw.is_null() {
             continue;
         }
-        let dict: CFDictionary<CFString, CFType> = unsafe { CFDictionary::wrap_under_get_rule(raw as _) };
+        let dict: CFDictionary<CFString, CFType> =
+            unsafe { CFDictionary::wrap_under_get_rule(raw as _) };
 
         // 跳过系统壳层 / ClipForge 自身窗口；列表按 z-order，第一个有效项即激活窗体。
         let owner_name = dict
@@ -3565,13 +5198,21 @@ fn active_window_frame_logical() -> Option<(f64, f64, f64, f64)> {
         if width < 1.0 || height < 1.0 {
             continue;
         }
-        log_to_file("debug", "panel-position", &format!(
-            "activeWindowFrame: owner={:?} frame=({},{},{},{})",
-            owner_name, x, y, width, height
-        ));
+        log_to_file(
+            "debug",
+            "panel-position",
+            &format!(
+                "activeWindowFrame: owner={:?} frame=({},{},{},{})",
+                owner_name, x, y, width, height
+            ),
+        );
         return Some((x, y, width, height));
     }
-    log_to_file("debug", "panel-position", "activeWindowFrame: no eligible window found");
+    log_to_file(
+        "debug",
+        "panel-position",
+        "activeWindowFrame: no eligible window found",
+    );
     None
 }
 
@@ -3601,10 +5242,14 @@ fn position_active_window_center<R: tauri::Runtime>(
     let max_y = pos.y + size.height - panel_height - QUICK_PANEL_MARGIN;
     let x = center_x.clamp(min_x, max_x.max(min_x));
     let y = center_y.clamp(min_y, max_y.max(min_y));
-    log_to_file("debug", "panel-position", &format!(
-        "activeWindowCenter: window=({},{},{},{}) monitor=({},{}) result=({},{})",
-        wx, wy, ww, wh, pos.x, pos.y, x, y
-    ));
+    log_to_file(
+        "debug",
+        "panel-position",
+        &format!(
+            "activeWindowCenter: window=({},{},{},{}) monitor=({},{}) result=({},{})",
+            wx, wy, ww, wh, pos.x, pos.y, x, y
+        ),
+    );
     Some((x, y))
 }
 
@@ -3622,9 +5267,11 @@ fn apply_position_strategy<R: tauri::Runtime>(
             .or_else(|| position_active_window_center(window, panel_width, panel_height))
             .or_else(|| position_follow_cursor(window, panel_width, panel_height))
             .or_else(|| position_center(window, panel_width, panel_height));
-        log_to_file("debug", "panel-position", &format!(
-            "ladder: primary_used={} result={:?}", primary_used, result
-        ));
+        log_to_file(
+            "debug",
+            "panel-position",
+            &format!("ladder: primary_used={} result={:?}", primary_used, result),
+        );
         result
     };
     match strategy {
@@ -3633,15 +5280,17 @@ fn apply_position_strategy<R: tauri::Runtime>(
                 // position_tray_center 内部已自行 set_position
                 return None;
             }
-            log_to_file("warn", "panel-position", "TrayCenter failed, fallback ladder");
+            log_to_file(
+                "warn",
+                "panel-position",
+                "TrayCenter failed, fallback ladder",
+            );
             ladder(None)
         }
         PanelPositionStrategy::FollowCursor => {
             ladder(position_follow_cursor(window, panel_width, panel_height))
         }
-        PanelPositionStrategy::Center => {
-            ladder(position_center(window, panel_width, panel_height))
-        }
+        PanelPositionStrategy::Center => ladder(position_center(window, panel_width, panel_height)),
         PanelPositionStrategy::WindowCenter => {
             ladder(position_window_center(window, panel_width, panel_height))
         }
@@ -3651,9 +5300,11 @@ fn apply_position_strategy<R: tauri::Runtime>(
         // 真正的「跟随输入框」需要辅助功能(AX)，是异步的（见 open_panel 的异步覆盖）。
         // 同步阶段先用「激活窗体中心」兜底，再退光标/屏幕中心——避免名义跟随输入框却退化成
         // FollowCursor 的旧实现(Gap#2)。AX 命中且与光标同屏时，异步覆盖会精修到光标位置。
-        PanelPositionStrategy::FocusInput => {
-            ladder(position_active_window_center(window, panel_width, panel_height))
-        }
+        PanelPositionStrategy::FocusInput => ladder(position_active_window_center(
+            window,
+            panel_width,
+            panel_height,
+        )),
     }
 }
 
@@ -3666,13 +5317,26 @@ fn get_strategy_for_source(source: &str) -> PanelPositionStrategy {
     }
 }
 
-fn mcp_status_payload(enabled: bool, running: bool, transport: &str, message: &str) -> McpStatusPayload {
+fn mcp_status_payload(
+    enabled: bool,
+    running: bool,
+    transport: &str,
+    message: &str,
+) -> McpStatusPayload {
     McpStatusPayload {
         enabled,
         running,
         transport: transport.to_string(),
-        command: format!("{} --mcp", std::env::current_exe().map(|path| path.to_string_lossy().to_string()).unwrap_or_else(|_| "clipforge".to_string())),
-        tools: mcp_tool_names().into_iter().map(ToString::to_string).collect(),
+        command: format!(
+            "{} --mcp",
+            std::env::current_exe()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "clipforge".to_string())
+        ),
+        tools: mcp_tool_names()
+            .into_iter()
+            .map(ToString::to_string)
+            .collect(),
         message: message.to_string(),
     }
 }
@@ -3701,8 +5365,12 @@ pub fn run_mcp_stdio() -> Result<(), String> {
         let request: Value = match serde_json::from_str(trimmed) {
             Ok(value) => value,
             Err(error) => {
-                writeln!(stdout, "{}", mcp_error(Value::Null, -32700, &error.to_string()))
-                    .map_err(|write_error| write_error.to_string())?;
+                writeln!(
+                    stdout,
+                    "{}",
+                    mcp_error(Value::Null, -32700, &error.to_string())
+                )
+                .map_err(|write_error| write_error.to_string())?;
                 stdout.flush().map_err(|error| error.to_string())?;
                 continue;
             }
@@ -3717,7 +5385,10 @@ pub fn run_mcp_stdio() -> Result<(), String> {
 
 fn handle_mcp_request(request: Value) -> Option<Value> {
     let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let method = request.get("method").and_then(Value::as_str).unwrap_or_default();
+    let method = request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if method.starts_with("notifications/") {
         return None;
     }
@@ -3828,7 +5499,10 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| (-32602, "tools/call requires name".to_string()))?;
-    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let result = match name {
         "clipboard.capture" => {
             let content = if let Some(content) = args.get("content").and_then(Value::as_str) {
@@ -3838,7 +5512,9 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             };
             let payload = capture_clip_record(
                 content,
-                args.get("sourceLabel").and_then(Value::as_str).map(ToString::to_string),
+                args.get("sourceLabel")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 now_millis().map_err(|error| (-32000, error))?,
             )
             .map_err(|error| (-32000, error))?;
@@ -3846,8 +5522,12 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
         }
         "clipboard.search" => {
             let payload = query_clip_records(
-                args.get("text").and_then(Value::as_str).map(ToString::to_string),
-                args.get("bucket").and_then(Value::as_str).map(ToString::to_string),
+                args.get("text")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                args.get("bucket")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 args.get("limit").and_then(Value::as_i64),
                 None,
             )
@@ -3870,10 +5550,16 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
                 .to_string();
             let payload = update_clip_record(UpdateClipInput {
                 id,
-                bucket: args.get("bucket").and_then(Value::as_str).map(ToString::to_string),
+                bucket: args
+                    .get("bucket")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 favorite: args.get("favorite").and_then(Value::as_bool),
                 pinned: args.get("pinned").and_then(Value::as_bool),
-                note: args.get("note").and_then(Value::as_str).map(ToString::to_string),
+                note: args
+                    .get("note")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 copied: None,
             })
             .map_err(|error| (-32000, error))?;
