@@ -94,7 +94,9 @@ type MultiAggregateWorkspaceProps = {
   aggregatePreview: string;
   onBack: () => void;
   onCopy: () => void;
+  onCopyItem: (clip: ClipItem) => void;
   onExportTable: () => void;
+  onOpenItem: (clip: ClipItem) => void;
 };
 
 const droppedLinkLogKeys = new Set<string>();
@@ -512,11 +514,22 @@ export function MultiAggregateWorkspace({
   items,
   onBack,
   onCopy,
+  onCopyItem,
   onExportTable,
+  onOpenItem,
 }: MultiAggregateWorkspaceProps) {
+  const grouped = items.reduce<Record<string, ClipItem[]>>((acc, item) => {
+    const key = getPayloadKindLabel(item.payloadKind);
+    acc[key] = acc[key] ?? [];
+    acc[key].push(item);
+    return acc;
+  }, {});
+  const totalChars = items.reduce((sum, item) => sum + item.content.length, 0);
+  const linkCount = items.reduce((sum, item) => sum + (item.analysis.url ? 1 : 0), 0);
+
   return (
-    <section className="workspace-page">
-      <WorkspaceCrumb title="多选聚合" subtitle={`${items.length} 项`} onBack={onBack}>
+    <section className="workspace-page workspace-aggregate-page">
+      <WorkspaceCrumb title="多选聚合" subtitle={`${items.length} 项 / ${totalChars} 字符`} onBack={onBack}>
         <button className="icon-button" onClick={onExportTable} type="button" aria-label="导出为表格">
           <Table2 size={14} />
         </button>
@@ -525,23 +538,101 @@ export function MultiAggregateWorkspace({
         </button>
       </WorkspaceCrumb>
       <div className="workspace-action-strip" aria-label="聚合快捷操作">
-        {/* 聚合页保留批量转换入口，后续会扩展表格导出和插件解析。 */}
-        <button type="button">
-          <FileText size={13} />
-          模板
-        </button>
-        <button type="button">
-          <FileJson size={13} />
-          结构化
+        <button type="button" onClick={onCopy}>
+          <Copy size={13} />
+          复制全部
         </button>
         <button type="button" onClick={onExportTable}>
           <Table2 size={13} />
-          表格
+          导出表格
+        </button>
+        <button type="button" disabled>
+          <FileText size={13} />
+          模板
+        </button>
+        <button type="button" disabled>
+          <FileJson size={13} />
+          结构化
         </button>
       </div>
-      <div className="detail-content aggregate">
-        {items.length ? <pre>{aggregatePreview}</pre> : <div className="workspace-empty">选择多条内容后预览聚合结果。</div>}
-      </div>
+      {items.length ? (
+        <div className="aggregate-summary" aria-label="聚合摘要">
+          <span><strong>{items.length}</strong> 项</span>
+          <span><strong>{Object.keys(grouped).length}</strong> 类</span>
+          <span><strong>{linkCount}</strong> 个链接</span>
+        </div>
+      ) : null}
+      {items.length ? (
+        <div className="aggregate-content" aria-label="聚合内容">
+          <section className="aggregate-preview-block">
+            <div className="aggregate-section-title">
+              <strong>聚合原文</strong>
+              <span>按选择顺序拼接，可直接复制全部</span>
+            </div>
+            <pre>{aggregatePreview}</pre>
+          </section>
+
+          {Object.entries(grouped).map(([group, groupItems]) => (
+            <section className="aggregate-group" key={group}>
+              <div className="aggregate-section-title">
+                <strong>{group}</strong>
+                <span>{groupItems.length} 项</span>
+              </div>
+              <div className="aggregate-item-list">
+                {groupItems.map((item) => {
+                  const Icon = getPayloadKindIcon(item.payloadKind);
+                  const links = safeHttpUrls([item.analysis.url ?? "", item.analysis.attachment?.target ?? ""]);
+                  return (
+                    <article className="aggregate-item" key={item.id}>
+                      <header className="aggregate-item-head">
+                        <span className={`kind-chip ${item.payloadKind}`}>
+                          <Icon size={11} />
+                          {getPayloadKindLabel(item.payloadKind)}
+                        </span>
+                        <strong title={item.analysis.title}>{item.analysis.title || item.analysis.sourceName || "剪贴板内容"}</strong>
+                        <div className="aggregate-item-actions">
+                          <button type="button" onClick={() => onOpenItem(item)}>
+                            <FileJson size={12} />
+                            详情
+                          </button>
+                          <button type="button" onClick={() => onCopyItem(item)}>
+                            <Copy size={12} />
+                            复制
+                          </button>
+                        </div>
+                      </header>
+                      <div className="aggregate-item-body">
+                        {item.analysis.url || item.kind === "link" ? (
+                          <div className="aggregate-link-preview">
+                            {links[0] ? (
+                              <a href={links[0].href} onClick={(event) => event.preventDefault()} title={links[0].href}>
+                                <ExternalLink size={12} />
+                                {links[0].label}
+                              </a>
+                            ) : null}
+                            <pre>{item.content}</pre>
+                          </div>
+                        ) : isLikelyMarkdown(item) ? (
+                          <MarkdownPreview
+                            clip={item}
+                            content={item.content}
+                            onCopyCode={(text) => navigator.clipboard.writeText(text)}
+                            onPasteCode={(text) => navigator.clipboard.writeText(text)}
+                          />
+                        ) : (
+                          <pre>{item.content}</pre>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="workspace-empty">选择多条内容后预览聚合结果。</div>
+      )}
     </section>
   );
 }

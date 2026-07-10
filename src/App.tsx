@@ -2617,10 +2617,15 @@ function ClipForgeApp() {
                   void navigateWorkspaceList();
                 }}
                 onCopy={() => copySelectedClips(selectedInList)}
+                onCopyItem={(clip) => copyClip(clip)}
                 onExportTable={() => {
                   const table = selectedInList.map((item) => [item.analysis.title, item.content.replace(/\s+/g, " ")]).map((row) => row.join("\t")).join("\n");
                   void navigator.clipboard.writeText(table);
                   setNativeStatus("已导出选中内容为 TSV 表格");
+                }}
+                onOpenItem={(clip) => {
+                  setSelectedId(clip.id);
+                  void navigateWorkspaceDetail(clip.id);
                 }}
               />
             )}
