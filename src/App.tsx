@@ -3388,6 +3388,9 @@ function ClipForgeApp() {
                   onCopySelected={() => {
                     void copySelectedClips(selectedInList);
                   }}
+                  onCopyMode={(item, mode) => {
+                    void copyClip(item, mode);
+                  }}
                   onDelete={(item) => {
                     void deleteClips([item.id]);
                   }}
@@ -4415,6 +4418,7 @@ function QuickPastePanel({
   onPointerActive,
   onPaste,
   onCopySelected,
+  onCopyMode,
   onDelete,
   onDeleteSelected,
   onSelect,
@@ -4444,6 +4448,7 @@ function QuickPastePanel({
   onPointerActive: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
   onCopySelected: () => void;
+  onCopyMode: (item: ClipItem, mode: PasteMode) => void;
   onDelete: (item: ClipItem) => void;
   onDeleteSelected: () => void;
   onSelect: (item: ClipItem) => void;
@@ -4465,7 +4470,7 @@ function QuickPastePanel({
     window.setTimeout(() => setSuppressTooltips(false), 900);
     if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
     const menuWidth = 204;
-    const menuHeight = multiSelectMode ? 190 : 228;
+    const menuHeight = multiSelectMode ? 190 : 332;
     setContextMenu({
       item,
       x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
@@ -4620,6 +4625,7 @@ function QuickPastePanel({
             onDeleteSelected={onDeleteSelected}
             onOpenAggregate={onOpenAggregate}
             onPaste={onPaste}
+            onCopyMode={(mode) => onCopyMode(contextMenu.item, mode)}
             onCopySelected={onCopySelected}
             onStartMultiSelect={onStartMultiSelect}
             onClearSelection={onClearSelection}
@@ -4643,6 +4649,7 @@ function ClipContextMenu({
   onFavoriteSelected,
   onOpenAggregate,
   onPaste,
+  onCopyMode,
   onCopySelected,
   onStartMultiSelect,
   onClearSelection,
@@ -4659,6 +4666,7 @@ function ClipContextMenu({
   onFavoriteSelected: () => void;
   onOpenAggregate: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
+  onCopyMode: (mode: PasteMode) => void;
   onCopySelected: () => void;
   onStartMultiSelect: (id: string) => void;
   onClearSelection: () => void;
@@ -4709,6 +4717,34 @@ function ClipContextMenu({
           <button className="clip-context-item" onClick={() => run(() => onPaste(item, "context-menu"))} role="menuitem" type="button">
             <span className="clip-context-label"><Clipboard size={13} />粘贴</span>
             <kbd>Enter</kbd>
+          </button>
+          <button className="clip-context-item" onClick={() => run(() => onCopyMode("rich"))} role="menuitem" type="button">
+            <span className="clip-context-label"><Copy size={13} />复制原格式</span>
+            <kbd>Rich</kbd>
+          </button>
+          <button
+            className="clip-context-item"
+            data-tooltip={item.payloadKind === "image" ? "图片纯文本复制第一阶段不可用" : "复制 text/plain"}
+            disabled={item.payloadKind === "image"}
+            onClick={() => run(() => onCopyMode("plain"))}
+            role="menuitem"
+            title={item.payloadKind === "image" ? "图片纯文本复制第一阶段不可用" : "复制为纯文本"}
+            type="button"
+          >
+            <span className="clip-context-label"><Copy size={13} />复制为纯文本</span>
+            <kbd>Plain</kbd>
+          </button>
+          <button
+            className="clip-context-item"
+            data-tooltip={item.payloadKind !== "file" ? "仅文件条目支持复制为路径" : "复制文件路径文本"}
+            disabled={item.payloadKind !== "file"}
+            onClick={() => run(() => onCopyMode("filesAsPaths"))}
+            role="menuitem"
+            title={item.payloadKind !== "file" ? "仅文件条目支持复制为路径" : "复制文件路径"}
+            type="button"
+          >
+            <span className="clip-context-label"><Copy size={13} />文件复制为路径</span>
+            <kbd>Path</kbd>
           </button>
           <button
             className="clip-context-item"

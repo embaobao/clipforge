@@ -767,9 +767,10 @@ fn write_clipboard_item(input: ClipboardItemCommandInput) -> Result<ClipItemPayl
         "info",
         "clipboard-write",
         &format!(
-            "id={} primaryFormat={} pasteMode={} writtenFormats={} guardHash={}",
+            "id={} primaryFormat={} availableFormats={} pasteMode={} writtenFormats={} guardHash={}",
             item.id,
             item.primary_format,
+            item.available_formats.join("|"),
             input.paste_mode.unwrap_or_else(|| "rich".to_string()),
             write_result.written_formats.join("|"),
             write_result.guard_hash
@@ -810,12 +811,14 @@ fn paste_clipboard_item<R: tauri::Runtime>(
         "info",
         "clipboard-paste",
         &format!(
-            "id={} primaryFormat={} pasteMode={} writtenFormats={} source={}",
+            "id={} primaryFormat={} availableFormats={} pasteMode={} writtenFormats={} source={} guardHash={}",
             item.id,
             item.primary_format,
+            item.available_formats.join("|"),
             input.paste_mode.unwrap_or_else(|| "rich".to_string()),
             write_result.written_formats.join("|"),
-            input.source.unwrap_or_else(|| "unknown".to_string())
+            input.source.unwrap_or_else(|| "unknown".to_string()),
+            write_result.guard_hash
         ),
     );
     load_clip(&conn, &item.id)

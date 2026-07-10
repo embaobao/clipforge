@@ -48,16 +48,16 @@
 ## Phase 5：写回与粘贴
 
 - [x] 实现 `clipboard::write::write_to_clipboard()`
-- [ ] 定义 `PasteMode = Rich | Plain | FilesAsPaths`
+- [x] 定义 `PasteMode = Rich | Plain | FilesAsPaths`
 - [x] 文本写回：Rich/Plain 都写 text/plain
 - [x] HTML / RTF 写回：Rich 写 html/rtf + plain，Plain 只写 plain
 - [x] 图片写回：从 `ImageStore` 读取原图并 `ctx.set_image()`
 - [x] 文件写回：Rich 写 `ctx.set_files()`，Plain/FilesAsPaths 写路径文本
-- [ ] 图片 Plain 动作第一阶段不可用，前端禁用并显示原因
-- [ ] 实现 `clipboard::guard::WritebackGuard`，抑制写回回环
+- [x] 图片 Plain 动作第一阶段不可用，前端禁用并显示原因
+- [x] 实现 `clipboard::guard::WritebackGuard`，抑制写回回环
 - [x] 升级前端写入入口为 `write_clipboard_item`
 - [x] 升级前端粘贴入口为 `paste_clipboard_item`
-- [ ] 写回日志包含 `clipId`、`primaryFormat`、`availableFormats`、`pasteMode`、`writtenFormats`、`guardHash`
+- [x] 写回日志包含 `clipId`、`primaryFormat`、`availableFormats`、`pasteMode`、`writtenFormats`、`guardHash`
 
 ## Phase 6：监听升级
 
@@ -77,7 +77,7 @@
 - [ ] 文件行：显示文件图标、文件名/数量，长路径进入详情页展示
 - [ ] 文件已删除时显示弱化样式
 - [x] 详情页支持图片原图预览、文件列表和“可用格式”展示
-- [ ] 右键菜单根据类型动态显示：复制原格式、复制为纯文本、文件复制为路径；不可用动作禁用并显示原因
+- [x] 右键菜单根据类型动态显示：复制原格式、复制为纯文本、文件复制为路径；不可用动作禁用并显示原因
 
 ## Phase 8：设置与配置
 
