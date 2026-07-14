@@ -49,8 +49,6 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "./components/ui/message-scroller";
-import { Avatar, AvatarFallback } from "./components/ui/avatar";
-import { AvatarGroup, AvatarGroupTooltip } from "./components/animate-ui/components/animate/avatar-group";
 
 export type AgentPanelStatus = "idle" | "drafting" | "waiting_confirmation" | "succeeded" | "failed";
 export type AgentPermissionMode = "metadata" | "summary" | "content";
@@ -194,7 +192,6 @@ export function AgentChatPage({
   runStatusLabel,
   showReferencePopover,
   status,
-  suggestedPrompts,
   viewportRef,
   onAction,
   onAttachClip,
@@ -215,7 +212,6 @@ export function AgentChatPage({
   onSelectProvider,
   onStopRun,
   onSubmit,
-  onUseSuggestedPrompt,
   tr,
 }: AgentChatPageProps) {
   const reduceMotion = useReducedMotion();
@@ -249,26 +245,15 @@ export function AgentChatPage({
       >
         <header className="agent-panel-head">
           <div className="agent-provider-select">
-            <AvatarGroup
-              className="agent-provider-avatar-group"
-              closeDelay={80}
-              openDelay={120}
-              side="bottom"
-              sideOffset={8}
-              translate="-18%"
+            <motion.span
+              aria-hidden="true"
+              className="agent-provider-logo"
+              transition={itemTransition}
+              whileHover={motionEnabled ? { y: -1, scale: 1.06 } : undefined}
+              whileTap={motionEnabled ? { scale: 0.94 } : undefined}
             >
-              {[
-                <Avatar className="agent-provider-avatar" key="agent">
-                  <AvatarFallback>A</AvatarFallback>
-                  <AvatarGroupTooltip>Agent</AvatarGroupTooltip>
-                </Avatar>,
-                <Avatar className="agent-provider-avatar" key="clip">
-                  <AvatarFallback>C</AvatarFallback>
-                  <AvatarGroupTooltip>ClipForge</AvatarGroupTooltip>
-                </Avatar>,
-              ]}
-            </AvatarGroup>
-            <Bot size={13} />
+              <Bot size={13} />
+            </motion.span>
             <select
               aria-label={tr("agent.aria.selectAgent")}
               onChange={(event) => onSelectProvider(event.currentTarget.value)}
@@ -404,10 +389,20 @@ export function AgentChatPage({
         </AnimatePresence>
 
         <form className="agent-composer" onSubmit={(event) => void onSubmit(event)}>
-          <div className="agent-attachment-bar" aria-label={tr("agent.aria.attachmentBar")} role="group" tabIndex={0}>
-            <AnimatePresence initial={false}>
-              {contextReferences.length ? (
-                contextReferences.slice(0, 8).map((reference) => (
+          <AnimatePresence initial={false}>
+            {contextReferences.length ? (
+              <motion.div
+                animate={motionEnabled ? { opacity: 1, y: 0 } : { opacity: 1 }}
+                aria-label={tr("agent.aria.attachmentBar")}
+                className="agent-attachment-bar"
+                exit={motionEnabled ? { opacity: 0, y: 4 } : { opacity: 0 }}
+                initial={motionEnabled ? { opacity: 0, y: 4 } : false}
+                key="agent-attachments"
+                role="group"
+                tabIndex={0}
+                transition={itemTransition}
+              >
+                {contextReferences.slice(0, 8).map((reference) => (
                   <AttachmentChip
                     key={reference.id}
                     motionEnabled={motionEnabled}
@@ -416,30 +411,10 @@ export function AgentChatPage({
                     onRemove={() => onRemoveReference(reference)}
                     removeLabel={tr("agent.aria.removeReference", { title: reference.title })}
                   />
-                ))
-              ) : (
-                <motion.span
-                  animate={motionEnabled ? { opacity: 1, x: 0 } : { opacity: 1 }}
-                  className="agent-reference-empty"
-                  exit={motionEnabled ? { opacity: 0, x: -6 } : { opacity: 0 }}
-                  initial={motionEnabled ? { opacity: 0, x: -6 } : false}
-                  key="empty-reference"
-                  transition={itemTransition}
-                >
-                  {tr("agent.referenceEmpty")}
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </div>
-          {!input.trim() && status !== "drafting" && status !== "waiting_confirmation" ? (
-            <div className="agent-suggestion-strip" aria-label={tr("agent.aria.suggestions")}>
-              {suggestedPrompts.map((prompt) => (
-                <motion.button key={prompt} onClick={() => onUseSuggestedPrompt(prompt)} type="button" whileTap={motionEnabled ? { scale: 0.98 } : undefined}>
-                  {prompt}
-                </motion.button>
-              ))}
-            </div>
-          ) : null}
+                ))}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
           <div className="agent-composer-main">
             <textarea
               aria-label={tr("agent.aria.composer")}

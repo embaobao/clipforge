@@ -21,11 +21,20 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+import { motion, useReducedMotion } from "motion/react";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
 import type { CSSProperties, ErrorInfo, MouseEvent, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
-import { normalizeLanguagePreference, resolveAppLocale, setDocumentLocale, t, type AppLanguagePreference, type TranslationKey } from "./i18n";
+import {
+  formatCommandError,
+  normalizeLanguagePreference,
+  resolveAppLocale,
+  setDocumentLocale,
+  t,
+  type AppLanguagePreference,
+  type TranslationKey,
+} from "./i18n";
 import { checkFilePaths, pasteClipboard, readClipboard, writeClipboard, type FilePathStatus } from "./services/clipboard";
 import { resolvePrimaryPluginAction } from "./plugin-actions";
 import {
@@ -81,6 +90,9 @@ type PanelSurface = "clipboard" | "agent";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
+
+const dockButtonTransition = { type: "spring", stiffness: 430, damping: 30, mass: 0.42 } as const;
+const dockTabTransition = { type: "spring", stiffness: 360, damping: 30, mass: 0.5 } as const;
 export type ClipboardRepresentation = {
   format: "text/plain" | "text/html" | "text/rtf" | "image/png" | "application/file-list" | "text/uri-list" | string;
   storage: "inline" | "file" | "derived" | string;
@@ -1436,6 +1448,7 @@ function ClipForgeApp() {
   const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const locale = resolveAppLocale(settings.language);
   const tr = useCallback((key: TranslationKey, params?: Record<string, string | number>) => t(locale, key, params), [locale]);
+  const formatNativeError = useCallback((error: unknown) => formatCommandError(tr, error), [tr]);
   const [clips, setClips] = useState<ClipItem[]>([]);
   const [query, setQuery] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -1906,14 +1919,13 @@ function ClipForgeApp() {
           setNativeStatus(tr("main.status.clipboardPromoted"));
         }
       } catch (error) {
-        const message = String(error);
-        setNativeStatus(message.includes("skipped") ? tr("main.status.clipboardSkipped") : tr("main.status.clipboardEmpty"));
+        setNativeStatus(formatNativeError(error));
       } finally {
         captureInFlightRef.current = false;
         if (reason === "manual") setIsReadingClipboard(false);
       }
     },
-    [syncCapturedClipboardPayload, tr],
+    [formatNativeError, syncCapturedClipboardPayload, tr],
   );
 
   const showQuickPanel = useCallback(
@@ -2574,7 +2586,7 @@ function ClipForgeApp() {
     } catch (error) {
       logAppError("warn", "Paste clip failed", String(error));
       await copyClip(item);
-      setNativeStatus(tr("main.status.pasteFallback"));
+      setNativeStatus(formatNativeError(error));
     }
   }
 
@@ -3115,7 +3127,7 @@ function ClipForgeApp() {
       showCompletionToast(tr("main.toast.agentResultSaved"));
     } catch (error) {
       logAppError("warn", "agent-result: save failed", String(error));
-      setNativeStatus(tr("main.status.agentResultSaveFailed"));
+      setNativeStatus(formatNativeError(error));
     }
   }
 
@@ -3175,7 +3187,7 @@ function ClipForgeApp() {
       showCompletionToast(tr("main.toast.deletedCount", { count: ids.length }));
     } catch (error) {
       logAppError("warn", "Soft delete failed", String(error));
-      setNativeStatus(tr("main.status.softDeleteFailed"));
+      setNativeStatus(formatNativeError(error));
       return;
     }
     // 软删除后保留在 clips 中以支持垃圾箱视图，仅设置 deletedAt 标记
@@ -3193,7 +3205,7 @@ function ClipForgeApp() {
       setNativeStatus(tr("main.status.restoredCount", { count: ids.length }));
     } catch (error) {
       logAppError("warn", "Restore failed", String(error));
-      setNativeStatus(tr("main.status.restoreFailed"));
+      setNativeStatus(formatNativeError(error));
       return;
     }
     setClips((current) =>
@@ -3218,7 +3230,7 @@ function ClipForgeApp() {
       setNativeStatus(tr("main.status.hardDeletedCount", { count: ids.length }));
     } catch (error) {
       logAppError("warn", "Hard delete failed", String(error));
-      setNativeStatus(tr("main.status.hardDeleteFailed"));
+      setNativeStatus(formatNativeError(error));
       return;
     }
     setClips((current) => current.filter((item) => !ids.includes(item.id)));
@@ -3870,6 +3882,7 @@ function BottomDock({
   status: string;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
+  const reduceMotion = useReducedMotion();
   const dockValue = activeSurface === "agent" ? "agent" : activeView;
   const handleDockValueChange = (value: string) => {
     if (value === "history" || value === "favorites" || value === "trash") {
@@ -3880,17 +3893,20 @@ function BottomDock({
   return (
     <footer className="list-footer" data-tauri-drag-region onPointerDown={onDrag}>
       <div className="footer-agent-slot" onPointerDown={(event) => event.stopPropagation()}>
-        <button
+        <motion.button
           aria-label={tr("main.dock.openAgent")}
           className={activeSurface === "agent" ? "icon-button active" : "icon-button subtle"}
           data-tooltip="Agent · Ctrl/Cmd+I"
           onClick={onOpenAgent}
           title="Agent · Ctrl/Cmd+I"
+          transition={dockButtonTransition}
           type="button"
+          whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
+          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
         >
           <img alt="" className="agent-access-icon" src={agentAccessIcon} />
           {agentContextCount ? <em>{agentContextCount}</em> : null}
-        </button>
+        </motion.button>
       </div>
       <StatusLine status={status} tr={tr} />
       <Tabs className="footer-view-tabs" value={dockValue} onValueChange={handleDockValueChange}>
@@ -3900,7 +3916,10 @@ function BottomDock({
           className={activeSurface === "clipboard" && activeView === "history" ? "icon-button active" : "icon-button subtle"}
           data-tooltip={tr("main.dock.history")}
           title={tr("main.dock.history")}
+          transition={dockTabTransition}
           value="history"
+          whileHover={reduceMotion ? undefined : { y: -1 }}
+          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
         >
           <History size={13} />
         </TabsTrigger>
@@ -3909,7 +3928,10 @@ function BottomDock({
           className={activeSurface === "clipboard" && activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
           data-tooltip={tr("main.dock.favorites")}
           title={tr("main.dock.favorites")}
+          transition={dockTabTransition}
           value="favorites"
+          whileHover={reduceMotion ? undefined : { y: -1 }}
+          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
         >
           <Heart size={13} />
         </TabsTrigger>
@@ -3918,18 +3940,30 @@ function BottomDock({
           className={activeSurface === "clipboard" && activeView === "trash" ? "icon-button active" : "icon-button subtle"}
           data-tooltip={tr("main.dock.trash")}
           title={tr("main.dock.trash")}
+          transition={dockTabTransition}
           value="trash"
+          whileHover={reduceMotion ? undefined : { y: -1 }}
+          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
         >
           <Trash2 size={13} />
         </TabsTrigger>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button aria-label={tr("main.dock.menu")} className="footer-profile-trigger" data-tooltip={tr("main.dock.menu")} title={tr("main.dock.menu")} type="button">
+            <motion.button
+              aria-label={tr("main.dock.menu")}
+              className="footer-profile-trigger"
+              data-tooltip={tr("main.dock.menu")}
+              title={tr("main.dock.menu")}
+              transition={dockButtonTransition}
+              type="button"
+              whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+            >
               <Avatar className="footer-profile-avatar">
                 <AvatarImage alt="" src={clipforgeAppIcon} />
                 <AvatarFallback>CF</AvatarFallback>
               </Avatar>
-            </button>
+            </motion.button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="footer-profile-menu" side="top" align="end" sideOffset={8}>
             <DropdownMenuLabel className="footer-profile-label">

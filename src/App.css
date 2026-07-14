@@ -133,35 +133,6 @@
 }
 
 /* shadcn / Animate UI backed Agent refinements */
-.agent-provider-avatar-group {
-  height: 22px !important;
-  margin-right: 1px;
-  margin-left: -1px;
-}
-
-.agent-provider-avatar {
-  width: 22px !important;
-  height: 22px !important;
-  border: 1px solid oklch(1 0 0 / 0.86);
-  background: oklch(0.16 0 0);
-  color: oklch(0.98 0 0);
-  box-shadow: 0 1px 3px oklch(0 0 0 / 0.12);
-}
-
-.agent-provider-avatar .avatar-fallback {
-  display: grid;
-  width: 100%;
-  height: 100%;
-  place-items: center;
-  font-size: 10px;
-  font-weight: 760;
-  line-height: 1;
-}
-
-.agent-provider-avatar-group [data-slot="avatar-container"] + [data-slot="avatar-container"] {
-  margin-left: -7px;
-}
-
 .agent-message-content {
   gap: 7px !important;
   padding: 8px 8px 10px !important;
@@ -266,8 +237,8 @@
 }
 
 .agent-composer {
-  min-height: 58px !important;
-  padding-top: 4px !important;
+  min-height: 42px !important;
+  padding-top: 2px !important;
 }
 
 .agent-composer-main {
@@ -332,6 +303,47 @@
   display: none !important;
 }
 
+/* Final selection frame rule: one moving dashed frame only, row state stays borderless. */
+.app-shell .quick-row.active,
+.app-shell .quick-row.selected {
+  background: oklch(0 0 0 / 0.025) !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.app-shell .quick-row.active::after,
+.app-shell .quick-row.selected::after,
+.app-shell .quick-row:hover::after {
+  display: none !important;
+  opacity: 0 !important;
+  animation: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.app-shell .quick-menu.virtual-list .target-focus-ring {
+  position: absolute !important;
+  top: 0 !important;
+  right: 2px !important;
+  left: 0 !important;
+  z-index: 4 !important;
+  display: block !important;
+  height: calc(var(--target-row-height, 40px) - 4px) !important;
+  margin-top: 2px !important;
+  pointer-events: none !important;
+  opacity: 1 !important;
+  background: transparent !important;
+  border: 1px dashed oklch(0.1 0 0 / 0.36) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 4px 14px oklch(0 0 0 / 0.055) !important;
+  transition:
+    transform 230ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 140ms var(--cf-ease-out),
+    border-color 160ms var(--cf-ease-out),
+    box-shadow 160ms var(--cf-ease-out) !important;
+  will-change: transform;
+}
+
 .footer-view-tabs {
   display: flex;
   align-items: center;
@@ -373,16 +385,26 @@
   position: relative;
   z-index: 1;
   border: 1px solid transparent !important;
+  transform-origin: center;
   transition:
     color 180ms var(--cf-ease-out),
     background-color 180ms var(--cf-ease-out),
     transform 180ms var(--cf-ease-out) !important;
+  will-change: transform;
 }
 
 .footer-view-tabs [data-slot="tabs-trigger"][data-state="active"] {
   color: oklch(1 0 0 / 0.96) !important;
   background: transparent !important;
   box-shadow: none !important;
+}
+
+.footer-view-tabs [data-slot="tabs-trigger"] svg {
+  transition: transform 180ms var(--cf-ease-out);
+}
+
+.footer-view-tabs [data-slot="tabs-trigger"][data-state="active"] svg {
+  transform: translateY(-0.5px) scale(1.05);
 }
 
 .app-shell .quick-row {
@@ -2414,10 +2436,11 @@ button {
   border-radius: 999px;
   cursor: pointer;
   outline: none;
+  transform-origin: center;
   transition:
     background 0.14s ease,
-    color 0.14s ease,
-    transform 0.14s ease;
+    color 0.14s ease;
+  will-change: transform;
 }
 
 .footer-profile-trigger:hover,
@@ -2427,16 +2450,22 @@ button {
   background: oklch(0 0 0 / 0.05);
 }
 
-.footer-profile-trigger:active {
-  transform: scale(0.96);
-}
-
 .footer-profile-avatar.avatar {
   width: 22px;
   height: 22px;
   color: oklch(0.24 0 0 / 0.78);
   background: oklch(1 0 0 / 0.62);
   border-color: oklch(0 0 0 / 0.1);
+  transition:
+    border-color 160ms var(--cf-ease-out),
+    box-shadow 160ms var(--cf-ease-out);
+}
+
+.footer-profile-trigger:hover .footer-profile-avatar,
+.footer-profile-trigger:focus-visible .footer-profile-avatar,
+.footer-profile-trigger[data-state="open"] .footer-profile-avatar {
+  border-color: oklch(0 0 0 / 0.16);
+  box-shadow: 0 5px 13px oklch(0 0 0 / 0.11);
 }
 
 .footer-profile-avatar .avatar-fallback {
@@ -5040,6 +5069,21 @@ body,
   min-width: 0;
 }
 
+.agent-provider-logo {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: oklch(0.16 0 0 / 0.88);
+  background: oklch(1 0 0 / 0.52);
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 999px;
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.06);
+  transform-origin: center;
+  will-change: transform;
+}
+
 .agent-provider-select select {
   max-width: 126px;
   height: 24px;
@@ -5107,21 +5151,6 @@ body,
 .agent-result-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.46;
-}
-
-.agent-reference-empty {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  max-width: 220px;
-  min-height: 30px;
-  padding: 0 7px;
-  color: oklch(0.14 0 0 / 0.8);
-  background: oklch(1 0 0 / 0.34);
-  border: 1px solid oklch(0 0 0 / 0.1);
-  border-radius: 4px;
-  font-size: 11px;
 }
 
 .agent-run-confirmation {
@@ -5484,40 +5513,6 @@ body,
   padding-top: 2px;
 }
 
-.agent-suggestion-strip {
-  display: flex;
-  gap: 5px;
-  min-width: 0;
-  overflow-x: auto;
-  padding-inline: 1px;
-  scrollbar-width: none;
-}
-
-.agent-suggestion-strip::-webkit-scrollbar {
-  display: none;
-}
-
-.agent-suggestion-strip button {
-  flex: 0 0 auto;
-  min-height: 24px;
-  max-width: 120px;
-  padding: 0 8px;
-  overflow: hidden;
-  color: oklch(0.15 0 0 / 0.72);
-  background: oklch(1 0 0 / 0.5);
-  border: 1px solid oklch(0 0 0 / 0.09);
-  border-radius: 999px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agent-suggestion-strip button:hover,
-.agent-suggestion-strip button:focus-visible {
-  color: oklch(0.98 0 0);
-  background: oklch(0.16 0 0 / 0.88);
-  outline: none;
-}
-
 .agent-composer input,
 .agent-composer textarea {
   width: 100%;
@@ -5855,6 +5850,7 @@ body,
   height: 18px;
   object-fit: contain;
   filter: drop-shadow(0 1px 1px oklch(0 0 0 / 0.16));
+  transition: filter 160ms var(--cf-ease-out);
 }
 
 .footer-agent-slot {
@@ -5869,6 +5865,14 @@ body,
   width: 32px !important;
   min-height: 32px !important;
   border-radius: 9px !important;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.footer-agent-slot .icon-button:hover .agent-access-icon,
+.footer-agent-slot .icon-button:focus-visible .agent-access-icon,
+.footer-agent-slot .icon-button.active .agent-access-icon {
+  filter: drop-shadow(0 4px 8px oklch(0 0 0 / 0.14));
 }
 
 .footer-agent-slot em {
@@ -10835,35 +10839,8 @@ body,
 }
 
 .agent-composer {
-  min-height: 68px !important;
-  gap: 4px !important;
-}
-
-.agent-composer .agent-suggestion-strip {
-  gap: 4px !important;
-  padding-inline: 0 !important;
-}
-
-.agent-composer .agent-suggestion-strip button {
-  min-width: 0 !important;
-  min-height: 28px !important;
-  max-width: 104px !important;
-  padding: 0 10px !important;
-  color: oklch(0.16 0 0 / 0.82) !important;
-  background: oklch(1 0 0 / 0.72) !important;
-  border: 1px solid oklch(0 0 0 / 0.1) !important;
-  border-radius: 7px !important;
-  font-size: 11px !important;
-  font-weight: 680 !important;
-  line-height: 1 !important;
-  box-shadow: none !important;
-}
-
-.agent-composer .agent-suggestion-strip button:hover,
-.agent-composer .agent-suggestion-strip button:focus-visible {
-  color: oklch(0.98 0 0) !important;
-  background: oklch(0.15 0 0 / 0.9) !important;
-  outline: none !important;
+  min-height: 42px !important;
+  gap: 3px !important;
 }
 
 .agent-composer-main {
@@ -11138,35 +11115,6 @@ body,
 }
 
 /* Final Agent/detail overrides. Keep this block after legacy compact-panel rules. */
-.agent-provider-avatar-group {
-  height: 22px !important;
-  margin-right: 1px;
-  margin-left: -1px;
-}
-
-.agent-provider-avatar {
-  width: 22px !important;
-  height: 22px !important;
-  color: oklch(0.98 0 0);
-  background: oklch(0.16 0 0);
-  border: 1px solid oklch(1 0 0 / 0.86);
-  box-shadow: 0 1px 3px oklch(0 0 0 / 0.12);
-}
-
-.agent-provider-avatar .avatar-fallback {
-  display: grid;
-  width: 100%;
-  height: 100%;
-  place-items: center;
-  font-size: 10px;
-  font-weight: 760;
-  line-height: 1;
-}
-
-.agent-provider-avatar-group [data-slot="avatar-container"] + [data-slot="avatar-container"] {
-  margin-left: -7px;
-}
-
 .agent-message-content {
   gap: 7px !important;
   padding: 8px 8px 10px !important;
@@ -11271,8 +11219,8 @@ body,
 }
 
 .agent-composer {
-  min-height: 58px !important;
-  padding-top: 4px !important;
+  min-height: 42px !important;
+  padding-top: 2px !important;
 }
 
 .agent-composer-main {

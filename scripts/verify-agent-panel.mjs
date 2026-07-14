@@ -138,7 +138,10 @@ assert(css.includes(".agent-overlay.open"), "Agent overlay open style is missing
 assert(css.includes("transform: translateY(0) scale(1)"), "Agent overlay enter animation is missing");
 assert(css.includes(".agent-access-icon"), "Agent icon style is missing");
 assert(css.includes(".agent-run-confirmation"), "Agent command confirmation style is missing");
-assert(css.includes(".agent-suggestion-strip"), "Agent suggested prompt style is missing");
+assert(!agent.includes("agent-reference-empty"), "Agent empty reference pill should not render in the compact composer");
+assert(!agent.includes("agent-suggestion-strip"), "Agent default suggested prompts should not render before the user types");
+assert(!css.includes(".agent-reference-empty"), "Agent empty reference pill style should not remain");
+assert(!css.includes(".agent-suggestion-strip"), "Agent suggested prompt strip style should not remain in the compact composer");
 assert(!css.includes(".agent-permission-strip"), "Agent permission mode strip style should not be present in the compact Agent panel");
 assert(!css.includes(".agent-provider-details"), "Agent provider detail style should not be present in the compact Agent panel");
 assert(css.includes("grid-template-columns: minmax(0, 1fr) 34px"), "Agent compact composer should only keep input plus send button");

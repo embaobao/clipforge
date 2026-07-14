@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use rusqlite::{
     params, params_from_iter, types::Value as SqlValue, Connection, OpenFlags, OptionalExtension,
 };
@@ -20,6 +22,27 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 mod clipboard;
+
+fn command_error(code: &str, detail: impl AsRef<str>) -> String {
+    format!("{}: {}", code, detail.as_ref())
+}
+
+fn is_command_error(value: &str) -> bool {
+    value.split_once(':').is_some_and(|(code, _)| {
+        !code.is_empty()
+            && code
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    })
+}
+
+fn preserve_command_error(default_code: &str, error: String) -> String {
+    if is_command_error(&error) {
+        error
+    } else {
+        command_error(default_code, error)
+    }
+}
 
 #[cfg(target_os = "macos")]
 use tauri_nspanel::objc2_app_kit::{NSResponder, NSWindow as AppKitNSWindow};
@@ -649,6 +672,17 @@ struct AgentProviderReadiness {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AgentProviderModelsPayload {
+    provider_id: String,
+    status: String,
+    reason: String,
+    checked_at: i64,
+    command_preview: String,
+    models: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AgentDetectCandidate {
     provider_id: String,
     label: String,
@@ -669,6 +703,16 @@ struct AgentConfigPayload {
     active_provider_id: Option<String>,
     providers: Vec<ClipboardAgentProviderConfig>,
     tools: Vec<ClipboardAgentToolDescriptor>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProviderModelsPayload {
+    provider_id: String,
+    active_model_id: Option<String>,
+    models: Vec<String>,
+    source: String,
+    message: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1039,11 +1083,13 @@ fn paste_prepared_clipboard<R: tauri::Runtime>(
 
 #[tauri::command]
 fn write_clipboard_item(input: ClipboardItemCommandInput) -> Result<ClipItemPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIPBOARD_WRITE_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIPBOARD_WRITE_FAILED", error))?;
     let item = load_clip(&conn, &input.id)?;
     suppress_writeback_for(Duration::from_millis(450));
-    let write_result = clipboard::write_clipboard_item(&item, input.paste_mode.as_deref())?;
+    let write_result = clipboard::write_clipboard_item(&item, input.paste_mode.as_deref())
+        .map_err(|error| preserve_command_error("CLIPBOARD_WRITE_FAILED", error))?;
     update_clip_record(UpdateClipInput {
         id: item.id.clone(),
         content: None,
@@ -1055,7 +1101,8 @@ fn write_clipboard_item(input: ClipboardItemCommandInput) -> Result<ClipItemPayl
         metadata: None,
         agent_context: None,
         copied: Some(true),
-    })?;
+    })
+    .map_err(|error| preserve_command_error("CLIPBOARD_WRITE_FAILED", error))?;
     log_to_file(
         "info",
         "clipboard-write",
@@ -1077,17 +1124,20 @@ fn paste_clipboard_item<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     input: ClipboardItemCommandInput,
 ) -> Result<ClipItemPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIPBOARD_PASTE_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIPBOARD_PASTE_FAILED", error))?;
     let item = load_clip(&conn, &input.id)?;
     suppress_writeback_for(Duration::from_millis(700));
-    let write_result = clipboard::write_clipboard_item(&item, input.paste_mode.as_deref())?;
+    let write_result = clipboard::write_clipboard_item(&item, input.paste_mode.as_deref())
+        .map_err(|error| preserve_command_error("CLIPBOARD_PASTE_FAILED", error))?;
     paste_prepared_clipboard(
         app,
         input.source.clone(),
         write_result.text_fallback.clone(),
         write_result.guard_hash.clone(),
-    )?;
+    )
+    .map_err(|error| preserve_command_error("CLIPBOARD_PASTE_FAILED", error))?;
     update_clip_record(UpdateClipInput {
         id: item.id.clone(),
         content: None,
@@ -1099,7 +1149,8 @@ fn paste_clipboard_item<R: tauri::Runtime>(
         metadata: None,
         agent_context: None,
         copied: Some(true),
-    })?;
+    })
+    .map_err(|error| preserve_command_error("CLIPBOARD_PASTE_FAILED", error))?;
     log_to_file(
         "info",
         "clipboard-paste",
@@ -1140,6 +1191,7 @@ fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, Str
         agent_context: None,
         copied: None,
     })
+    .map_err(|error| preserve_command_error("EDITOR_SAVE_FAILED", error))
 }
 
 fn agent_trace_id(prefix: &str) -> String {
@@ -1276,6 +1328,15 @@ fn value_string_array(value: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn configured_default_agent_provider_id() -> Option<String> {
+    read_user_settings().ok().and_then(|payload| {
+        payload
+            .settings
+            .get("agent")
+            .and_then(|agent| value_string(agent, &["defaultProviderId", "default_provider_id"]))
+    })
+}
+
 fn configured_agent_providers_from_settings() -> Vec<AgentDetectCandidate> {
     let settings = read_user_settings()
         .map(|payload| payload.settings)
@@ -1295,10 +1356,12 @@ fn configured_agent_providers_from_settings() -> Vec<AgentDetectCandidate> {
             if !provider.is_object() || !value_bool(provider, "enabled", true) {
                 return None;
             }
-            let kind = value_string(provider, &["kind"]).unwrap_or_else(|| "openai-compatible".to_string());
+            let kind = value_string(provider, &["kind"])
+                .unwrap_or_else(|| "openai-compatible".to_string());
             let fallback_id = format!("settings-agent-{index}");
             let provider_id = value_string(provider, &["id"]).unwrap_or(fallback_id);
-            let label = value_string(provider, &["label", "name"]).unwrap_or_else(|| provider_id.clone());
+            let label =
+                value_string(provider, &["label", "name"]).unwrap_or_else(|| provider_id.clone());
             if kind == "openai-compatible" || kind == "openapi" || kind == "openai" {
                 let base_url = value_string(provider, &["baseUrl", "baseURL", "endpoint"])
                     .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
@@ -1344,6 +1407,17 @@ fn configured_agent_providers_from_settings() -> Vec<AgentDetectCandidate> {
             None
         })
         .collect()
+}
+
+fn configured_default_agent_provider_id() -> Option<String> {
+    let settings = read_user_settings().ok()?.settings;
+    settings
+        .get("agent")
+        .and_then(|agent| {
+            value_string(agent, &["defaultProviderId"])
+                .or_else(|| value_string(agent, &["defaultAgentId"]))
+        })
+        .or_else(|| value_string(&settings, &["defaultProviderId", "defaultAgentId"]))
 }
 
 fn agent_detect_candidates() -> Vec<AgentDetectCandidate> {
@@ -1580,6 +1654,45 @@ fn check_agent_candidate(candidate: &AgentDetectCandidate) -> AgentProviderReadi
         checked_at,
         command_preview: command_preview(candidate),
     })
+}
+
+fn check_openai_compatible_models(candidate: &AgentDetectCandidate) -> AgentProviderModelsPayload {
+    if candidate.kind != "openai-compatible" {
+        return AgentProviderModelsPayload {
+            provider_id: candidate.provider_id.clone(),
+            active_model_id: candidate.model_id.clone(),
+            models: Vec::new(),
+            source: "unsupported-provider".to_string(),
+            message: "Model listing is only available for OpenAI-compatible providers".to_string(),
+        };
+    }
+
+    let mut models = Vec::new();
+    if let Some(model_id) = candidate.model_id.as_deref() {
+        models.push(model_id.to_string());
+    }
+    models.extend(
+        [
+            "gpt-4.1-mini",
+            "gpt-4.1",
+            "gpt-4o-mini",
+            "gpt-4o",
+            "o4-mini",
+            "o3-mini",
+        ]
+        .iter()
+        .map(|model| model.to_string()),
+    );
+    models.sort();
+    models.dedup();
+
+    AgentProviderModelsPayload {
+        provider_id: candidate.provider_id.clone(),
+        active_model_id: candidate.model_id.clone(),
+        models,
+        source: "static-openai-compatible".to_string(),
+        message: "Static model suggestions; edit settings.json5 to use a custom modelId".to_string(),
+    }
 }
 
 fn shell_escape_word(value: &str) -> String {
@@ -2161,9 +2274,11 @@ fn spawn_agent_output_reader<R, T>(
 #[tauri::command]
 fn agent_get_config() -> Result<AgentConfigPayload, String> {
     let providers = provider_configs_with_readiness(false);
-    let active_provider_id = providers
-        .iter()
-        .find(|provider| provider.configured)
+    let default_provider_id = configured_default_agent_provider_id();
+    let active_provider_id = default_provider_id
+        .as_deref()
+        .and_then(|default_id| providers.iter().find(|provider| provider.id == default_id))
+        .or_else(|| providers.iter().find(|provider| provider.configured))
         .or_else(|| providers.first())
         .map(|provider| provider.id.clone());
     Ok(AgentConfigPayload {
@@ -2183,6 +2298,284 @@ fn agent_check_provider(provider_id: Option<String>) -> Result<AgentProviderRead
     let candidate = agent_candidate_by_id(provider_id.as_deref())
         .ok_or_else(|| "AGENT_PROVIDER_NOT_CONFIGURED".to_string())?;
     Ok(check_agent_candidate(&candidate))
+}
+
+#[tauri::command]
+fn agent_list_provider_models(
+    provider_id: Option<String>,
+) -> Result<AgentProviderModelsPayload, String> {
+    let candidate = agent_candidate_by_id(provider_id.as_deref())
+        .ok_or_else(|| "AGENT_PROVIDER_NOT_CONFIGURED".to_string())?;
+    Ok(check_openai_compatible_models(&candidate))
+}
+
+fn settings_json_schema() -> Value {
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ClipForgeSettings",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "language": { "type": "string", "enum": ["system", "zh-CN", "en-US"] },
+            "globalShortcut": { "type": "string", "minLength": 1 },
+            "panelDensity": { "type": "string", "enum": ["dense", "normal", "comfortable"] },
+            "contentDisplayMode": { "type": "string", "enum": ["summary", "middle", "raw"] },
+            "quickItemLimit": { "type": "integer", "minimum": 1, "maximum": 100 },
+            "maxStoredItems": { "type": "integer", "minimum": 1, "maximum": 100000 },
+            "clipboardPollMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
+            "cleanupEnabled": { "type": "boolean" },
+            "cleanupIntervalHours": { "type": "integer", "minimum": 1, "maximum": 8760 },
+            "softDeletedRetentionDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
+            "enableMarkdownPreview": { "type": "boolean" },
+            "fuzzySearchEnabled": { "type": "boolean" },
+            "pinyinSearchEnabled": { "type": "boolean" },
+            "tagMode": { "type": "string", "enum": ["similar", "rules", "off"] },
+            "tagRules": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "id": { "type": "string", "minLength": 1 },
+                        "label": { "type": "string", "minLength": 1, "maxLength": 32 },
+                        "query": { "type": "string", "maxLength": 500 }
+                    },
+                    "required": ["id", "label", "query"]
+                }
+            },
+            "positionStrategy": { "type": "string", "enum": ["trayCenter", "followCursor", "center", "windowCenter", "lastPosition", "focusInput"] },
+            "panelBackgroundOpacity": { "type": "number", "minimum": 0.2, "maximum": 1 },
+            "enableScrollCollapse": { "type": "boolean" },
+            "panelWidth": { "type": "integer", "minimum": 300, "maximum": 1200 },
+            "panelHeight": { "type": "integer", "minimum": 240, "maximum": 1200 },
+            "onboardingCompleted": { "type": "boolean" },
+            "logMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 2048 },
+            "logKeepRatio": { "type": "number", "minimum": 0.05, "maximum": 1 },
+            "logMaxLines": { "type": "integer", "minimum": 100, "maximum": 2000000 },
+            "logRetentionDays": { "type": "integer", "minimum": 0, "maximum": 3650 },
+            "logAutoCleanup": { "type": "boolean" },
+            "logCleanupIntervalMin": { "type": "integer", "minimum": 1, "maximum": 1440 },
+            "captureTextEnabled": { "type": "boolean" },
+            "captureHtmlEnabled": { "type": "boolean" },
+            "captureRtfEnabled": { "type": "boolean" },
+            "captureImageEnabled": { "type": "boolean" },
+            "captureFileEnabled": { "type": "boolean" },
+            "captureSensitiveEnabled": { "type": "boolean" },
+            "imageMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 4096 },
+            "textMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 1024 },
+            "agentProviders": { "$ref": "#/$defs/agentProvidersLegacy" },
+            "agent": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "defaultProviderId": { "type": "string" },
+                    "defaultAgentId": { "type": "string" },
+                    "providers": { "$ref": "#/$defs/agentProviders" }
+                }
+            }
+        },
+        "$defs": {
+            "agentProvidersLegacy": { "$ref": "#/$defs/agentProviders" },
+            "agentProviders": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "id": { "type": "string", "minLength": 1 },
+                        "name": { "type": "string", "minLength": 1 },
+                        "label": { "type": "string", "minLength": 1 },
+                        "kind": { "type": "string", "enum": ["openai-compatible", "openai", "openapi", "local-cli", "cli", "local-cli-configured"] },
+                        "enabled": { "type": "boolean" },
+                        "baseUrl": { "type": "string" },
+                        "baseURL": { "type": "string" },
+                        "endpoint": { "type": "string" },
+                        "modelId": { "type": "string" },
+                        "model": { "type": "string" },
+                        "apiKey": { "type": "string" },
+                        "apiKeyEnv": { "type": "string" },
+                        "apiKeyRef": { "type": "string" },
+                        "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 600 },
+                        "command": { "type": "string" },
+                        "args": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["id", "kind"]
+                }
+            }
+        }
+    })
+}
+
+fn resolve_schema_ref<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
+    let Some(reference) = schema.get("$ref").and_then(Value::as_str) else {
+        return schema;
+    };
+    if reference == "#/$defs/agentProviders" {
+        return root
+            .get("$defs")
+            .and_then(|defs| defs.get("agentProviders"))
+            .unwrap_or(schema);
+    }
+    if reference == "#/$defs/agentProvidersLegacy" {
+        return root
+            .get("$defs")
+            .and_then(|defs| defs.get("agentProvidersLegacy"))
+            .map(|value| resolve_schema_ref(root, value))
+            .unwrap_or(schema);
+    }
+    schema
+}
+
+fn validate_settings_value(value: &Value, schema: &Value, root: &Value, path: &str, errors: &mut Vec<String>) {
+    let schema = resolve_schema_ref(root, schema);
+    if let Some(expected_type) = schema.get("type").and_then(Value::as_str) {
+        let ok = match expected_type {
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            "string" => value.is_string(),
+            "boolean" => value.is_boolean(),
+            "number" => value.is_number(),
+            "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+            _ => true,
+        };
+        if !ok {
+            errors.push(format!("{path} must be {expected_type}"));
+            return;
+        }
+    }
+    if let Some(options) = schema.get("enum").and_then(Value::as_array) {
+        if !options.iter().any(|item| item == value) {
+            errors.push(format!("{path} must be one of {}", Value::Array(options.clone())));
+        }
+    }
+    if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64) {
+        if value.as_f64().is_some_and(|number| number < minimum) {
+            errors.push(format!("{path} must be >= {minimum}"));
+        }
+    }
+    if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64) {
+        if value.as_f64().is_some_and(|number| number > maximum) {
+            errors.push(format!("{path} must be <= {maximum}"));
+        }
+    }
+    if let Some(min_length) = schema.get("minLength").and_then(Value::as_u64) {
+        if value
+            .as_str()
+            .is_some_and(|text| text.chars().count() < min_length as usize)
+        {
+            errors.push(format!("{path} is shorter than {min_length}"));
+        }
+    }
+    if let Some(max_length) = schema.get("maxLength").and_then(Value::as_u64) {
+        if value
+            .as_str()
+            .is_some_and(|text| text.chars().count() > max_length as usize)
+        {
+            errors.push(format!("{path} is longer than {max_length}"));
+        }
+    }
+    if let (Some(object), Some(properties)) = (value.as_object(), schema.get("properties").and_then(Value::as_object)) {
+        let additional = schema
+            .get("additionalProperties")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        for (key, item) in object {
+            let next_path = if path == "$" {
+                format!("$.{key}")
+            } else {
+                format!("{path}.{key}")
+            };
+            if let Some(property_schema) = properties.get(key) {
+                validate_settings_value(item, property_schema, root, &next_path, errors);
+            } else if !additional {
+                errors.push(format!("{next_path} is not a supported setting key"));
+            }
+        }
+    }
+    if let (Some(items), Some(item_schema)) = (value.as_array(), schema.get("items")) {
+        for (index, item) in items.iter().enumerate() {
+            validate_settings_value(item, item_schema, root, &format!("{path}[{index}]"), errors);
+        }
+    }
+}
+
+fn validate_settings_patch(input: &Value) -> Result<(), String> {
+    let schema = settings_json_schema();
+    let mut errors = Vec::new();
+    validate_settings_value(input, &schema, &schema, "$", &mut errors);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("SETTINGS_SCHEMA_VALIDATION_FAILED: {}", errors.join("; ")))
+    }
+}
+
+fn public_settings_payload() -> Result<Value, String> {
+    Ok(json!({
+        "settings": read_user_settings()?.settings,
+        "schema": settings_json_schema(),
+        "recommendedWriteMode": "patch",
+        "warnings": [
+            "Prefer settings patch updates. Full replacement is available only with confirmed=true.",
+            "Arrays are replaced as complete values, including agent.providers and tagRules.",
+            "Prefer agent.providers[].apiKeyEnv over persistent inline apiKey."
+        ],
+        "redaction": {
+            "agent.providers[].apiKey": "write-only in UI and MCP responses should not depend on reading it back from provider list",
+            "agent.providers[].apiKeyEnv": "preferred for persistent config"
+        }
+    }))
+}
+
+#[tauri::command]
+fn settings_get_public() -> Result<Value, String> {
+    public_settings_payload()
+}
+
+#[tauri::command]
+fn settings_patch_public(input: Value) -> Result<Value, String> {
+    validate_settings_patch(&input)?;
+    let mut current = read_user_settings()?.settings;
+    merge_json_object(&mut current, input);
+    write_user_settings(current)?;
+    public_settings_payload()
+}
+
+#[tauri::command]
+fn settings_replace_public(input: Value, confirmed: Option<bool>) -> Result<Value, String> {
+    if confirmed != Some(true) {
+        return Err("SETTINGS_REPLACE_REQUIRES_CONFIRMATION: use partial patch unless you intend to replace the full settings object".to_string());
+    }
+    validate_settings_patch(&input)?;
+    write_user_settings(input)?;
+    public_settings_payload()
+}
+
+#[tauri::command]
+fn settings_reset_public(scope: Option<String>, confirmed: Option<bool>) -> Result<Value, String> {
+    if confirmed != Some(true) {
+        return Err("SETTINGS_RESET_REQUIRES_CONFIRMATION".to_string());
+    }
+    let scope = scope.unwrap_or_else(|| "all".to_string());
+    let mut current = read_user_settings()?.settings;
+    match scope.as_str() {
+        "all" => current = json!({}),
+        "agent" => {
+            if let Some(object) = current.as_object_mut() {
+                object.remove("agent");
+                object.remove("agentProviders");
+            }
+        }
+        key => {
+            if let Some(object) = current.as_object_mut() {
+                object.remove(key);
+            } else {
+                current = json!({});
+            }
+        }
+    }
+    write_user_settings(current)?;
+    public_settings_payload()
 }
 
 #[tauri::command]
@@ -3005,11 +3398,16 @@ fn capture_current_clipboard(
     source_label: Option<String>,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
-    let raw_payload =
-        clipboard::read_clipboard_payload()?.ok_or_else(|| "clipboard is empty".to_string())?;
+    let raw_payload = clipboard::read_clipboard_payload()
+        .map_err(|error| preserve_command_error("CLIPBOARD_READ_FAILED", error))?
+        .ok_or_else(|| command_error("CLIPBOARD_EMPTY", "clipboard is empty"))?;
     let raw_fingerprint = clipboard_payload_fingerprint(&raw_payload);
-    let payload = apply_capture_settings(raw_payload)?
-        .ok_or_else(|| "clipboard capture skipped by settings".to_string())?;
+    let payload = apply_capture_settings(raw_payload)?.ok_or_else(|| {
+        command_error(
+            "CLIPBOARD_CAPTURE_SKIPPED",
+            "clipboard capture skipped by settings",
+        )
+    })?;
     let fingerprint = clipboard_payload_fingerprint(&payload);
     log_to_file(
         "info",
@@ -3035,7 +3433,7 @@ fn capture_clip_payload(
     let draft = clipboard::build_clipboard_draft(payload, &image_store)?;
     let content = draft.content.trim().to_string();
     if content.is_empty() && draft.plain_text.trim().is_empty() {
-        return Err("content is empty".to_string());
+        return Err(command_error("CLIPBOARD_CONTENT_EMPTY", "content is empty"));
     }
     let hash = draft.content_hash.clone();
     let existing_id: Option<String> = conn
@@ -3819,17 +4217,19 @@ fn push_in_clause(
 
 #[tauri::command]
 fn soft_delete_clip_records(ids: Vec<String>) -> Result<DeleteClipPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
-    let deleted_at = now_millis()?;
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIP_DELETE_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIP_DELETE_FAILED", error))?;
+    let deleted_at =
+        now_millis().map_err(|error| preserve_command_error("CLIP_DELETE_FAILED", error))?;
     for id in &ids {
         conn.execute(
             "UPDATE clips SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![deleted_at, id],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_DELETE_FAILED", error.to_string()))?;
         conn.execute("DELETE FROM clip_fts WHERE id = ?1", params![id])
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| command_error("CLIP_DELETE_FAILED", error.to_string()))?;
     }
     Ok(DeleteClipPayload {
         deleted_ids: ids,
@@ -3845,16 +4245,18 @@ struct RestoreClipPayload {
 
 #[tauri::command]
 fn restore_clip_records(ids: Vec<String>) -> Result<RestoreClipPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
-    let now = now_millis()?;
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIP_RESTORE_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIP_RESTORE_FAILED", error))?;
+    let now = now_millis().map_err(|error| preserve_command_error("CLIP_RESTORE_FAILED", error))?;
     for id in &ids {
         conn.execute(
             "UPDATE clips SET deleted_at = NULL, updated_at = ?1, bucket = 'history' WHERE id = ?2",
             params![now, id],
         )
-        .map_err(|error| error.to_string())?;
-        upsert_fts(&conn, id)?;
+        .map_err(|error| command_error("CLIP_RESTORE_FAILED", error.to_string()))?;
+        upsert_fts(&conn, id)
+            .map_err(|error| preserve_command_error("CLIP_RESTORE_FAILED", error))?;
     }
     Ok(RestoreClipPayload { restored_ids: ids })
 }
@@ -3867,9 +4269,13 @@ struct HardDeleteClipPayload {
 
 #[tauri::command]
 fn hard_delete_clip_records(ids: Vec<String>) -> Result<HardDeleteClipPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
-    let image_store = clipboard::ImageStore::new(image_storage_path()?);
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIP_HARD_DELETE_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIP_HARD_DELETE_FAILED", error))?;
+    let image_store = clipboard::ImageStore::new(
+        image_storage_path()
+            .map_err(|error| preserve_command_error("CLIP_HARD_DELETE_FAILED", error))?,
+    );
     for id in &ids {
         let image_file_name: Option<String> = conn
             .query_row(
@@ -3878,11 +4284,11 @@ fn hard_delete_clip_records(ids: Vec<String>) -> Result<HardDeleteClipPayload, S
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| command_error("CLIP_HARD_DELETE_FAILED", error.to_string()))?;
         conn.execute("DELETE FROM clip_fts WHERE id = ?1", params![id])
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| command_error("CLIP_HARD_DELETE_FAILED", error.to_string()))?;
         conn.execute("DELETE FROM clips WHERE id = ?1", params![id])
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| command_error("CLIP_HARD_DELETE_FAILED", error.to_string()))?;
         if let Some(file_name) = image_file_name {
             if let Err(error) = image_store.remove(&file_name) {
                 log_to_file(
@@ -3903,13 +4309,14 @@ fn hard_delete_clip_records(ids: Vec<String>) -> Result<HardDeleteClipPayload, S
 
 #[tauri::command]
 fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
-    let now = now_millis()?;
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
+    let now = now_millis().map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
     if let Some(content) = input.content {
         let content = content.trim().to_string();
         if content.is_empty() {
-            return Err("content is empty".to_string());
+            return Err(command_error("CLIPBOARD_CONTENT_EMPTY", "content is empty"));
         }
         let detection = clipboard::detect_text(&content);
         let payload_kind = detection.payload_kind;
@@ -3929,7 +4336,7 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
                     |row| row.get(0),
                 )
                 .optional()
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
             existing
                 .unwrap_or_default()
                 .split(',')
@@ -3943,9 +4350,12 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
         if let Some(duplicate_id) = duplicate_id {
-            return Err(format!("content duplicates existing clip {duplicate_id}"));
+            return Err(command_error(
+                "CLIP_DUPLICATE_CONTENT",
+                format!("content duplicates existing clip {duplicate_id}"),
+            ));
         }
         let analysis = analyze_clip(&content, "Edit");
         conn.execute(
@@ -3990,8 +4400,9 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
                 input.id
             ],
         )
-        .map_err(|error| error.to_string())?;
-        upsert_fts(&conn, &input.id)?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
+        upsert_fts(&conn, &input.id)
+            .map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
         log_to_file(
             "info",
             "clip-edit",
@@ -4008,68 +4419,80 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
             "UPDATE clips SET tags = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![normalize_tags(tags).join(","), now, input.id],
         )
-        .map_err(|error| error.to_string())?;
-        upsert_fts(&conn, &input.id)?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
+        upsert_fts(&conn, &input.id)
+            .map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
     }
     if let Some(bucket) = input.bucket {
         conn.execute(
             "UPDATE clips SET bucket = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![bucket, now, input.id],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
     }
     if let Some(favorite) = input.favorite {
         conn.execute(
             "UPDATE clips SET favorite = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![if favorite { 1 } else { 0 }, now, input.id],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
     }
     if let Some(pinned) = input.pinned {
         conn.execute(
             "UPDATE clips SET pinned = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![if pinned { 1 } else { 0 }, now, input.id],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
     }
     if let Some(note) = input.note {
         conn.execute(
             "UPDATE clips SET note = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
             params![note, now, input.id],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
     }
     if let Some(metadata) = input.metadata {
         conn.execute(
             "UPDATE clips SET metadata_json = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
-            params![json_string(&metadata)?, now, input.id],
+            params![
+                json_string(&metadata).map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?,
+                now,
+                input.id
+            ],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
     }
     if let Some(agent_context) = input.agent_context {
         conn.execute(
             "UPDATE clips SET agent_context_json = ?1, updated_at = ?2 WHERE id = ?3 AND deleted_at IS NULL",
-            params![json_string(&agent_context)?, now, input.id],
+            params![
+                json_string(&agent_context).map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?,
+                now,
+                input.id
+            ],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
     }
     if input.copied.unwrap_or(false) {
         conn.execute(
             "UPDATE clips SET copy_count = copy_count + 1, last_copied_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
             params![now, input.id],
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
     }
-    load_clip(&conn, &input.id)
+    load_clip(&conn, &input.id).map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))
 }
 
 #[tauri::command]
 fn export_clip_records(include_deleted: Option<bool>) -> Result<ExportClipPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
-    let items = export_items(&conn, include_deleted.unwrap_or(false))?;
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?;
+    let items = export_items(&conn, include_deleted.unwrap_or(false))
+        .map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?;
     Ok(ExportClipPayload {
-        exported_at: now_millis()?,
+        exported_at: now_millis()
+            .map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?,
         count: items.len() as i64,
         items,
     })
@@ -4077,9 +4500,10 @@ fn export_clip_records(include_deleted: Option<bool>) -> Result<ExportClipPayloa
 
 #[tauri::command]
 fn import_clip_records(items: Vec<ImportClipInput>) -> Result<ImportClipPayload, String> {
-    let conn = open_clip_db()?;
-    init_schema(&conn)?;
-    import_items(&conn, items)
+    let conn =
+        open_clip_db().map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))?;
+    init_schema(&conn).map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))?;
+    import_items(&conn, items).map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))
 }
 
 #[tauri::command]
@@ -6216,7 +6640,12 @@ fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
             })
         },
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| match error {
+        rusqlite::Error::QueryReturnedNoRows => {
+            command_error("CLIP_NOT_FOUND", format!("clip not found: {id}"))
+        }
+        other => command_error("CLIP_LOAD_FAILED", other.to_string()),
+    })
 }
 
 fn export_items(conn: &Connection, include_deleted: bool) -> Result<Vec<Value>, String> {
@@ -7137,6 +7566,7 @@ pub fn run() {
             ignore_update_version,
             agent_get_config,
             agent_list_providers,
+            agent_list_provider_models,
             agent_check_provider,
             agent_detect,
             agent_prepare_run,

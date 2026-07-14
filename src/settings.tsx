@@ -22,12 +22,20 @@ import {
 } from "lucide-react";
 import { getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import {
+  formatCommandError,
   normalizeLanguagePreference,
   resolveAppLocale,
   setDocumentLocale,
   t,
   type AppLanguagePreference,
 } from "./i18n";
+import {
+  Tabs,
+  TabsContent,
+  TabsContents,
+  TabsList,
+  TabsTrigger,
+} from "./components/animate-ui/components/animate/tabs";
 
 interface AppSettings {
   language: AppLanguagePreference;
@@ -264,27 +272,67 @@ function SettingGroup({ children, title }: { children: React.ReactNode; title: s
 }
 
 function SegmentSetting<T extends string>({
+  label,
   options,
   selected,
   onChange,
 }: {
+  label?: string;
   options: Array<{ value: T; label: string }>;
   selected: T;
   onChange: (value: T) => void;
 }) {
   return (
-    <div className="segment-row">
+    <div aria-label={label} className="setting-toggle-group" role="radiogroup">
       {options.map((option) => (
         <button
           className={selected === option.value ? "active" : ""}
+          aria-checked={selected === option.value}
           key={option.value}
           onClick={() => onChange(option.value)}
+          role="radio"
           type="button"
         >
           {option.label}
         </button>
       ))}
     </div>
+  );
+}
+
+function CodeTabsSetting({
+  tabs,
+  onCopy,
+}: {
+  tabs: Array<{ value: string; label: string; language: string; content: string }>;
+  onCopy: (label: string, content: string) => void;
+}) {
+  const defaultValue = tabs[0]?.value ?? "";
+
+  return (
+    <Tabs className="settings-code-tabs" defaultValue={defaultValue}>
+      <TabsList className="settings-code-tabs-list">
+        {tabs.map((tab) => (
+          <TabsTrigger className="settings-code-tabs-trigger" key={tab.value} value={tab.value}>
+            {tab.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      <TabsContents className="settings-code-tabs-contents">
+        {tabs.map((tab) => (
+          <TabsContent className="settings-code-tab-panel" key={tab.value} value={tab.value}>
+            <div className="settings-code-tab-toolbar">
+              <span>{tab.language}</span>
+              <button className="secondary-button" onClick={() => onCopy(tab.label, tab.content)} type="button">
+                <Copy size={13} />
+                复制
+              </button>
+            </div>
+            <pre>{tab.content}</pre>
+          </TabsContent>
+        ))}
+      </TabsContents>
+    </Tabs>
   );
 }
 
@@ -427,6 +475,7 @@ export function SettingsApp() {
   });
   const locale = resolveAppLocale(state.settings.language);
   const tr = (key: Parameters<typeof t>[1], params?: Record<string, string | number>) => t(locale, key, params);
+  const formatSettingsError = (error: unknown) => formatCommandError(tr, error);
 
   useEffect(() => {
     void (async () => {
@@ -469,7 +518,7 @@ export function SettingsApp() {
         setState((prev) => ({
           ...prev,
           configStatus: "加载失败：使用本地兜底",
-          status: String(error),
+          status: formatSettingsError(error),
         }));
       }
     })();
@@ -487,7 +536,7 @@ export function SettingsApp() {
     }
     setState((prev) => ({ ...prev, settings: { ...prev.settings, ...normalizedNext } }));
     invoke("update_clipforge_settings", { input: normalizedNext }).catch((error) =>
-      setState((prev) => ({ ...prev, status: String(error) })),
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) })),
     );
   }
 
@@ -496,7 +545,7 @@ export function SettingsApp() {
       const stats = await invoke<LogStatsPayload>("get_log_stats");
       setState((prev) => ({ ...prev, logStats: stats }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -507,7 +556,7 @@ export function SettingsApp() {
       await refreshLogStats();
       setState((prev) => ({ ...prev, status: result }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -523,7 +572,7 @@ export function SettingsApp() {
         status: `${result.summary} 路径：${result.path}`,
       }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -558,7 +607,7 @@ export function SettingsApp() {
         status: accessibilityDiagnostics.message,
       }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -573,7 +622,7 @@ export function SettingsApp() {
         status: accessibilityDiagnostics.message,
       }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -588,7 +637,7 @@ export function SettingsApp() {
         status: tr("settings.accessibility.status.reset"),
       }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -597,7 +646,7 @@ export function SettingsApp() {
       const panel = await invoke<PanelTriggerPayload>("get_panel_trigger_status");
       setState((prev) => ({ ...prev, panel, status: panel.message }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -606,7 +655,7 @@ export function SettingsApp() {
       const panel = await invoke<PanelTriggerPayload>("show_quick_panel_command", { source: "settings-test" });
       setState((prev) => ({ ...prev, panel, status: `悬浮检测：${panel.positionSource}` }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -618,51 +667,71 @@ export function SettingsApp() {
     return (state.settings.agent?.providers ?? state.settings.agentProviders ?? []).length;
   }
 
-  async function copyAgentProviderTemplate() {
-    const template = {
-      agent: {
-        providers: [
-          {
-            id: "openai-main",
-            name: "OpenAI compatible",
-            kind: "openai-compatible",
-            enabled: true,
-            baseUrl: "https://api.openai.com/v1",
-            modelId: "gpt-4.1-mini",
-            apiKeyEnv: "OPENAI_API_KEY",
-            timeoutSeconds: 120,
-          },
-          {
-            id: "local-codex",
-            name: "Codex CLI",
-            kind: "local-cli",
-            enabled: false,
-            command: "codex",
-            args: [],
-          },
-        ],
+  function getAgentProviderTemplateText() {
+    return JSON.stringify(
+      {
+        agent: {
+          providers: [
+            {
+              id: "openai-main",
+              name: "OpenAI compatible",
+              kind: "openai-compatible",
+              enabled: true,
+              baseUrl: "https://api.openai.com/v1",
+              modelId: "gpt-4.1-mini",
+              apiKeyEnv: "OPENAI_API_KEY",
+              timeoutSeconds: 120,
+            },
+            {
+              id: "local-codex",
+              name: "Codex CLI",
+              kind: "local-cli",
+              enabled: false,
+              command: "codex",
+              args: [],
+            },
+          ],
+        },
       },
-    };
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(template, null, 2));
-      setState((prev) => ({ ...prev, status: "Agent provider JSON 模板已复制，可粘贴到设置文件后按需改名。" }));
-    } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
-    }
+      null,
+      2,
+    );
   }
 
-  async function copyMcpCommand(source: string) {
-    const command = [
+  function getAgentInstallPrompt() {
+    return [
       "请帮我安装 ClipForge MCP 接入。",
       "使用 stdio transport，server command 如下：",
       getMcpCommand(),
       "安装后优先使用 clipf.list / clipf.get / clipf.copy / clipf.search 工具读取和操作剪贴板。",
     ].join("\n");
+  }
+
+  async function copySettingsSnippet(label: string, content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      setState((prev) => ({ ...prev, status: `${label} 已复制` }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
+    }
+  }
+
+  async function copyAgentProviderTemplate() {
+    try {
+      await navigator.clipboard.writeText(getAgentProviderTemplateText());
+      setState((prev) => ({ ...prev, status: "Agent provider JSON 模板已复制，可粘贴到设置文件后按需改名。" }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
+    }
+  }
+
+  async function copyMcpCommand(source: string) {
+    const command = getAgentInstallPrompt();
     try {
       await navigator.clipboard.writeText(command);
       setState((prev) => ({ ...prev, status: `${source} MCP 安装提示已复制，发送给相关 Agent 即可接入` }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -671,7 +740,7 @@ export function SettingsApp() {
       const mcp = await invoke<McpStatusPayload>("get_mcp_status");
       setState((prev) => ({ ...prev, mcp, status: mcp.message }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -685,7 +754,7 @@ export function SettingsApp() {
       const update = await invoke<UpdateCheckState>("check_update");
       setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.refreshed") }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -699,7 +768,7 @@ export function SettingsApp() {
       const update = await invoke<UpdateCheckState>("download_update");
       setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.ready") }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -708,7 +777,7 @@ export function SettingsApp() {
       const update = await invoke<UpdateCheckState>("install_update");
       setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.installing") }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -719,7 +788,7 @@ export function SettingsApp() {
       const update = await invoke<UpdateCheckState>("ignore_update_version", { version });
       setState((prev) => ({ ...prev, update, status: tr("settings.update.status.ignored", { version }) }));
     } catch (error) {
-      setState((prev) => ({ ...prev, status: String(error) }));
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
@@ -745,6 +814,17 @@ export function SettingsApp() {
     middle: tr("settings.display.contentMode.middle"),
     raw: tr("settings.display.contentMode.raw"),
   };
+  const mcpCommand = getMcpCommand();
+  const agentInstallPrompt = getAgentInstallPrompt();
+  const jsonRpcExample =
+    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"clipf.copy","arguments":{"id":"clip_xxx","client":"agent","requestId":"req_001"}}}';
+  const toolExamples = [
+    "use clipf.list limit=9",
+    "use clipf.get id=clip_xxx",
+    "use clipf.copy id=clip_xxx",
+    'use clipf.search text="github" limit=20',
+    'use clipf.analyze content="https://github.com/embaobao/clipforge"',
+  ].join("\n");
 
   return (
     <div className="settings-window-shell">
@@ -1017,24 +1097,16 @@ export function SettingsApp() {
                 <span>Agent 快速接入</span>
                 <strong>工具命名统一使用 clipf.*，不保留测试期旧别名。</strong>
                 <p>应用启动时会自动托管 MCP 服务状态；外部 Agent / MCP Client 使用 stdio 命令接入。</p>
-                <div className="command-copy-row">
-                  <button className="secondary-button" onClick={() => void copyMcpCommand("Agent")} type="button">
-                    <Copy size={13} />
-                    复制给 Agent 的安装提示
-                  </button>
-                </div>
-              </div>
-              <div className="setting-card permission-card mcp-doc-card">
-                <span>常用 Agent 指令示例</span>
-                <pre>{`use clipf.list limit=9
-use clipf.get id=clip_xxx
-use clipf.copy id=clip_xxx
-use clipf.search text="github" limit=20
-use clipf.analyze content="https://github.com/embaobao/clipforge"`}</pre>
-              </div>
-              <div className="setting-card permission-card mcp-doc-card">
-                <span>标准 MCP JSON-RPC 示例</span>
-                <pre>{`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"clipf.copy","arguments":{"id":"clip_xxx","client":"agent","requestId":"req_001"}}}`}</pre>
+                <CodeTabsSetting
+                  tabs={[
+                    { value: "install", label: "安装提示", language: "text", content: agentInstallPrompt },
+                    { value: "command", label: "MCP 命令", language: "bash", content: mcpCommand },
+                    { value: "tools", label: "工具示例", language: "text", content: toolExamples },
+                    { value: "json-rpc", label: "JSON-RPC", language: "json", content: jsonRpcExample },
+                    { value: "provider", label: "Provider JSON", language: "json", content: getAgentProviderTemplateText() },
+                  ]}
+                  onCopy={(label, content) => void copySettingsSnippet(label, content)}
+                />
                 <p>成功返回固定包含 ok、traceId、tool、source、businessChain、permissionDecision、nextActions、result。</p>
                 <p>失败返回 JSON-RPC error.data，包含 ok=false、traceId、hint、expected，方便 Agent 自动修正参数。</p>
               </div>
