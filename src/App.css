@@ -11284,3 +11284,37 @@ body,
 .link-preview > .copy-layout-grid {
   display: none !important;
 }
+
+/* P0: quick-list selection must render as a single, stable frame.
+   Legacy focus rings and ::after pulse frames stack with the row border and drift during virtual-list moves. */
+.app-shell .quick-menu .target-focus-ring {
+  display: none !important;
+}
+
+.app-shell .quick-menu .quick-row::after,
+.app-shell .quick-menu .quick-row:hover::after,
+.app-shell .quick-menu .quick-row.active::after,
+.app-shell .quick-menu .quick-row.selected::after {
+  display: none !important;
+  content: none !important;
+  opacity: 0 !important;
+  transform: none !important;
+  animation: none !important;
+  transition: none !important;
+}
+
+.app-shell .quick-menu .quick-row,
+.app-shell .quick-menu .quick-row:hover {
+  border: 1px solid transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.app-shell .quick-menu .quick-row.active,
+.app-shell .quick-menu .quick-row.selected {
+  background: oklch(0 0 0 / 0.025) !important;
+  border: 1px dashed oklch(0.1 0 0 / 0.28) !important;
+  box-shadow: none !important;
+  outline: none !important;
+  transform: none !important;
+}
