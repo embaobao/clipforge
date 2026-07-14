@@ -3350,6 +3350,7 @@ function ClipForgeApp() {
             renderList={() =>
               activeView === "trash" ? (
                 <TrashPanel
+                  key={`trash:${activeView}`}
                   activeId={selectedClip?.id ?? null}
                   autoScroll={keyboardNavigating}
                   clips={filteredClips}
@@ -3386,6 +3387,7 @@ function ClipForgeApp() {
                 />
               ) : (
                 <QuickPastePanel
+                  key={`quick:${activeView}`}
                   activeId={selectedClip?.id ?? null}
                   autoScroll={keyboardNavigating}
                   clips={filteredClips}

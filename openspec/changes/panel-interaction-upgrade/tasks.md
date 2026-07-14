@@ -54,4 +54,4 @@
 - [x] 输入框空时滚动收起 + 收起/激活态动画
 - [x] 底部导航切换引入 Animate UI Tabs active highlight，保留现有按钮尺寸与 Tooltip，不重排 footer
 - [x] 列表选择态参考 Animate UI Icons 的 hover/selected smooth highlight：保留现有虚线框与 active group 语义，仅让选择框位置/透明度平滑移动
-- [ ] 页面内容切换统一使用短 spring 过渡，覆盖 history/favorites/trash/agent surface，避免切换时硬闪
+- [x] 页面内容切换统一使用短 spring 过渡，覆盖 history/favorites/trash/agent surface，避免切换时硬闪
