@@ -42,3 +42,6 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --check
         working-directory: src-tauri
+
+      - name: Run verify scripts (unit / boundaries / hot-path / file-size / i18n)
+        run: pnpm test:unit && pnpm check:i18n

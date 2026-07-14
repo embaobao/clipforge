@@ -78,7 +78,8 @@ assert(agent.includes("parseSmartTargets(clip.content)"), "Agent references do n
 assert(agent.includes("primaryUrl: clip.analysis.url"), "Agent link references do not expose primaryUrl");
 assert(agent.includes("summary: clip.analysis.summary || compactText(clip.content, 120)"), "Agent text references do not default to summary");
 assert(agent.includes("textPreview: metadataOnly ? \"\" : compactText(clip.content, allowFullContent ? 480 : 180)"), "Agent text references do not use a short summary preview by default");
-assert(agent.includes('activeClip ? makeClipReference(activeClip, "current", permissionMode) : null'), "Agent current clip is not used as the default current reference");
+// 断言核心不变量（current clip 被用作默认 current 引用），对 hasCurrentScope 守卫的演进鲁棒。
+assert(agent.includes('makeClipReference(activeClip, "current", permissionMode)'), "Agent current clip is not used as the default current reference");
 assert(agent.includes('type AgentReferenceScope = "current" | "selection" | "favorites" | "search-result" | "all" | "file" | "skill-context"'), "Agent reference scopes do not cover current/selection/favorites/search/all/file/skill-context");
 assert(agent.includes('function referenceSourceForScope'), "Agent reference scopes are not normalized to standard reference sources");
 assert(agent.includes('if (scope === "favorites") return "favorites"') && agent.includes('if (scope === "search-result") return "search-result"') && agent.includes('if (scope === "all") return "all"'), "Agent reference scope source mapping is incomplete");

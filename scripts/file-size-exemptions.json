@@ -1,0 +1,13 @@
+{
+  "_doc": "单文件 ≤500 行门禁的豁免清单（codebase-modularity-refactor）。豁免内文件超 target 只 warn 不 fail；豁免外文件超 500 行 fail。每完成一个拆分切片就把对应文件移除。",
+  "limit": 500,
+  "exempt": [
+    { "path": "src/App.tsx", "target": 500, "track": "clipboard-panel-split" },
+    { "path": "src/settings.tsx", "target": 500, "track": "settings-interface-redesign" },
+    { "path": "src/agent-panel.tsx", "target": 500, "track": "agent-panel-split" },
+    { "path": "src/agent-chat-page.tsx", "target": 500, "track": "agent-panel-split" },
+    { "path": "src/workspace/workspace-panels.tsx", "target": 500, "track": "workspace-split" },
+    { "path": "src/services/contracts.ts", "target": 500, "track": "contracts-split" },
+    { "path": "src-tauri/src/lib.rs", "target": 500, "track": "lib-rs-module-split" }
+  ]
+}

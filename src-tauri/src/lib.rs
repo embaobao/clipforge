@@ -1689,7 +1689,8 @@ fn check_openai_compatible_models(candidate: &AgentDetectCandidate) -> AgentProv
         active_model_id: candidate.model_id.clone(),
         models,
         source: "static-openai-compatible".to_string(),
-        message: "Static model suggestions; edit settings.json5 to use a custom modelId".to_string(),
+        message: "Static model suggestions; edit settings.json5 to use a custom modelId"
+            .to_string(),
     }
 }
 
@@ -2307,6 +2308,21 @@ fn agent_list_provider_models(
     Ok(check_openai_compatible_models(&candidate))
 }
 
+/// 设置写入互斥锁（B2b）：保护 read-modify-write 全段，避免设置窗 + MCP/主面板并发写入导致 lost-update。
+/// 只在编排函数（settings_service_*、update_clipforge_settings）里持有；底层 read/write 不加锁，避免重入死锁。
+static SETTINGS_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 记录一次设置操作的耗时，超 300ms 写 app log（B6：300ms 性能预算可观测）。
+fn log_slow_settings_operation(operation: &str, duration_ms: i64) {
+    if duration_ms > 300 {
+        log_to_file(
+            "warn",
+            "settings-service",
+            &format!("slow {operation} durationMs={duration_ms} > 300"),
+        );
+    }
+}
+
 fn settings_revision(settings: &Value) -> String {
     let serialized = serde_json::to_string(settings).unwrap_or_else(|_| settings.to_string());
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -2316,20 +2332,36 @@ fn settings_revision(settings: &Value) -> String {
 
 fn redact_settings_value(value: &Value) -> Value {
     let mut redacted = value.clone();
-    let Some(agent) = redacted.get_mut("agent") else {
-        return redacted;
-    };
-    let Some(providers) = agent.get_mut("providers").and_then(Value::as_array_mut) else {
-        return redacted;
-    };
-    for provider in providers {
-        if let Some(object) = provider.as_object_mut() {
-            if object.contains_key("apiKey") {
-                object.insert("apiKey".to_string(), Value::String("[redacted]".to_string()));
+    // 抹掉明文 apiKey（B7）：schema 同时接受新结构 agent.providers[] 和 legacy 顶层 agentProviders[]，
+    // 两条路径都要 redact，否则 settings_service_get 会泄漏 legacy provider 的 key。
+    if let Some(providers) = redacted
+        .get_mut("agentProviders")
+        .and_then(Value::as_array_mut)
+    {
+        for provider in providers {
+            redact_provider_api_key(provider);
+        }
+    }
+    if let Some(agent) = redacted.get_mut("agent") {
+        if let Some(providers) = agent.get_mut("providers").and_then(Value::as_array_mut) {
+            for provider in providers {
+                redact_provider_api_key(provider);
             }
         }
     }
     redacted
+}
+
+/// 抹掉单个 provider 配置里的明文 apiKey，统一返回 redacted 占位符。
+fn redact_provider_api_key(provider: &mut Value) {
+    if let Some(object) = provider.as_object_mut() {
+        if object.contains_key("apiKey") {
+            object.insert(
+                "apiKey".to_string(),
+                Value::String("[redacted]".to_string()),
+            );
+        }
+    }
 }
 
 fn collect_changed_paths(previous: &Value, next: &Value, path: &str, out: &mut Vec<String>) {
@@ -2516,7 +2548,13 @@ fn resolve_schema_ref<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
     schema
 }
 
-fn validate_settings_value(value: &Value, schema: &Value, root: &Value, path: &str, errors: &mut Vec<String>) {
+fn validate_settings_value(
+    value: &Value,
+    schema: &Value,
+    root: &Value,
+    path: &str,
+    errors: &mut Vec<String>,
+) {
     let schema = resolve_schema_ref(root, schema);
     if let Some(expected_type) = schema.get("type").and_then(Value::as_str) {
         let ok = match expected_type {
@@ -2535,7 +2573,10 @@ fn validate_settings_value(value: &Value, schema: &Value, root: &Value, path: &s
     }
     if let Some(options) = schema.get("enum").and_then(Value::as_array) {
         if !options.iter().any(|item| item == value) {
-            errors.push(format!("{path} must be one of {}", Value::Array(options.clone())));
+            errors.push(format!(
+                "{path} must be one of {}",
+                Value::Array(options.clone())
+            ));
         }
     }
     if let Some(minimum) = schema.get("minimum").and_then(Value::as_f64) {
@@ -2564,7 +2605,10 @@ fn validate_settings_value(value: &Value, schema: &Value, root: &Value, path: &s
             errors.push(format!("{path} is longer than {max_length}"));
         }
     }
-    if let (Some(object), Some(properties)) = (value.as_object(), schema.get("properties").and_then(Value::as_object)) {
+    if let (Some(object), Some(properties)) = (
+        value.as_object(),
+        schema.get("properties").and_then(Value::as_object),
+    ) {
         let additional = schema
             .get("additionalProperties")
             .and_then(Value::as_bool)
@@ -2743,7 +2787,13 @@ fn settings_write_response(
 
 #[tauri::command]
 fn settings_service_get(include_schema: Option<bool>) -> Result<Value, String> {
-    public_settings_payload(include_schema.unwrap_or(true))
+    // 记录耗时（B6）：300ms 是控制面操作的硬预算，超限写 log 便于回归追踪。
+    let started = std::time::Instant::now();
+    let mut payload = public_settings_payload(include_schema.unwrap_or(true))?;
+    let duration_ms = started.elapsed().as_millis() as i64;
+    payload["durationMs"] = json!(duration_ms);
+    log_slow_settings_operation("get", duration_ms);
+    Ok(payload)
 }
 
 #[tauri::command]
@@ -2754,6 +2804,10 @@ fn settings_service_patch<R: tauri::Runtime>(
     reason: Option<String>,
     expected_revision: Option<String>,
 ) -> Result<Value, String> {
+    let started = std::time::Instant::now();
+    let _write_guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
     validate_settings_patch(&patch)?;
     let previous = read_user_settings()?.settings;
     let previous_revision =
@@ -2784,7 +2838,11 @@ fn settings_service_patch<R: tauri::Runtime>(
             changed_paths.join(",")
         ),
     );
-    settings_write_response(next, previous_revision, changed_paths, true)
+    let mut response = settings_write_response(next, previous_revision, changed_paths, true)?;
+    let duration_ms = started.elapsed().as_millis() as i64;
+    response["durationMs"] = json!(duration_ms);
+    log_slow_settings_operation("patch", duration_ms);
+    Ok(response)
 }
 
 #[tauri::command]
@@ -2796,9 +2854,13 @@ fn settings_service_replace<R: tauri::Runtime>(
     expected_revision: Option<String>,
     confirmed: Option<bool>,
 ) -> Result<Value, String> {
+    let started = std::time::Instant::now();
     if confirmed != Some(true) {
         return Err("SETTINGS_REPLACE_REQUIRES_CONFIRMATION: use patch for partial updates or retry with confirmed=true".to_string());
     }
+    let _write_guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
     validate_settings_patch(&settings)?;
     let previous = read_user_settings()?.settings;
     let previous_revision =
@@ -2827,7 +2889,11 @@ fn settings_service_replace<R: tauri::Runtime>(
             changed_paths.join(",")
         ),
     );
-    settings_write_response(settings, previous_revision, changed_paths, true)
+    let mut response = settings_write_response(settings, previous_revision, changed_paths, true)?;
+    let duration_ms = started.elapsed().as_millis() as i64;
+    response["durationMs"] = json!(duration_ms);
+    log_slow_settings_operation("replace", duration_ms);
+    Ok(response)
 }
 
 #[tauri::command]
@@ -2839,9 +2905,15 @@ fn settings_service_reset<R: tauri::Runtime>(
     expected_revision: Option<String>,
     confirmed: Option<bool>,
 ) -> Result<Value, String> {
+    let started = std::time::Instant::now();
     if confirmed != Some(true) {
-        return Err("SETTINGS_RESET_REQUIRES_CONFIRMATION: retry with scope and confirmed=true".to_string());
+        return Err(
+            "SETTINGS_RESET_REQUIRES_CONFIRMATION: retry with scope and confirmed=true".to_string(),
+        );
     }
+    let _write_guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
     let scope = scope.ok_or_else(|| {
         "SETTINGS_RESET_REQUIRES_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags".to_string()
     })?;
@@ -2956,7 +3028,11 @@ fn settings_service_reset<R: tauri::Runtime>(
             changed_paths.join(",")
         ),
     );
-    settings_write_response(next, previous_revision, changed_paths, true)
+    let mut response = settings_write_response(next, previous_revision, changed_paths, true)?;
+    let duration_ms = started.elapsed().as_millis() as i64;
+    response["durationMs"] = json!(duration_ms);
+    log_slow_settings_operation("reset", duration_ms);
+    Ok(response)
 }
 
 #[tauri::command]
@@ -2971,12 +3047,16 @@ fn settings_service_agent_providers() -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn settings_service_agent_check(provider_id: Option<String>) -> Result<AgentProviderReadiness, String> {
+fn settings_service_agent_check(
+    provider_id: Option<String>,
+) -> Result<AgentProviderReadiness, String> {
     agent_check_provider(provider_id)
 }
 
 #[tauri::command]
-fn settings_service_agent_models(provider_id: Option<String>) -> Result<AgentProviderModelsPayload, String> {
+fn settings_service_agent_models(
+    provider_id: Option<String>,
+) -> Result<AgentProviderModelsPayload, String> {
     agent_list_provider_models(provider_id)
 }
 
@@ -5057,8 +5137,15 @@ fn update_clipforge_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     input: Value,
 ) -> Result<Value, String> {
-    let mut current = read_user_settings()?.settings;
+    // legacy 写路径也加锁 + 接入 settings_changed 事件总线（B2b + B5），消除多窗口漂移根因。
+    let _write_guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
+    let previous = read_user_settings()?.settings;
+    let previous_revision = settings_revision(&previous);
+    let mut current = previous.clone();
     merge_json_object(&mut current, input);
+    let changed_paths = settings_changed_paths(&previous, &current);
     write_user_settings(current.clone())?;
     sync_global_shortcut_registration(&app);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
@@ -5079,20 +5166,53 @@ fn update_clipforge_settings<R: tauri::Runtime>(
             ),
         }
     }
+    let updated_at = now_millis()?;
+    let revision = settings_revision(&current);
+    emit_settings_changed(
+        &app,
+        previous_revision,
+        revision,
+        changed_paths,
+        "settings-window",
+        "patch",
+        updated_at,
+    );
     Ok(current)
 }
 
 #[tauri::command]
 fn write_user_settings(settings: Value) -> Result<(), String> {
+    write_settings_atomic(&settings)
+}
+
+/// 原子写入用户设置（B2）：先写临时文件并 fsync，再 rename 覆盖目标文件。
+///
+/// 所有写路径（settings_service_*、update_clipforge_settings、legacy 命令）都经过这里。
+/// 裸 `fs::write` 在崩溃/断电时会截断或清空 settings.json5，导致丢失全部用户配置；
+/// temp + sync_all + rename 保证目标文件要么是旧内容、要么是完整新内容，不会出现半写状态。
+fn write_settings_atomic(settings: &Value) -> Result<(), String> {
     let path = settings_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let body = format!(
         "// ClipForge user settings. JSON5-style comments are allowed.\n{}\n",
-        serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?
+        serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?
     );
-    fs::write(path, body).map_err(|error| error.to_string())
+    // 临时文件必须与目标在同一目录、同一文件系统，rename 才原子。
+    let temp_path = match path.file_name().and_then(|name| name.to_str()) {
+        Some(name) => path.with_file_name(format!("{name}.tmp")),
+        None => return Err("SETTINGS_PATH_INVALID: cannot resolve settings file name".to_string()),
+    };
+    use std::io::Write;
+    {
+        let mut file = fs::File::create(&temp_path).map_err(|error| error.to_string())?;
+        file.write_all(body.as_bytes())
+            .map_err(|error| error.to_string())?;
+        // fsync 确保数据落盘后再 rename，否则断电仍可能丢数据。
+        file.sync_all().map_err(|error| error.to_string())?;
+    }
+    fs::rename(&temp_path, &path).map_err(|error| format!("SETTINGS_ATOMIC_RENAME_FAILED: {error}"))
 }
 
 fn current_native_locale() -> &'static str {

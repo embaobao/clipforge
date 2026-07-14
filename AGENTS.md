@@ -52,3 +52,31 @@ pnpm tauri dev
 ```
 
 如果因为本机依赖、权限或系统安全策略无法完成，必须在交付说明中明确写出未验证项。
+
+## 开发规范（可维护性）
+
+为保证代码可维护、可协作、可长期演进，新增和重构代码必须遵守以下规范。门禁脚本见 [scripts/verify-file-size.mjs](scripts/verify-file-size.mjs)，豁免清单见 [scripts/file-size-exemptions.json](scripts/file-size-exemptions.json)，详见提案 [codebase-modularity-refactor](openspec/changes/codebase-modularity-refactor/proposal.md)。
+
+### 单文件不超过 500 行
+
+- 新增源文件、被本次改动触碰的文件，必须 ≤ 500 行（含注释）。
+- 现存超长主文件（`src/App.tsx`、`src/settings.tsx`、`src/agent-panel.tsx`、`src/agent-chat-page.tsx`、`src-tauri/src/lib.rs`）列入豁免清单，按域分阶段拆分，不要求一次性达标；豁免清单只减不增，新增豁免必须在对应提案说明理由。
+- 超过 500 行不是「拆成多文件」的唯一理由；当一个文件承担多个不相关职责时，即使未超限也应按域拆分。
+
+### 必须有中文注释
+
+- 公共能力必须有中文文档注释：Rust `#[tauri::command]`、public struct/enum/fn、TS exported interface/type、React 组件 props、MCP 工具、复杂业务逻辑（写回抑制、面板定位、settings 合并、原子写、provider 解析）。
+- 注释说明「做什么、为什么、边界」，与提案/设计文档中文一致。
+- 不强制行内注释；明显的小工具、CSS、纯样式常量可省略。
+
+### 组件化与按域拆分
+
+- 前端按 surface 拆目录：`src/settings/`、`src/agent/`、`src/clipboard/`。
+- 组件职责单一，props 类型显式导出，状态提升到最近共同父级或 Zustand（仅跨组件 UI 状态）。
+- 业务数据仍由 Tauri command 驱动，不把业务状态塞进全局 store。
+
+### 样式按功能拆分
+
+- 不再向 `src/App.css` 单文件追加；新组件样式随组件拆（优先 `*.module.css`，或按域 `src/<surface>/<surface>.css`）。
+- 全局语义 token / CSS 变量保持在 `:root`，组件只消费不重定义。
+- 现有 App.css 在对应 surface 抽组件时随组件迁移，不一次性重写。
