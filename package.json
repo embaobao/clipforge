@@ -8,7 +8,7 @@
     "dev": "vite",
     "build:web": "tsc && vite build",
     "check:i18n": "node scripts/check-i18n-keys.mjs && node scripts/scan-hardcoded-copy.mjs",
-    "test:unit": "node scripts/run-unit-checks.mjs && node scripts/verify-agent-panel.mjs && node scripts/verify-editor-agent-bridge.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-hot-path.mjs && node scripts/verify-file-size.mjs",
+    "test:unit": "node scripts/run-unit-checks.mjs && node scripts/verify-agent-panel.mjs && node scripts/verify-editor-agent-bridge.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-hot-path.mjs && node scripts/verify-mcp-dispatch.mjs && node scripts/verify-file-size.mjs",
     "test:agent": "node scripts/verify-agent-panel.mjs",
     "test:boundaries": "node scripts/verify-hot-path.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-file-size.mjs",
     "build:manual": "node scripts/generate-release-manual.mjs",

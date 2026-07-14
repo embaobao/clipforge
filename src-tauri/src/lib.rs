@@ -10517,6 +10517,192 @@ fn extract_hash_tags(content: &str) -> Vec<String> {
     tags
 }
 
+// ===== MCP 设置/Agent 工具实现（B3：让 clipf.settings.*/clipf.agent.* 真正可调用）=====
+// MCP stdio 子进程没有 AppHandle，因此 patch/replace/reset 复用底层服务函数，
+// 但无法 emit settings_changed（需要主进程代发桥，见 settings-service-unified-protocol design §4），
+// 也无法同步全局快捷键 / 重建托盘菜单（依赖 AppHandle）。
+// SETTINGS_WRITE_LOCK 仍然获取，避免与设置窗并发写入导致 lost-update。
+
+/// MCP 设置局部更新：校验 → 读 → 合并 → 原子写 → 返回 write response。
+fn mcp_settings_patch(
+    patch: Value,
+    reason: Option<&str>,
+    expected_revision: Option<&str>,
+) -> Result<Value, (i64, String)> {
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
+    validate_settings_patch(&patch).map_err(|error| (-32602, error))?;
+    let previous = read_user_settings()
+        .map_err(|error| (-32000, error))?
+        .settings;
+    let previous_revision = ensure_expected_settings_revision(&previous, expected_revision)
+        .map_err(|error| (-32602, error))?;
+    let mut next = previous.clone();
+    merge_settings_patch(&mut next, &patch);
+    let changed_paths = settings_changed_paths(&previous, &next);
+    write_settings_atomic(&next).map_err(|error| (-32000, error))?;
+    log_to_file(
+        "info",
+        "settings-service",
+        &format!(
+            "mcp patch reason={} changed={}",
+            reason.unwrap_or(""),
+            changed_paths.join(",")
+        ),
+    );
+    settings_write_response(next, previous_revision, changed_paths, true)
+        .map_err(|error| (-32000, error))
+}
+
+/// MCP 设置全量替换（调用方必须先 confirmed=true）。
+fn mcp_settings_replace(
+    settings: Value,
+    reason: Option<&str>,
+    expected_revision: Option<&str>,
+) -> Result<Value, (i64, String)> {
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
+    validate_settings_patch(&settings).map_err(|error| (-32602, error))?;
+    let previous = read_user_settings()
+        .map_err(|error| (-32000, error))?
+        .settings;
+    let previous_revision = ensure_expected_settings_revision(&previous, expected_revision)
+        .map_err(|error| (-32602, error))?;
+    let changed_paths = settings_changed_paths(&previous, &settings);
+    write_settings_atomic(&settings).map_err(|error| (-32000, error))?;
+    log_to_file(
+        "warn",
+        "settings-service",
+        &format!(
+            "mcp replace reason={} changed={}",
+            reason.unwrap_or(""),
+            changed_paths.join(",")
+        ),
+    );
+    settings_write_response(settings, previous_revision, changed_paths, true)
+        .map_err(|error| (-32000, error))
+}
+
+/// MCP 设置按 scope 重置（调用方必须先 confirmed=true）。
+fn mcp_settings_reset(
+    scope: String,
+    reason: Option<&str>,
+    expected_revision: Option<&str>,
+) -> Result<Value, (i64, String)> {
+    let _guard = SETTINGS_WRITE_LOCK
+        .lock()
+        .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
+    let previous = read_user_settings()
+        .map_err(|error| (-32000, error))?
+        .settings;
+    let previous_revision = ensure_expected_settings_revision(&previous, expected_revision)
+        .map_err(|error| (-32602, error))?;
+    let mut next = previous.clone();
+    // scope 匹配逻辑与 settings_service_reset 一致；后续由 codebase-modularity-refactor 的 settings 模块抽取合并。
+    match scope.as_str() {
+        "all" => next = json!({}),
+        "agent" => {
+            if let Some(object) = next.as_object_mut() {
+                object.remove("agent");
+                object.remove("agentProviders");
+            }
+        }
+        "shortcuts" => {
+            if let Some(object) = next.as_object_mut() {
+                object.remove("globalShortcut");
+            }
+        }
+        "display" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "panelDensity",
+                    "contentDisplayMode",
+                    "positionStrategy",
+                    "panelBackgroundOpacity",
+                    "enableScrollCollapse",
+                    "panelWidth",
+                    "panelHeight",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "capture" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "captureTextEnabled",
+                    "captureHtmlEnabled",
+                    "captureRtfEnabled",
+                    "captureImageEnabled",
+                    "captureFileEnabled",
+                    "captureSensitiveEnabled",
+                    "imageMaxSizeMb",
+                    "textMaxSizeMb",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "storage" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "quickItemLimit",
+                    "maxStoredItems",
+                    "clipboardPollMs",
+                    "cleanupEnabled",
+                    "cleanupIntervalHours",
+                    "softDeletedRetentionDays",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "logs" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "logMaxSizeMb",
+                    "logKeepRatio",
+                    "logMaxLines",
+                    "logRetentionDays",
+                    "logAutoCleanup",
+                    "logCleanupIntervalMin",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "tags" => {
+            if let Some(object) = next.as_object_mut() {
+                object.remove("tagMode");
+                object.remove("tagRules");
+            }
+        }
+        _ => {
+            return Err((
+                -32602,
+                "SETTINGS_RESET_INVALID_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags"
+                    .to_string(),
+            ));
+        }
+    }
+    let changed_paths = settings_changed_paths(&previous, &next);
+    write_settings_atomic(&next).map_err(|error| (-32000, error))?;
+    log_to_file(
+        "warn",
+        "settings-service",
+        &format!(
+            "mcp reset scope={} reason={} changed={}",
+            scope,
+            reason.unwrap_or(""),
+            changed_paths.join(",")
+        ),
+    );
+    settings_write_response(next, previous_revision, changed_paths, true)
+        .map_err(|error| (-32000, error))
+}
+
 fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
     let name = params
         .get("name")
@@ -11163,6 +11349,92 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
                 .map_err(|error| (-32602, error.to_string()))?;
             serde_json::to_value(import_clip_records(items).map_err(|error| (-32000, error))?)
                 .map_err(|error| (-32000, error.to_string()))?
+        }
+        // ===== B3：MCP 设置/Agent 工具分发（复用统一 SettingsService 底层函数）=====
+        "clipf.settings.get" => {
+            let include_schema = args
+                .get("includeSchema")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            public_settings_payload(include_schema).map_err(|error| (-32000, error))?
+        }
+        "clipf.settings.patch" => mcp_settings_patch(
+            args.get("patch").cloned().unwrap_or_else(|| json!({})),
+            args.get("reason").and_then(Value::as_str),
+            args.get("expectedRevision").and_then(Value::as_str),
+        )?,
+        "clipf.settings.replace" => {
+            if args.get("confirmed").and_then(Value::as_bool) != Some(true) {
+                return Err((
+                    -32602,
+                    "SETTINGS_REPLACE_REQUIRES_CONFIRMATION: retry with confirmed=true".to_string(),
+                ));
+            }
+            let settings = args.get("settings").cloned().ok_or_else(|| {
+                (
+                    -32602,
+                    "clipf.settings.replace requires settings".to_string(),
+                )
+            })?;
+            mcp_settings_replace(
+                settings,
+                args.get("reason").and_then(Value::as_str),
+                args.get("expectedRevision").and_then(Value::as_str),
+            )?
+        }
+        "clipf.settings.reset" => {
+            if args.get("confirmed").and_then(Value::as_bool) != Some(true) {
+                return Err((
+                    -32602,
+                    "SETTINGS_RESET_REQUIRES_CONFIRMATION: retry with scope and confirmed=true"
+                        .to_string(),
+                ));
+            }
+            let scope = args
+                .get("scope")
+                .and_then(Value::as_str)
+                .ok_or_else(|| (-32602, "clipf.settings.reset requires scope".to_string()))?
+                .to_string();
+            mcp_settings_reset(
+                scope,
+                args.get("reason").and_then(Value::as_str),
+                args.get("expectedRevision").and_then(Value::as_str),
+            )?
+        }
+        "clipf.agent.providers" => {
+            let config = agent_get_config().map_err(|error| (-32000, error))?;
+            let revision = settings_revision(
+                &read_user_settings()
+                    .map_err(|error| (-32000, error))?
+                    .settings,
+            );
+            serde_json::to_value(json!({
+                "activeProviderId": config.active_provider_id,
+                "providers": config.providers,
+                "tools": config.tools,
+                "revision": revision
+            }))
+            .map_err(|error| (-32000, error.to_string()))?
+        }
+        "clipf.agent.check" => {
+            let provider_id = args
+                .get("providerId")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            serde_json::to_value(
+                agent_check_provider(provider_id).map_err(|error| (-32000, error))?,
+            )
+            .map_err(|error| (-32000, error.to_string()))?
+        }
+        "clipf.agent.models" => {
+            let provider_id = args
+                .get("providerId")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            serde_json::to_value(
+                agent_list_provider_models(provider_id).map_err(|error| (-32000, error))?,
+            )
+            .map_err(|error| (-32000, error.to_string()))?
         }
         _ => return Err((-32602, format!("unknown tool: {name}"))),
     };
