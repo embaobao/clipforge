@@ -157,6 +157,22 @@ function replaceMentionQuery(value: string, label: string) {
   return value.replace(/(^|\s)@([^\s@]*)$/, `$1@${label} `);
 }
 
+function normalizeMentionFilter(value: string | null) {
+  return (value ?? "").trim().toLowerCase().replace(/:$/, "");
+}
+
+function mentionPayloadFilter(value: string | null): "image" | "file" | null {
+  const token = normalizeMentionFilter(value);
+  if (!token) return null;
+  if (["img", "image", "images", "图片"].includes(token)) return "image";
+  if (["file", "files", "attachment", "attachments", "文件", "附件"].includes(token)) return "file";
+  return null;
+}
+
+function scrollViewportToEnd(node: HTMLDivElement, behavior: ScrollBehavior = "smooth") {
+  node.scrollTo({ top: Math.max(0, node.scrollHeight - node.clientHeight), behavior });
+}
+
 function makeClipReference(clip: ClipItem, source: AgentContextReferenceSource, permissionMode: AgentPermissionMode = "summary"): AgentContextReference {
   const allowFullContent = permissionMode === "content";
   const metadataOnly = permissionMode === "metadata" || clip.payloadKind === "file" || clip.payloadKind === "image" || source === "skill-context";
@@ -698,10 +714,11 @@ export function ClipboardAgentPanel({
   }, [preserveVisibleRowDuring]);
 
   const contextSet = useMemo<AgentContextSet>(() => {
+    const hasCurrentScope = scopeRequests.some((request) => request.scope === "current");
     const attachedClips = attachedClipIds
       .map((id) => allClips.find((clip) => clip.id === id))
       .filter((clip): clip is ClipItem => Boolean(clip && !clip.deletedAt));
-    const currentReference = activeClip ? makeClipReference(activeClip, "current", permissionMode) : null;
+    const currentReference = activeClip && hasCurrentScope ? makeClipReference(activeClip, "current", permissionMode) : null;
     const attachedReferences = attachedClips.map((clip) => makeClipReference(clip, "clip", permissionMode));
     const scopedReferences = scopeRequests.flatMap((request) => {
       const source = referenceSourceForScope(request.scope);
@@ -712,7 +729,7 @@ export function ClipboardAgentPanel({
     const references = uniqueReferences([currentReference, ...attachedReferences, ...scopedReferences]).filter((reference) => !removedReferenceIds.has(reference.id));
     return {
       id: `ctx_chat_${contextRefreshAt}_${permissionMode}_${references.map((reference) => reference.id).join("_")}`,
-      mode: scopeRequests[0]?.scope === "favorites" ? "favorites" : scopeRequests[0]?.scope === "search-result" ? "search-result" : scopeRequests[0]?.scope === "all" ? "all" : scopeRequests[0]?.scope === "skill-context" ? "skill" : references.length > 1 ? "selected" : "current",
+      mode: scopeRequests[0]?.scope === "favorites" ? "favorites" : scopeRequests[0]?.scope === "search-result" ? "search-result" : scopeRequests[0]?.scope === "all" ? "all" : scopeRequests[0]?.scope === "skill-context" ? "skill" : references.length > 1 ? "selected" : hasCurrentScope ? "current" : "selected",
       references: references.map((reference) => ({
         ...reference,
         scopeLabel: references.length > 1 ? tr("agent.scope.references", { count: references.length }) : tr("agent.scope.current"),
@@ -725,8 +742,9 @@ export function ClipboardAgentPanel({
 
   const mentionQuery = useMemo(() => getMentionQuery(input), [input]);
   const activeReferenceQuery = referencePickerOpen ? referenceSearch : mentionQuery;
+  const activeReferencePayloadFilter = useMemo(() => mentionPayloadFilter(activeReferenceQuery), [activeReferenceQuery]);
   const referenceCandidates = useMemo(() => {
-    const queryText = (activeReferenceQuery ?? "").trim().toLowerCase();
+    const queryText = normalizeMentionFilter(activeReferenceQuery);
     const usedClipIds = new Set(contextSet.references.map((reference) => reference.clipId).filter(Boolean) as string[]);
     const pool = uniqueClips([
       activeClip,
@@ -738,12 +756,15 @@ export function ClipboardAgentPanel({
     return pool
       .filter((clip) => !usedClipIds.has(clip.id))
       .filter((clip) => {
+        if (activeReferencePayloadFilter === "image" && clip.payloadKind !== "image") return false;
+        if (activeReferencePayloadFilter === "file" && clip.payloadKind !== "file" && clip.payloadKind !== "image") return false;
         if (!queryText) return true;
-        const haystack = [getClipTitle(clip), clip.content, clip.analysis.host, clip.tags.join(" ")].join(" ").toLowerCase();
+        if (activeReferencePayloadFilter) return true;
+        const haystack = [clip.payloadKind, getClipTitle(clip), clip.content, clip.analysis.host, clip.tags.join(" ")].join(" ").toLowerCase();
         return haystack.includes(queryText);
       })
       .slice(0, 6);
-  }, [activeClip, activeReferenceQuery, allClips, contextSet.references, filteredClips, selectedClips]);
+  }, [activeClip, activeReferencePayloadFilter, activeReferenceQuery, allClips, contextSet.references, filteredClips, selectedClips]);
 
   useEffect(() => {
     setConversation((current) => ({
@@ -804,7 +825,7 @@ export function ClipboardAgentPanel({
     const node = viewportRef.current;
     if (!node) return;
     window.requestAnimationFrame(() => {
-      node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+      scrollViewportToEnd(node);
       setHasUnread(false);
     });
   }, [liveEdge, messages, lastResult]);
@@ -835,6 +856,7 @@ export function ClipboardAgentPanel({
           next.delete(`current:${activeClip.id}`);
           return next;
         });
+        setScopeRequests((current) => (current.some((request) => request.scope === "current") ? current : [{ scope: "current", createdAt: Date.now() }, ...current]));
         setContextRefreshAt(Date.now());
       }
       setReferencePickerOpen(false);
@@ -849,6 +871,7 @@ export function ClipboardAgentPanel({
 
   const removeReference = useCallback((reference: AgentContextReference) => {
     if (reference.source === "current") {
+      setScopeRequests((current) => current.filter((request) => request.scope !== "current"));
       setRemovedReferenceIds((current) => new Set([...current, reference.id]));
       return;
     }
@@ -873,7 +896,7 @@ export function ClipboardAgentPanel({
   const jumpToLatest = useCallback(() => {
     const node = viewportRef.current;
     if (!node) return;
-    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+    scrollViewportToEnd(node);
     setLiveEdge(true);
     setHasUnread(false);
   }, []);
@@ -1060,7 +1083,7 @@ export function ClipboardAgentPanel({
         await startAgentTurn(prompt, contextSet);
         return;
       }
-      if (!prompt || contextSet.references.length === 0) return;
+      if (!prompt) return;
       setInput("");
       await startAgentTurn(prompt, contextSet);
     },
@@ -1174,7 +1197,7 @@ export function ClipboardAgentPanel({
     return options.map((item) => {
       const active =
         item.scope === "current"
-          ? Boolean(activeClip && !removedReferenceIds.has(`current:${activeClip.id}`))
+          ? Boolean(activeClip && scopeRequests.some((request) => request.scope === "current") && !removedReferenceIds.has(`current:${activeClip.id}`))
           : scopeRequests.some((request) => request.scope === item.scope);
       const count = Math.min(item.count, DEFAULT_LIMITS.maxItems);
       return {
@@ -1206,7 +1229,7 @@ export function ClipboardAgentPanel({
       activeReadiness={activeReadiness}
       canSubmit={
         status !== "drafting" &&
-        ((Boolean(input.trim()) && status !== "waiting_confirmation" && contextSet.references.length > 0) ||
+        ((Boolean(input.trim()) && status !== "waiting_confirmation") ||
           (Boolean(pendingRun) && status === "waiting_confirmation"))
       }
       contextReferences={contextSet.references}

@@ -60,6 +60,63 @@ Adapters
 - Agent provider 解析、默认 provider、模型拉取和 redaction 只在 Settings Service 内实现一次。
 - 主面板首批不迁移，保留现状；后续单独开任务迁移。
 
+统一边界：
+
+- 统一的是 Rust domain service、JSON schema、错误码、redaction、revision、事件和写入策略。
+- 前端设置页通过 Tauri command 适配器调用 Settings Service。
+- MCP 通过 tools/call 适配器调用同一个 Settings Service。
+- 前端不通过 MCP stdio 调用本机设置服务；MCP 是给外部 Agent 的协议入口。
+- 主面板热路径不调用 Settings Service；第一阶段只允许设置窗口和 Agent 配置面使用。
+
+## 2.1 控制面与热路径拆分
+
+ClipForge 需要把设置控制面和剪贴板热路径拆开：
+
+```text
+Control Plane
+  Settings window
+  Agent provider config
+  MCP settings tools
+  schema / validation / revision / redaction / provider check / model list
+
+Hot Path
+  global shortcut trigger
+  quick panel show/hide/position
+  clipboard listener
+  virtual list scroll/selection
+  copy/paste writeback
+  search/filter in current panel
+```
+
+第一阶段 Settings Service 只进入 Control Plane。Hot Path 继续保留现有低延迟链路，避免每次快捷键、每次滚动、每次复制都等待 schema、磁盘、MCP 或网络 provider。
+
+允许的连接：
+
+- 设置窗口写入后触发 `settings_changed`，设置窗口刷新自己的状态。
+- Agent 配置面按需调用 provider check / models。
+- MCP settings 工具读写配置并返回 schema、revision、changedPaths。
+- 后续主面板迁移只能作为单独提案，在初始化阶段读取轻量 snapshot，不进入每帧交互。
+
+禁止的连接：
+
+- 主面板打开时默认拉取完整 schema。
+- 主面板打开时默认检查 provider readiness 或拉取 model list。
+- 主面板选中行、滚动、搜索、复制回写同步调用 Settings Service。
+- 前端设置页通过 MCP tools/call 调本机服务。
+
+## 2.2 前端与 MCP 的统一协议方式
+
+前端和 MCP 共享协议，但使用不同传输：
+
+| 调用方 | 传输 | 目标 | 是否进入热路径 |
+| --- | --- | --- | --- |
+| 设置窗口 | Tauri command `settings_service_*` | Settings Service | 否 |
+| Agent 面板配置区 | Tauri command `settings_service_agent_*` | Settings Service | 否 |
+| MCP Agent | MCP tools `clipf.settings.*` / `clipf.agent.*` | Settings Service | 否 |
+| 主面板 | 现有本地状态和现有 command | 剪贴板主能力 | 是，首批不迁移 |
+
+因此“一致性”来自服务和协议对象，不来自所有调用方共用同一个 transport。
+
 ## 3. 协议对象
 
 ```ts
@@ -124,6 +181,9 @@ type SettingsChangedEvent = {
 - MCP 写入同样触发事件。
 - 首批不要求主面板订阅，避免影响主流程。
 - 后续主面板迁移时再把 debounce 整体写回改为 patch + subscribe。
+- 事件不能携带完整 schema，避免大 payload 造成不必要渲染压力。
+- 事件消费者必须用 `revision` 去重；同 revision 不重复刷新。
+- 主面板若后续订阅，只能把刷新放到 idle/debounce 队列，不能阻塞快捷键打开。
 
 ## 5. 性能稳定
 
@@ -132,6 +192,55 @@ type SettingsChangedEvent = {
 - Provider readiness 和 models 拉取必须有 timeout、缓存和显式刷新参数。
 - `agentListModels()` 只返回模型 ID、状态、错误摘要，不返回 key。
 - MCP `settings.get` 默认返回 schema；可支持 `includeSchema=false` 减少传输。
+- 前端设置页初次打开可 `includeSchema=true`；后续同 revision 刷新应复用缓存或 `includeSchema=false`。
+- Agent provider check/model list 不应在设置页首屏同步串行执行，除非用户点击测试或刷新。
+- MCP tools/list schema 只是工具 schema，不代表主面板要预加载完整 settings schema。
+
+## 5.1 300ms 交互预算
+
+统一服务必须服务于体验稳定，而不是制造新的等待链路。第一阶段采用 300ms 硬预算：
+
+| 场景 | 预算 | 证明方式 | 失败处理 |
+| --- | --- | --- | --- |
+| 快捷键触发到主面板可交互 | P95 <= 300ms，热缓存目标 <= 150ms | `performance.mark` / native log 记录 trigger、window show、first interactive | 不接入 Settings Service；回退现有主面板链路 |
+| 主面板选中、滚动、复制/粘贴反馈 | P95 <= 300ms | 前端交互 mark + native copy/writeback log | 禁止等待 schema、settings patch、MCP 或 provider |
+| 设置页 sidebar/tab 切换 | P95 <= 300ms | 前端 mark route/section switch | schema/cache 后台刷新，UI 先切换 |
+| 设置页开关、输入、局部保存反馈 | P95 <= 300ms | mark input -> optimistic/local saved state -> command response | 300ms 内先给 pending/saved/error 状态，慢写入后台完成 |
+| `settings.get(includeSchema=false)` | P95 <= 300ms | Tauri command duration log | schema 分离缓存，避免重复序列化大 schema |
+| `settings.patch/reset` 本地写入 | P95 <= 300ms | command duration + changedPaths | patch 小对象，atomic write；超过预算必须标记慢操作 |
+| MCP `clipf.settings.get includeSchema=false` | P95 <= 300ms | stdio handler duration log | includeSchema 默认可关闭，schema 单独按需获取 |
+
+不适用 300ms 同步完成的场景：
+
+- provider readiness check。
+- OpenAI-compatible model list。
+- 网络模型调用。
+- Tauri updater / release check。
+- 导出诊断包、批量导入导出、日志清理。
+
+这些场景必须满足“300ms 内有可见状态反馈”，但真实完成时间可以超过 300ms。它们不能阻塞主面板打开、列表滚动、复制回写或设置页切换。
+
+## 5.2 必要校验与防回归
+
+实现必须增加以下防线：
+
+- 前端 `settingsService` 对每个调用记录 `startedAt`、`endedAt`、`durationMs`，开发环境超 300ms 输出 warn。
+- native Settings Service 对 get/patch/replace/reset/MCP handler 记录 duration，超 300ms 写入 app log。
+- `settings_changed` 事件只广播小 payload，禁止携带完整 settings 或 schema。
+- 设置页 schema 缓存按 `revision` 复用，不能每个表单控件 mount 都拉 schema。
+- 主面板代码中不得出现 `settings_service_get`、`settings_service_patch`、`clipf.settings.*`、provider check/model list 的同步调用。
+- provider check/model list 必须有 loading 状态、timeout 和取消/忽略过期结果策略。
+- 自动化验证至少覆盖：MCP tools/list 不破坏、settings get/patch 基本路径、主面板打开路径没有新增设置服务调用。
+
+## 5.3 主面板性能风险评估
+
+| 风险 | 触发条件 | 处理策略 |
+| --- | --- | --- |
+| 快捷键打开变慢 | 打开面板时同步读 schema / provider / models | 第一阶段禁止主面板接入 Settings Service |
+| 列表滚动卡顿 | `settings_changed` 触发整页重渲染 | 首批主面板不订阅；后续订阅需 revision 去重 + debounce |
+| 复制回写延迟 | copy/paste 等待 settings patch 或 MCP 写入 | copy/paste 继续走现有 clipboard writeback |
+| MCP 异常影响 UI | MCP tool handler 共享全局锁或阻塞主线程 | MCP 只通过服务函数读写配置，不触发 UI 操作 |
+| provider 检查阻塞 | 网络模型检查在面板打开时自动执行 | readiness/models 必须用户触发或后台缓存，默认不跑 |
 
 ## 6. 原子性与并发
 
@@ -245,15 +354,18 @@ MCP 写入默认策略：
 - 新增 MCP settings/agent 工具。
 - 设置窗口接入 `src/services/settings.ts`。
 - 不迁移主面板。
+- 验证主面板快捷键打开、列表滚动、复制回写不新增 settings/schema/provider 调用。
 
 第二阶段：
 
 - Agent 面板 provider 状态改走 `settingsService.agent.*`。
 - 设置页 Agent provider 表单接入 patch、check、models。
+- provider check / models 默认按需，不随面板打开自动串行触发。
 
 第三阶段：
 
 - 评估主面板迁移。只有在第一、二阶段稳定后，才把主面板从 `write_user_settings` 改为 patch + subscribe。
+- 如果迁移，必须先定义主面板 `SettingsSnapshot`，只包含主面板需要的轻量字段，不携带 schema、provider secret、model list。
 
 ## 11. 方案评估
 

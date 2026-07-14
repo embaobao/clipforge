@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -672,17 +673,6 @@ struct AgentProviderReadiness {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AgentProviderModelsPayload {
-    provider_id: String,
-    status: String,
-    reason: String,
-    checked_at: i64,
-    command_preview: String,
-    models: Vec<String>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct AgentDetectCandidate {
     provider_id: String,
     label: String,
@@ -1329,12 +1319,31 @@ fn value_string_array(value: &Value, key: &str) -> Vec<String> {
 }
 
 fn configured_default_agent_provider_id() -> Option<String> {
-    read_user_settings().ok().and_then(|payload| {
-        payload
-            .settings
-            .get("agent")
-            .and_then(|agent| value_string(agent, &["defaultProviderId", "default_provider_id"]))
-    })
+    let settings = read_user_settings().ok()?.settings;
+    settings
+        .get("agent")
+        .and_then(|agent| {
+            value_string(
+                agent,
+                &[
+                    "defaultProviderId",
+                    "default_provider_id",
+                    "defaultAgentId",
+                    "default_agent_id",
+                ],
+            )
+        })
+        .or_else(|| {
+            value_string(
+                &settings,
+                &[
+                    "defaultProviderId",
+                    "default_provider_id",
+                    "defaultAgentId",
+                    "default_agent_id",
+                ],
+            )
+        })
 }
 
 fn configured_agent_providers_from_settings() -> Vec<AgentDetectCandidate> {
@@ -1407,17 +1416,6 @@ fn configured_agent_providers_from_settings() -> Vec<AgentDetectCandidate> {
             None
         })
         .collect()
-}
-
-fn configured_default_agent_provider_id() -> Option<String> {
-    let settings = read_user_settings().ok()?.settings;
-    settings
-        .get("agent")
-        .and_then(|agent| {
-            value_string(agent, &["defaultProviderId"])
-                .or_else(|| value_string(agent, &["defaultAgentId"]))
-        })
-        .or_else(|| value_string(&settings, &["defaultProviderId", "defaultAgentId"]))
 }
 
 fn agent_detect_candidates() -> Vec<AgentDetectCandidate> {
@@ -2309,6 +2307,98 @@ fn agent_list_provider_models(
     Ok(check_openai_compatible_models(&candidate))
 }
 
+fn settings_revision(settings: &Value) -> String {
+    let serialized = serde_json::to_string(settings).unwrap_or_else(|_| settings.to_string());
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    serialized.hash(&mut hasher);
+    format!("rev_{:016x}", hasher.finish())
+}
+
+fn redact_settings_value(value: &Value) -> Value {
+    let mut redacted = value.clone();
+    let Some(agent) = redacted.get_mut("agent") else {
+        return redacted;
+    };
+    let Some(providers) = agent.get_mut("providers").and_then(Value::as_array_mut) else {
+        return redacted;
+    };
+    for provider in providers {
+        if let Some(object) = provider.as_object_mut() {
+            if object.contains_key("apiKey") {
+                object.insert("apiKey".to_string(), Value::String("[redacted]".to_string()));
+            }
+        }
+    }
+    redacted
+}
+
+fn collect_changed_paths(previous: &Value, next: &Value, path: &str, out: &mut Vec<String>) {
+    if previous == next {
+        return;
+    }
+    match (previous.as_object(), next.as_object()) {
+        (Some(previous_object), Some(next_object)) => {
+            let mut keys = previous_object.keys().collect::<Vec<_>>();
+            for key in next_object.keys() {
+                if !previous_object.contains_key(key) {
+                    keys.push(key);
+                }
+            }
+            keys.sort();
+            keys.dedup();
+            for key in keys {
+                let next_path = if path == "$" {
+                    format!("$.{key}")
+                } else {
+                    format!("{path}.{key}")
+                };
+                collect_changed_paths(
+                    previous_object.get(key).unwrap_or(&Value::Null),
+                    next_object.get(key).unwrap_or(&Value::Null),
+                    &next_path,
+                    out,
+                );
+            }
+        }
+        _ => out.push(path.to_string()),
+    }
+}
+
+fn settings_changed_paths(previous: &Value, next: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_changed_paths(previous, next, "$", &mut out);
+    if out.is_empty() {
+        vec![]
+    } else {
+        out
+    }
+}
+
+fn merge_settings_patch(base: &mut Value, patch: &Value) {
+    if !base.is_object() || !patch.is_object() {
+        *base = patch.clone();
+        return;
+    }
+    let Some(base_object) = base.as_object_mut() else {
+        return;
+    };
+    let Some(patch_object) = patch.as_object() else {
+        return;
+    };
+    for (key, value) in patch_object {
+        if value.is_null() {
+            base_object.remove(key);
+        } else if value.is_object() {
+            let entry = base_object
+                .entry(key.clone())
+                .or_insert_with(|| Value::Object(Default::default()));
+            merge_settings_patch(entry, value);
+        } else {
+            base_object.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 fn settings_json_schema() -> Value {
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2499,6 +2589,13 @@ fn validate_settings_value(value: &Value, schema: &Value, root: &Value, path: &s
     }
 }
 
+fn settings_validation_error(errors: Vec<String>) -> String {
+    format!(
+        "SETTINGS_SCHEMA_VALIDATION_FAILED: {}; hint=Use clipf.settings.get to inspect schema, then retry with a smaller patch.",
+        errors.join("; ")
+    )
+}
+
 fn validate_settings_patch(input: &Value) -> Result<(), String> {
     let schema = settings_json_schema();
     let mut errors = Vec::new();
@@ -2506,15 +2603,27 @@ fn validate_settings_patch(input: &Value) -> Result<(), String> {
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(format!("SETTINGS_SCHEMA_VALIDATION_FAILED: {}", errors.join("; ")))
+        Err(settings_validation_error(errors))
     }
 }
 
-fn public_settings_payload() -> Result<Value, String> {
+fn public_settings_payload(include_schema: bool) -> Result<Value, String> {
+    let payload = read_user_settings()?;
+    let settings = payload.settings;
+    let revision = settings_revision(&settings);
+    let updated_at = now_millis()?;
     Ok(json!({
-        "settings": read_user_settings()?.settings,
-        "schema": settings_json_schema(),
-        "recommendedWriteMode": "patch",
+        "settings": redact_settings_value(&settings),
+        "schema": if include_schema { settings_json_schema() } else { Value::Null },
+        "revision": revision,
+        "updatedAt": updated_at,
+        "source": "tauri",
+        "writePolicy": {
+            "recommendedMode": "patch",
+            "replaceRequiresConfirmation": true,
+            "resetRequiresConfirmation": true,
+            "arrayMerge": "replace"
+        },
         "warnings": [
             "Prefer settings patch updates. Full replacement is available only with confirmed=true.",
             "Arrays are replaced as complete values, including agent.providers and tagRules.",
@@ -2529,16 +2638,16 @@ fn public_settings_payload() -> Result<Value, String> {
 
 #[tauri::command]
 fn settings_get_public() -> Result<Value, String> {
-    public_settings_payload()
+    public_settings_payload(true)
 }
 
 #[tauri::command]
 fn settings_patch_public(input: Value) -> Result<Value, String> {
     validate_settings_patch(&input)?;
     let mut current = read_user_settings()?.settings;
-    merge_json_object(&mut current, input);
+    merge_settings_patch(&mut current, &input);
     write_user_settings(current)?;
-    public_settings_payload()
+    public_settings_payload(true)
 }
 
 #[tauri::command]
@@ -2548,7 +2657,7 @@ fn settings_replace_public(input: Value, confirmed: Option<bool>) -> Result<Valu
     }
     validate_settings_patch(&input)?;
     write_user_settings(input)?;
-    public_settings_payload()
+    public_settings_payload(true)
 }
 
 #[tauri::command]
@@ -2575,7 +2684,300 @@ fn settings_reset_public(scope: Option<String>, confirmed: Option<bool>) -> Resu
         }
     }
     write_user_settings(current)?;
-    public_settings_payload()
+    public_settings_payload(true)
+}
+
+fn ensure_expected_settings_revision(
+    settings: &Value,
+    expected_revision: Option<&str>,
+) -> Result<String, String> {
+    let revision = settings_revision(settings);
+    if let Some(expected_revision) = expected_revision {
+        if !expected_revision.trim().is_empty() && expected_revision != revision {
+            return Err(format!(
+                "SETTINGS_REVISION_CONFLICT: expected {expected_revision}, current {revision}; get latest settings before retrying"
+            ));
+        }
+    }
+    Ok(revision)
+}
+
+fn emit_settings_changed<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    previous_revision: String,
+    revision: String,
+    changed_paths: Vec<String>,
+    actor: &str,
+    mode: &str,
+    updated_at: i64,
+) {
+    let _ = app.emit(
+        "settings_changed",
+        json!({
+            "revision": revision,
+            "previousRevision": previous_revision,
+            "changedPaths": changed_paths,
+            "actor": actor,
+            "mode": mode,
+            "updatedAt": updated_at
+        }),
+    );
+}
+
+fn settings_write_response(
+    settings: Value,
+    previous_revision: String,
+    changed_paths: Vec<String>,
+    include_schema: bool,
+) -> Result<Value, String> {
+    let mut payload = public_settings_payload(include_schema)?;
+    payload["previousRevision"] = Value::String(previous_revision);
+    payload["changedPaths"] = Value::Array(changed_paths.into_iter().map(Value::String).collect());
+    payload["nextActions"] = json!([
+        "Prefer settings_service_patch / clipf.settings.patch for follow-up changes.",
+        "Use settings_service_get / clipf.settings.get to refresh schema and revision before replace/reset."
+    ]);
+    payload["settings"] = redact_settings_value(&settings);
+    Ok(payload)
+}
+
+#[tauri::command]
+fn settings_service_get(include_schema: Option<bool>) -> Result<Value, String> {
+    public_settings_payload(include_schema.unwrap_or(true))
+}
+
+#[tauri::command]
+fn settings_service_patch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    patch: Value,
+    actor: Option<String>,
+    reason: Option<String>,
+    expected_revision: Option<String>,
+) -> Result<Value, String> {
+    validate_settings_patch(&patch)?;
+    let previous = read_user_settings()?.settings;
+    let previous_revision =
+        ensure_expected_settings_revision(&previous, expected_revision.as_deref())?;
+    let mut next = previous.clone();
+    merge_settings_patch(&mut next, &patch);
+    let changed_paths = settings_changed_paths(&previous, &next);
+    write_user_settings(next.clone())?;
+    sync_global_shortcut_registration(&app);
+    let updated_at = now_millis()?;
+    let revision = settings_revision(&next);
+    emit_settings_changed(
+        &app,
+        previous_revision.clone(),
+        revision,
+        changed_paths.clone(),
+        actor.as_deref().unwrap_or("settings-window"),
+        "patch",
+        updated_at,
+    );
+    log_to_file(
+        "info",
+        "settings-service",
+        &format!(
+            "patch actor={} reason={} changed={}",
+            actor.as_deref().unwrap_or("settings-window"),
+            reason.as_deref().unwrap_or(""),
+            changed_paths.join(",")
+        ),
+    );
+    settings_write_response(next, previous_revision, changed_paths, true)
+}
+
+#[tauri::command]
+fn settings_service_replace<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    settings: Value,
+    actor: Option<String>,
+    reason: Option<String>,
+    expected_revision: Option<String>,
+    confirmed: Option<bool>,
+) -> Result<Value, String> {
+    if confirmed != Some(true) {
+        return Err("SETTINGS_REPLACE_REQUIRES_CONFIRMATION: use patch for partial updates or retry with confirmed=true".to_string());
+    }
+    validate_settings_patch(&settings)?;
+    let previous = read_user_settings()?.settings;
+    let previous_revision =
+        ensure_expected_settings_revision(&previous, expected_revision.as_deref())?;
+    let changed_paths = settings_changed_paths(&previous, &settings);
+    write_user_settings(settings.clone())?;
+    sync_global_shortcut_registration(&app);
+    let updated_at = now_millis()?;
+    let revision = settings_revision(&settings);
+    emit_settings_changed(
+        &app,
+        previous_revision.clone(),
+        revision,
+        changed_paths.clone(),
+        actor.as_deref().unwrap_or("settings-window"),
+        "replace",
+        updated_at,
+    );
+    log_to_file(
+        "warn",
+        "settings-service",
+        &format!(
+            "replace actor={} reason={} changed={}",
+            actor.as_deref().unwrap_or("settings-window"),
+            reason.as_deref().unwrap_or(""),
+            changed_paths.join(",")
+        ),
+    );
+    settings_write_response(settings, previous_revision, changed_paths, true)
+}
+
+#[tauri::command]
+fn settings_service_reset<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    scope: Option<String>,
+    actor: Option<String>,
+    reason: Option<String>,
+    expected_revision: Option<String>,
+    confirmed: Option<bool>,
+) -> Result<Value, String> {
+    if confirmed != Some(true) {
+        return Err("SETTINGS_RESET_REQUIRES_CONFIRMATION: retry with scope and confirmed=true".to_string());
+    }
+    let scope = scope.ok_or_else(|| {
+        "SETTINGS_RESET_REQUIRES_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags".to_string()
+    })?;
+    let previous = read_user_settings()?.settings;
+    let previous_revision =
+        ensure_expected_settings_revision(&previous, expected_revision.as_deref())?;
+    let mut next = previous.clone();
+    match scope.as_str() {
+        "all" => next = json!({}),
+        "agent" => {
+            if let Some(object) = next.as_object_mut() {
+                object.remove("agent");
+                object.remove("agentProviders");
+            }
+        }
+        "shortcuts" => {
+            if let Some(object) = next.as_object_mut() {
+                object.remove("globalShortcut");
+            }
+        }
+        "display" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "panelDensity",
+                    "contentDisplayMode",
+                    "positionStrategy",
+                    "panelBackgroundOpacity",
+                    "enableScrollCollapse",
+                    "panelWidth",
+                    "panelHeight",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "capture" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "captureTextEnabled",
+                    "captureHtmlEnabled",
+                    "captureRtfEnabled",
+                    "captureImageEnabled",
+                    "captureFileEnabled",
+                    "captureSensitiveEnabled",
+                    "imageMaxSizeMb",
+                    "textMaxSizeMb",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "storage" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "quickItemLimit",
+                    "maxStoredItems",
+                    "clipboardPollMs",
+                    "cleanupEnabled",
+                    "cleanupIntervalHours",
+                    "softDeletedRetentionDays",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "logs" => {
+            if let Some(object) = next.as_object_mut() {
+                for key in [
+                    "logMaxSizeMb",
+                    "logKeepRatio",
+                    "logMaxLines",
+                    "logRetentionDays",
+                    "logAutoCleanup",
+                    "logCleanupIntervalMin",
+                ] {
+                    object.remove(key);
+                }
+            }
+        }
+        "tags" => {
+            if let Some(object) = next.as_object_mut() {
+                object.remove("tagMode");
+                object.remove("tagRules");
+            }
+        }
+        _ => {
+            return Err("SETTINGS_RESET_INVALID_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags".to_string());
+        }
+    }
+    let changed_paths = settings_changed_paths(&previous, &next);
+    write_user_settings(next.clone())?;
+    sync_global_shortcut_registration(&app);
+    let updated_at = now_millis()?;
+    let revision = settings_revision(&next);
+    emit_settings_changed(
+        &app,
+        previous_revision.clone(),
+        revision,
+        changed_paths.clone(),
+        actor.as_deref().unwrap_or("settings-window"),
+        "reset",
+        updated_at,
+    );
+    log_to_file(
+        "warn",
+        "settings-service",
+        &format!(
+            "reset scope={} actor={} reason={} changed={}",
+            scope,
+            actor.as_deref().unwrap_or("settings-window"),
+            reason.as_deref().unwrap_or(""),
+            changed_paths.join(",")
+        ),
+    );
+    settings_write_response(next, previous_revision, changed_paths, true)
+}
+
+#[tauri::command]
+fn settings_service_agent_providers() -> Result<Value, String> {
+    let config = agent_get_config()?;
+    Ok(json!({
+        "activeProviderId": config.active_provider_id,
+        "providers": config.providers,
+        "tools": config.tools,
+        "revision": settings_revision(&read_user_settings()?.settings)
+    }))
+}
+
+#[tauri::command]
+fn settings_service_agent_check(provider_id: Option<String>) -> Result<AgentProviderReadiness, String> {
+    agent_check_provider(provider_id)
+}
+
+#[tauri::command]
+fn settings_service_agent_models(provider_id: Option<String>) -> Result<AgentProviderModelsPayload, String> {
+    agent_list_provider_models(provider_id)
 }
 
 #[tauri::command]
@@ -7591,6 +7993,17 @@ pub fn run() {
             read_user_settings,
             write_user_settings,
             get_clipforge_settings,
+            settings_get_public,
+            settings_patch_public,
+            settings_replace_public,
+            settings_reset_public,
+            settings_service_get,
+            settings_service_patch,
+            settings_service_replace,
+            settings_service_reset,
+            settings_service_agent_providers,
+            settings_service_agent_check,
+            settings_service_agent_models,
             get_clipforge_config_path,
             get_clipforge_database_path,
             get_image_storage_path,
@@ -9076,6 +9489,88 @@ fn mcp_tool_specs() -> Vec<McpToolSpec> {
                     "tags": { "type": "array", "items": { "type": "string" } },
                     "favorite": { "type": "boolean" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+                }
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.settings.get",
+            description: "Read redacted ClipForge settings, schema, writePolicy, redaction rules, and revision.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "includeSchema": { "type": "boolean" }
+                }
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.settings.patch",
+            description: "Patch ClipForge settings through the unified Settings Service. Prefer this over replace.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "patch": { "type": "object" },
+                    "actor": { "type": "string" },
+                    "reason": { "type": "string" },
+                    "expectedRevision": { "type": "string" },
+                    "includeSchema": { "type": "boolean" }
+                },
+                "required": ["patch"]
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.settings.replace",
+            description: "Replace the full ClipForge settings document. Requires confirmed=true.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "settings": { "type": "object" },
+                    "actor": { "type": "string" },
+                    "reason": { "type": "string" },
+                    "expectedRevision": { "type": "string" },
+                    "confirmed": { "type": "boolean" },
+                    "includeSchema": { "type": "boolean" }
+                },
+                "required": ["settings", "confirmed"]
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.settings.reset",
+            description: "Reset a ClipForge settings scope. Requires scope and confirmed=true.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "scope": { "type": "string", "enum": ["all", "agent", "shortcuts", "display", "capture", "storage", "logs", "tags"] },
+                    "actor": { "type": "string" },
+                    "reason": { "type": "string" },
+                    "expectedRevision": { "type": "string" },
+                    "confirmed": { "type": "boolean" },
+                    "includeSchema": { "type": "boolean" }
+                },
+                "required": ["scope", "confirmed"]
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.agent.providers",
+            description: "List redacted Agent providers resolved from Settings Service.",
+            input_schema: || json!({ "type": "object", "properties": {} }),
+        },
+        McpToolSpec {
+            name: "clipf.agent.check",
+            description: "Check readiness for the default or selected Agent provider without blocking the quick panel.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "providerId": { "type": "string" }
+                }
+            }),
+        },
+        McpToolSpec {
+            name: "clipf.agent.models",
+            description: "List available models for the default or selected OpenAI-compatible Agent provider.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "providerId": { "type": "string" }
                 }
             }),
         },

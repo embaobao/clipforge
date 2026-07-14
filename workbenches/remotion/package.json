@@ -1,0 +1,29 @@
+{
+  "name": "@clipforge/remotion-workbench",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "still": "remotion still src/index.ts FeatureIntro out/feature-intro-frame30.png --frame=30 --scale=0.5",
+    "render:intro": "remotion render src/index.ts FeatureIntro out/clipforge-feature-intro.mp4",
+    "render:onboarding": "remotion render src/index.ts OnboardingGuide out/clipforge-onboarding-guide.mp4",
+    "render:agent-skills": "remotion render src/index.ts AgentSkillsClipForge out/clipforge-agent-skills.mp4",
+    "still:agent-skills": "remotion still src/index.ts AgentSkillsClipForge out/agent-skills-frame720.png --frame=720 --scale=0.5"
+  },
+  "dependencies": {
+    "@remotion/media": "4.0.489",
+    "@remotion/transitions": "4.0.489",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "remotion": "4.0.489",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@remotion/cli": "4.0.489",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "typescript": "~5.8.3"
+  }
+}

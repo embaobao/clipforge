@@ -229,10 +229,10 @@ export function AgentChatPage({
     const frame = window.requestAnimationFrame(() => {
       const node = viewportRef.current;
       if (!node) return;
-      node.scrollTop = node.scrollHeight;
+      node.scrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [viewportRef]);
+  }, []);
 
   return (
     <MotionConfig reducedMotion="user">

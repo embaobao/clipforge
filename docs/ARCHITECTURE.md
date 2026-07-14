@@ -2,6 +2,13 @@
 
 ClipForge 采用 **统一服务层 + 内置 MCP 常驻** 架构，分为四层：前端交互层、Tauri IPC 层、Service 层、数据与平台层。
 
+当前 OpenSpec 主规范已经吸收：
+
+- `openspec/specs/agent-runtime/spec.md`
+- `openspec/specs/search-filters/spec.md`
+
+历史完成提案统一保存在 `openspec/changes/archive/`，active change 的优先级和接手顺序见 `docs/PROPOSAL_ROADMAP.md`。
+
 ```text
 ┌─────────────────────────────────────────────────────────┐
 │                   React UI (前端交互层)                  │
@@ -88,6 +95,22 @@ Service Layer 是业务逻辑的唯一实现位置，Tauri command 和 MCP handl
 | `query` | 查询日志 | `text: Option<&str>`, `level: Option<&str>`, `limit: i64` | `Result<Vec<LogEntry>>` |
 | `cleanup` | 清理日志（超过 10MB） | - | `Result<String>` |
 
+### SettingsService（规划中）
+
+SettingsService 是设置控制面的单一服务入口，供设置窗口、Agent 配置区和 MCP 设置工具复用。第一阶段只进入控制面，不迁移主面板热路径。
+
+| 方法 | 功能 | 参数 | 返回 |
+|------|------|------|------|
+| `get` | 读取设置文档，可按需包含 schema | `include_schema: bool` | `Result<SettingsDocument>` |
+| `patch` | 局部更新设置 | `SettingsPatchRequest` | `Result<SettingsWriteResult>` |
+| `replace` | 全量替换设置，必须确认 | `SettingsReplaceRequest` | `Result<SettingsWriteResult>` |
+| `reset` | 按 scope 重置设置，必须确认 | `SettingsResetRequest` | `Result<SettingsWriteResult>` |
+| `agent_providers` | 读取 redacted provider 列表 | - | `Result<Vec<AgentProvider>>` |
+| `agent_check` | 按需检测 provider 可用性 | `provider_id: &str` | `Result<AgentProviderCheck>` |
+| `agent_models` | 按需拉取模型列表 | `provider_id: &str` | `Result<AgentModelList>` |
+
+统一的是 Rust domain service、JSON schema、revision、redaction、错误码、事件和写入策略；不是强制所有调用方共用同一个传输层。
+
 ## MCP 服务（应用托管 + stdio）
 
 当前实现以 `clipforge --mcp` stdio server 为稳定外部入口。应用启动时会自动托管一个 MCP 子进程用于状态检测和应用内展示；外部 MCP Client 仍按 MCP 规范启动自己的 stdio server 进程。
@@ -112,6 +135,36 @@ Service Layer 是业务逻辑的唯一实现位置，Tauri command 和 MCP handl
 | `clipf.delete` | ClipboardService.delete | 删除条目 |
 | `clipf.export` | ClipboardService.export | 导出历史 |
 | `clipf.import` | ClipboardService.import | 导入历史 |
+
+SettingsService 落地后会新增 `clipf.settings.*` 和 `clipf.agent.*` 工具。MCP handler 必须调用 SettingsService，不直接写设置文件，也不能影响已有 `clipf.list`、`clipf.get`、`clipf.copy` 等剪贴板工具。
+
+## 控制面与热路径
+
+ClipForge 的低延迟体验依赖控制面和主面板热路径隔离：
+
+```text
+Control Plane
+  Settings window
+  Agent provider config
+  MCP settings tools
+  schema / validation / revision / redaction / provider check / model list
+
+Hot Path
+  global shortcut trigger
+  quick panel show/hide/position
+  clipboard listener
+  virtual list scroll/selection
+  copy/paste writeback
+  search/filter in current panel
+```
+
+第一阶段 SettingsService 只进入 Control Plane。Hot Path 继续保留现有低延迟链路，禁止在快捷键打开、滚动、选中、搜索、复制/粘贴反馈中同步等待 settings schema、MCP、provider check 或 models。
+
+可见交互预算：
+
+- 主面板打开、选中、滚动、复制/粘贴反馈：P95 <= 300ms。
+- 设置页 sidebar/tab 切换、开关和局部保存反馈：P95 <= 300ms。
+- 网络 provider check、models、updater、诊断导出等异步任务：300ms 内显示 pending/loading/error 状态，真实完成可异步返回。
 
 ## 定位策略（聚合 EcoPaste/Maccy/TieZ）
 

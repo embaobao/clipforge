@@ -100,6 +100,68 @@ await repository.import({
 
 MCP 只负责标准调用入口，不应该引入复杂 AI 配置流程。
 
+## 设置服务契约（规划中）
+
+设置窗口、Agent 配置区和 MCP 设置工具应统一到 `SettingsService`。统一的是服务对象、JSON schema、revision、校验、redaction、错误码和写入策略；前端设置页仍通过 Tauri command 调用本机服务，外部 Agent 通过 MCP tools 调用同一服务。
+
+```mermaid
+flowchart LR
+  SettingsUI["Settings UI"] --> Tauri["settings_service_* commands"]
+  AgentUI["Agent config UI"] --> Tauri
+  MCP["clipf.settings.* / clipf.agent.*"] --> Bridge["MCP handler"]
+  Tauri --> Service["SettingsService"]
+  Bridge --> Service
+  Service --> File["User settings file"]
+  Service --> Schema["JSON schema"]
+```
+
+核心对象：
+
+```ts
+type SettingsDocument = {
+  settings: AppSettings;
+  schema?: JsonSchema;
+  revision: string;
+  updatedAt: number;
+  source: "tauri" | "mcp";
+  writePolicy: {
+    recommendedMode: "patch";
+    replaceRequiresConfirmation: true;
+    resetRequiresConfirmation: true;
+    arrayMerge: "replace";
+  };
+  warnings: string[];
+  redaction: Record<string, string>;
+};
+
+type SettingsPatchRequest = {
+  patch: Partial<AppSettings>;
+  actor: "settings-window" | "mcp" | "agent" | "system";
+  reason?: string;
+  expectedRevision?: string;
+};
+```
+
+写入规则：
+
+- 推荐使用 `patch`，只更新变更字段。
+- `replace` 和 `reset` 必须带 `confirmed: true`，否则返回明确错误和修复提示。
+- 写入成功必须返回 `revision`、`changedPaths`、`updatedAt` 和 `durationMs`。
+- MCP 返回不得包含明文 API key；provider 配置必须 redacted。
+- `settings.get(includeSchema=false)` 应支持轻量读取，避免重复序列化完整 schema。
+
+计划中的 MCP 工具：
+
+- `clipf.settings.get`
+- `clipf.settings.patch`
+- `clipf.settings.replace`
+- `clipf.settings.reset`
+- `clipf.agent.providers`
+- `clipf.agent.check`
+- `clipf.agent.models`
+
+主面板热路径不接入这些工具或命令。快捷键打开、列表滚动、选中态、搜索、复制/粘贴回写不能同步等待设置 schema、MCP、provider check 或 models。所有可见交互必须在 300ms 内反馈；网络类操作只要求 300ms 内显示 pending/loading/error 状态。
+
 ## Agent 快速访问边界
 
 Agent、CLI、MCP server、同步服务都只能通过同一套服务契约访问剪贴板数据：
