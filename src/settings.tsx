@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { settingsService } from "./services/settings";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -522,6 +523,35 @@ export function SettingsApp() {
         }));
       }
     })();
+  }, []);
+
+  // B5：订阅 settings_changed，跨窗口/跨进程设置变更时轻量重读 settings（revision 去重）。
+  // 不重跑 accessibility/mcp/logStats/update 等无关加载；自身写入触发的同 revision 事件会被去重跳过。
+  const lastSettingsRevision = useRef<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    settingsService
+      .subscribe((event) => {
+        if (!active) return;
+        if (lastSettingsRevision.current === event.revision) return;
+        lastSettingsRevision.current = event.revision;
+        invoke<AppSettings>("get_clipforge_settings")
+          .then((next) => {
+            if (!active) return;
+            setState((prev) => ({ ...prev, settings: next }));
+          })
+          .catch(() => {
+            /* 单次刷新失败不打断设置页主流程，下次事件再试 */
+          });
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
   }, []);
 
   function updateSettings(next: Partial<AppSettings>) {

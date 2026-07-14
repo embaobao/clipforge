@@ -612,3 +612,107 @@ export type ServiceRegistry = {
   sync?: SyncAdapter;
   externalTools?: ExternalToolBridge;
 };
+
+// ===== 统一设置服务契约（settings-service-unified-protocol）=====
+// 与 Rust SettingsService 的 serde 字段对齐（camelCase）。
+// settings 字段以宽松 JSON 对象表达（Rust 侧是 serde_json::Value）；
+// src/settings.tsx 的 AppSettings 是它的强类型视图。
+
+/** 设置写入发起方。 */
+export type SettingsActor = "settings-window" | "mcp" | "agent" | "system";
+
+/** 设置写入模式：patch 局部更新；replace 全量替换；reset 按 scope 重置。 */
+export type SettingsWriteMode = "patch" | "replace" | "reset";
+
+/** 设置重置范围。 */
+export type SettingsResetScope =
+  | "all"
+  | "agent"
+  | "shortcuts"
+  | "display"
+  | "capture"
+  | "storage"
+  | "logs"
+  | "tags";
+
+/** 写入策略：默认推荐 patch；replace / reset 必须显式 confirmed。 */
+export type SettingsWritePolicy = {
+  recommendedMode: "patch";
+  replaceRequiresConfirmation: true;
+  resetRequiresConfirmation: true;
+  arrayMerge: "replace";
+};
+
+/** 设置文档（get 返回）：含 settings、可选 schema、revision、写入策略与 redaction 说明。 */
+export type SettingsDocument = {
+  settings: Record<string, unknown>;
+  schema: unknown;
+  revision: string;
+  previousRevision?: string;
+  changedPaths?: string[];
+  nextActions?: string[];
+  updatedAt: number;
+  source: "tauri" | "mcp";
+  writePolicy: SettingsWritePolicy;
+  warnings: string[];
+  redaction: Record<string, string>;
+  durationMs?: number;
+};
+
+/** 局部更新请求（推荐写入方式）。 */
+export type SettingsPatchRequest = {
+  patch: Record<string, unknown>;
+  actor?: SettingsActor;
+  reason?: string;
+  expectedRevision?: string;
+};
+
+/** 全量替换请求，必须 confirmed=true。 */
+export type SettingsReplaceRequest = {
+  settings: Record<string, unknown>;
+  actor?: SettingsActor;
+  reason?: string;
+  expectedRevision?: string;
+  confirmed: true;
+};
+
+/** 按 scope 重置请求，必须 confirmed=true。 */
+export type SettingsResetRequest = {
+  scope: SettingsResetScope;
+  actor?: SettingsActor;
+  reason?: string;
+  expectedRevision?: string;
+  confirmed: true;
+};
+
+/** 写入结果（patch/replace/reset 返回），含 revision、changedPaths、nextActions。 */
+export type SettingsWriteResult = SettingsDocument;
+
+/** settings_changed 事件 payload：只携带小字段，不含 settings body / schema / apiKey。 */
+export type SettingsChangedEvent = {
+  revision: string;
+  previousRevision: string;
+  changedPaths: string[];
+  actor: SettingsActor;
+  mode: SettingsWriteMode;
+  updatedAt: number;
+};
+
+/** 统一设置服务契约（前端设置页 / Agent 配置区共用）。 */
+export type SettingsService = {
+  get(includeSchema?: boolean): Promise<SettingsDocument>;
+  patch(request: SettingsPatchRequest): Promise<SettingsWriteResult>;
+  replace(request: SettingsReplaceRequest): Promise<SettingsWriteResult>;
+  reset(request: SettingsResetRequest): Promise<SettingsWriteResult>;
+  subscribe(handler: (event: SettingsChangedEvent) => void): Promise<() => void>;
+};
+
+/** MCP 设置 / Agent 工具名（与 Rust mcp_tool_specs 对齐）。 */
+export type SettingsToolName =
+  | "clipf.settings.get"
+  | "clipf.settings.patch"
+  | "clipf.settings.replace"
+  | "clipf.settings.reset"
+  | "clipf.agent.providers"
+  | "clipf.agent.check"
+  | "clipf.agent.models";
