@@ -102,3 +102,57 @@ fn remove_if_exists(path: PathBuf) -> Result<(), String> {
         Err(error) => Err(error.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+    use std::path::PathBuf;
+
+    use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+
+    use super::ImageStore;
+    use crate::clipboard::payload::ImagePayload;
+
+    fn temp_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "clipforge-image-store-{name}-{}",
+            std::process::id()
+        ))
+    }
+
+    fn png_payload() -> ImagePayload {
+        let image = ImageBuffer::from_pixel(2, 2, Rgba([255, 0, 0, 255]));
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgba8(image)
+            .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
+            .expect("test png should encode");
+        ImagePayload {
+            bytes,
+            width: 2,
+            height: 2,
+        }
+    }
+
+    #[test]
+    fn stores_images_idempotently_and_removes_files() {
+        let root = temp_root("idempotent");
+        let _ = std::fs::remove_dir_all(&root);
+        let store = ImageStore::new(root.clone());
+        let payload = png_payload();
+
+        let first = store.store(&payload).expect("first store should succeed");
+        let second = store.store(&payload).expect("second store should succeed");
+        assert_eq!(first.file_name, second.file_name);
+        assert!(first.origin_path.exists());
+        assert!(first.thumbnail_path.exists());
+        assert_eq!(first.width, 2);
+        assert_eq!(first.height, 2);
+
+        store
+            .remove(&first.file_name)
+            .expect("remove should succeed");
+        assert!(!first.origin_path.exists());
+        assert!(!first.thumbnail_path.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+}

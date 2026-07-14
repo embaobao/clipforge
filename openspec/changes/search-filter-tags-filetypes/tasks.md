@@ -12,7 +12,7 @@
 - [x] 实现前端查询 token parser
 - [x] 支持 `#tag` 快捷语法，与 `tag:tag` 进入同一 `filters.tags`
 - [x] 实现 Rust 侧请求结构 `SearchClipsRequest`
-- [ ] 补 parser 单元测试：tag/#tag/type/kind/file/bucket/favorite
+- [x] 补 parser 单元测试：tag/#tag/type/kind/file/bucket/favorite
 - [x] 明确异常 token 的展示和忽略策略
 - [x] 明确 tag normalize、去重、长度上限和中英文支持策略
 
@@ -48,6 +48,6 @@
 - [x] 验证纯文本搜索保持原行为
 - [x] 验证 tag/type/file 组合筛选
 - [x] 验证 `#tag` 与 `tag:tag` 结果一致
-- [ ] 验证 `#AI` 能命中 Agent 生成或建议应用保存后的条目
-- [ ] 验证详情页 tag 点击能进入对应搜索结果
+- [x] 验证 `#AI` 能命中 Agent 生成或建议应用保存后的条目
+- [x] 验证详情页 tag 点击能进入对应搜索结果
 - [x] 验证删除 chip 后结果恢复

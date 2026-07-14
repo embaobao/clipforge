@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   BookOpen,
   Copy,
@@ -20,8 +21,16 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
+import {
+  normalizeLanguagePreference,
+  resolveAppLocale,
+  setDocumentLocale,
+  t,
+  type AppLanguagePreference,
+} from "./i18n";
 
 interface AppSettings {
+  language: AppLanguagePreference;
   globalShortcut: string;
   panelDensity: "dense" | "normal" | "comfortable";
   contentDisplayMode: "summary" | "middle" | "raw";
@@ -56,6 +65,10 @@ interface AppSettings {
   captureSensitiveEnabled: boolean;
   imageMaxSizeMb: number;
   textMaxSizeMb: number;
+  agentProviders?: Array<Record<string, unknown>>;
+  agent?: {
+    providers?: Array<Record<string, unknown>>;
+  };
 }
 
 interface AccessibilityPermissionPayload {
@@ -126,17 +139,29 @@ interface UpdateCheckState {
   errorMessage?: string;
 }
 
-const densityLabels: Record<AppSettings["panelDensity"], string> = {
-  dense: "紧凑",
-  normal: "标准",
-  comfortable: "舒适",
-};
+interface BuildInfoPayload {
+  productName: string;
+  currentVersion: string;
+  bundleIdentifier: string;
+  targetOs: string;
+  targetArch: string;
+  updaterEndpoint: string;
+}
 
-const displayModeLabels: Record<AppSettings["contentDisplayMode"], string> = {
-  summary: "摘要",
-  middle: "中等",
-  raw: "原始",
-};
+async function safeInvokeUpdateCheck(): Promise<UpdateCheckState> {
+  try {
+    return await invoke<UpdateCheckState>("check_update");
+  } catch (error) {
+    return {
+      status: "failed",
+      currentVersion: "0.1.0",
+      channel: "stable",
+      lastCheckedAt: Date.now(),
+      errorCode: "UPDATE_CHECK_FAILED",
+      errorMessage: String(error),
+    };
+  }
+}
 
 const tagModeLabels: Record<AppSettings["tagMode"], string> = {
   similar: "仅类型",
@@ -158,6 +183,7 @@ interface SettingsAppState {
   status: string;
   logStats: LogStatsPayload | null;
   update: UpdateCheckState | null;
+  buildInfo: BuildInfoPayload | null;
 }
 
 interface LogStatsPayload {
@@ -186,6 +212,7 @@ function formatBytes(bytes: number): string {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
+  language: "system",
   globalShortcut: DEFAULT_SHORTCUT,
   panelDensity: "normal",
   contentDisplayMode: "summary",
@@ -368,15 +395,15 @@ function CheckItem({ body, icon, title }: { body: string; icon: React.ReactNode;
 }
 
 const SECTIONS = [
-  { key: "shortcut", label: "快捷键", icon: Terminal },
-  { key: "display", label: "面板显示", icon: Eye },
-  { key: "integration", label: "集成", icon: Terminal },
-  { key: "manual", label: "使用手册", icon: BookOpen },
-  { key: "content", label: "内容识别", icon: FileCode },
-  { key: "capture", label: "采集", icon: FileImage },
-  { key: "storage", label: "数据存储", icon: Database },
-  { key: "update", label: "更新", icon: UploadCloud },
-  { key: "tags", label: "Tag 规则", icon: Tag },
+  { key: "shortcut", labelKey: "settings.section.shortcut", icon: Terminal },
+  { key: "display", labelKey: "settings.section.display", icon: Eye },
+  { key: "integration", labelKey: "settings.section.integration", icon: Terminal },
+  { key: "manual", labelKey: "settings.section.manual", icon: BookOpen },
+  { key: "content", labelKey: "settings.section.content", icon: FileCode },
+  { key: "capture", labelKey: "settings.section.capture", icon: FileImage },
+  { key: "storage", labelKey: "settings.section.storage", icon: Database },
+  { key: "update", labelKey: "settings.section.update", icon: UploadCloud },
+  { key: "tags", labelKey: "settings.section.tags", icon: Tag },
 ] as const;
 
 type SectionKey = (typeof SECTIONS)[number]["key"];
@@ -396,12 +423,15 @@ export function SettingsApp() {
     status: "",
     logStats: null,
     update: null,
+    buildInfo: null,
   });
+  const locale = resolveAppLocale(state.settings.language);
+  const tr = (key: Parameters<typeof t>[1], params?: Record<string, string | number>) => t(locale, key, params);
 
   useEffect(() => {
     void (async () => {
       try {
-        const [settings, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, mcp, logStats, update] = await Promise.all([
+        const [settings, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, mcp, logStats, update, buildInfo] = await Promise.all([
           invoke<AppSettings>("get_clipforge_settings"),
           invoke<string>("get_clipforge_config_path"),
           invoke<string>("get_clipforge_database_path"),
@@ -410,8 +440,17 @@ export function SettingsApp() {
           invoke<PanelTriggerPayload>("get_panel_trigger_status"),
           invoke<McpStatusPayload>("get_mcp_status"),
           invoke<LogStatsPayload>("get_log_stats"),
-          invoke<UpdateCheckState>("check_update"),
+          safeInvokeUpdateCheck(),
+          invoke<BuildInfoPayload>("get_build_info"),
         ]);
+        const mergedSettings = {
+          ...DEFAULT_SETTINGS,
+          ...settings,
+          language: normalizeLanguagePreference((settings as Partial<AppSettings>).language),
+        };
+        const locale = resolveAppLocale(mergedSettings.language);
+        setDocumentLocale(locale);
+        void getCurrentWindow().setTitle(t(locale, "window.settings.title"));
         setState({
           accessibility,
           accessibilityDiagnostics,
@@ -420,9 +459,10 @@ export function SettingsApp() {
           databasePath,
           mcp,
           panel,
-          settings: { ...DEFAULT_SETTINGS, ...settings },
+          settings: mergedSettings,
           logStats,
           update,
+          buildInfo,
           status: "",
         });
       } catch (error) {
@@ -436,8 +476,17 @@ export function SettingsApp() {
   }, []);
 
   function updateSettings(next: Partial<AppSettings>) {
-    setState((prev) => ({ ...prev, settings: { ...prev.settings, ...next } }));
-    invoke("update_clipforge_settings", { input: next }).catch((error) =>
+    const normalizedNext = {
+      ...next,
+      ...(next.language ? { language: normalizeLanguagePreference(next.language) } : {}),
+    };
+    if (normalizedNext.language) {
+      const locale = resolveAppLocale(normalizedNext.language);
+      setDocumentLocale(locale);
+      void getCurrentWindow().setTitle(t(locale, "window.settings.title"));
+    }
+    setState((prev) => ({ ...prev, settings: { ...prev.settings, ...normalizedNext } }));
+    invoke("update_clipforge_settings", { input: normalizedNext }).catch((error) =>
       setState((prev) => ({ ...prev, status: String(error) })),
     );
   }
@@ -536,7 +585,7 @@ export function SettingsApp() {
         ...prev,
         accessibility,
         accessibilityDiagnostics,
-        status: "已重置 ClipForge 辅助功能授权记录，请在系统设置中重新勾选当前应用。",
+        status: tr("settings.accessibility.status.reset"),
       }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
@@ -565,11 +614,53 @@ export function SettingsApp() {
     return state.mcp?.command || "/Applications/ClipForge.app/Contents/MacOS/clipforge --mcp";
   }
 
+  function getConfiguredAgentProviderCount() {
+    return (state.settings.agent?.providers ?? state.settings.agentProviders ?? []).length;
+  }
+
+  async function copyAgentProviderTemplate() {
+    const template = {
+      agent: {
+        providers: [
+          {
+            id: "openai-main",
+            name: "OpenAI compatible",
+            kind: "openai-compatible",
+            enabled: true,
+            baseUrl: "https://api.openai.com/v1",
+            modelId: "gpt-4.1-mini",
+            apiKeyEnv: "OPENAI_API_KEY",
+            timeoutSeconds: 120,
+          },
+          {
+            id: "local-codex",
+            name: "Codex CLI",
+            kind: "local-cli",
+            enabled: false,
+            command: "codex",
+            args: [],
+          },
+        ],
+      },
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(template, null, 2));
+      setState((prev) => ({ ...prev, status: "Agent provider JSON 模板已复制，可粘贴到设置文件后按需改名。" }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
   async function copyMcpCommand(source: string) {
-    const command = getMcpCommand();
+    const command = [
+      "请帮我安装 ClipForge MCP 接入。",
+      "使用 stdio transport，server command 如下：",
+      getMcpCommand(),
+      "安装后优先使用 clipf.list / clipf.get / clipf.copy / clipf.search 工具读取和操作剪贴板。",
+    ].join("\n");
     try {
       await navigator.clipboard.writeText(command);
-      setState((prev) => ({ ...prev, status: `${source} 接入命令已复制` }));
+      setState((prev) => ({ ...prev, status: `${source} MCP 安装提示已复制，发送给相关 Agent 即可接入` }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
     }
@@ -588,15 +679,72 @@ export function SettingsApp() {
     setState((prev) => ({
       ...prev,
       update: prev.update ? { ...prev.update, status: "checking" } : prev.update,
-      status: "正在检查更新…",
+      status: tr("settings.update.status.checking"),
     }));
     try {
       const update = await invoke<UpdateCheckState>("check_update");
-      setState((prev) => ({ ...prev, update, status: update.errorMessage || "更新状态已刷新" }));
+      setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.refreshed") }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: String(error) }));
     }
   }
+
+  async function downloadUpdateNow() {
+    setState((prev) => ({
+      ...prev,
+      update: prev.update ? { ...prev.update, status: "downloading", downloadProgress: 0 } : prev.update,
+      status: tr("settings.update.status.downloading"),
+    }));
+    try {
+      const update = await invoke<UpdateCheckState>("download_update");
+      setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.ready") }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function installUpdateNow() {
+    try {
+      const update = await invoke<UpdateCheckState>("install_update");
+      setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.installing") }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  async function ignoreCurrentUpdate() {
+    const version = state.update?.availableVersion;
+    if (!version) return;
+    try {
+      const update = await invoke<UpdateCheckState>("ignore_update_version", { version });
+      setState((prev) => ({ ...prev, update, status: tr("settings.update.status.ignored", { version }) }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: String(error) }));
+    }
+  }
+
+  const updateStatusCopy =
+    state.update?.status === "latest"
+      ? tr("settings.update.status.latest")
+      : state.update?.status === "available"
+        ? tr("settings.update.status.available", { version: state.update.availableVersion ?? "" })
+        : state.update?.status === "checking"
+          ? tr("settings.update.status.checking")
+          : state.update?.status === "downloading"
+            ? tr("settings.update.status.downloading")
+            : state.update?.status === "ready"
+              ? tr("settings.update.status.ready")
+              : state.update?.errorMessage || tr("settings.update.status.idle");
+  const densityCopy: Record<AppSettings["panelDensity"], string> = {
+    dense: tr("settings.display.density.dense"),
+    normal: tr("settings.display.density.normal"),
+    comfortable: tr("settings.display.density.comfortable"),
+  };
+  const displayModeCopy: Record<AppSettings["contentDisplayMode"], string> = {
+    summary: tr("settings.display.contentMode.summary"),
+    middle: tr("settings.display.contentMode.middle"),
+    raw: tr("settings.display.contentMode.raw"),
+  };
 
   return (
     <div className="settings-window-shell">
@@ -620,7 +768,7 @@ export function SettingsApp() {
                 type="button"
               >
                 <Icon size={15} />
-                <span>{item.label}</span>
+                <span>{tr(item.labelKey)}</span>
               </button>
             );
           })}
@@ -628,9 +776,25 @@ export function SettingsApp() {
 
         <main className="settings-window-content">
           {section === "shortcut" && (
-            <SettingGroup title="快捷键">
+            <SettingGroup title={tr("settings.section.shortcut")}>
               <div className="setting-row">
-                <span>快速唤起</span>
+                <span>{tr("settings.language.current")}</span>
+                <SegmentSetting
+                  options={(["system", "zh-CN", "en-US"] as AppLanguagePreference[]).map((value) => ({
+                    value,
+                    label:
+                      value === "system"
+                        ? tr("settings.language.system")
+                        : value === "zh-CN"
+                          ? tr("settings.language.zh")
+                          : tr("settings.language.en"),
+                  }))}
+                  selected={state.settings.language}
+                  onChange={(language) => updateSettings({ language })}
+                />
+              </div>
+              <div className="setting-row">
+                <span>{tr("settings.shortcut.quickOpen")}</span>
                 <div className="kbd-row">
                   {state.settings.globalShortcut.split("+").map((part) => (
                     <kbd key={part}>{part}</kbd>
@@ -638,7 +802,7 @@ export function SettingsApp() {
                 </div>
               </div>
               <div className="setting-row">
-                <span>录入快捷键</span>
+                <span>{tr("settings.shortcut.record")}</span>
                 <button
                   className={recording ? "primary-button" : "secondary-button"}
                   onClick={() => setRecording((v) => !v)}
@@ -648,11 +812,11 @@ export function SettingsApp() {
                   }}
                   type="button"
                 >
-                  {recording ? "按下组合键…" : "开始录入"}
+                  {recording ? tr("settings.shortcut.recording") : tr("settings.shortcut.startRecording")}
                 </button>
               </div>
               <div className="setting-row">
-                <span>手动指定</span>
+                <span>{tr("settings.shortcut.manual")}</span>
                 <input
                   onChange={(event) =>
                     updateSettings({ globalShortcut: event.currentTarget.value })
@@ -661,20 +825,20 @@ export function SettingsApp() {
                 />
               </div>
               <div className="setting-card permission-card">
-                <span>macOS 辅助功能权限</span>
+                <span>{tr("settings.accessibility.title")}</span>
                 <strong>
                   {state.accessibility?.canReadFocusedInput
-                    ? "已授权：可贴近输入位置"
-                    : "未授权：使用屏幕右侧兜底"}
+                    ? tr("settings.accessibility.status.granted")
+                    : tr("settings.accessibility.status.missing")}
                 </strong>
                 <p>
                   {state.accessibility?.message ??
-                    "启动时自动检查，用于读取当前输入控件位置。"}
+                    tr("settings.accessibility.description")}
                 </p>
                 {state.accessibilityDiagnostics ? (
                   <div className="permission-diagnostics">
                     <div>
-                      <span>当前进程</span>
+                      <span>{tr("settings.accessibility.currentProcess")}</span>
                       <strong>{state.accessibilityDiagnostics.trusted ? "trusted" : "missing"}</strong>
                     </div>
                     <div>
@@ -682,11 +846,11 @@ export function SettingsApp() {
                       <code>{state.accessibilityDiagnostics.expectedBundleIdentifier}</code>
                     </div>
                     <div>
-                      <span>签名 ID</span>
+                      <span>{tr("settings.accessibility.signatureId")}</span>
                       <code>{state.accessibilityDiagnostics.codeSignatureIdentifier || "unknown"}</code>
                     </div>
                     <div>
-                      <span>签名类型</span>
+                      <span>{tr("settings.accessibility.signatureKind")}</span>
                       <code>{state.accessibilityDiagnostics.signatureKind || "unknown"}</code>
                     </div>
                     <p className="path">{state.accessibilityDiagnostics.appBundlePath || state.accessibilityDiagnostics.executablePath}</p>
@@ -703,25 +867,25 @@ export function SettingsApp() {
                         ))}
                       </div>
                     ) : (
-                      <p>未找到当前 ClipForge 的 TCC 授权记录。</p>
+                      <p>{tr("settings.accessibility.noTccRecord")}</p>
                     )}
                     {state.accessibilityDiagnostics.tccQueryError ? (
-                      <p>TCC 查询失败：{state.accessibilityDiagnostics.tccQueryError}</p>
+                      <p>{tr("settings.accessibility.tccQueryFailed", { error: state.accessibilityDiagnostics.tccQueryError })}</p>
                     ) : null}
                   </div>
                 ) : null}
                 <div className="button-row">
                   <button className="secondary-button" onClick={openAccessibilitySettings} type="button">
                     <ShieldCheck size={13} />
-                    请求权限
+                    {tr("settings.accessibility.action.request")}
                   </button>
                   <button className="secondary-button" onClick={refreshAccessibilityStatus} type="button">
                     <RefreshCw size={13} />
-                    刷新状态
+                    {tr("settings.accessibility.action.refresh")}
                   </button>
                   <button className="secondary-button" onClick={resetAccessibilityPermission} type="button">
                     <RotateCcw size={13} />
-                    重置后重试
+                    {tr("settings.accessibility.action.reset")}
                   </button>
                 </div>
               </div>
@@ -729,52 +893,52 @@ export function SettingsApp() {
           )}
 
           {section === "display" && (
-            <SettingGroup title="面板显示">
+            <SettingGroup title={tr("settings.section.display")}>
               <div className="setting-row">
-                <span>面板密度</span>
+                <span>{tr("settings.display.density")}</span>
                 <SegmentSetting
                   options={(["dense", "normal", "comfortable"] as AppSettings["panelDensity"][]).map((v) => ({
                     value: v,
-                    label: densityLabels[v],
+                    label: densityCopy[v],
                   }))}
                   selected={state.settings.panelDensity}
                   onChange={(panelDensity) => updateSettings({ panelDensity })}
                 />
               </div>
               <div className="setting-row">
-                <span>内容显示</span>
+                <span>{tr("settings.display.contentMode")}</span>
                 <SegmentSetting
                   options={(["summary", "middle", "raw"] as AppSettings["contentDisplayMode"][]).map((v) => ({
                     value: v,
-                    label: displayModeLabels[v],
+                    label: displayModeCopy[v],
                   }))}
                   selected={state.settings.contentDisplayMode}
                   onChange={(contentDisplayMode) => updateSettings({ contentDisplayMode })}
                 />
               </div>
               <NumberSetting
-                label="快捷列表条数"
+                label={tr("settings.display.quickItemLimit")}
                 value={state.settings.quickItemLimit}
                 min={4}
                 max={30}
                 onChange={(quickItemLimit) => updateSettings({ quickItemLimit })}
               />
               <NumberSetting
-                label="面板宽度"
+                label={tr("settings.display.panelWidth")}
                 value={state.settings.panelWidth}
                 min={320}
                 max={600}
                 onChange={(panelWidth) => updateSettings({ panelWidth })}
               />
               <NumberSetting
-                label="面板高度"
+                label={tr("settings.display.panelHeight")}
                 value={state.settings.panelHeight}
                 min={300}
                 max={1000}
                 onChange={(panelHeight) => updateSettings({ panelHeight })}
               />
               <SliderSetting
-                label="面板背景透明度"
+                label={tr("settings.display.backgroundOpacity")}
                 min={20}
                 max={100}
                 step={1}
@@ -783,7 +947,7 @@ export function SettingsApp() {
                 onChange={(value) => updateSettings({ panelBackgroundOpacity: value / 100 })}
               />
               <ToggleSetting
-                label="滚动时自动隐藏底部导航"
+                label={tr("settings.display.autoHideDock")}
                 checked={state.settings.enableScrollCollapse}
                 onChange={(enableScrollCollapse) => updateSettings({ enableScrollCollapse })}
               />
@@ -820,10 +984,9 @@ export function SettingsApp() {
                 <strong>{state.mcp?.running ? "常驻运行中" : "常驻状态未确认"} · {state.mcp?.transport ?? "stdio"}</strong>
                 <p>ClipForge 启动时自动托管 MCP 状态；这里不提供停止入口，避免测试用户误关常驻服务。</p>
                 <div className="command-copy-row">
-                  <code>{getMcpCommand()}</code>
                   <button className="secondary-button" onClick={() => void copyMcpCommand("MCP")} type="button">
                     <Copy size={13} />
-                    复制接入命令
+                    复制给 Agent 的安装提示
                   </button>
                 </div>
                 <p className="mcp-tool-list">{state.mcp?.tools.join(" / ") || "刷新后显示当前工具列表"}</p>
@@ -831,6 +994,17 @@ export function SettingsApp() {
                   <button className="secondary-button" onClick={() => void refreshMcpStatus()} type="button">
                     <RefreshCw size={13} />
                     刷新
+                  </button>
+                </div>
+              </div>
+              <div className="setting-card permission-card">
+                <span>Agent Provider JSON</span>
+                <strong>{getConfiguredAgentProviderCount()} 个自定义 provider · CLI 与 OpenAI-compatible 分开配置</strong>
+                <p>OpenAI-compatible、OpenAPI 兼容网关和本地 CLI 都写入 settings.json5；可以直接编辑名称、baseUrl、modelId、apiKeyEnv 或 command。</p>
+                <div className="button-row">
+                  <button className="secondary-button" onClick={() => void copyAgentProviderTemplate()} type="button">
+                    <Copy size={13} />
+                    复制 JSON 模板
                   </button>
                 </div>
               </div>
@@ -844,10 +1018,9 @@ export function SettingsApp() {
                 <strong>工具命名统一使用 clipf.*，不保留测试期旧别名。</strong>
                 <p>应用启动时会自动托管 MCP 服务状态；外部 Agent / MCP Client 使用 stdio 命令接入。</p>
                 <div className="command-copy-row">
-                  <code>{getMcpCommand()}</code>
                   <button className="secondary-button" onClick={() => void copyMcpCommand("Agent")} type="button">
                     <Copy size={13} />
-                    复制接入命令
+                    复制给 Agent 的安装提示
                   </button>
                 </div>
               </div>
@@ -1130,30 +1303,96 @@ use clipf.analyze content="https://github.com/embaobao/clipforge"`}</pre>
           )}
 
           {section === "update" && (
-            <SettingGroup title="更新检查">
+            <SettingGroup title={tr("settings.update.title")}>
               <div className="setting-card permission-card">
-                <span>当前版本</span>
+                <span>{tr("settings.update.currentVersion")}</span>
                 <strong>{state.update?.currentVersion ?? "0.1.0"} · {state.update?.channel ?? "stable"}</strong>
-                <p>
-                  {state.update?.status === "latest"
-                    ? "已是最新版本。"
-                    : state.update?.status === "available"
-                      ? `发现 ${state.update.availableVersion}`
-                      : state.update?.errorMessage || "可手动刷新更新状态。"}
-                </p>
+                <p>{updateStatusCopy}</p>
                 <div className="button-row">
                   <button className="secondary-button" onClick={() => void checkUpdateNow()} type="button">
                     <RefreshCw size={13} />
-                    检查更新
+                    {tr("settings.update.action.check")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={state.update?.status !== "available"}
+                    onClick={() => void downloadUpdateNow()}
+                    type="button"
+                  >
+                    <FileDown size={13} />
+                    {tr("settings.update.action.download")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={state.update?.status !== "ready"}
+                    onClick={() => void installUpdateNow()}
+                    type="button"
+                  >
+                    <UploadCloud size={13} />
+                    {tr("settings.update.action.install")}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    disabled={!state.update?.availableVersion}
+                    onClick={() => void ignoreCurrentUpdate()}
+                    type="button"
+                  >
+                    {tr("settings.update.action.ignore")}
                   </button>
                 </div>
               </div>
+              <div className="setting-row">
+                <span>{tr("settings.update.status")}</span>
+                <strong className="path">
+                  {state.update?.status ?? "idle"}
+                  {typeof state.update?.downloadProgress === "number"
+                    ? ` · ${Math.round(state.update.downloadProgress * 100)}%`
+                    : ""}
+                </strong>
+              </div>
+              {state.update?.releaseNotes ? (
+                <div className="setting-row">
+                  <span>{tr("settings.update.releaseNotes")}</span>
+                  <strong className="path">{state.update.releaseNotes}</strong>
+                </div>
+              ) : null}
+              {state.update?.errorCode ? (
+                <div className="setting-row">
+                  <span>{tr("settings.update.error")}</span>
+                  <strong className="path">
+                    {state.update.errorCode}
+                    {state.update.errorMessage ? ` · ${state.update.errorMessage}` : ""}
+                  </strong>
+                </div>
+              ) : null}
+              {state.update?.ignoredVersion ? (
+                <div className="setting-row">
+                  <span>{tr("settings.update.ignoredVersion")}</span>
+                  <strong className="path">{state.update.ignoredVersion}</strong>
+                </div>
+              ) : null}
               {state.update?.lastCheckedAt ? (
                 <div className="setting-row">
-                  <span>最近检查</span>
+                  <span>{tr("settings.update.lastChecked")}</span>
                   <strong className="path">{new Date(state.update.lastCheckedAt).toLocaleString()}</strong>
                 </div>
               ) : null}
+              <div className="setting-row">
+                <span>构建信息</span>
+                <strong className="path">
+                  {state.buildInfo
+                    ? `${state.buildInfo.productName} ${state.buildInfo.currentVersion} · ${state.buildInfo.targetOs}-${state.buildInfo.targetArch}`
+                    : "加载中"}
+                </strong>
+              </div>
+              <div className="setting-row">
+                <span>Bundle ID</span>
+                <strong className="path">{state.buildInfo?.bundleIdentifier ?? "app.clipforge.desktop"}</strong>
+              </div>
+              <div className="setting-row">
+                <span>{tr("settings.update.endpoint")}</span>
+                <strong className="path">{state.buildInfo?.updaterEndpoint ?? "latest.json"}</strong>
+              </div>
             </SettingGroup>
           )}
 

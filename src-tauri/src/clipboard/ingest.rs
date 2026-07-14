@@ -24,6 +24,7 @@ pub struct ClipboardItemDraft {
     pub file_types: Option<String>,
     pub thumbnail_path: Option<String>,
     pub image_file: Option<String>,
+    pub is_sensitive: bool,
     pub metadata: serde_json::Value,
 }
 
@@ -62,6 +63,7 @@ pub fn build_clipboard_draft(
                 file_types: Some("png".to_string()),
                 thumbnail_path: Some(stored.thumbnail_path.to_string_lossy().to_string()),
                 image_file: Some(stored.origin_path.to_string_lossy().to_string()),
+                is_sensitive: false,
                 metadata: json!({ "storage": "image-store" }),
             })
         }
@@ -70,8 +72,20 @@ pub fn build_clipboard_draft(
 }
 
 fn build_text_draft(text: TextPayload) -> Result<ClipboardItemDraft, String> {
-    let has_html = text.html.as_ref().is_some_and(|value| !value.trim().is_empty());
-    let has_rtf = text.rtf.as_ref().is_some_and(|value| !value.trim().is_empty());
+    let has_html = text
+        .html
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_rtf = text
+        .rtf
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let sensitivity_basis = [
+        text.text.as_str(),
+        text.html.as_deref().unwrap_or(""),
+        text.rtf.as_deref().unwrap_or(""),
+    ]
+    .join("\n");
     let (primary_format, content, payload_kind, sub_kind) = if has_html {
         (
             "text/html".to_string(),
@@ -87,14 +101,16 @@ fn build_text_draft(text: TextPayload) -> Result<ClipboardItemDraft, String> {
             Some("rtf".to_string()),
         )
     } else {
-        let payload_kind = crate::detect_payload_kind(&text.text);
+        let detection = super::detect_text(&text.text);
+        let payload_kind = detection.payload_kind;
         (
             crate::primary_format_from_payload(&payload_kind).to_string(),
             text.text.clone(),
             payload_kind,
-            None,
+            detection.sub_kind,
         )
     };
+    let is_sensitive = super::detect_text(&sensitivity_basis).is_sensitive;
 
     let mut available_formats = Vec::new();
     let mut representations = Vec::new();
@@ -122,7 +138,10 @@ fn build_text_draft(text: TextPayload) -> Result<ClipboardItemDraft, String> {
             primary_format == "text/rtf",
         ));
     }
-    if !available_formats.iter().any(|format| format == &primary_format) {
+    if !available_formats
+        .iter()
+        .any(|format| format == &primary_format)
+    {
         available_formats.insert(0, primary_format.clone());
     }
 
@@ -149,6 +168,7 @@ fn build_text_draft(text: TextPayload) -> Result<ClipboardItemDraft, String> {
         file_types: None,
         thumbnail_path: None,
         image_file: None,
+        is_sensitive,
         metadata: json!({}),
     })
 }
@@ -200,11 +220,16 @@ fn build_files_draft(paths: Vec<String>) -> Result<ClipboardItemDraft, String> {
         file_types: (!file_types.is_empty()).then_some(file_types.join(",")),
         thumbnail_path: None,
         image_file: None,
+        is_sensitive: false,
         metadata: json!({ "fileCount": clean_paths.len() }),
     })
 }
 
-fn inline_representation(format: &str, content: &str, preferred: bool) -> ClipboardRepresentationPayload {
+fn inline_representation(
+    format: &str,
+    content: &str,
+    preferred: bool,
+) -> ClipboardRepresentationPayload {
     ClipboardRepresentationPayload {
         format: format.to_string(),
         storage: "inline".to_string(),

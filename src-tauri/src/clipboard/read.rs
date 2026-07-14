@@ -16,17 +16,6 @@ pub fn read_clipboard_payload() -> Result<Option<StandardClipboardPayload>, Stri
     read_text_payload(&ctx).map(|payload| payload.map(StandardClipboardPayload::Text))
 }
 
-pub fn read_clipboard_text_fallback() -> Result<String, String> {
-    match read_clipboard_payload()? {
-        Some(StandardClipboardPayload::Text(text)) => Ok(text.text),
-        Some(StandardClipboardPayload::Files(paths)) => Ok(paths.join("\n")),
-        Some(StandardClipboardPayload::Image(image)) => {
-            Ok(format!("[Image {}x{} PNG]", image.width, image.height))
-        }
-        None => Ok(String::new()),
-    }
-}
-
 fn read_files(ctx: &ClipboardContext) -> Result<Option<Vec<String>>, String> {
     if !ctx.has(ContentFormat::Files) {
         return Ok(None);
@@ -52,8 +41,8 @@ fn read_text_payload(ctx: &ClipboardContext) -> Result<Option<TextPayload>, Stri
     } else {
         String::new()
     };
-    let html = read_optional(has_html, || ctx.get_html());
-    let rtf = read_optional(has_rtf, || ctx.get_rich_text());
+    let html = read_optional("text/html", has_html, || ctx.get_html());
+    let rtf = read_optional("text/rtf", has_rtf, || ctx.get_rich_text());
     if text.trim().is_empty() && html.is_none() && rtf.is_none() {
         return Ok(None);
     }
@@ -61,13 +50,34 @@ fn read_text_payload(ctx: &ClipboardContext) -> Result<Option<TextPayload>, Stri
 }
 
 fn read_image(ctx: &ClipboardContext) -> Result<Option<ImagePayload>, String> {
-    if let Ok(bytes) = ctx.get_buffer(PNG_FORMAT) {
-        if let Some((width, height)) = png_dimensions(&bytes) {
-            return Ok(Some(ImagePayload {
-                bytes,
-                width,
-                height,
-            }));
+    match ctx.get_buffer(PNG_FORMAT) {
+        Ok(bytes) => {
+            if let Some((width, height)) = png_dimensions(&bytes) {
+                return Ok(Some(ImagePayload {
+                    bytes,
+                    width,
+                    height,
+                }));
+            }
+            crate::log_to_file(
+                "warn",
+                "clipboard-read",
+                &format!(
+                    "png buffer format present but dimensions invalid format={} bytes={}",
+                    PNG_FORMAT,
+                    bytes.len()
+                ),
+            );
+        }
+        Err(error) => {
+            crate::log_to_file(
+                "warn",
+                "clipboard-read",
+                &format!(
+                    "png buffer unavailable despite image=true format={} error={}",
+                    PNG_FORMAT, error
+                ),
+            );
         }
     }
 
@@ -106,13 +116,33 @@ pub fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 fn read_optional(
+    format: &str,
     available: bool,
     read: impl FnOnce() -> clipboard_rs::common::Result<String>,
 ) -> Option<String> {
     if !available {
         return None;
     }
-    read().ok().filter(|value| !value.trim().is_empty())
+    match read() {
+        Ok(value) => {
+            if value.trim().is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        Err(error) => {
+            crate::log_to_file(
+                "warn",
+                "clipboard-read",
+                &format!(
+                    "optional format unavailable despite has=true format={} error={}",
+                    format, error
+                ),
+            );
+            None
+        }
+    }
 }
 
 fn clip_err<E: std::fmt::Display>(err: E) -> String {
@@ -126,8 +156,8 @@ mod tests {
     #[test]
     fn parses_png_dimensions() {
         let bytes = [
-            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, b'I', b'H', b'D',
-            b'R', 0, 0, 0, 2, 0, 0, 0, 3,
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0,
+            0, 0, 2, 0, 0, 0, 3,
         ];
         assert_eq!(png_dimensions(&bytes), Some((2, 3)));
     }

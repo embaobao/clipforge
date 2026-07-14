@@ -5,7 +5,7 @@
 - [x] 确认 `file-image-clipboard-support` 已定义 `ClipboardRepresentation`
 - [x] 确认 `clips.representations_json`、`primary_format`、`plain_text` 已完成 schema v2 重建
 - [x] 确认前端类型已暴露 `primaryFormat`、`availableFormats`、`plainText`
-- [ ] 增加模型兼容测试：旧纯文本条目可作为 text/plain representation 读取
+- [x] 按“不做兼容处理”边界取消旧纯文本兼容测试：schema v2 删库重建后所有新条目统一写入 text/plain representation
 
 ## Phase 2：采集保真验收
 
@@ -13,7 +13,7 @@
 - [x] RTF 同时保存 rtf + plain
 - [x] 图片保存 image/png + 可选来源路径
 - [x] 文件保存 file-list + plain paths
-- [ ] 当平台缺失某个格式时写入诊断日志，避免把能力缺失误判成数据丢失
+- [x] 当平台缺失某个格式时写入诊断日志，避免把能力缺失误判成数据丢失
 
 ## Phase 3：写回
 
@@ -35,6 +35,7 @@
 
 - [x] `pnpm build` 通过
 - [x] `cd src-tauri && cargo check` 通过
+- [x] `cd src-tauri && cargo test clipboard::write` 通过，覆盖 HTML rich/plain、RTF、图片、文件 rich/path 的标准写回计划层
 - [ ] 验证 HTML rich/plain 写回
 - [ ] 验证文件 rich/path 写回
 - [ ] 验证图片 rich 写回

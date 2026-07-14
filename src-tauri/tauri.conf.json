@@ -72,5 +72,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "CLIPFORGE_UPDATER_PUBLIC_KEY_NOT_CONFIGURED",
+      "endpoints": [
+        "https://github.com/embaobao/clipforge/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

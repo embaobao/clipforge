@@ -23,6 +23,13 @@ OUTPUT_DMG_PATH="${RELEASE_DIR}/${DMG_NAME}"
 STAGING_DIR="${RELEASE_DIR}/.dmg-staging"
 MUST_READ_SOURCE="release-assets/CLIPFORGE_MUST_READ.html"
 MUST_READ_TARGET="0_安装必读_READ_ME_FIRST_ClipForge.html"
+UPDATER_CONFIG_PATH="${RELEASE_DIR}/.tauri-updater-public-key.json"
+REQUIRE_SIGNATURES="${CLIPFORGE_RELEASE_REQUIRE_SIGNATURES:-0}"
+
+cleanup_release_config() {
+  rm -f "$UPDATER_CONFIG_PATH"
+}
+trap cleanup_release_config EXIT
 
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR" "$RELEASE_DIR"
@@ -34,7 +41,26 @@ find "$RELEASE_DIR" -maxdepth 1 \( \
 \) -exec rm -rf {} +
 
 node scripts/generate-release-manual.mjs
-pnpm tauri build --bundles app
+TAURI_BUILD_ARGS=(tauri build --bundles app)
+if [[ -n "${CLIPFORGE_UPDATER_PUBLIC_KEY:-}" ]]; then
+  node --input-type=module - "$UPDATER_CONFIG_PATH" "$CLIPFORGE_UPDATER_PUBLIC_KEY" <<'NODE'
+import fs from "node:fs";
+
+const [outputPath, pubkey] = process.argv.slice(2);
+fs.writeFileSync(
+  outputPath,
+  `${JSON.stringify({ plugins: { updater: { pubkey } } }, null, 2)}\n`,
+);
+NODE
+  TAURI_BUILD_ARGS+=(--config "$UPDATER_CONFIG_PATH")
+elif [[ "$REQUIRE_SIGNATURES" == "1" ]]; then
+  echo "error: CLIPFORGE_UPDATER_PUBLIC_KEY is required when CLIPFORGE_RELEASE_REQUIRE_SIGNATURES=1" >&2
+  exit 1
+else
+  echo "warning: CLIPFORGE_UPDATER_PUBLIC_KEY is not set; using placeholder updater public key for local build" >&2
+fi
+
+pnpm "${TAURI_BUILD_ARGS[@]}"
 
 if command -v codesign >/dev/null 2>&1; then
   codesign \
@@ -65,3 +91,5 @@ hdiutil create \
   "$OUTPUT_DMG_PATH"
 
 echo "Built release DMG at: $OUTPUT_DMG_PATH"
+node scripts/sign-release-artifacts.mjs
+node scripts/generate-release-metadata.mjs

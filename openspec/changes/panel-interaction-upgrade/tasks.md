@@ -48,7 +48,10 @@
 
 ## 待办（后续）
 - [x] 配置面板宽高（通用设置项，open_panel 读取 settings；resolve_panel_dims 读 settings.panelWidth/Height 钳制）
-- [ ] 单项选中 checkbox 样式对齐多选 checkbox
-- [ ] 列表右边距 + 滚动条浮右两边等宽
+- [x] 单项选中 checkbox 样式对齐多选 checkbox
+- [x] 列表右边距 + 滚动条浮右两边等宽
 - [x] 长文案中间省略（头尾显示）：拆 head/tail 交 CSS flex，只收缩头部、尾部固定不裁，修复 JS 预截断后被 CSS 二次裁掉尾部
-- [ ] 输入框空时滚动收起 + 收起/激活态动画
+- [x] 输入框空时滚动收起 + 收起/激活态动画
+- [ ] 底部导航切换引入 Animate UI Tabs active highlight，保留现有按钮尺寸与 Tooltip，不重排 footer
+- [ ] 列表选择态参考 Animate UI Icons 的 hover/selected smooth highlight：保留现有虚线框与 active group 语义，仅让选择框位置/透明度平滑移动
+- [ ] 页面内容切换统一使用短 spring 过渡，覆盖 history/favorites/trash/agent surface，避免切换时硬闪

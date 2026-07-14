@@ -463,6 +463,13 @@ Agent 输出统一转成 AG-UI events：
 - custom event：panel render、patch preview、permission prompt
 - custom event：suggest update、tag patch preview、agent generated clip metadata
 
+Provider adapter 描述统一使用 `AgentProviderAdapterDescriptor`：
+
+- `local-cli`：只暴露 `commandPreview` 和 readiness，不暴露真实 shell 环境。
+- `remote-http` / `openai-compatible`：只暴露 `endpointRef/apiKeyRef/modelId/protocol/timeoutMs/redactedConfig`，真实 `baseURL/apiKey` 保存在原生层或安全配置层。
+- `acp`：只暴露 `serverRef/agentId/sessionMode/redactedConfig`，会话状态由 runtime 持有，不由 React 保存 secret 或连接句柄。
+- 所有 adapter 的输出必须在 runtime 层转换为 `ClipboardAgentMessagePart` / `ClipboardAgentEvent`，React 只消费标准 message parts。
+
 ### Agent 生成内容的来源规则
 
 Agent 生成的新粘贴项或 Agent 建议应用保存后的条目必须携带来源元数据：
@@ -546,6 +553,49 @@ export type CapabilityVersionRecord = {
 - 每个插件和 Agent Provider 都有 kill switch。
 - 最近一次可用版本必须保留，升级失败自动回滚。
 - 所有升级检查、应用、失败、回滚都写结构化日志。
+
+标准记录分三类，后续实现必须统一走同一套 registry，不允许插件、Agent provider 和内置 manifest 各自保存一份不兼容状态：
+
+```ts
+export type CapabilityDisableRecord = {
+  id: string;
+  kind: CapabilityVersionRecord["kind"];
+  version?: string;
+  disabledBy: "remote-kill-switch" | "local-user" | "permission-denied" | "health-check" | "rollback";
+  reasonCode: string;
+  reasonSummary: string;
+  createdAt: number;
+  expiresAt?: number;
+  sourceTraceId: string;
+};
+
+export type CapabilityRollbackRecord = {
+  id: string;
+  kind: CapabilityVersionRecord["kind"];
+  fromVersion: string;
+  toVersion: string;
+  reasonCode: string;
+  createdAt: number;
+  sourceTraceId: string;
+};
+
+export type CapabilityKillSwitchDecision = {
+  id: string;
+  kind: CapabilityVersionRecord["kind"];
+  decision: "allow" | "disabled" | "rollback";
+  activeVersion?: string;
+  disableRecord?: CapabilityDisableRecord;
+  rollbackRecord?: CapabilityRollbackRecord;
+};
+```
+
+执行规则：
+
+- 快速面板启动只读取本地 disable/rollback 摘要，不做远程请求。
+- 远程 kill switch 只在后台空闲检查；网络失败视为保持当前本地决策，不影响剪贴板监听。
+- 本地用户禁用优先级高于远程 allow，除非用户手动恢复。
+- rollback 只能回到最近一次已验证可用版本；没有可回滚版本时进入 disabled。
+- 每次 decision 都必须包含 `sourceTraceId`，日志只记录 id、kind、version、reasonCode 和状态，不记录完整 manifest 或 provider secret。
 
 ### 性能边界
 

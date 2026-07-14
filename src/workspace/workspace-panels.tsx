@@ -1,50 +1,71 @@
 import {
   AppWindow,
   BarChart3,
+  ChevronDown,
+  ChevronUp,
   Clipboard,
   Copy,
   ExternalLink,
   FileJson,
   FileText,
   Image,
+  MoreHorizontal,
   Pencil,
   RotateCcw,
   Save,
+  Sparkles,
   Tag,
   Table2,
   X,
 } from "lucide-react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { Component, useEffect, useMemo, useState } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { ClipItem, ClipPayloadKind } from "../App";
+import { detectSensitiveEditorFields } from "../editor/sensitive";
+import { applyEditorSuggestion, buildLocalEditorSuggestion } from "../editor/suggestions";
+import { formatCommandError, type TranslationKey } from "../i18n";
+import { getImagePath, type FilePathStatus } from "../services/clipboard";
+import type { EditorSuggestionResult } from "../services/contracts";
+import { analyzeSmartFormats } from "../smart-format";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 
-function getPayloadKindLabel(kind: ClipPayloadKind): string {
+type WorkspaceTr = (key: TranslationKey, params?: Record<string, string | number>) => string;
+
+function getPayloadKindLabel(kind: ClipPayloadKind, tr: WorkspaceTr): string {
   switch (kind) {
     case "link":
-      return "链接";
+      return tr("main.payloadKind.link");
     case "markdown":
       return "Markdown";
     case "code":
-      return "代码";
+      return tr("main.payloadKind.code");
     case "command":
-      return "命令";
+      return tr("main.payloadKind.command");
     case "html":
       return "HTML";
     case "rtf":
       return "RTF";
     case "file":
-      return "文件";
+      return tr("main.payloadKind.file");
     case "image":
-      return "图片";
+      return tr("main.payloadKind.image");
     case "json":
       return "JSON";
     case "chart":
-      return "图表";
+      return tr("main.payloadKind.chart");
     case "table":
-      return "表格";
+      return tr("main.payloadKind.table");
     default:
-      return "文本";
+      return tr("main.payloadKind.text");
   }
 }
 
@@ -79,14 +100,24 @@ function getPayloadKindIcon(kind: ClipPayloadKind) {
 
 type ClipDetailWorkspaceProps = {
   clip: ClipItem | null;
+  filePathStatuses?: Record<string, FilePathStatus>;
   links: string[];
+  tr: WorkspaceTr;
   onBack: () => void;
   onCopy: (clip: ClipItem) => void;
   onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
   onOpen: (clip: ClipItem) => void;
+  onOpenPath?: (path: string) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
   onSearchTag: (tag: string) => void;
-  onUpdateContent: (clip: ClipItem, content: string, tags?: string[]) => Promise<ClipItem | void>;
+  onUpdateContent: (
+    clip: ClipItem,
+    content: string,
+    tags?: string[],
+    context?: { sessionId: string; draftVersion: number },
+  ) => Promise<ClipItem | void>;
   quickActions?: DetailQuickAction[];
 };
 
@@ -101,11 +132,18 @@ export type DetailQuickAction = {
 type MultiAggregateWorkspaceProps = {
   items: ClipItem[];
   aggregatePreview: string;
+  tr: WorkspaceTr;
   onBack: () => void;
   onCopy: () => void;
   onCopyItem: (clip: ClipItem) => void;
   onExportTable: () => void;
   onOpenItem: (clip: ClipItem) => void;
+};
+
+type EditorVariableRow = {
+  key: string;
+  type: string;
+  example: string;
 };
 
 const droppedLinkLogKeys = new Set<string>();
@@ -130,6 +168,12 @@ function normalizeDetailTags(values: string[]) {
   return tags.slice(0, 12);
 }
 
+function compactInlineText(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
 function extractDetailHashTags(content: string) {
   return normalizeDetailTags(
     Array.from(content.matchAll(/(^|[\s([{])#([\p{L}\p{N}_-]{1,32})/gu)).map((match) => match[2]),
@@ -138,9 +182,7 @@ function extractDetailHashTags(content: string) {
 
 function clipImageSrc(clip: ClipItem) {
   const path = clip.imageFile || clip.thumbnailPath;
-  if (!path) return null;
-  if (/^(data:|https?:|asset:|http:\/\/asset\.localhost)/i.test(path)) return path;
-  return convertFileSrc(path);
+  return getImagePath(path);
 }
 
 function fileRowsFromClip(clip: ClipItem) {
@@ -150,23 +192,29 @@ function fileRowsFromClip(clip: ClipItem) {
     .filter(Boolean);
 }
 
-function detectDetailMode(clip: ClipItem) {
-  // 详情页先做轻量类型识别，后续解析插件会从这里扩展更完整的渲染能力。
-  if (clip.analysis.attachment?.isImage) return "图片";
-  if (clip.kind === "markdown") return "Markdown";
-  if (clip.kind === "code") return "代码";
-  if (/^\s*[\[{]/.test(clip.content)) return "JSON";
-  if (/\t/.test(clip.content) || /^\|.+\|$/m.test(clip.content)) return "表格";
-  if (clip.kind === "link") return "链接";
-  return "文本";
+function getDetailModeId(clip: ClipItem) {
+  if (clip.analysis.attachment?.isImage) return "image";
+  if (clip.kind === "markdown") return "markdown";
+  if (clip.kind === "code") return "code";
+  if (/^\s*[\[{]/.test(clip.content)) return "json";
+  if (/\t/.test(clip.content) || /^\|.+\|$/m.test(clip.content)) return "table";
+  if (clip.kind === "link") return "link";
+  return "text";
+}
+
+function getDetailModeLabel(clip: ClipItem, tr: WorkspaceTr) {
+  const mode = getDetailModeId(clip);
+  if (mode === "markdown") return "Markdown";
+  if (mode === "json") return "JSON";
+  return tr(`main.detail.mode.${mode}` as TranslationKey);
 }
 
 function isLikelyMarkdown(clip: ClipItem) {
-  return clip.kind === "markdown" || clip.analysis.isMarkdown || detectDetailMode(clip) === "Markdown";
+  return clip.kind === "markdown" || clip.analysis.isMarkdown || getDetailModeId(clip) === "markdown";
 }
 
 function isLikelyJson(clip: ClipItem) {
-  return clip.payloadKind === "json" || detectDetailMode(clip) === "JSON";
+  return clip.payloadKind === "json" || getDetailModeId(clip) === "json";
 }
 
 function formatJsonPreview(content: string) {
@@ -210,6 +258,8 @@ function getDetailRendererName(clip: ClipItem) {
 
 function getClipRenderDiagnostics(clip: ClipItem, extra: Record<string, unknown> = {}) {
   return {
+    traceId: `detail_render_${clip.id}_${Date.now().toString(36)}`,
+    contextSchema: "ClipDetailRenderDiagnostics.v1",
     businessChain: "quick-panel -> workspace-router -> detail-route -> ClipDetailWorkspace -> content-renderer",
     routePath: "/clip/$clipId",
     component: "ClipDetailWorkspace",
@@ -217,7 +267,7 @@ function getClipRenderDiagnostics(clip: ClipItem, extra: Record<string, unknown>
     clipId: clip.id,
     clipKind: clip.kind,
     payloadKind: clip.payloadKind,
-    detailMode: detectDetailMode(clip),
+    detailMode: getDetailModeId(clip),
     chars: clip.content.length,
     lines: clip.content.split(/\r?\n/).length,
     sourceAppName: clip.sourceApp?.name ?? "",
@@ -396,7 +446,7 @@ function MarkdownPreview({
 }
 
 class DetailContentBoundary extends Component<
-  { children: ReactNode; clip: ClipItem; onBack: () => void; onCopy: (clip: ClipItem) => void },
+  { children: ReactNode; clip: ClipItem; onBack: () => void; onCopy: (clip: ClipItem) => void; tr: WorkspaceTr },
   { failed: boolean; message: string }
 > {
   state = { failed: false, message: "" };
@@ -431,14 +481,14 @@ class DetailContentBoundary extends Component<
       <div className="detail-render-fallback">
         <div className="panel-fallback">
           <FileText size={22} />
-          <strong>当前内容预览失败</strong>
-          <span title={this.state.message}>已切换到原文模式，面板可继续使用。</span>
+          <strong>{this.props.tr("main.detail.previewFailedTitle")}</strong>
+          <span title={this.state.message}>{this.props.tr("main.detail.previewFailedBody")}</span>
           <div className="copy-layout-grid">
             <button type="button" onClick={() => this.props.onCopy(this.props.clip)}>
-              复制原文
+              {this.props.tr("main.detail.copyOriginal")}
             </button>
             <button type="button" onClick={this.props.onBack}>
-              返回列表
+              {this.props.tr("main.workspace.backToList")}
             </button>
           </div>
         </div>
@@ -448,7 +498,7 @@ class DetailContentBoundary extends Component<
   }
 }
 
-function LinkPreview({ clip, links, onCopy, onOpen }: { clip: ClipItem; links: string[]; onCopy: (clip: ClipItem) => void; onOpen: (clip: ClipItem) => void }) {
+function LinkPreview({ clip, links, onOpen, tr }: { clip: ClipItem; links: string[]; onOpen: (clip: ClipItem) => void; tr: WorkspaceTr }) {
   const primaryUrl = parseHttpUrl(clip.analysis.url)?.href ?? parseHttpUrl(links[0])?.href ?? parseHttpUrl(clip.analysis.attachment?.target)?.href;
   return (
     <div className="link-preview">
@@ -459,15 +509,11 @@ function LinkPreview({ clip, links, onCopy, onOpen }: { clip: ClipItem; links: s
             <strong>{clip.analysis.title || primaryUrl}</strong>
             <span>{primaryUrl}</span>
           </div>
-          <button type="button" onClick={() => onOpen(clip)}>打开</button>
-          <button type="button" onClick={() => navigator.clipboard.writeText(primaryUrl)}>复制链接</button>
+          <button type="button" onClick={() => onOpen(clip)}>{tr("main.detail.open")}</button>
+          <button type="button" onClick={() => navigator.clipboard.writeText(primaryUrl)}>{tr("main.detail.copyLink")}</button>
         </div>
       ) : null}
       <pre>{clip.content}</pre>
-      <div className="copy-layout-grid">
-        <button type="button" onClick={() => onCopy(clip)}>复制全文</button>
-        {primaryUrl ? <button type="button" onClick={() => navigator.clipboard.writeText(primaryUrl)}>只复制链接</button> : null}
-      </div>
     </div>
   );
 }
@@ -476,10 +522,12 @@ function JsonPreview({
   clip,
   content,
   onCopyText,
+  tr,
 }: {
   clip: ClipItem;
   content: string;
   onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
+  tr: WorkspaceTr;
 }) {
   const preview = useMemo(() => formatJsonPreview(content), [content]);
   return (
@@ -487,7 +535,7 @@ function JsonPreview({
       <div className="json-preview-toolbar">
         <span>
           <FileJson size={12} />
-          {preview.error ? "JSON 原文" : "JSON 格式化"}
+          {preview.error ? tr("main.detail.jsonRaw") : tr("main.detail.jsonFormatted")}
           <em>{preview.root}</em>
         </span>
         <button
@@ -502,68 +550,221 @@ function JsonPreview({
           }
         >
           <Copy size={11} />
-          复制格式化
+          {tr("main.detail.copyFormatted")}
         </button>
       </div>
-      {preview.error ? <p className="json-preview-error">解析失败：{preview.error}</p> : null}
+      {preview.error ? <p className="json-preview-error">{tr("main.detail.jsonParseFailed", { error: preview.error })}</p> : null}
       <pre><code>{preview.formatted}</code></pre>
+    </div>
+  );
+}
+
+function buildHtmlPreviewDocument(content: string) {
+  const style = `
+    <style>
+      :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; padding: 12px; color: #171717; background: #fff; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+      img, video, canvas, svg { max-width: 100%; height: auto; }
+      pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
+      table { max-width: 100%; border-collapse: collapse; }
+      td, th { border: 1px solid #e5e5e5; padding: 4px 6px; }
+    </style>`;
+  if (/<html[\s>]/i.test(content)) {
+    return content.replace(/<head([^>]*)>/i, `<head$1><meta charset="utf-8">${style}`);
+  }
+  return `<!doctype html><html><head><meta charset="utf-8">${style}</head><body>${content}</body></html>`;
+}
+
+function HtmlPreview({ clip, content, onCopy, tr }: { clip: ClipItem; content: string; onCopy: (clip: ClipItem) => void; tr: WorkspaceTr }) {
+  const canPreview = content.trim().length > 0 && content.length <= 180_000;
+  const srcDoc = useMemo(() => {
+    try {
+      return canPreview ? buildHtmlPreviewDocument(content) : "";
+    } catch {
+      return "";
+    }
+  }, [canPreview, content]);
+
+  return (
+    <div className="html-preview">
+      <div className="html-preview-toolbar">
+        <span>
+          <FileText size={12} />
+          {tr("main.detail.htmlPreview")}
+        </span>
+        <button type="button" onClick={() => onCopy(clip)}>
+          <Copy size={11} />
+          {tr("main.detail.copyOriginal")}
+        </button>
+      </div>
+      {srcDoc ? (
+        <iframe sandbox="" srcDoc={srcDoc} title={clip.analysis.title || "HTML preview"} />
+      ) : (
+        <div className="html-preview-fallback">
+          <strong>{tr("main.detail.htmlPreviewFallback")}</strong>
+          <pre>{content}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SmartFormatPanel({
+  clip,
+  content,
+  onCopyText,
+  tr,
+}: {
+  clip: ClipItem;
+  content: string;
+  onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
+  tr: WorkspaceTr;
+}) {
+  const analyses = useMemo(() => analyzeSmartFormats(content), [content]);
+  if (!analyses.length) return null;
+  return (
+    <div className="smart-format-panel" aria-label={tr("main.detail.smartFormatAria")}>
+      <div className="smart-format-header">
+        <FileJson size={12} />
+        <span>{tr("main.detail.smartFormatTitle")}</span>
+      </div>
+      {analyses.map((analysis) => (
+        <div className={analysis.error ? "smart-format-result has-error" : "smart-format-result"} key={analysis.kind}>
+          <div>
+            <strong>{analysis.label}</strong>
+            {analysis.error ? <em>{analysis.error}</em> : null}
+            {!analysis.error ? (
+              <button
+                onClick={() =>
+                  onCopyText(analysis.output, `smart-format:${analysis.kind}:${clip.id}`, {
+                    businessChain: "detail -> smart-format -> copy-result",
+                    clipId: clip.id,
+                    kind: analysis.kind,
+                    chars: analysis.output.length,
+                  })
+                }
+                type="button"
+              >
+                <Copy size={11} />
+                {tr("main.detail.copyResult")}
+              </button>
+            ) : null}
+          </div>
+          {analysis.error ? null : <pre>{analysis.output}</pre>}
+        </div>
+      ))}
     </div>
   );
 }
 
 function DetailQuickEditor({
   content,
+  draftVersion,
   error,
   hasChanges,
   isSaving,
+  sessionId,
   suggestedTags,
   tags,
+  variableRows,
+  tr,
+  onApplySuggestion,
+  onApplySuggestionAndSave,
   onCancel,
   onChange,
   onTagsChange,
+  onVariableDrawerOpen,
   onSave,
+  onSaveAndPaste,
 }: {
   content: string;
+  draftVersion: number;
   error: string;
   hasChanges: boolean;
   isSaving: boolean;
+  sessionId: string;
   suggestedTags: string[];
   tags: string[];
+  variableRows: EditorVariableRow[];
+  tr: WorkspaceTr;
+  onApplySuggestion: (content: string, tags: string[]) => void;
+  onApplySuggestionAndSave: (content: string, tags: string[]) => void;
   onCancel: () => void;
   onChange: (value: string) => void;
   onTagsChange: (tags: string[]) => void;
+  onVariableDrawerOpen: () => void;
   onSave: () => void;
+  onSaveAndPaste: () => void;
 }) {
   const [tagInput, setTagInput] = useState("");
+  const [showVariables, setShowVariables] = useState(false);
+  const [suggestion, setSuggestion] = useState<EditorSuggestionResult | null>(null);
+  const [suggestionError, setSuggestionError] = useState("");
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const sensitiveFindings = useMemo(() => detectSensitiveEditorFields(content), [content]);
   const addTag = (value: string) => {
     const tag = normalizeDetailTag(value);
     if (!tag) return;
     onTagsChange(normalizeDetailTags([...tags, tag]));
     setTagInput("");
   };
+  const requestSuggestion = () => {
+    setIsSuggesting(true);
+    setSuggestionError("");
+    try {
+      setSuggestion(buildLocalEditorSuggestion({ sessionId, draftVersion, content, tags, suggestedTags }));
+    } catch (error) {
+      setSuggestionError(tr("main.detail.suggestionFailed", { error: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
+  const applySuggestion = (mode: "draft" | "save") => {
+    if (!suggestion) return;
+    const next = applyEditorSuggestion(content, tags, suggestion);
+    if (mode === "save") {
+      onApplySuggestionAndSave(next.content, next.tags);
+    } else {
+      onApplySuggestion(next.content, next.tags);
+    }
+  };
   return (
     <div className="detail-editor">
       <div className="detail-editor-toolbar">
         <span>
-          快速编辑
-          <em>{content.length} 字符 / {content.split(/\r?\n/).length} 行</em>
+          {tr("main.detail.quickEdit")}
+          <em>{tr("main.detail.editorStats", { chars: content.length, lines: content.split(/\r?\n/).length })}</em>
         </span>
         <div>
           <button type="button" onClick={onCancel}>
             <X size={11} />
-            取消
+            {tr("agent.action.cancel")}
+          </button>
+          <button disabled={isSuggesting} type="button" onClick={requestSuggestion}>
+            <Sparkles size={11} />
+            {isSuggesting ? tr("main.detail.analyzing") : tr("main.detail.suggest")}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowVariables((current) => !current);
+              if (!showVariables) onVariableDrawerOpen();
+            }}
+          >
+            <FileJson size={11} />
+            {tr("main.detail.variables")}
           </button>
           <button disabled={!hasChanges || isSaving || !content.trim()} type="button" onClick={onSave}>
             <Save size={11} />
-            {isSaving ? "保存中" : "保存"}
+            {isSaving ? tr("main.detail.saving") : tr("agent.action.save")}
           </button>
         </div>
       </div>
-      <div className="detail-tag-editor" aria-label="编辑 Tag">
+      <div className="detail-tag-editor" aria-label={tr("main.detail.editTags")}>
         <div className="detail-tag-scroll">
           {tags.map((tag) => (
             <button
-              aria-label={`删除 Tag ${tag}`}
+              aria-label={tr("main.detail.removeTag", { tag })}
               className="detail-tag-chip removable"
               key={tag}
               onClick={() => onTagsChange(tags.filter((item) => item !== tag))}
@@ -575,7 +776,7 @@ function DetailQuickEditor({
             </button>
           ))}
           <input
-            aria-label="新增 Tag"
+            aria-label={tr("main.detail.addTag")}
             className="detail-tag-input"
             onChange={(event) => setTagInput(event.currentTarget.value)}
             onKeyDown={(event) => {
@@ -597,10 +798,87 @@ function DetailQuickEditor({
           </div>
         ) : null}
       </div>
+      {showVariables ? (
+        <div className="detail-variable-drawer" aria-label={tr("main.detail.editVariables")}>
+          <div className="detail-variable-head">
+            <span>{tr("main.detail.sendScope")}</span>
+            <em>{sensitiveFindings.length ? tr("main.detail.sensitiveSummaryOnly") : tr("main.detail.variablesVisibleThisSession")}</em>
+          </div>
+          <div className="detail-variable-grid">
+            {variableRows.map((row) => (
+              <div key={row.key}>
+                <code>{row.key}</code>
+                <span>{row.type}</span>
+                <em>{row.example}</em>
+              </div>
+            ))}
+          </div>
+          {sensitiveFindings.length ? (
+            <div className="detail-sensitive-row">
+              {sensitiveFindings.map((finding) => (
+                <span key={finding.kind}>{finding.label}</span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {suggestion ? (
+        <div className="detail-suggestion-panel" aria-label={tr("main.detail.suggestionPreview")}>
+          <div className="detail-suggestion-head">
+            <span>
+              <Sparkles size={12} />
+              {tr("main.detail.smartSuggestion")}
+              <em>{suggestion.riskLevel === "high" ? tr("main.detail.riskHigh") : suggestion.riskLevel === "medium" ? tr("main.detail.riskMedium") : tr("main.detail.riskLow")}</em>
+            </span>
+            <div>
+              <button disabled={!suggestion.contentPatch && !suggestion.tagPatch} type="button" onClick={() => applySuggestion("draft")}>
+                {tr("main.detail.applyToDraft")}
+              </button>
+              <button disabled={!suggestion.contentPatch && !suggestion.tagPatch || isSaving} type="button" onClick={() => applySuggestion("save")}>
+                {tr("main.detail.applyAndSave")}
+              </button>
+            </div>
+          </div>
+          <p>{suggestion.rationale}</p>
+          {suggestion.tagPatch ? (
+            <div className="detail-suggestion-tags">
+              {suggestion.tagPatch.add.map((tag) => (
+                <span key={`add-${tag}`}>+ #{tag}</span>
+              ))}
+              {suggestion.tagPatch.remove.map((tag) => (
+                <span className="remove" key={`remove-${tag}`}>- #{tag}</span>
+              ))}
+            </div>
+          ) : null}
+          {suggestion.contentPatch ? (
+            <div className="detail-suggestion-diff" aria-label={tr("main.detail.contentChangePreview")}>
+              <div>
+                <span>{tr("main.detail.current")}</span>
+                <pre className="detail-suggestion-preview">{content.slice(0, 1600)}</pre>
+              </div>
+              <div>
+                <span>{tr("main.detail.suggested")}</span>
+                <pre className="detail-suggestion-preview">{suggestion.contentPatch.preview}</pre>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {suggestionError ? <p className="detail-editor-error" role="alert">{suggestionError}</p> : null}
       <textarea
-        aria-label="编辑剪贴板内容"
+        aria-label={tr("main.detail.editContent")}
         className="detail-editor-textarea"
         onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (!(event.metaKey || event.ctrlKey)) return;
+          if (event.key.toLowerCase() !== "s" && event.key !== "Enter") return;
+          event.preventDefault();
+          if (event.key === "Enter") {
+            onSaveAndPaste();
+          } else {
+            onSave();
+          }
+        }}
         spellCheck={false}
         value={content}
       />
@@ -609,38 +887,10 @@ function DetailQuickEditor({
   );
 }
 
-function AgentMcpCopyButton({ clip }: { clip: ClipItem }) {
-  const getCommand = `use clipf.get id=${clip.id}`;
-  const [copied, setCopied] = useState(false);
-  const copyCommand = (text: string) => {
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    });
-  };
-  const tooltip = [
-    "复制 Agent MCP 获取命令",
-    getCommand,
-  ].join("\n");
-
-  return (
-    <button
-      aria-label="复制 Agent MCP 获取命令"
-      className={copied ? "agent-mcp-copy-button copied" : "agent-mcp-copy-button"}
-      onClick={() => copyCommand(getCommand)}
-      title={tooltip}
-      type="button"
-    >
-      <Clipboard size={12} />
-      <span>{copied ? "已复制" : "复制 MCP"}</span>
-    </button>
-  );
-}
-
-function AvailableFormatsRow({ clip }: { clip: ClipItem }) {
+function AvailableFormatsRow({ clip, tr }: { clip: ClipItem; tr: WorkspaceTr }) {
   const formats = clip.availableFormats.length ? clip.availableFormats : [clip.primaryFormat];
   return (
-    <div className="detail-format-row" aria-label="可用格式">
+    <div className="detail-format-row" aria-label={tr("main.detail.availableFormats")}>
       {formats.map((format) => (
         <span key={format}>{format}</span>
       ))}
@@ -648,51 +898,111 @@ function AvailableFormatsRow({ clip }: { clip: ClipItem }) {
   );
 }
 
-function ImageFilePreview({ clip }: { clip: ClipItem }) {
+function ImageFilePreview({ clip, tr, onOpenPath }: { clip: ClipItem; tr: WorkspaceTr; onOpenPath?: (path: string) => void }) {
   const src = clipImageSrc(clip);
+  const name = clip.imageFile || clip.analysis.attachment?.name || clip.content;
+  const openablePath = clip.imageFile || (clip.analysis.attachment?.targetType === "path" ? clip.analysis.attachment.target : "");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [actualSize, setActualSize] = useState(false);
   return (
     <div className="detail-binary-preview">
-      {src ? <img alt={clip.analysis.title || "Clipboard image"} src={src} /> : null}
-      <div className="detail-binary-meta">
-        <span>{clip.width && clip.height ? `${clip.width} x ${clip.height}` : "Image"}</span>
-        {clip.size ? <span>{Math.round(clip.size / 1024)} KB</span> : null}
-        {clip.imageFile ? <span title={clip.imageFile}>{clip.imageFile}</span> : null}
+      <div className={actualSize ? "detail-image-stage actual-size" : "detail-image-stage"}>
+        {src ? (
+          <button className="detail-image-button" onClick={() => setPreviewOpen(true)} title={tr("main.detail.imagePreview")} type="button">
+            <img alt={clip.analysis.title || name || "Clipboard image"} src={src} />
+          </button>
+        ) : (
+          <span>{tr("main.payloadKind.image")}</span>
+        )}
       </div>
-      <AvailableFormatsRow clip={clip} />
+      <div className="detail-image-actions">
+        <button disabled={!src} onClick={() => setPreviewOpen(true)} type="button">
+          <Image size={12} />
+          {tr("main.detail.imagePreview")}
+        </button>
+        <button disabled={!src} onClick={() => setActualSize((current) => !current)} type="button">
+          {actualSize ? tr("main.detail.imageFit") : tr("main.detail.imageActual")}
+        </button>
+        {openablePath && onOpenPath ? (
+          <button onClick={() => onOpenPath(openablePath)} type="button">
+            <ExternalLink size={12} />
+            {tr("main.detail.openSystem")}
+          </button>
+        ) : null}
+      </div>
+      <div className="detail-binary-meta">
+        <span>{clip.width && clip.height ? `${clip.width} x ${clip.height}` : tr("main.payloadKind.image")}</span>
+        {clip.size ? <span>{Math.round(clip.size / 1024)} KB</span> : null}
+        {name ? <span title={name}>{name}</span> : null}
+      </div>
+      <AvailableFormatsRow clip={clip} tr={tr} />
+      {previewOpen && src ? (
+        <div className="detail-image-lightbox" role="dialog" aria-modal="true" aria-label={tr("main.detail.imagePreview")}>
+          <button className="detail-image-lightbox-close" onClick={() => setPreviewOpen(false)} type="button" aria-label={tr("main.detail.close")}>
+            <X size={14} />
+          </button>
+          <img alt={clip.analysis.title || name || "Clipboard image"} src={src} />
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function FileListPreview({ clip }: { clip: ClipItem }) {
+function FileListPreview({
+  clip,
+  filePathStatuses = {},
+  tr,
+  onOpenPath,
+}: {
+  clip: ClipItem;
+  filePathStatuses?: Record<string, FilePathStatus>;
+  tr: WorkspaceTr;
+  onOpenPath?: (path: string) => void;
+}) {
   const rows = fileRowsFromClip(clip);
   return (
     <div className="detail-file-preview">
       <div className="detail-file-summary">
         <FileText size={13} />
-        <span>{rows.length} 个文件</span>
+        <span>{tr("main.detail.fileCount", { count: rows.length })}</span>
         {clip.fileTypes ? <em>{clip.fileTypes}</em> : null}
       </div>
       <div className="detail-file-list">
-        {rows.map((path) => (
-          <button key={path} title={path} type="button">
+        {rows.map((path) => {
+          const missing = filePathStatuses[path]?.exists === false;
+          return (
+          <button
+            className={missing ? "is-missing" : undefined}
+            disabled={missing || !onOpenPath}
+            key={path}
+            onClick={() => onOpenPath?.(path)}
+            title={missing ? `${path} - ${tr("main.list.fileMissing")}` : path}
+            type="button"
+          >
             <FileText size={12} />
             <span>{path}</span>
           </button>
-        ))}
+          );
+        })}
       </div>
-      <AvailableFormatsRow clip={clip} />
+      <AvailableFormatsRow clip={clip} tr={tr} />
     </div>
   );
 }
 
 export function ClipDetailWorkspace({
   clip,
+  filePathStatuses,
   links,
+  tr,
   onBack,
   onCopy,
   onCopyText,
   onOpen,
+  onOpenPath,
   onPasteText,
+  onPrevious,
+  onNext,
   onSearchTag,
   onUpdateContent,
   quickActions = [],
@@ -702,10 +1012,14 @@ export function ClipDetailWorkspace({
   const [draftTags, setDraftTags] = useState<string[]>([]);
   const [editError, setEditError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [editorSessionId, setEditorSessionId] = useState("");
+  const [draftVersion, setDraftVersion] = useState(1);
 
   useEffect(() => {
     setDraftContent(clip?.content ?? "");
     setDraftTags(normalizeDetailTags(clip?.tags ?? []));
+    setEditorSessionId(clip ? `editor_${clip.id}_${Date.now().toString(36)}` : "");
+    setDraftVersion(1);
     setIsEditing(false);
     setEditError("");
     setIsSaving(false);
@@ -714,13 +1028,13 @@ export function ClipDetailWorkspace({
   if (!clip) {
     return (
       <section className="workspace-page workspace-detail-page">
-        <WorkspaceCrumb title="详情" onBack={onBack} />
-        <div className="workspace-empty">当前内容不存在，返回列表重新选择。</div>
+        <WorkspaceCrumb title={tr("main.detail.title")} onBack={onBack} tr={tr} />
+        <div className="workspace-empty">{tr("main.detail.missing")}</div>
       </section>
     );
   }
 
-  const mode = detectDetailMode(clip);
+  const mode = getDetailModeLabel(clip, tr);
   const imageUrl = clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url"
     ? clip.analysis.attachment.target
     : null;
@@ -730,26 +1044,75 @@ export function ClipDetailWorkspace({
   const suggestedTags = extractDetailHashTags(draftContent).filter(
     (tag) => !draftTags.some((current) => current.toLowerCase() === tag.toLowerCase()),
   );
+  const editorVariableRows = useMemo<EditorVariableRow[]>(
+    () => [
+      { key: "clip.id", type: "string", example: clip.id },
+      { key: "clip.kind", type: "enum", example: clip.kind },
+      { key: "clip.payloadKind", type: "enum", example: clip.payloadKind },
+      { key: "clip.title", type: "string", example: compactInlineText(clip.analysis.title || tr("main.detail.clipContentFallback"), 44) },
+      { key: "clip.tags", type: "string[]", example: draftTags.length ? draftTags.join(", ") : "[]" },
+      { key: "editor.sessionId", type: "string", example: editorSessionId || `editor_${clip.id}` },
+      { key: "editor.draftVersion", type: "number", example: String(draftVersion) },
+      { key: "editor.content", type: "string", example: `${draftContent.length} chars` },
+      { key: "editor.suggestedTags", type: "string[]", example: suggestedTags.length ? suggestedTags.join(", ") : "[]" },
+      { key: "runtime.route", type: "string", example: "/clip/$clipId" },
+    ],
+    [clip, draftContent.length, draftTags, draftVersion, editorSessionId, suggestedTags],
+  );
   const safeLinks = safeHttpUrls(links);
   const droppedLinkCount = links.length - safeLinks.length;
   const droppedLinkLogKey = `${clip.id}:${links.length}:${safeLinks.length}`;
+  const confirmDiscardDraft = () => !hasDraftChanges || window.confirm(tr("main.detail.confirmDiscard"));
+  const handleBack = () => {
+    if (isEditing && !confirmDiscardDraft()) return;
+    onBack();
+  };
+  const handleCancelEdit = () => {
+    if (!confirmDiscardDraft()) return;
+    setDraftContent(clip.content);
+    setDraftTags(normalizeDetailTags(clip.tags));
+    setEditError("");
+    setIsEditing(false);
+  };
 
-  const saveDraftContent = async () => {
-    if (!draftContent.trim()) {
-      setEditError("内容不能为空");
+  const saveDraftContent = async (
+    afterSave: "stay" | "paste" = "stay",
+    override?: { content: string; tags: string[] },
+  ) => {
+    const nextContent = override?.content ?? draftContent;
+    const nextTags = normalizeDetailTags(override?.tags ?? draftTags);
+    const nextHasChanges =
+      nextContent !== clip.content ||
+      nextTags.join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
+    if (!nextContent.trim()) {
+      setEditError(tr("main.detail.emptyContent"));
       return;
     }
-    if (!hasDraftChanges) {
+    if (!nextHasChanges) {
       setIsEditing(false);
       return;
     }
     setIsSaving(true);
     setEditError("");
     try {
-      await onUpdateContent(clip, draftContent, draftTags);
+      await onUpdateContent(clip, nextContent, nextTags, {
+        sessionId: editorSessionId || `editor_${clip.id}`,
+        draftVersion,
+      });
+      setDraftContent(nextContent);
+      setDraftTags(nextTags);
+      setDraftVersion((current) => current + 1);
+      if (afterSave === "paste") {
+        onPasteText(nextContent, "detail-editor:save-and-paste", {
+          businessChain: "detail -> compact-editor -> save_editor_draft -> paste",
+          clipId: clip.id,
+          sessionId: editorSessionId,
+          draftVersion,
+        });
+      }
       setIsEditing(false);
     } catch (error) {
-      setEditError(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+      setEditError(tr("main.detail.saveFailed", { error: formatCommandError(tr, error) }));
     } finally {
       setIsSaving(false);
     }
@@ -768,12 +1131,33 @@ export function ClipDetailWorkspace({
     );
   }
 
+  const menuActions = quickActions.filter((action) => action.id !== "open-target" && action.id !== "copy");
+
   return (
     <section className="workspace-page workspace-detail-page">
-      <WorkspaceCrumb title="内容详情" subtitle={mode} onBack={onBack}>
-        <AgentMcpCopyButton clip={clip} />
+      <WorkspaceCrumb title={tr("main.detail.contentTitle")} subtitle={mode} onBack={handleBack} tr={tr}>
         <button
-          aria-label={isEditing ? "正在编辑内容" : "编辑内容"}
+          aria-label={tr("main.detail.previous")}
+          className="icon-button detail-nav-button"
+          disabled={!onPrevious}
+          onClick={onPrevious}
+          title={tr("main.detail.previousShortcut")}
+          type="button"
+        >
+          <ChevronUp size={14} />
+        </button>
+        <button
+          aria-label={tr("main.detail.next")}
+          className="icon-button detail-nav-button"
+          disabled={!onNext}
+          onClick={onNext}
+          title={tr("main.detail.nextShortcut")}
+          type="button"
+        >
+          <ChevronDown size={14} />
+        </button>
+        <button
+          aria-label={isEditing ? tr("main.detail.editingContent") : tr("main.detail.editContent")}
           className={isEditing ? "detail-edit-button active" : "detail-edit-button"}
           onClick={() => {
             setDraftContent(clip.content);
@@ -781,32 +1165,74 @@ export function ClipDetailWorkspace({
             setEditError("");
             setIsEditing(true);
           }}
-          title="快速编辑当前剪贴板内容"
+          title={tr("main.detail.quickEditTooltip")}
           type="button"
         >
           <Pencil size={12} />
-          <span>{isEditing ? "编辑中" : "编辑"}</span>
+          <span>{isEditing ? tr("main.detail.editing") : tr("main.detail.edit")}</span>
         </button>
-        {clip.analysis.url || clip.analysis.attachment ? (
-          <button className="icon-button" onClick={() => onOpen(clip)} type="button" aria-label="打开内容">
-            <ExternalLink size={14} />
-          </button>
-        ) : null}
-        <button className="icon-button" onClick={() => onCopy(clip)} type="button" aria-label="复制内容">
-          <Copy size={14} />
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="icon-button detail-more-button" type="button" aria-label={tr("main.detail.moreActions")} title={tr("main.detail.moreActions")}>
+              <MoreHorizontal size={15} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="detail-action-menu" side="bottom" align="end" sideOffset={8}>
+            <DropdownMenuLabel>{tr("main.detail.quickActions")}</DropdownMenuLabel>
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(`use clipf.get id=${clip.id}`)}>
+                <Clipboard size={13} />
+                <span>{tr("main.detail.copyMcp")}</span>
+              </DropdownMenuItem>
+              {clip.analysis.url || clip.analysis.attachment ? (
+                <DropdownMenuItem onSelect={() => onOpen(clip)}>
+                  <ExternalLink size={13} />
+                  <span>{tr("main.detail.openContent")}</span>
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem onSelect={() => onCopy(clip)}>
+                <Copy size={13} />
+                <span>{tr("main.detail.copyContent")}</span>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            {menuActions.length ? <DropdownMenuSeparator /> : null}
+            {menuActions.length ? (
+            <DropdownMenuGroup>
+            {menuActions.map((action) => (
+              <DropdownMenuItem
+                disabled={action.disabled}
+                key={action.id}
+                onSelect={() => {
+                  try {
+                    action.onSelect();
+                  } catch (error) {
+                    appendWorkspacePanelLog("warn", "workspace-plugin-action-failed", {
+                      actionId: action.id,
+                      error: String(error),
+                    });
+                  }
+                }}
+              >
+                {action.icon}
+                <span>{action.label}</span>
+              </DropdownMenuItem>
+            ))}
+            </DropdownMenuGroup>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </WorkspaceCrumb>
 
-      <div className="detail-meta" aria-label="内容元信息">
+      <div className="detail-meta" aria-label={tr("main.detail.meta")}>
         <span className="clip-id-chip" title={clip.id}>
           ID {clip.id.slice(0, 8)}…{clip.id.slice(-6)}
         </span>
-        <span className={`kind-chip ${clip.payloadKind}`} title={getPayloadKindLabel(clip.payloadKind)}>
+        <span className={`kind-chip ${clip.payloadKind}`} title={getPayloadKindLabel(clip.payloadKind, tr)}>
           {(() => {
             const Icon = getPayloadKindIcon(clip.payloadKind);
             return <Icon size={10} />;
           })()}
-          <span>{getPayloadKindLabel(clip.payloadKind)}</span>
+          <span>{getPayloadKindLabel(clip.payloadKind, tr)}</span>
         </span>
         {clip.sourceApp?.name ? (
           <span className="source-chip" title={clip.sourceApp.executablePath}>
@@ -820,7 +1246,7 @@ export function ClipDetailWorkspace({
         ) : null}
       </div>
       {clip.tags.length ? (
-        <div className="detail-tag-row" aria-label="Tag 列表">
+        <div className="detail-tag-row" aria-label={tr("main.detail.tagList")}>
           {clip.tags.map((tag) => (
             <button key={tag} onClick={() => onSearchTag(tag)} type="button">
               <Tag size={10} />
@@ -830,58 +1256,76 @@ export function ClipDetailWorkspace({
         </div>
       ) : null}
 
-      <div className="workspace-action-strip" aria-label="详情快捷操作">
-        {quickActions.map((action) => (
-          <button disabled={action.disabled} key={action.id} onClick={action.onSelect} type="button">
-            {action.icon}
-            {action.label}
-          </button>
-        ))}
-      </div>
-
-      <DetailContentBoundary clip={clip} onBack={onBack} onCopy={onCopy}>
+      <DetailContentBoundary clip={clip} onBack={onBack} onCopy={onCopy} tr={tr}>
         <div className="detail-content">
           {isEditing ? (
             <DetailQuickEditor
               content={draftContent}
+              draftVersion={draftVersion}
               error={editError}
               hasChanges={hasDraftChanges}
               isSaving={isSaving}
+              sessionId={editorSessionId || `editor_${clip.id}`}
               suggestedTags={suggestedTags}
               tags={draftTags}
-              onCancel={() => {
-                setDraftContent(clip.content);
-                setDraftTags(normalizeDetailTags(clip.tags));
+              variableRows={editorVariableRows}
+              tr={tr}
+              onApplySuggestion={(content, tags) => {
+                setDraftContent(content);
+                setDraftTags(normalizeDetailTags(tags));
+                setDraftVersion((current) => current + 1);
                 setEditError("");
-                setIsEditing(false);
               }}
+              onApplySuggestionAndSave={(content, tags) => void saveDraftContent("stay", { content, tags })}
+              onCancel={handleCancelEdit}
               onChange={(value) => {
                 setDraftContent(value);
                 if (editError) setEditError("");
               }}
               onTagsChange={setDraftTags}
-              onSave={saveDraftContent}
+              onVariableDrawerOpen={() => {
+                const sensitive = detectSensitiveEditorFields(draftContent);
+                appendWorkspacePanelLog("info", "editor-variable-snapshot", {
+                  traceId: `editor_variable_${clip.id}_${Date.now().toString(36)}`,
+                  contextSchema: "EditorVariableSnapshot.v1",
+                  clipId: clip.id,
+                  sessionId: editorSessionId || `editor_${clip.id}`,
+                  draftVersion,
+                  variableKeys: editorVariableRows.map((row) => row.key),
+                  contentLength: draftContent.length,
+                  tagCount: draftTags.length,
+                  suggestedTagCount: suggestedTags.length,
+                  sensitiveKinds: sensitive.map((finding) => finding.kind),
+                });
+              }}
+              onSave={() => void saveDraftContent()}
+              onSaveAndPaste={() => void saveDraftContent("paste")}
             />
           ) : clip.payloadKind === "image" ? (
-            <ImageFilePreview clip={clip} />
+            <ImageFilePreview clip={clip} tr={tr} onOpenPath={onOpenPath} />
           ) : clip.payloadKind === "file" ? (
-            <FileListPreview clip={clip} />
+            <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />
           ) : imageUrl ? (
             <img src={imageUrl} alt={clip.analysis.title} />
+          ) : clip.payloadKind === "html" ? (
+            <HtmlPreview clip={clip} content={clip.content} onCopy={onCopy} tr={tr} />
           ) : clip.analysis.url || clip.kind === "link" ? (
-            <LinkPreview clip={clip} links={links} onCopy={onCopy} onOpen={onOpen} />
+            <LinkPreview clip={clip} links={links} onOpen={onOpen} tr={tr} />
           ) : isLikelyJson(clip) ? (
-            <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} />
+            <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
           ) : isLikelyMarkdown(clip) ? (
             <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
           ) : (
-            <pre>{clip.content}</pre>
+            <>
+              <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
+              <pre>{clip.content}</pre>
+            </>
           )}
         </div>
       </DetailContentBoundary>
 
       {safeLinks.length ? (
-        <div className="detail-link-grid" aria-label="链接列表">
+        <div className="detail-link-grid" aria-label={tr("main.detail.linkList")}>
           {safeLinks.slice(0, 8).map((url) => (
             <button key={url.href} type="button" onClick={() => window.open(url.href, "_blank", "noopener,noreferrer")}>
               <ExternalLink size={12} />
@@ -897,6 +1341,7 @@ export function ClipDetailWorkspace({
 export function MultiAggregateWorkspace({
   aggregatePreview,
   items,
+  tr,
   onBack,
   onCopy,
   onCopyItem,
@@ -904,7 +1349,7 @@ export function MultiAggregateWorkspace({
   onOpenItem,
 }: MultiAggregateWorkspaceProps) {
   const grouped = items.reduce<Record<string, ClipItem[]>>((acc, item) => {
-    const key = getPayloadKindLabel(item.payloadKind);
+    const key = getPayloadKindLabel(item.payloadKind, tr);
     acc[key] = acc[key] ?? [];
     acc[key].push(item);
     return acc;
@@ -914,45 +1359,45 @@ export function MultiAggregateWorkspace({
 
   return (
     <section className="workspace-page workspace-aggregate-page">
-      <WorkspaceCrumb title="多选聚合" subtitle={`${items.length} 项 / ${totalChars} 字符`} onBack={onBack}>
-        <button className="icon-button" onClick={onExportTable} type="button" aria-label="导出为表格">
+      <WorkspaceCrumb title={tr("main.aggregate.title")} subtitle={tr("main.aggregate.subtitle", { count: items.length, chars: totalChars })} onBack={onBack} tr={tr}>
+        <button className="icon-button" onClick={onExportTable} type="button" aria-label={tr("main.aggregate.exportTable")}>
           <Table2 size={14} />
         </button>
-        <button className="icon-button" onClick={onCopy} type="button" aria-label="复制聚合内容">
+        <button className="icon-button" onClick={onCopy} type="button" aria-label={tr("main.aggregate.copyContent")}>
           <Copy size={14} />
         </button>
       </WorkspaceCrumb>
-      <div className="workspace-action-strip" aria-label="聚合快捷操作">
+      <div className="workspace-action-strip" aria-label={tr("main.aggregate.quickActions")}>
         <button type="button" onClick={onCopy}>
           <Copy size={13} />
-          复制全部
+          {tr("main.aggregate.copyAll")}
         </button>
         <button type="button" onClick={onExportTable}>
           <Table2 size={13} />
-          导出表格
+          {tr("main.aggregate.exportTable")}
         </button>
         <button type="button" disabled>
           <FileText size={13} />
-          模板
+          {tr("main.aggregate.template")}
         </button>
         <button type="button" disabled>
           <FileJson size={13} />
-          结构化
+          {tr("main.aggregate.structure")}
         </button>
       </div>
       {items.length ? (
-        <div className="aggregate-summary" aria-label="聚合摘要">
-          <span><strong>{items.length}</strong> 项</span>
-          <span><strong>{Object.keys(grouped).length}</strong> 类</span>
-          <span><strong>{linkCount}</strong> 个链接</span>
+        <div className="aggregate-summary" aria-label={tr("main.aggregate.summary")}>
+          <span><strong>{items.length}</strong> {tr("main.aggregate.items")}</span>
+          <span><strong>{Object.keys(grouped).length}</strong> {tr("main.aggregate.kinds")}</span>
+          <span><strong>{linkCount}</strong> {tr("main.aggregate.links")}</span>
         </div>
       ) : null}
       {items.length ? (
-        <div className="aggregate-content" aria-label="聚合内容">
+        <div className="aggregate-content" aria-label={tr("main.aggregate.content")}>
           <section className="aggregate-preview-block">
             <div className="aggregate-section-title">
-              <strong>聚合原文</strong>
-              <span>按选择顺序拼接，可直接复制全部</span>
+              <strong>{tr("main.aggregate.raw")}</strong>
+              <span>{tr("main.aggregate.rawHint")}</span>
             </div>
             <pre>{aggregatePreview}</pre>
           </section>
@@ -961,7 +1406,7 @@ export function MultiAggregateWorkspace({
             <section className="aggregate-group" key={group}>
               <div className="aggregate-section-title">
                 <strong>{group}</strong>
-                <span>{groupItems.length} 项</span>
+                <span>{tr("main.aggregate.itemCount", { count: groupItems.length })}</span>
               </div>
               <div className="aggregate-item-list">
                 {groupItems.map((item) => {
@@ -972,17 +1417,17 @@ export function MultiAggregateWorkspace({
                       <header className="aggregate-item-head">
                         <span className={`kind-chip ${item.payloadKind}`}>
                           <Icon size={11} />
-                          {getPayloadKindLabel(item.payloadKind)}
+                          {getPayloadKindLabel(item.payloadKind, tr)}
                         </span>
-                        <strong title={item.analysis.title}>{item.analysis.title || item.analysis.sourceName || "剪贴板内容"}</strong>
+                        <strong title={item.analysis.title}>{item.analysis.title || item.analysis.sourceName || tr("main.detail.clipContentFallback")}</strong>
                         <div className="aggregate-item-actions">
                           <button type="button" onClick={() => onOpenItem(item)}>
                             <FileJson size={12} />
-                            详情
+                            {tr("main.detail.title")}
                           </button>
                           <button type="button" onClick={() => onCopyItem(item)}>
                             <Copy size={12} />
-                            复制
+                            {tr("agent.action.copy")}
                           </button>
                         </div>
                       </header>
@@ -1016,7 +1461,7 @@ export function MultiAggregateWorkspace({
           ))}
         </div>
       ) : (
-        <div className="workspace-empty">选择多条内容后预览聚合结果。</div>
+        <div className="workspace-empty">{tr("main.aggregate.empty")}</div>
       )}
     </section>
   );
@@ -1027,15 +1472,17 @@ function WorkspaceCrumb({
   onBack,
   subtitle,
   title,
+  tr,
 }: {
   children?: React.ReactNode;
   onBack: () => void;
   subtitle?: string;
   title: string;
+  tr: WorkspaceTr;
 }) {
   return (
     <header className="workspace-crumb">
-      <button className="icon-button subtle" onClick={onBack} type="button" aria-label="返回列表">
+      <button className="icon-button subtle" onClick={onBack} type="button" aria-label={tr("main.workspace.backToList")}>
         <RotateCcw size={14} />
       </button>
       <div className="workspace-crumb-title">
@@ -1044,7 +1491,7 @@ function WorkspaceCrumb({
       </div>
       <div className="workspace-crumb-actions">
         {children}
-        <button className="icon-button subtle" onClick={onBack} type="button" aria-label="关闭详情">
+        <button className="icon-button subtle" onClick={onBack} type="button" aria-label={tr("main.detail.close")}>
           <X size={14} />
         </button>
       </div>

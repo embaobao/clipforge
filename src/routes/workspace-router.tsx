@@ -16,6 +16,16 @@ type WorkspaceRouterRenderers = {
   renderList: () => ReactNode;
   renderDetail: (clipId: string) => ReactNode;
   renderAggregate: () => ReactNode;
+  fallbackCopy: WorkspaceFallbackCopy;
+};
+
+type WorkspaceFallbackCopy = {
+  routeTitle: string;
+  routeMessage: string;
+  providerTitle: string;
+  providerMessage: string;
+  backToList: string;
+  retry: string;
 };
 
 const WorkspaceRendererContext = createContext<WorkspaceRouterRenderers | null>(null);
@@ -79,6 +89,8 @@ function getWorkspaceRouteDiagnostics(extra: Record<string, unknown> = {}) {
 }
 
 function WorkspaceRouteError({ error, reset }: ErrorComponentProps) {
+  const renderers = useContext(WorkspaceRendererContext);
+  const copy = renderers?.fallbackCopy;
   const message = error instanceof Error ? error.message : String(error);
 
   useEffect(() => {
@@ -95,8 +107,8 @@ function WorkspaceRouteError({ error, reset }: ErrorComponentProps) {
 
   return (
     <section className="workspace-route-fallback" role="alert">
-      <strong>当前视图渲染失败</strong>
-      <span title={message}>已保留面板运行状态，可以返回列表继续使用。</span>
+      <strong>{copy?.routeTitle ?? "Workspace route failed"}</strong>
+      <span title={message}>{copy?.routeMessage ?? "Panel state is preserved. Return to the list to continue."}</span>
       <div>
         <button
           type="button"
@@ -105,17 +117,17 @@ function WorkspaceRouteError({ error, reset }: ErrorComponentProps) {
             void navigateWorkspaceList();
           }}
         >
-          返回列表
+          {copy?.backToList ?? "Back to list"}
         </button>
         <button type="button" onClick={reset}>
-          重试
+          {copy?.retry ?? "Retry"}
         </button>
       </div>
     </section>
   );
 }
 
-class WorkspaceProviderBoundary extends Component<{ children: ReactNode }, { failed: boolean; message: string }> {
+class WorkspaceProviderBoundary extends Component<{ children: ReactNode; copy: WorkspaceFallbackCopy }, { failed: boolean; message: string }> {
   state = { failed: false, message: "" };
 
   static getDerivedStateFromError(error: Error) {
@@ -141,8 +153,8 @@ class WorkspaceProviderBoundary extends Component<{ children: ReactNode }, { fai
 
     return (
       <section className="workspace-route-fallback" role="alert">
-        <strong>当前面板视图异常</strong>
-        <span title={this.state.message}>已阻止异常继续扩散，可以返回列表恢复。</span>
+        <strong>{this.props.copy.providerTitle}</strong>
+        <span title={this.state.message}>{this.props.copy.providerMessage}</span>
         <div>
           <button
             type="button"
@@ -151,10 +163,10 @@ class WorkspaceProviderBoundary extends Component<{ children: ReactNode }, { fai
               void navigateWorkspaceList();
             }}
           >
-            返回列表
+            {this.props.copy.backToList}
           </button>
           <button type="button" onClick={() => this.setState({ failed: false, message: "" })}>
-            重试
+            {this.props.copy.retry}
           </button>
         </div>
       </section>
@@ -201,18 +213,19 @@ declare module "@tanstack/react-router" {
 }
 
 export function WorkspaceRouterProvider({
+  fallbackCopy,
   renderAggregate,
   renderDetail,
   renderList,
 }: WorkspaceRouterRenderers) {
   const renderers = useMemo(
-    () => ({ renderAggregate, renderDetail, renderList }),
-    [renderAggregate, renderDetail, renderList],
+    () => ({ fallbackCopy, renderAggregate, renderDetail, renderList }),
+    [fallbackCopy, renderAggregate, renderDetail, renderList],
   );
 
   return (
     <WorkspaceRendererContext.Provider value={renderers}>
-      <WorkspaceProviderBoundary>
+      <WorkspaceProviderBoundary copy={renderers.fallbackCopy}>
         <RouterProvider router={workspaceRouter} />
       </WorkspaceProviderBoundary>
     </WorkspaceRendererContext.Provider>
