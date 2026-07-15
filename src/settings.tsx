@@ -283,20 +283,45 @@ function SegmentSetting<T extends string>({
   selected: T;
   onChange: (value: T) => void;
 }) {
+  // 键盘方向键在组内循环切换（design：Toggle Group 键盘方向键可切换）+ roving tabindex
+  // （只有当前选中项 tabIndex=0，符合 radiogroup 焦点模式）。DOM 与类名不变，零视觉回归。
+  const selectByOffset = (offset: number) => {
+    const currentIndex = options.findIndex((option) => option.value === selected);
+    if (currentIndex < 0) return;
+    const nextIndex = (currentIndex + offset + options.length) % options.length;
+    onChange(options[nextIndex].value);
+  };
   return (
-    <div aria-label={label} className="setting-toggle-group" role="radiogroup">
-      {options.map((option) => (
-        <button
-          className={selected === option.value ? "active" : ""}
-          aria-checked={selected === option.value}
-          key={option.value}
-          onClick={() => onChange(option.value)}
-          role="radio"
-          type="button"
-        >
-          {option.label}
-        </button>
-      ))}
+    <div
+      aria-label={label}
+      className="setting-toggle-group"
+      role="radiogroup"
+      onKeyDown={(event) => {
+        if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+          event.preventDefault();
+          selectByOffset(1);
+        } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+          event.preventDefault();
+          selectByOffset(-1);
+        }
+      }}
+    >
+      {options.map((option) => {
+        const isActive = selected === option.value;
+        return (
+          <button
+            className={isActive ? "active" : ""}
+            aria-checked={isActive}
+            key={option.value}
+            onClick={() => onChange(option.value)}
+            role="radio"
+            tabIndex={isActive ? 0 : -1}
+            type="button"
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
