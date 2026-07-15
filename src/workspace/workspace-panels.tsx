@@ -1041,9 +1041,24 @@ export function ClipDetailWorkspace({
   const hasDraftChanges =
     draftContent !== clip.content ||
     normalizeDetailTags(draftTags).join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
-  const suggestedTags = extractDetailHashTags(draftContent).filter(
-    (tag) => !draftTags.some((current) => current.toLowerCase() === tag.toLowerCase()),
-  );
+  // 智能内容→tag：从 clip 类型/附件派生 tag（链接/代码/JSON/Markdown/命令/图片），与文中 #tag 合并建议，去重已有 tag。
+  // 此前 suggestedTags 只提取字面 #tag；现在补齐"智能检查内容作为 tag 生成"（镜像 App.tsx getTypeTags 语义）。
+  const smartTypeTags = clip.analysis.attachment
+    ? [clip.analysis.attachment.isImage ? "图片" : "资源"]
+    : clip.kind === "link"
+      ? ["链接"]
+      : clip.kind === "command"
+        ? ["命令"]
+        : clip.kind === "json"
+          ? ["JSON"]
+          : clip.kind === "markdown"
+            ? ["Markdown"]
+            : clip.kind === "code"
+              ? ["代码"]
+              : [];
+  const suggestedTags = Array.from(
+    new Set([...extractDetailHashTags(draftContent), ...smartTypeTags]),
+  ).filter((tag) => !draftTags.some((current) => current.toLowerCase() === tag.toLowerCase()));
   const editorVariableRows = useMemo<EditorVariableRow[]>(
     () => [
       { key: "clip.id", type: "string", example: clip.id },
