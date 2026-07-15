@@ -40,7 +40,7 @@
 | [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) | P1 提案中 | 格式支持保真层：补齐 HTML/RTF/图片/文件的多 representation、纯文本降级和回写验证矩阵 |
 | [search-filter-tags-filetypes](./changes/search-filter-tags-filetypes/proposal.md) | P2 提案中 | 搜索增强依托前面的格式字段，支持 `tag:`、`#tag`、`type:`、`file:`、`kind:`、`bucket:` 等结构化筛选 |
 | [content-smart-format-decoder](./changes/content-smart-format-decoder/proposal.md) | P3 小功能提案 | 智能识别代码、JSON、URL/Base64/JWT/Unicode/HTML entity，并提供格式化、补齐和解码动作 |
-| [context-plugin-agent-runtime](./changes/context-plugin-agent-runtime/proposal.md) | 提案中 | 上下文快照、插件边界、Agent 智能建议反吐、AG-UI 桥、MCP 工具面与自动升级能力 |
+| [context-plugin-agent-runtime](./changes/context-plugin-agent-runtime/proposal.md) | P3.5 提案中 | 上下文快照、插件边界、Agent 智能建议反吐、AG-UI 桥、MCP 工具面、v2 场景感知与规则沉淀 |
 | [detail-rich-editor-agent-bridge](./changes/detail-rich-editor-agent-bridge/proposal.md) | 提案中 | 详情页紧凑编辑、tag 快速编辑、`#tag` 建议、AI 建议回填、后续 Tiptap 富文本编辑 |
 | [clipboard-agent-panel](./changes/clipboard-agent-panel/proposal.md) | P4 提案中 | 悬浮面板内 Agent 工作页：用剪贴板上下文集合、私域 skill 和受控工具完成分析、管理与结果回填 |
 | [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) | P4.5/P5 讨论中 | 规划模型配置、Tiptap AI Toolkit、详情页 AI 增强、Agent 插件化、插件体系 V2 和 AI 能力标品化 |
@@ -54,5 +54,6 @@
 5. P1：再完成格式支持，先落 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md)，再补 [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md)。
 6. P2：搜索增强依托格式字段推进，完成 [search-filter-tags-filetypes](./changes/search-filter-tags-filetypes/proposal.md)，其中 `#tag` 与详情页 tag 跳转可先用现有 tags 字段铺垫。
 7. P3：最后做 [content-smart-format-decoder](./changes/content-smart-format-decoder/proposal.md)，按 JSON 格式化/补齐和常用解码小功能逐步交付。
-8. P4：在上下文快照、智能解析和详情页回填边界稳定后，再推进 [clipboard-agent-panel](./changes/clipboard-agent-panel/proposal.md)，只做 Agent 调用服务，不做 Agent 管理平台。
-9. P4.5/P5：完成 [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) 的方案评审，确认配置好模型后的默认 AI 能力、Agent 插件化原则、Tiptap AI Toolkit 边界和标品化分层后，再拆实现提案。
+8. P3.5：推进 [context-plugin-agent-runtime](./changes/context-plugin-agent-runtime/proposal.md)，补齐 v2 场景感知与规则沉淀能力，为后续 Agent 页和内部智能推荐提供输入源。
+9. P4：在上下文快照、智能解析和详情页回填边界稳定后，再推进 [clipboard-agent-panel](./changes/clipboard-agent-panel/proposal.md)，只做 Agent 调用服务，不做 Agent 管理平台。
+10. P4.5/P5：完成 [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) 的方案评审，确认配置好模型后的默认 AI 能力、Agent 插件化原则、Tiptap AI Toolkit 边界和标品化分层后，再拆实现提案。

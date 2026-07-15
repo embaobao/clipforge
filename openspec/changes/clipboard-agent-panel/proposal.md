@@ -79,3 +79,80 @@ AionUi 可以作为参考，但只借鉴局部能力：
 - 启动时 Agent 后台服务异常、检测超时或未完成时，悬浮面板仍可立即打开并正常完成剪贴板列表、搜索和复制动作。
 - 消息滚动区在流式响应、加载历史、重新打开会话、停止/重试 run 时都能保持阅读位置，不把用户强制拉到底部。
 - 附件引用条复用统一 Attachment 原语，用户能快速识别类型、标题、权限范围，并能一键移除本次上下文引用。
+
+---
+
+## v2 增量：外部 Agent 依赖弱化路径
+
+> 评估依据：[pi-runtime-evaluation 报告](../archive/2026-07-15-pi-runtime-evaluation/report.md)
+> 增量目标：减少对外部 Agent CLI 的依赖，最终用内部 provider 替代
+
+### 背景
+
+当前 Agent 页默认调用外部 CLI（`claude -p`、`codex` 等），存在两个问题：
+
+1. **启动延迟**：每次用户操作都启动外部进程
+2. **能力不足**：外部 Agent 只能看到当前 clip + 用户输入
+
+本增量明确"外部 Agent CLI 依赖"是过渡方案，长期目标是用内部 provider 替代。
+
+### v2 新增目标
+
+| ID | 目标 | 边界 |
+|---|---|---|
+| AGT-V2-01 | 引入"Agent Provider 优先级"：内部 provider > 本地 LLM > 外部 CLI adapter | 用户可手动覆盖 |
+| AGT-V2-02 | 引入"延迟预算"机制：内部 provider 必须 < 500ms 返回首 token；超过则自动降级 | 不阻塞悬浮面板唤起 |
+| AGT-V2-03 | 引入"能力适配"层：把外部 CLI 的能力（claude -p, codex）映射成 ClipForge 内部 capability，**不绑定具体 CLI** | 后续可替换 |
+| AGT-V2-04 | 外部 CLI adapter 标记为"legacy"接口：保留向后兼容，但默认 UI 隐藏 | 不破坏现有用户 |
+
+### 保持的 hard constraint
+
+- ❌ Agent 是 plugin capability，不是独立运行时
+- ❌ 外部 CLI 失败不影响快速剪贴板主路径
+- ❌ 不允许 Agent 静默修改剪贴板历史
+- ❌ 不默认暴露完整剪贴板历史给外部 Agent
+
+### 技术要点
+
+1. **Provider 优先级配置**：
+   ```typescript
+   interface AgentProviderConfig {
+     priority: ('internal-local' | 'internal-cloud' | 'external-cli')[];
+     fallback: boolean; // 是否允许降级
+   }
+   ```
+
+2. **延迟预算实现**：
+   - 内部 provider 使用 Promise.race + AbortController
+   - 超时后自动切换到下一级 provider
+   - 不影响主面板的唤醒和交互
+
+3. **能力适配层**：
+   - 定义 `AgentCapability` 接口（summarize / rewrite / translate / extract / fix）
+   - 外部 CLI adapter 实现 `AgentCapability` 接口
+   - 内部 provider 也实现同一接口
+   - Agent 页只依赖 `AgentCapability`，不依赖具体实现
+
+### 与其他提案的协同
+
+| 提案 | 协同点 |
+|---|---|
+| [ai-model-plugin-productization v2](../ai-model-plugin-productization/proposal.md) | 内部 provider 配置和能力定义 |
+| [context-plugin-agent-runtime v2](../context-plugin-agent-runtime/proposal.md) | 场景感知能力作为 Agent 上下文 |
+
+### 推进顺序
+
+- 本增量在 **P4** 阶段与 v1 同步推进
+- 前置依赖：
+  - P3.5 context-plugin-agent-runtime v2（上下文快照）
+  - P4.5 ai-model-plugin-productization v1（provider 配置框架）
+
+### 迁移路径
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| 阶段 1 | 当前 | 外部 CLI adapter 作为唯一 provider |
+| 阶段 2 | P4 | 引入内部 provider，优先级低于外部 CLI |
+| 阶段 3 | P4.5 | 内部 provider 优先级高于外部 CLI |
+| 阶段 4 | P5 | 外部 CLI adapter 标记为 legacy，默认隐藏 |
+| 阶段 5 | P5+ | 外部 CLI adapter 可选移除（保留向后兼容） |

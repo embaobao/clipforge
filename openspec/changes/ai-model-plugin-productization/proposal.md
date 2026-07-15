@@ -104,3 +104,67 @@ Monthly quota exceeded. Create a free API key at https://context7.com/dashboard 
 - 没有模型和插件标品边界，后续很容易把 ClipForge 做成重型 AI 工作台。
 - 先讨论完整标品方案，再拆实现，可以避免 Tiptap、AI SDK、MCP、Agent runtime 各自扩张。
 
+---
+
+## v2 增量：内部智能推荐与外部 Agent 依赖弱化
+
+> 评估依据：[pi-runtime-evaluation 报告](../archive/2026-07-15-pi-runtime-evaluation/report.md)
+> 增量目标：减少对外部 Agent CLI 的依赖，把高频低风险能力优先内化
+
+### 背景
+
+当前 ClipForge 的 Agent 能力依赖外部 CLI（`claude -p`、`codex` 等），存在两个问题：
+
+1. **启动延迟**：每次用户操作都启动外部进程，用户感知延迟
+2. **能力不足**：外部 Agent 只能看到当前 clip + 用户输入，无法访问 ClipForge 内部状态
+
+本增量不引入 Pi runtime，而是把"高频能力本地化 + 内部智能推荐"作为过渡方案。
+
+### v2 新增目标
+
+| ID | 目标 | 边界 |
+|---|---|---|
+| AI-V2-01 | 把摘要、改写、翻译、标签建议、结构化提取、格式修复 6 个能力标记为**可本地化能力** | 优先用本地 LLM / 轻量模型 |
+| AI-V2-02 | 引入"内部 provider 优先"策略：高频能力用内部 provider；低频长任务保留外部 CLI adapter | 内部能力失败时可降级到外部 |
+| AI-V2-03 | 引入"内部智能推荐"面板：基于场景感知 + 内容分析，在 settings 或主面板给出"建议"列表 | 只读建议，一键应用 |
+| AI-V2-04 | 内部推荐结果可直接保存为 snippet / 收藏 / 归档 / 标签，但保存动作走用户显式确认 | 与原提案"四类结果"保持一致 |
+
+### 保持的 hard constraint
+
+- ❌ 模型密钥不进前端
+- ❌ 危险动作必须预览确认
+- ❌ 不把 ClipForge 改造成 AI 工作台
+- ❌ 不允许模型、Agent 或插件绕过 preview/confirm 直接写历史
+
+### 技术要点
+
+1. **Provider 优先级链**：
+   ```
+   内部 provider（本地 LLM）
+   → 内部 provider（云端模型，用户配置）
+   → 外部 CLI adapter（fallback）
+   ```
+
+2. **延迟预算**：
+   - 内部 provider 必须 < 500ms 返回首 token
+   - 超过则自动降级到下一级 provider
+
+3. **能力适配层**：
+   - 把外部 CLI 的能力（claude -p, codex）映射成 ClipForge 内部 capability
+   - 不绑定具体 CLI，后续可替换
+
+### 与其他提案的协同
+
+| 提案 | 协同点 |
+|---|---|
+| [context-plugin-agent-runtime v2](../context-plugin-agent-runtime/proposal.md) | 场景感知能力作为内部推荐的输入源 |
+| [clipboard-agent-panel v2](../clipboard-agent-panel/proposal.md) | Agent 页使用内部 provider 优先策略 |
+
+### 推进顺序
+
+- 本增量在 **P5** 阶段推进
+- 前置依赖：
+  - P3.5 context-plugin-agent-runtime v2（场景感知能力）
+  - P4 clipboard-agent-panel v1 + v2（Agent 页基础设施）
+  - P4.5 ai-model-plugin-productization v1（模型配置框架）
+
