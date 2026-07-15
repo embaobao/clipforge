@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 import { settingsService } from "./services/settings";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -699,6 +700,9 @@ export function SettingsApp() {
                 onClick={() => setSection(item.key)}
                 type="button"
               >
+                {section === item.key ? (
+                  <motion.span layoutId="settings-sidebar-active" className="settings-sidebar-active-indicator" />
+                ) : null}
                 <Icon size={15} />
                 <span>{tr(item.labelKey)}</span>
               </button>

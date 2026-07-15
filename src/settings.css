@@ -109,6 +109,20 @@ body,
   color: var(--accent);
   font-weight: 500;
 }
+/* Inc4: 侧栏活跃指示条（左侧 accent 竖条），motion layoutId 在切换 section 时滑动到新活跃项。 */
+.settings-window-sidebar button {
+  position: relative;
+}
+.settings-sidebar-active-indicator {
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  z-index: 1;
+}
 
 .settings-window-content {
   flex: 1 1 auto;
