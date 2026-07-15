@@ -1,3 +1,34 @@
+/* Tailwind v4：只引入 theme + utilities，刻意跳过 preflight，避免基础重置冲垮既有 6800 行 App.css。
+   shadcn 组件（message/bubble/button…）依赖下面的 @theme inline，把 :root 语义 token 暴露成 bg、text、border 等颜色工具类。 */
+@import "tailwindcss/theme";
+@import "tailwindcss/utilities";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 :root {
   color: var(--foreground);
   background: transparent;
@@ -4516,11 +4547,11 @@ body,
 
 .search-autocomplete-item.highlighted,
 .search-autocomplete-item:hover {
-  background: oklch(0.54 0.11 205 / 0.12);
+  background: var(--accent);
 }
 
 .search-autocomplete-item.active {
-  color: var(--cf-row-focus-accent);
+  color: var(--primary);
   font-weight: 600;
 }
 
@@ -4529,7 +4560,7 @@ body,
   min-width: 56px;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 12px;
-  color: var(--cf-row-focus-accent);
+  color: var(--muted-foreground);
 }
 
 .search-autocomplete-label {
