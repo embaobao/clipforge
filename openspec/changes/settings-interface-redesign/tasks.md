@@ -1,11 +1,16 @@
 # 任务：设置页信息架构与交互组件重构
 
+## Phase 0：作废增量基线
+
+- [ ] 确认 `src/settings/controls.tsx`（ToggleGroup 控件）、侧边栏 `motion.layoutId` 活跃指示条（提交 `4e54f24`/`28f2e39`/`f69c703`）为过渡产物，彻底重构中替换或删除
+- [ ] 不在 Inc1-4 增量产物上继续叠加；以本提案彻底方案为唯一基线
+
 ## Phase 1：依赖与边界确认
 
-- [ ] 使用 Context7 重新拉取 Animate UI Tabs、Code Tabs、Tooltip、Radix Sidebar、Radix Toggle Group 当前文档
-- [ ] 确认本地已有 `src/components/animate-ui/primitives/animate/tooltip.tsx` 可复用范围
-- [ ] 补齐缺失的 Animate UI 组件到 `src/components/animate-ui/`
-- [ ] 确认新增依赖是否已经存在于 `package.json`，缺失时先列安装命令再引入
+- [ ] 使用 Context7 重新拉取 Animate UI **Radix Sidebar、Code Tabs** 当前文档（Tabs / Tooltip / Toggle Group 已 vendored，仅需核对其 API 是否漂移）
+- [ ] 确认本地已 vendored：Tabs、Tooltip、Toggle Group；待 vendor：Radix Sidebar、Code Tabs
+- [ ] 补齐缺失的 Animate UI 组件（Radix Sidebar、Code Tabs）到 `src/components/animate-ui/`
+- [ ] 确认新增依赖是否已经存在于 `package.json`，缺失时先列安装命令再引入（Radix Sidebar 通常依赖 `radix-ui` 或对应 `@radix-ui/react-*`）
 - [ ] 确认本提案不改变 `AppSettings`、Rust command 和配置持久化语义
 
 ## Phase 2：设置页信息架构

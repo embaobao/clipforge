@@ -167,7 +167,7 @@ src/settings/
     SettingsStatusPanel.tsx
 ```
 
-第一阶段可在 `src/settings.tsx` 内局部抽组件，避免一次性迁移过大。完成后再把组件拆目录。
+按 proposal 的「实现策略决议（彻底重构，非增量）」一次性落地：直接按上述目录新建组件并替换 `src/settings.tsx` 的渲染，**不走"先在主文件局部抽组件、避免一次性迁移"的增量路径**（该路径已被否决）。前期增量产物（`src/settings/controls.tsx` 的 ToggleGroup 控件、侧边栏 `motion.layoutId` 指示条，提交 `4e54f24`/`28f2e39`/`f69c703`）在彻底重构中替换或删除，不作为基线保留。
 
 ## 11. 服务依赖边界
 
