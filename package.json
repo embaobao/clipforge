@@ -11,6 +11,7 @@
     "test:unit": "node scripts/run-unit-checks.mjs && node scripts/verify-agent-panel.mjs && node scripts/verify-editor-agent-bridge.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-hot-path.mjs && node scripts/verify-mcp-dispatch.mjs && node scripts/verify-file-size.mjs",
     "test:agent": "node scripts/verify-agent-panel.mjs",
     "test:boundaries": "node scripts/verify-hot-path.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-file-size.mjs",
+    "test:perf": "node scripts/perf-smoke.mjs",
     "build:manual": "node scripts/generate-release-manual.mjs",
     "build": "bash ./scripts/build-mac-release.sh",
     "build:mac-release": "bash ./scripts/build-mac-release.sh",
