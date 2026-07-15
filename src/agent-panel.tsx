@@ -742,11 +742,12 @@ export function ClipboardAgentPanel({
   }, [preserveVisibleRowDuring]);
 
   const contextSet = useMemo<AgentContextSet>(() => {
-    const hasCurrentScope = scopeRequests.some((request) => request.scope === "current");
     const attachedClips = attachedClipIds
       .map((id) => allClips.find((clip) => clip.id === id))
       .filter((clip): clip is ClipItem => Boolean(clip && !clip.deletedAt));
-    const currentReference = activeClip && hasCurrentScope ? makeClipReference(activeClip, "current", permissionMode) : null;
+    // 默认附带当前选中项作为上下文（提案：新建对话默认附带当前剪贴板条目）。
+    // activeClip 即 App.tsx 传入的 selectedClip；用户可通过 removedReferenceIds 显式移除。
+    const currentReference = activeClip ? makeClipReference(activeClip, "current", permissionMode) : null;
     const attachedReferences = attachedClips.map((clip) => makeClipReference(clip, "clip", permissionMode));
     const scopedReferences = scopeRequests.flatMap((request) => {
       const source = referenceSourceForScope(request.scope);
@@ -755,9 +756,10 @@ export function ClipboardAgentPanel({
         .map((clip) => makeClipReference(clip, source, permissionMode));
     });
     const references = uniqueReferences([currentReference, ...attachedReferences, ...scopedReferences]).filter((reference) => !removedReferenceIds.has(reference.id));
+    const onlyCurrent = references.length === 1 && currentReference != null && references[0]?.id === currentReference.id;
     return {
       id: `ctx_chat_${contextRefreshAt}_${permissionMode}_${references.map((reference) => reference.id).join("_")}`,
-      mode: scopeRequests[0]?.scope === "favorites" ? "favorites" : scopeRequests[0]?.scope === "search-result" ? "search-result" : scopeRequests[0]?.scope === "all" ? "all" : scopeRequests[0]?.scope === "skill-context" ? "skill" : references.length > 1 ? "selected" : hasCurrentScope ? "current" : "selected",
+      mode: scopeRequests[0]?.scope === "favorites" ? "favorites" : scopeRequests[0]?.scope === "search-result" ? "search-result" : scopeRequests[0]?.scope === "all" ? "all" : scopeRequests[0]?.scope === "skill-context" ? "skill" : references.length > 1 ? "selected" : onlyCurrent ? "current" : "selected",
       references: references.map((reference) => ({
         ...reference,
         scopeLabel: references.length > 1 ? tr("agent.scope.references", { count: references.length }) : tr("agent.scope.current"),

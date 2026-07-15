@@ -1463,7 +1463,10 @@ function ClipForgeApp() {
   const [groupScrollTarget, setGroupScrollTarget] = useState<number | null>(null);
   const activeGroupStartRef = useRef(0);
   activeGroupStartRef.current = activeGroupStart;
+  // 程序化翻页（Cmd+↑/↓）窗口期内屏蔽视口中心驱动的分组检测，避免 smooth scroll 中间值导致 activeGroupStart 闪烁/回弹。
+  const programmaticGroupUntilRef = useRef(0);
   const handleActiveGroupChange = useCallback((groupStart: number) => {
+    if (Date.now() < programmaticGroupUntilRef.current) return;
     setActiveGroupStart(groupStart);
   }, []);
   const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
@@ -2842,6 +2845,11 @@ function ClipForgeApp() {
         const dir = event.key === "ArrowDown" ? 1 : -1;
         const maxGroupStart = Math.max(0, Math.floor(Math.max(0, quickItems.length - 1) / 10) * 10);
         const next = Math.min(Math.max(0, activeGroupStartRef.current + dir * 10), maxGroupStart);
+        // 同步更新激活分组起点（含 ref，使同一 tick 内连按也能叠加）+ 屏蔽滚动回调一小段窗口，
+        // 让快速连按 Cmd+↑/↓ 确定性地逐页叠加（0→10→20），不再因 activeGroupStart 异步滞后导致翻页不叠加/错位跳项。
+        activeGroupStartRef.current = next;
+        setActiveGroupStart(next);
+        programmaticGroupUntilRef.current = Date.now() + 450;
         setGroupScrollTarget(next);
         const firstInGroup = quickItems[next];
         if (firstInGroup) {
