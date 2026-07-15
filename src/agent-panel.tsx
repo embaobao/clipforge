@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { settingsService } from "./services/settings";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { ClipItem } from "./App";
@@ -457,19 +458,23 @@ export function ClipboardAgentPanel({
     liveEdgeRef.current = liveEdge;
   }, [liveEdge]);
 
+  // Gap1：刷新 provider 配置——mount 加载与 settings_changed 事件复用同一逻辑（agent_get_config 是本地读取，非网络）。
+  const refreshProviderConfig = useCallback(() => {
+    invoke<AgentConfigPayload>("agent_get_config")
+      .then((payload) => {
+        setProviders(payload.providers);
+        setActiveProviderId(payload.activeProviderId ?? payload.providers[0]?.id ?? null);
+      })
+      .catch(() => {
+        setProviders([]);
+      });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const configTimer = window.setTimeout(() => {
       if (cancelled) return;
-      invoke<AgentConfigPayload>("agent_get_config")
-        .then((payload) => {
-          if (cancelled) return;
-          setProviders(payload.providers);
-          setActiveProviderId(payload.activeProviderId ?? payload.providers[0]?.id ?? null);
-        })
-        .catch(() => {
-          if (!cancelled) setProviders([]);
-        });
+      refreshProviderConfig();
     }, 180);
     const detectTimer = window.setTimeout(() => {
       if (cancelled) return;
@@ -489,7 +494,30 @@ export function ClipboardAgentPanel({
       window.clearTimeout(configTimer);
       window.clearTimeout(detectTimer);
     };
-  }, []);
+  }, [refreshProviderConfig]);
+
+  // Gap1：订阅 settings_changed——provider 配置在设置页/MCP 改动后实时同步到已打开的 Agent 面板。
+  // 只在 agent 相关路径变化时重读 provider 配置，避免无关设置变更触发多余刷新（按 changedPaths 过滤）。
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+    settingsService
+      .subscribe((event) => {
+        if (!active) return;
+        const agentTouched = event.changedPaths.some(
+          (path) => path.startsWith("$.agent") || path.startsWith("$.agentProviders"),
+        );
+        if (!agentTouched) return;
+        refreshProviderConfig();
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [refreshProviderConfig]);
 
   const prewarmProvider = useCallback(
     async (providerId: string | null = activeProviderId) => {
