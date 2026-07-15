@@ -2262,7 +2262,9 @@ function ClipForgeApp() {
 
   const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
     const token = query.trim();
-    if (!isSearchActive) return [];
+    // @/# 自动补全不依赖搜索焦点态：只要 query 含 @ 或 # 就计算建议下拉，
+    // 避免"输入 @ 但下拉不出现"（此前仅 isSearchActive 为真才返回建议，焦点态丢失时 @ 触发失败）。
+    if (!isSearchActive && !token.includes("@") && !token.includes("#")) return [];
     const commandToken = token.split(/\s+/).at(-1) ?? "";
     if (!token || (!commandToken.startsWith("@") && !commandToken.startsWith("#"))) return baseSearchSuggestions.slice(0, 6);
     if (commandToken.startsWith("#")) {
