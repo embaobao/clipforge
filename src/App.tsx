@@ -1068,7 +1068,10 @@ function getClipboardLine(item: ClipItem) {
     const first = files[0]?.split(/[\\/]/).filter(Boolean).at(-1);
     return first ? `${first}${files.length > 1 ? ` +${files.length - 1}` : ""}` : item.analysis.title || item.content;
   }
-  const firstLine = (item.content || "").split(/\r?\n/, 1)[0] ?? "";
+  // 优先用纯文本渲染：HTML/RTF 等 clip 的 content 是源码，plainText 才是用户可见的文字。
+  // 修复前：复制 HTML 后列表把它当 HTML 源码显示；修复后：默认渲染为文字内容。
+  const source = item.plainText || item.content;
+  const firstLine = (source || "").split(/\r?\n/, 1)[0] ?? "";
   const line = firstLine.replace(/\s+/g, " ").trim();
   return line || item.analysis.title || "";
 }
@@ -1153,7 +1156,8 @@ function getItemTooltip(item: ClipItem, tr: (key: TranslationKey, params?: Recor
   // tooltip 每个可见行都常驻挂载在 DOM（仅 opacity:0）。把整篇大文案塞进 body，
   // 大文本条目会让打开那一帧布局/提交暴涨 200–340ms、阻塞输入。截断到预览长度即可；
   // 复制/粘贴走 item.content 本体，不受影响。
-  const fullBody = item.content || getClipboardLine(item);
+  // 优先纯文本：HTML/RTF 不把源码塞进 tooltip（与列表渲染一致，默认显示文字）。
+  const fullBody = item.plainText || item.content || getClipboardLine(item);
   const body =
     fullBody.length > 600
       ? `${fullBody.slice(0, 600)}\n${tr("main.tooltip.omitted", { total: fullBody.length, omitted: fullBody.length - 600 })}`
