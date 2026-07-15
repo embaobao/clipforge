@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Save,
   Send,
+  Square,
   Tags,
   X,
 } from "lucide-react";
@@ -272,17 +273,13 @@ export function AgentChatPage({
             <span title={providerHint(activeProvider, activeReadiness)}>{providerLabel(activeProvider, activeReadiness)}</span>
           </div>
           <div className="agent-head-actions">
-            {status === "waiting_confirmation" ? (
-              <MotionIconButton className="icon-button subtle" label={tr("agent.aria.cancelPreview")} onClick={onCancelPreview}>
-                <X size={13} />
-              </MotionIconButton>
-            ) : status === "drafting" ? (
+            {status === "drafting" ? (
               <MotionIconButton className="icon-button subtle" label={tr("agent.aria.stopRun")} onClick={onStopRun}>
-                <X size={13} />
+                <Square size={12} />
               </MotionIconButton>
             ) : null}
             <MotionIconButton className="icon-button subtle" label={tr("agent.aria.backToClipboard")} onClick={onBackToClipboard}>
-              <Clipboard size={13} />
+              <X size={14} />
             </MotionIconButton>
           </div>
         </header>

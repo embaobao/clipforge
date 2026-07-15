@@ -288,7 +288,9 @@ function normalizeAgentMessage(message: Partial<ClipboardAgentUiMessage> | null 
 }
 
 function panelStatusFromRun(status: AgentRunPayload["status"]): "idle" | "drafting" | "waiting_confirmation" | "succeeded" | "failed" {
-  if (status === "waiting_confirmation") return "waiting_confirmation";
+  // 去掉审批门后，后端仍可能残留 WaitingConfirmation（prepare 存储 / 重开会话回灌）。
+  // 一律视作 drafting（运行中），避免面板被回灌成 waiting_confirmation 卡死。
+  if (status === "waiting_confirmation") return "drafting";
   if (status === "succeeded") return "succeeded";
   if (status === "failed" || status === "cancelled") return "failed";
   if (status === "preparing" || status === "running" || status === "streaming" || status === "cancelling") return "drafting";
@@ -955,8 +957,9 @@ export function ClipboardAgentPanel({
       setReferencePickerOpen(false);
       setStatus("drafting");
       setLiveEdge(true);
+      let prepared: AgentPreparedRunPayload;
       try {
-        const prepared = await invoke<AgentPreparedRunPayload>("agent_prepare_run", {
+        prepared = await invoke<AgentPreparedRunPayload>("agent_prepare_run", {
           input: {
             providerId: activeProviderId,
             prompt,
@@ -964,21 +967,6 @@ export function ClipboardAgentPanel({
             allowFullContent: allowFullContentForRun,
           },
         });
-        setActiveRunId(prepared.run.id);
-        setPendingRun({ prompt, prepared, contextSet: turnContextSet, allowFullContent: allowFullContentForRun });
-        setMessages((current) => [
-          ...current,
-          {
-            id: `assistant:${prepared.run.id}`,
-            role: "assistant",
-            parts: [
-              { type: "text", text: tr("agent.run.waitingConfirmation", { command: prepared.run.commandPreview }) },
-              { type: "data-status", data: { status: "waiting_confirmation", message: prepared.run.providerId } },
-            ],
-            metadata: { conversationId: prepared.run.conversationId || CONVERSATION_ID, createdAt: Date.now() },
-          },
-        ]);
-        setStatus("waiting_confirmation");
       } catch (error) {
         const text = tr("agent.error.runtimeCallFailed", { error: String(error) });
         setMessages((current) => [
@@ -994,9 +982,80 @@ export function ClipboardAgentPanel({
           },
         ]);
         setStatus("failed");
+        return;
+      }
+      setActiveRunId(prepared.run.id);
+      // 去掉"等待确认"审批门：prepare 后直接添加 running 消息并立即启动 run（用户要求不要审批执行）。
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant:${prepared.run.id}`,
+          role: "assistant",
+          parts: [
+            { type: "text", text: tr("agent.run.runningWithCommand", { command: prepared.run.commandPreview }) },
+            { type: "data-status", data: { status: "running", message: prepared.run.providerId } },
+          ],
+          metadata: { conversationId: prepared.run.conversationId || CONVERSATION_ID, createdAt: Date.now() },
+        },
+      ]);
+      setStatus("drafting");
+      try {
+        const started = await invoke<AgentRunPayload>("agent_start_run", {
+          input: {
+            runId: prepared.run.id,
+            providerId: prepared.run.providerId,
+            prompt,
+            contextSet: turnContextSet,
+            confirmed: true,
+            allowFullContent: allowFullContentForRun,
+          },
+        });
+        preserveVisibleRowDuring(() => {
+          setPermissionMode("summary");
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === `assistant:${started.id}`
+                ? {
+                    ...message,
+                    parts: [
+                      {
+                        type: "text",
+                        text:
+                          started.status === "failed"
+                            ? started.errorMessage || tr("agent.error.providerUnavailable")
+                            : tr("agent.run.runningWithCommand", { command: started.commandPreview }),
+                      },
+                      { type: "data-status", data: { status: started.status === "failed" ? "failed" : "running", message: started.errorCode ?? started.providerId } },
+                    ],
+                  }
+                : message,
+            ),
+          );
+          if (started.status === "failed") {
+            setStatus("failed");
+            setActiveRunId(null);
+          }
+        });
+      } catch (error) {
+        preserveVisibleRowDuring(() => {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === `assistant:${prepared.run.id}`
+                ? {
+                    ...message,
+                    parts: [
+                      { type: "text", text: tr("agent.error.runtimeStartFailed", { error: String(error) }) },
+                      { type: "data-status", data: { status: "failed", message: "runtime-error" } },
+                    ],
+                  }
+                : message,
+            ),
+          );
+          setStatus("failed");
+        });
       }
     },
-    [activeProviderId, allowFullContentForRun, tr],
+    [activeProviderId, allowFullContentForRun, preserveVisibleRowDuring, tr],
   );
 
   const retryRunFromRow = useCallback(
@@ -1257,11 +1316,7 @@ export function ClipboardAgentPanel({
       activeProvider={activeProvider}
       activeProviderId={activeProviderId}
       activeReadiness={activeReadiness}
-      canSubmit={
-        status !== "drafting" &&
-        ((Boolean(input.trim()) && status !== "waiting_confirmation") ||
-          (Boolean(pendingRun) && status === "waiting_confirmation"))
-      }
+      canSubmit={status !== "drafting" && Boolean(input.trim())}
       contextReferences={contextSet.references}
       hasUnread={hasUnread}
       input={input}

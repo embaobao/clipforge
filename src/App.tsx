@@ -2102,7 +2102,6 @@ function ClipForgeApp() {
     const visible = clips.filter((item) => !item.deletedAt);
     const countKind = (kind: ClipPayloadKind) => visible.filter((item) => item.payloadKind === kind).length;
     const base: SearchSuggestion[] = [
-      { id: "all", label: tr("main.searchSuggestion.all"), hint: `${visible.length}`, kind: "all", typeFilter: "all" },
       { id: "favorite", label: tr("main.searchSuggestion.favorite"), hint: `${visible.filter((item) => item.favorite).length}`, kind: "favorite" },
       { id: "link", label: tr("main.searchSuggestion.link"), hint: `${countKind("link")}`, kind: "type", typeFilter: "link" },
       { id: "file", label: tr("main.searchSuggestion.file"), hint: `${countKind("file")}`, kind: "type", typeFilter: "file" },
