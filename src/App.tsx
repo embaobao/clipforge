@@ -22,9 +22,17 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { motion, useReducedMotion } from "motion/react";
-import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
+import {
+  autoUpdate,
+  flip,
+  FloatingPortal,
+  offset as floatingOffset,
+  shift,
+  useFloating,
+} from "@floating-ui/react";
 import type { CSSProperties, ErrorInfo, MouseEvent, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
 import {
   formatCommandError,
@@ -2262,11 +2270,13 @@ function ClipForgeApp() {
 
   const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
     const token = query.trim();
-    // @/# 自动补全不依赖搜索焦点态：只要 query 含 @ 或 # 就计算建议下拉，
-    // 避免"输入 @ 但下拉不出现"（此前仅 isSearchActive 为真才返回建议，焦点态丢失时 @ 触发失败）。
-    if (!isSearchActive && !token.includes("@") && !token.includes("#")) return [];
     const commandToken = token.split(/\s+/).at(-1) ?? "";
-    if (!token || (!commandToken.startsWith("@") && !commandToken.startsWith("#"))) return baseSearchSuggestions.slice(0, 6);
+    // autocomplete 仅在「尾部 token 以 @ 或 # 开头」时触发：输入 @ 立即给出类型筛选下拉（@file: @img: …），
+    // 输入 # 给出标签下拉；普通文本搜索不再常驻类型条，避免噪声（reui 式 combobox 触发模型）。
+    if (!commandToken.startsWith("@") && !commandToken.startsWith("#")) return [];
+    // 已补全的过滤器（如选中 @file: / @收藏 后 query 里的完整 token）不再弹下拉，避免选中后残留单条建议。
+    const lowerToken = commandToken.toLowerCase();
+    if (baseSearchSuggestions.some((s) => getSearchSuggestionToken(s).toLowerCase() === lowerToken)) return [];
     if (commandToken.startsWith("#")) {
       const tagToken = normalizeSearch(commandToken.slice(1));
       const tagCounts = new Map<string, { label: string; count: number }>();
@@ -2294,6 +2304,12 @@ function ClipForgeApp() {
       )
       .slice(0, 8);
   }, [baseSearchSuggestions, clips, isSearchActive, query]);
+
+  // autocomplete 下拉的高亮项索引；建议列表变化（输入/过滤）时重置到首项，使 Enter 默认应用第一项。
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+  useEffect(() => {
+    setActiveSuggestionIndex(0);
+  }, [searchSuggestions]);
 
   const aggregatePreview = useMemo(() => {
     return selectedInList.map((item) => item.content.trim()).filter(Boolean).join("\n\n");
@@ -2892,6 +2908,13 @@ function ClipForgeApp() {
       }
 
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        // 搜索聚焦且有建议时：↑/↓ 在 autocomplete 下拉里移动高亮，不再穿透去翻背后列表。
+        if (editable === searchRef.current && searchSuggestions.length > 0) {
+          event.preventDefault();
+          const dir = event.key === "ArrowDown" ? 1 : -1;
+          setActiveSuggestionIndex((i) => (i + dir + searchSuggestions.length) % searchSuggestions.length);
+          return;
+        }
         if (editable && editable !== searchRef.current) return;
         event.preventDefault();
         setKeyboardNavigating(true);
@@ -2925,9 +2948,10 @@ function ClipForgeApp() {
       }
 
       if (event.key === "Enter") {
-        if (editable === searchRef.current && query.trimStart().startsWith("@") && searchSuggestions.length > 0) {
+        if (editable === searchRef.current && searchSuggestions.length > 0) {
           event.preventDefault();
-          applySearchSuggestion(searchSuggestions[0]);
+          const idx = Math.min(Math.max(activeSuggestionIndex, 0), searchSuggestions.length - 1);
+          applySearchSuggestion(searchSuggestions[idx]);
           return;
         }
         if (editable && editable !== searchRef.current) return;
@@ -2981,6 +3005,7 @@ function ClipForgeApp() {
     selectedId,
     selectedInList,
     searchSuggestions,
+    activeSuggestionIndex,
     showCompletionToast,
     togglePanelPinned,
     workspaceRoute.clipId,
@@ -3319,6 +3344,8 @@ function ClipForgeApp() {
           activeFilterLabels={parsedSearchCommand.ast.labels}
           inputRef={searchRef}
           onApplySuggestion={applySearchSuggestion}
+          activeSuggestionIndex={activeSuggestionIndex}
+          onSelectSuggestionIndex={setActiveSuggestionIndex}
           onBlur={closeSearchIfEmpty}
           onChange={handleSearchChange}
           onClear={() => {
@@ -3678,11 +3705,13 @@ function GlassSearchBar({
   activeFilterLabels,
   inputRef,
   onApplySuggestion,
+  activeSuggestionIndex,
   onBlur,
   onChange,
   onClear,
   onFocus,
   onRemoveFilter,
+  onSelectSuggestionIndex,
   parsedSearchCommand,
   query,
   suggestions,
@@ -3691,11 +3720,13 @@ function GlassSearchBar({
   activeFilterLabels: string[];
   inputRef: RefObject<HTMLInputElement | null>;
   onApplySuggestion: (suggestion: SearchSuggestion) => void;
+  activeSuggestionIndex: number;
   onBlur: () => void;
   onChange: (value: string) => void;
   onClear: () => void;
   onFocus: () => void;
   onRemoveFilter: (label: string) => void;
+  onSelectSuggestionIndex: (index: number) => void;
   parsedSearchCommand: ParsedSearchCommand;
   query: string;
   suggestions: SearchSuggestion[];
@@ -3743,8 +3774,11 @@ function GlassSearchBar({
           </div>
         ) : null}
         {suggestions.length ? (
-          <FilterChips
+          <SearchAutocomplete
+            activeIndex={activeSuggestionIndex}
+            inputRef={inputRef}
             onApplySuggestion={onApplySuggestion}
+            onSelectIndex={onSelectSuggestionIndex}
             parsedSearchCommand={parsedSearchCommand}
             suggestions={suggestions}
             tr={tr}
@@ -3755,40 +3789,92 @@ function GlassSearchBar({
   );
 }
 
-function FilterChips({
+// reui 式 autocomplete 下拉：以 @ / # 触发，floating-ui 把浮层 portal 到 body 层，
+// 绕开搜索栏祖先的 overflow/层叠，保证下拉一定可见；↑/↓/Enter 由外层 keydown 驱动 activeIndex。
+function SearchAutocomplete({
+  activeIndex,
+  inputRef,
   onApplySuggestion,
+  onSelectIndex,
   parsedSearchCommand,
   suggestions,
   tr,
 }: {
+  activeIndex: number;
+  inputRef: RefObject<HTMLInputElement | null>;
   onApplySuggestion: (suggestion: SearchSuggestion) => void;
+  onSelectIndex: (index: number) => void;
   parsedSearchCommand: ParsedSearchCommand;
   suggestions: SearchSuggestion[];
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
+  const { refs, x, y, strategy } = useFloating({
+    open: suggestions.length > 0,
+    placement: "bottom-start",
+    whileElementsMounted: autoUpdate,
+    middleware: [floatingOffset(6), flip({ padding: 8 }), shift({ padding: 8 })],
+  });
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  // 把浮层锚定到搜索输入框（输入框由外层 inputRef 持有，挂载后绑定）。
+  useLayoutEffect(() => {
+    if (inputRef.current) refs.setReference(inputRef.current);
+  }, [inputRef, refs]);
+
+  // 键盘移动高亮时，把当前项滚进下拉视口。
+  useEffect(() => {
+    const root = listRef.current;
+    if (!root) return;
+    const el = root.querySelector<HTMLElement>(`[data-idx="${activeIndex}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, suggestions]);
+
+  const ready = x != null && y != null;
+
   return (
-    <div className="search-suggestions" role="listbox" aria-label={tr("main.search.suggestions")}>
-      {suggestions.map((suggestion) => (
-        <button
-          className={[
-            "search-suggestion",
-            suggestion.kind === "favorite" && parsedSearchCommand.filterFavorite ? "active" : "",
-            suggestion.kind === "type" && parsedSearchCommand.typeFilter === suggestion.typeFilter ? "active" : "",
-            suggestion.kind === "saved" && parsedSearchCommand.tag === suggestion.tag ? "active" : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          key={suggestion.id}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => onApplySuggestion(suggestion)}
-          role="option"
-          type="button"
-        >
-          <span>{getSearchSuggestionToken(suggestion)}</span>
-          <em>{suggestion.hint}</em>
-        </button>
-      ))}
-    </div>
+    <FloatingPortal>
+      <div
+        ref={refs.setFloating}
+        className="search-autocomplete"
+        role="listbox"
+        aria-label={tr("main.search.suggestions")}
+        style={{
+          position: strategy,
+          top: 0,
+          left: 0,
+          zIndex: 60,
+          visibility: ready ? "visible" : "hidden",
+          transform: `translate3d(${x ?? 0}px, ${y ?? 0}px, 0)`,
+        }}
+      >
+        <div className="search-autocomplete-list" ref={listRef}>
+          {suggestions.map((suggestion, index) => {
+            const token = getSearchSuggestionToken(suggestion);
+            const isActive =
+              (suggestion.kind === "favorite" && parsedSearchCommand.filterFavorite) ||
+              (suggestion.kind === "type" && parsedSearchCommand.typeFilter === suggestion.typeFilter) ||
+              (suggestion.kind === "saved" && parsedSearchCommand.tag === suggestion.tag);
+            return (
+              <button
+                className={`search-autocomplete-item${index === activeIndex ? " highlighted" : ""}${isActive ? " active" : ""}`}
+                data-idx={index}
+                key={suggestion.id}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseMove={() => onSelectIndex(index)}
+                onClick={() => onApplySuggestion(suggestion)}
+                role="option"
+                aria-selected={index === activeIndex}
+                type="button"
+              >
+                <span className="search-autocomplete-token">{token}</span>
+                <span className="search-autocomplete-label">{suggestion.label}</span>
+                <em className="search-autocomplete-hint">{suggestion.hint}</em>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </FloatingPortal>
   );
 }
 
