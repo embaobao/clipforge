@@ -573,63 +573,6 @@ body,
   word-break: break-word;
 }
 
-.settings-redesign-code-tabs {
-  margin-top: var(--space-3);
-  width: 100%;
-  min-width: 0;
-}
-
-.settings-redesign-code-tabs-list {
-  max-width: 100%;
-  overflow-x: auto;
-}
-
-.settings-redesign-code-tabs-contents {
-  min-width: 0;
-}
-
-.settings-redesign-code-tabs-panel {
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--code-bg);
-  overflow: hidden;
-}
-
-.settings-redesign-code-tabs-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--code-line);
-  color: var(--code-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-}
-
-.settings-redesign-code-tabs-toolbar .secondary-button {
-  min-height: 28px;
-  padding: var(--space-1) var(--space-2);
-  border-color: var(--code-line-strong);
-  background: var(--code-line);
-  color: var(--text-inverse);
-}
-
-.settings-redesign-code-tabs-pre {
-  margin: 0;
-  max-height: 220px;
-  overflow: auto;
-  padding: var(--space-3);
-  color: var(--code-text);
-  background: transparent;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .mcp-tool-list {
   max-height: 44px;
   overflow: auto;
@@ -1236,16 +1179,6 @@ body,
     grid-template-columns: 1fr;
   }
 
-  .settings-redesign-code-tabs-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .settings-redesign-code-tabs-toolbar .secondary-button {
-    width: 100%;
-    justify-content: center;
-  }
-
   .tag-rule-row {
     align-items: stretch;
     flex-direction: column;
@@ -1273,10 +1206,6 @@ body,
 @media (min-width: 761px) and (max-width: 980px) {
   .setting-row {
     gap: var(--space-2);
-  }
-
-  .settings-redesign-code-tabs-pre {
-    max-height: 180px;
   }
 
   .onboarding-wizard {
