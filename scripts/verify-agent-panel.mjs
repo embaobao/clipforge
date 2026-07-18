@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const appPath = path.join(root, "src/App.tsx");
+const topToolbarPath = path.join(root, "src/clipboard/components/TopToolbar.tsx");
 const agentPath = path.join(root, "src/agent-panel.tsx");
 const agentChatPath = path.join(root, "src/agent-chat-page.tsx");
 const contractsPath = path.join(root, "src/services/contracts.ts");
@@ -53,6 +54,7 @@ function checkLocalAgentCli(command) {
 }
 
 const app = read(appPath);
+const topToolbar = read(topToolbarPath);
 const agent = `${read(agentPath)}\n${read(agentChatPath)}`;
 const contracts = read(contractsPath);
 const settingsService = read(settingsServicePath);
@@ -64,13 +66,14 @@ const panelNativePath = sectionBetween(rust, "fn open_panel", "/// 面板「固�
 
 assert(fs.existsSync(iconPath), "agent access icon asset is missing");
 assert(fs.statSync(iconPath).size > 1024, "agent access icon asset looks empty");
-assert(app.includes("agentAccessIcon"), "App does not import/use the Agent access icon");
-assert(app.includes('useState<PanelSurface>("clipboard")'), "App does not default to clipboard surface");
+assert(app.includes("useState<PanelSurface>(\"clipboard\")"), "App does not default to clipboard surface");
+assert(app.includes("<TopToolbar"), "App does not render TopToolbar");
 assert(
-  app.includes('data-agent-trigger="top-toolbar"') &&
-    app.includes("onClick={onOpenAgent}"),
+  topToolbar.includes('data-agent-trigger="top-toolbar"') &&
+    topToolbar.includes("onClick={onOpenAgent}"),
   "Agent trigger marker is not wired to the top toolbar open action",
 );
+assert(topToolbar.includes("agentAccessIcon"), "TopToolbar does not import/use the Agent access icon");
 assert(
   app.includes('data-agent-overlay={activeSurface === "agent" ? "open" : "closed"}') &&
     app.includes("data-agent-overlay-panel"),

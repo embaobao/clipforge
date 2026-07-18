@@ -7,8 +7,6 @@ import {
   ExternalLink,
   FileJson,
   Heart,
-  History,
-  MoreHorizontal,
   Pin,
   RotateCcw,
   Search,
@@ -19,7 +17,7 @@ import {
 } from "lucide-react";
 import { ClipboardEmptyState } from "./clipboard/components/ClipboardEmptyState";
 import { ClipboardRow } from "./clipboard/components/ClipboardRow";
-import { PanelStatusFeedback } from "./clipboard/components/PanelStatusFeedback";
+import { TopToolbar } from "./clipboard/components/TopToolbar";
 import { AppTooltip } from "./clipboard/components/AppTooltip";
 import {
   getDisplayText,
@@ -32,7 +30,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { motion, useReducedMotion } from "motion/react";
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
@@ -84,17 +81,6 @@ import {
 import type { AgentContextReference } from "./services/contracts";
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./components/ui/dropdown-menu";
-import { Tabs, TabsList, TabsTrigger } from "./components/animate-ui/components/animate/tabs";
-import agentAccessIcon from "../assets/brand/icons/256/agent-access.png";
 import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
@@ -109,14 +95,12 @@ type SourceAppInfo = {
   executablePath: string;
   iconBase64?: string;
 };
-type ViewKey = "history" | "favorites" | "trash";
-type PanelSurface = "clipboard" | "agent";
+export type ViewKey = "history" | "favorites" | "trash";
+export type PanelSurface = "clipboard" | "agent";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
 
-const dockButtonTransition = { type: "spring", stiffness: 430, damping: 30, mass: 0.42 } as const;
-const dockTabTransition = { type: "spring", stiffness: 360, damping: 30, mass: 0.5 } as const;
 export type ClipboardRepresentation = {
   format: "text/plain" | "text/html" | "text/rtf" | "image/png" | "application/file-list" | "text/uri-list" | string;
   storage: "inline" | "file" | "derived" | string;
@@ -3791,138 +3775,6 @@ function MultiSelectToolbar({
         )}
       </div>
     </section>
-  );
-}
-
-function TopToolbar({
-  activeSurface,
-  activeView,
-  agentContextCount,
-  onDrag,
-  onOpenAgent,
-  onOpenSettings,
-  onViewChange,
-  searchBar,
-  status,
-  tr,
-}: {
-  activeSurface: PanelSurface;
-  activeView: ViewKey;
-  agentContextCount: number;
-  onDrag: (event: PointerEvent<HTMLElement>) => void;
-  onOpenAgent: () => void;
-  onOpenSettings: () => void;
-  onViewChange: (view: ViewKey) => void;
-  searchBar: ReactNode;
-  status: string;
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}) {
-  const reduceMotion = useReducedMotion();
-  const toolbarValue = activeSurface === "agent" ? "agent" : activeView;
-  const agentShortcutLabel = `${tr("main.dock.openAgent")} · Ctrl/Cmd+I`;
-  const handleToolbarValueChange = (value: string) => {
-    if (value === "history" || value === "favorites") {
-      onViewChange(value);
-    }
-  };
-
-  return (
-    <header className="top-toolbar" data-dev-probe="top-toolbar" data-tauri-drag-region onPointerDown={onDrag}>
-      <Tabs className="top-view-tabs" data-dev-probe="top-view-tabs" value={toolbarValue} onValueChange={handleToolbarValueChange}>
-        <TabsList className="top-view-actions" data-dev-probe="top-view-actions" onPointerDown={(event) => event.stopPropagation()}>
-          <TabsTrigger
-            aria-label={tr("main.dock.history")}
-            className={activeSurface === "clipboard" && activeView === "history" ? "icon-button active" : "icon-button subtle"}
-            data-dev-probe="top-view-history"
-            data-tooltip={tr("main.dock.history")}
-            title={tr("main.dock.history")}
-            transition={dockTabTransition}
-            value="history"
-            whileHover={reduceMotion ? undefined : { y: -1 }}
-            whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-          >
-            <History size={13} />
-            <span>{tr("main.dock.history")}</span>
-          </TabsTrigger>
-          <TabsTrigger
-            aria-label={tr("main.dock.favorites")}
-            className={activeSurface === "clipboard" && activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
-            data-dev-probe="top-view-favorites"
-            data-tooltip={tr("main.dock.favorites")}
-            title={tr("main.dock.favorites")}
-            transition={dockTabTransition}
-            value="favorites"
-            whileHover={reduceMotion ? undefined : { y: -1 }}
-            whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-          >
-            <Heart size={13} />
-            <span>{tr("main.dock.favorites")}</span>
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-      <div className="top-toolbar-search-slot" data-dev-probe="top-search-slot" onPointerDown={(event) => event.stopPropagation()}>
-        {searchBar}
-      </div>
-      <div className="top-toolbar-action-slot" data-dev-probe="top-action-slot" onPointerDown={(event) => event.stopPropagation()}>
-        <motion.button
-          aria-label={tr("main.dock.openAgent")}
-          className={activeSurface === "agent" ? "icon-button active top-agent-button" : "icon-button subtle top-agent-button"}
-          data-agent-trigger="top-toolbar"
-          data-dev-probe="top-agent-button"
-          data-tooltip={agentShortcutLabel}
-          onClick={onOpenAgent}
-          title={agentShortcutLabel}
-          transition={dockButtonTransition}
-          type="button"
-          whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
-          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-        >
-          <img alt="" className="agent-access-icon" src={agentAccessIcon} />
-          {agentContextCount ? <em>{agentContextCount}</em> : null}
-        </motion.button>
-        <PanelStatusFeedback status={status} tr={tr} />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <motion.button
-              aria-label={tr("main.dock.menu")}
-              className="top-menu-trigger"
-              data-dev-probe="top-menu-trigger"
-              data-tooltip={tr("main.dock.menu")}
-              title={tr("main.dock.menu")}
-              transition={dockButtonTransition}
-              type="button"
-              whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
-              whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-            >
-              <MoreHorizontal size={16} />
-            </motion.button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="top-toolbar-menu" side="bottom" align="end" sideOffset={8}>
-            <DropdownMenuLabel className="top-toolbar-menu-header">
-              <span>ClipForge</span>
-              <small>{tr("main.dock.shortcutHint")}</small>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem data-dev-probe="top-menu-trash" onSelect={() => onViewChange("trash")}>
-                <span className="top-toolbar-menu-label">
-                  <Trash2 size={13} />
-                  <span>{tr("main.dock.trash")}</span>
-                </span>
-                <span className="top-toolbar-menu-shortcut">
-                  {activeSurface === "clipboard" && activeView === "trash" ? <Check size={12} /> : null}
-                  <kbd>T</kbd>
-                </span>
-              </DropdownMenuItem>
-              <DropdownMenuItem data-dev-probe="top-menu-settings" onSelect={onOpenSettings}>
-                <span>{tr("main.dock.settings")}</span>
-                <kbd>,</kbd>
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </header>
   );
 }
 

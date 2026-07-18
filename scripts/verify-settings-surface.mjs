@@ -5,6 +5,7 @@ const root = process.cwd();
 
 const files = {
   app: "src/App.tsx",
+  topToolbar: "src/clipboard/components/TopToolbar.tsx",
   appCss: "src/App.css",
   onboarding: "src/settings/onboarding-wizard.tsx",
   settings: "src/settings.tsx",
@@ -58,6 +59,7 @@ function extractList(source, name) {
 }
 
 const app = read(files.app);
+const topToolbar = read(files.topToolbar);
 const appCss = read(files.appCss);
 const onboarding = read(files.onboarding);
 const settings = read(files.settings);
@@ -104,17 +106,17 @@ include(onboarding, "settings.onboarding.feature.trash.title", "onboarding featu
 include(onboarding, "settings.onboarding.feature.agent.title", "onboarding feature overview should still include agent");
 
 // App shell: top navigation and first-launch onboarding handoff.
-match(app, /<header[^>]*className="top-toolbar"[^>]*data-tauri-drag-region[^>]*onPointerDown=\{onDrag\}/, "top toolbar should remain the drag region");
-match(app, /<TabsList[^>]*className="top-view-actions"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "top view tabs should block drag on pointer down");
-match(app, /<div[^>]*className="top-toolbar-search-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "search slot should block drag on pointer down");
-match(app, /<div[^>]*className="top-toolbar-action-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "action slot should block drag on pointer down");
+match(topToolbar, /<header[^>]*className="top-toolbar"[^>]*data-tauri-drag-region[^>]*onPointerDown=\{onDrag\}/, "top toolbar should remain the drag region");
+match(topToolbar, /<TabsList[^>]*className="top-view-actions"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "top view tabs should block drag on pointer down");
+match(topToolbar, /<div[^>]*className="top-toolbar-search-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "search slot should block drag on pointer down");
+match(topToolbar, /<div[^>]*className="top-toolbar-action-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "action slot should block drag on pointer down");
 match(app, /target\.closest\("button, input, textarea, select, a, \[role='menuitem'\]"\)/, "interactive targets should stay exempt from window dragging");
-include(app, 'value="history"', "top nav should keep the history tab");
-include(app, 'value="favorites"', "top nav should keep the favorites tab");
-include(app, 'onSelect={() => onViewChange("trash")}', "top nav menu should still switch to trash");
-include(app, "onSelect={onOpenSettings}", "top nav menu should still open settings");
-include(app, "<kbd>T</kbd>", "top nav shortcut hint should keep T for trash");
-include(app, "<kbd>,</kbd>", "top nav shortcut hint should keep Cmd/Ctrl+, for settings");
+include(topToolbar, 'value="history"', "top nav should keep the history tab");
+include(topToolbar, 'value="favorites"', "top nav should keep the favorites tab");
+include(topToolbar, 'onSelect={() => onViewChange("trash")}', "top nav menu should still switch to trash");
+include(topToolbar, "onSelect={onOpenSettings}", "top nav menu should still open settings");
+include(topToolbar, "<kbd>T</kbd>", "top nav shortcut hint should keep T for trash");
+include(topToolbar, "<kbd>,</kbd>", "top nav shortcut hint should keep Cmd/Ctrl+, for settings");
 match(app, /if \(!editable && !event\.ctrlKey && !event\.metaKey && !event\.altKey && key === "t"\)/, "T shortcut should still switch to trash");
 match(app, /if \(\(event\.metaKey \|\| event\.ctrlKey\) && !event\.altKey && key === ","\)/, "Cmd/Ctrl+, shortcut should still open settings");
 exclude(app, "main.dock.onboarding", "top nav menu should not expose an onboarding entry");
