@@ -1,0 +1,167 @@
+/* src/theme/tokens.css — 共享语义 token 与 Tailwind v4 theme 映射
+ *
+ * 归属：frontend-surface-architecture-refactor Phase 3
+ * 本文件集中管理 shadcn/ui 语义 token、ClipForge 产品 token 与 Tailwind v4
+ * @theme inline 映射，避免继续向单一 App.css 追加全局变量。
+ */
+@import "tailwindcss/theme";
+@import "tailwindcss/utilities";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  color: var(--foreground);
+  background: transparent;
+
+  /* shadcn 语义 token：所有组件颜色先从语义层取值。 */
+  --radius: 10px;
+  --background: oklch(0.985 0.004 255);
+  --foreground: oklch(0.18 0.035 255);
+  --card: oklch(1 0 0 / 0.82);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0 / 0.9);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.16 0 0);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.94 0 0);
+  --secondary-foreground: oklch(0.22 0 0);
+  --muted: oklch(0.93 0 0);
+  --muted-foreground: oklch(0.48 0 0);
+  --accent: oklch(0.9 0 0);
+  --accent-foreground: oklch(0.22 0 0);
+  --destructive: oklch(0.58 0.22 28);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.82 0 0 / 0.72);
+  --input: oklch(0.88 0 0 / 0.72);
+  --ring: oklch(0.16 0 0);
+
+  /* ClipForge 产品 token：固定尺寸让预览、列表、底部栏不随内容抖动。 */
+  --cf-font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", system-ui, sans-serif;
+  --cf-font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --cf-text-2xs: 10px;
+  --cf-text-xs: 11px;
+  --cf-text-sm: 12px;
+  --cf-text-md: 13px;
+  --cf-text-lg: 15px;
+  --cf-leading-tight: 1.15;
+  --cf-leading-normal: 1.35;
+  --cf-leading-relaxed: 1.55;
+  --cf-space-1: 2px;
+  --cf-space-2: 4px;
+  --cf-space-3: 6px;
+  --cf-space-4: 8px;
+  --cf-space-5: 10px;
+  --cf-space-6: 12px;
+  --cf-space-8: 16px;
+  --cf-space-10: 20px;
+  --cf-radius-xs: 4px;
+  --cf-radius-sm: 6px;
+  --cf-radius-md: 8px;
+  --cf-radius-lg: 12px;
+  --cf-radius-xl: 16px;
+  --cf-radius-pill: 999px;
+  --cf-panel-width-min: 420px;
+  --cf-panel-width: 442px;
+  --cf-panel-width-max: 520px;
+  --cf-panel-height: 650px;
+  --cf-search-height: 54px;
+  --cf-filter-height: 28px;
+  --cf-preview-height: 132px;
+  --cf-row-height: 34px;
+  --cf-row-height-comfort: 40px;
+  --cf-shortcut-size: 24px;
+  --cf-sheet-height: 168px;
+  --cf-z-base: 0;
+  --cf-z-row-focus: 5;
+  --cf-z-search: 20;
+  --cf-z-preview: 25;
+  --cf-z-dock: 30;
+  --cf-z-sheet: 40;
+  --cf-z-toast: 60;
+
+  /* 玻璃层 token：只用于搜索岛、底部 dock、预览带和多选 sheet。 */
+  --cf-glass-bg: oklch(1 0 0 / 0.58);
+  --cf-glass-bg-strong: oklch(1 0 0 / 0.76);
+  --cf-glass-bg-subtle: oklch(1 0 0 / 0.38);
+  --cf-glass-border: oklch(1 0 0 / 0.56);
+  --cf-glass-border-strong: oklch(0.74 0.04 255 / 0.46);
+  --cf-glass-highlight: oklch(1 0 0 / 0.74);
+  --cf-glass-shadow: 0 16px 44px oklch(0.28 0.06 255 / 0.16);
+  --cf-glass-shadow-tight: 0 8px 24px oklch(0.26 0.05 255 / 0.14);
+  --cf-glass-blur: 18px;
+  --cf-glass-saturation: 1.35;
+
+  /* 像素品牌 token：用于数字块和复制目标，不把正文做成像素字体。 */
+  --cf-pixel-ink: oklch(0.18 0.045 255);
+  --cf-pixel-blue: var(--primary);
+  --cf-pixel-white: oklch(0.99 0.004 255);
+  --cf-pixel-edge: 1px;
+  --cf-pixel-shadow: 0 1px 0 oklch(1 0 0 / 0.72), 0 2px 0 oklch(0.55 0.12 253 / 0.22);
+  --cf-target-shadow: 0 0 0 1px var(--ring), 0 0 0 4px oklch(0.62 0.17 253 / 0.12);
+
+  --cf-state-hover: oklch(0.94 0.035 252 / 0.72);
+  --cf-state-active: oklch(0.9 0.06 252 / 0.92);
+  --cf-state-selected: oklch(0.86 0.09 252 / 0.84);
+  --cf-state-copied: oklch(0.88 0.12 156 / 0.86);
+  --cf-state-warning: oklch(0.86 0.15 82);
+  --cf-state-danger: var(--destructive);
+  --cf-state-disabled: oklch(0.68 0.014 255 / 0.56);
+
+  --cf-kind-text: oklch(0.52 0.04 255);
+  --cf-kind-link: oklch(0.58 0.16 253);
+  --cf-kind-image: oklch(0.62 0.14 315);
+  --cf-kind-file: oklch(0.62 0.11 180);
+  --cf-kind-table: oklch(0.6 0.13 145);
+  --cf-kind-chart: oklch(0.66 0.15 65);
+  --cf-kind-rich-text: oklch(0.58 0.12 285);
+  --cf-kind-unknown: var(--muted-foreground);
+
+  --cf-motion-instant: 80ms;
+  --cf-motion-fast: 140ms;
+  --cf-motion-base: 200ms;
+  --cf-motion-emphasis: 280ms;
+  --cf-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --cf-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --cf-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --cf-target-scale: 1.012;
+  --cf-press-scale: 0.985;
+
+  --cf-status-idle: var(--muted-foreground);
+  --cf-status-listening: oklch(0.58 0.13 156);
+  --cf-status-writing: oklch(0.62 0.14 253);
+  --cf-status-warning: var(--cf-state-warning);
+  --cf-status-agent: oklch(0.62 0.12 285);
+  --cf-status-plugin: oklch(0.6 0.11 180);
+
+  font-family: var(--cf-font-sans);
+  font-size: var(--cf-text-sm);
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
