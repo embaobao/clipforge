@@ -16,8 +16,8 @@
 ## Phase 2：主列表选中交互恢复
 
 - [x] 移除最后追加的 `.quick-row` / `.target-focus-ring` 覆盖块
-- [ ] 检查 `src/App.css` 中是否仍有本轮新增的 quick-row 强覆盖影响原交互
-- [ ] 如仍有影响，只撤本轮新增覆盖，不重写列表交互
+- [x] 检查 `src/App.css` 中是否仍有本轮新增的 quick-row 强覆盖影响原交互
+- [x] 如仍有影响，只撤本轮新增覆盖，不重写列表交互
 - [ ] 运行主面板后由用户目视确认列表选中/hover/active 恢复
 
 ## Phase 3：顶部菜单修复
@@ -30,21 +30,21 @@
 
 ## Phase 4：顶部工具栏边界收口
 
-- [ ] 保留 History / Favorites / Search / Agent / Menu 不重叠的必要样式
-- [ ] 移除与顶部工具栏无关的 P-FINAL 覆盖
-- [ ] 确认搜索输入、Agent 按钮、菜单按钮仍阻止拖拽冒泡
+- [x] 保留 History / Favorites / Search / Agent / Menu 不重叠的必要样式
+- [x] 移除与顶部工具栏无关的 P-FINAL 覆盖（搜索栏作用域收进 `.app-shell .top-toolbar`）
+- [x] 确认搜索输入、Agent 按钮、菜单按钮仍阻止拖拽冒泡（代码保留 `onPointerDown={stopPropagation}`）
 
 ## Phase 5：设置页样式边界复核
 
-- [ ] 确认设置页最终覆盖均绑定 `.settings-window-shell` 或设置页 `data-slot`
-- [ ] 确认设置页 Sidebar / Tabs / Code Tabs 不影响主面板 dropdown 或 quick-row
-- [ ] 确认设置页仍使用本地 Animate UI Sidebar / Code Tabs 组件
+- [x] 确认设置页最终覆盖均绑定 `.settings-window-shell` 或设置页 `data-slot`
+- [x] 确认设置页 Sidebar / Tabs / Code Tabs 不影响主面板 dropdown 或 quick-row（清理了 `.settings-redesign-code-tabs*` 全局类）
+- [x] 确认设置页仍使用本地 Animate UI Sidebar / Code Tabs 组件
 
 ## Phase 6：验证
 
-- [ ] `pnpm exec tsc --noEmit` 通过
-- [ ] `node scripts/verify-settings-surface.mjs` 通过
-- [ ] `pnpm openspec validate quick-panel-visual-regression-recovery --strict` 通过
-- [ ] `git diff --check` 通过
-- [ ] 用户确认主列表选中交互恢复
-- [ ] 用户确认顶部菜单样式恢复
+- [x] `pnpm exec tsc --noEmit` 通过（`pnpm build` 内含）
+- [x] `node scripts/verify-settings-surface.mjs` 通过
+- [x] `pnpm openspec validate quick-panel-visual-regression-recovery --strict` 通过
+- [x] `git diff --check` 通过
+- [ ] 用户确认主列表选中交互恢复（需 `pnpm tauri dev` 目视）
+- [ ] 用户确认顶部菜单样式恢复（需 `pnpm tauri dev` 目视）
