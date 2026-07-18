@@ -40,7 +40,7 @@
 
 ## Phase 4：主面板展示层拆分
 
-- [ ] 新建 `src/clipboard/components/ClipboardRow.tsx`（待 tauri dev 实机验证：行选中/复制/右键菜单/虚拟滚动对齐）
+- [x] 新建 `src/clipboard/components/ClipboardRow.tsx`（待 tauri dev 实机验证：行选中/复制/右键菜单/虚拟滚动对齐）
 - [x] 新建 `src/clipboard/components/ClipboardContentPreview.tsx`（历史行 quick-content：AI 摘要徽标/图片/文件/middle-ellipsis+tooltip；helper 已迁 clipboard-domain，对抗式 review 确认零回归）
 - [x] 新建 `src/clipboard/components/ClipboardRowActions.tsx`（历史行 open-target/favorite + stopPropagation）
 - [x] 新建 `src/clipboard/components/ClipboardEmptyState.tsx`（合并 history/trash 两处空态，`variant` 复用）
