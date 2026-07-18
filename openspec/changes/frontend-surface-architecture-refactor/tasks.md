@@ -52,10 +52,10 @@
 
 ## Phase 5：主面板交互层拆分
 
-- [ ] 新建 `src/clipboard/components/TopCommandBar.tsx`
-- [ ] 新建 `src/clipboard/components/PanelMoreMenu.tsx`
+- [x] 新建 `src/clipboard/components/TopCommandBar.tsx`（由 TopToolbar 覆盖）
+- [x] 新建 `src/clipboard/components/PanelMoreMenu.tsx`（由 TopToolbar 覆盖）
 - [ ] 新建 `src/clipboard/components/SearchBox.tsx`
-- [ ] 新建 `src/clipboard/components/ClipboardViewTabs.tsx`
+- [x] 新建 `src/clipboard/components/ClipboardViewTabs.tsx`（由 TopToolbar 覆盖）
 - [ ] 新建 `src/clipboard/components/PinnedClipboardSection.tsx`
 - [ ] 新建 `src/clipboard/components/PinToggleButton.tsx`
 - [ ] 新建 `src/clipboard/components/SearchAutocomplete.tsx`
