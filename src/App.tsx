@@ -18,14 +18,12 @@ import {
   X,
 } from "lucide-react";
 import { ClipboardEmptyState } from "./clipboard/components/ClipboardEmptyState";
-import { ClipboardContentPreview } from "./clipboard/components/ClipboardContentPreview";
-import { ClipboardRowActions } from "./clipboard/components/ClipboardRowActions";
+import { ClipboardRow } from "./clipboard/components/ClipboardRow";
 import { AppTooltip } from "./clipboard/components/AppTooltip";
 import {
   getDisplayText,
   getFilePathsFromClip,
   getItemTooltip,
-  isFileClipMissing,
   middleEllipsis,
   splitLineForMiddleEllipsis,
 } from "./clipboard/clipboard-domain";
@@ -80,7 +78,6 @@ import {
   generateClipAiSummary,
   getClipAiSummaryErrorLogMetadata,
   getClipAiSummaryLogMetadata,
-  getStoredClipAiSummary,
   type ClipAiSummary,
 } from "./services/ai-summary";
 import type { AgentContextReference } from "./services/contracts";
@@ -4501,68 +4498,27 @@ function QuickPastePanel({
           groupSize={10}
           onActiveGroupChange={onActiveGroupChange}
           scrollToGroupStart={groupScrollTarget}
-          renderItem={(item, index) => {
-            const fileMissing = isFileClipMissing(item, filePathStatuses);
-            const aiSummary = getStoredClipAiSummary(item);
-            return (
-          <article
-            className={[
-              "quick-row",
-              activeId === item.id ? "active" : "",
-              copiedId === item.id ? "copied" : "",
-              selectedIds.has(item.id) ? "selected" : "",
-              multiSelectMode ? "selecting" : "",
-              fileMissing ? "file-missing" : "",
-              index >= activeGroupStart && index < activeGroupStart + 10 ? "in-active-group" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            key={item.id}
-            onClick={() => {
-              recordNextFramePerf("quick.select", { source: "click" });
-              if (multiSelectMode) {
-                onToggleSelected(item.id);
-                return;
-              }
-              onSelect(item);
-              onPaste(item, "click");
-            }}
-            onContextMenu={(event) => {
-              openContextMenu(event, item);
-            }}
-            onFocus={() => {
-              recordNextFramePerf("quick.select", { source: "focus" });
-              onSelect(item);
-            }}
-            tabIndex={0}
-          >
-            <button
-              aria-label={selectedIds.has(item.id) ? tr("main.list.unselectItem") : tr("main.list.multiSelectItem")}
-              className={selectedIds.has(item.id) ? "quick-index selected" : "quick-index"}
-              onClick={(event) => {
-                event.stopPropagation();
-                onSelect(item);
-                if (multiSelectMode) onToggleSelected(item.id);
-                else onStartMultiSelect(item.id);
-              }}
-              title={multiSelectMode ? tr("main.list.toggleSelection") : tr("main.list.enterMultiSelect")}
-              type="button"
-            >
-              {selectedIds.has(item.id) ? (
-                <Check size={12} />
-              ) : copiedId === item.id ? (
-                <Check size={12} />
-              ) : index - activeGroupStart >= 0 && index - activeGroupStart <= 9 ? (
-                <span className="quick-index-num">{index - activeGroupStart}</span>
-              ) : (
-                <Square size={12} />
-              )}
-            </button>
-            <ClipboardContentPreview aiSummary={aiSummary} fileMissing={fileMissing} item={item} tr={tr} />
-            <ClipboardRowActions item={item} onFavorite={onFavorite} onOpen={onOpen} tr={tr} />
-          </article>
-          );
-          }}
+          renderItem={(item, index) => (
+            <ClipboardRow
+              key={item.id}
+              item={item}
+              index={index}
+              activeId={activeId}
+              copiedId={copiedId}
+              selectedIds={selectedIds}
+              multiSelectMode={multiSelectMode}
+              activeGroupStart={activeGroupStart}
+              filePathStatuses={filePathStatuses}
+              onFavorite={onFavorite}
+              onOpen={onOpen}
+              onOpenContextMenu={openContextMenu}
+              onPaste={onPaste}
+              onSelect={onSelect}
+              onStartMultiSelect={onStartMultiSelect}
+              onToggleSelected={onToggleSelected}
+              tr={tr}
+            />
+          )}
         />
         {contextMenu ? (
           <ClipContextMenu

@@ -37,6 +37,7 @@ const panel = read("src/workspace/ai-summary-panel.tsx");
 const workspace = read("src/workspace/workspace-panels.tsx");
 const app = read("src/App.tsx");
 const clipboardPreview = read("src/clipboard/components/ClipboardContentPreview.tsx");
+const clipboardRow = read("src/clipboard/components/ClipboardRow.tsx");
 const zh = readJson("src/i18n/locales/zh-CN.json");
 const en = readJson("src/i18n/locales/en-US.json");
 
@@ -260,14 +261,16 @@ assert(app.includes('input: { id: item.id, metadata }'), "AI summary action does
 assert(app.includes("getClipAiSummaryLogMetadata(item.id, result, jobId)"), "AI summary completion log does not use metadata-only helper");
 assert(app.includes("getClipAiSummaryErrorLogMetadata(item.id, jobId"), "AI summary failure log does not use metadata-only helper");
 assert(service.includes("clip.metadata.aiSummary"), "AI summary service does not read persisted metadata");
-assert(app.includes("getStoredClipAiSummary(item)"), "quick list does not read AI summary status");
+assert(
+  clipboardRow.includes("getStoredClipAiSummary(item)"),
+  "quick list does not read AI summary status in ClipboardRow",
+);
 assert(
   clipboardPreview.includes("quick-ai-summary-badge"),
   "quick list AI summary badge is missing in ClipboardContentPreview",
 );
 assert(app.includes('tr("main.context.generateAiSummary")'), "context menu generate summary label is missing");
-assert(app.includes("onGenerateAiSummary={onGenerateAiSummary}"), "context menu does not receive the generate summary action");
-assert(app.includes("onGenerateAiSummary={(item) =>"), "QuickPastePanel is not wired to generate summaries");
+assert(app.includes("onGenerateAiSummary={(item) =>"), "context menu does not receive the generate summary action");
 assert(app.includes('logAppError("info", "ai-summary: job finished"'), "AI summary metadata-only completion log is missing");
 
 for (const key of [
