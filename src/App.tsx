@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { ClipboardEmptyState } from "./clipboard/components/ClipboardEmptyState";
 import { ClipboardRow } from "./clipboard/components/ClipboardRow";
+import { PanelStatusFeedback } from "./clipboard/components/PanelStatusFeedback";
 import { AppTooltip } from "./clipboard/components/AppTooltip";
 import {
   getDisplayText,
@@ -3879,7 +3880,7 @@ function TopToolbar({
           <img alt="" className="agent-access-icon" src={agentAccessIcon} />
           {agentContextCount ? <em>{agentContextCount}</em> : null}
         </motion.button>
-        <StatusLine status={status} tr={tr} />
+        <PanelStatusFeedback status={status} tr={tr} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <motion.button
@@ -3922,18 +3923,6 @@ function TopToolbar({
         </DropdownMenu>
       </div>
     </header>
-  );
-}
-
-function StatusLine({ status, tr }: { status: string; tr: (key: TranslationKey, params?: Record<string, string | number>) => string }) {
-  return (
-    <span className="toolbar-status">
-      {status || (
-        <>
-          <kbd>Tab</kbd> {tr("main.statusLine.navigate")} · <kbd>Enter</kbd> {tr("main.statusLine.paste")} · <kbd>→</kbd> {tr("main.statusLine.detail")} · <kbd>Ctrl/Cmd</kbd>+<kbd>J</kbd> {tr("main.statusLine.openTarget")} · <kbd>Ctrl/Cmd</kbd>+<kbd>P</kbd> {tr("main.statusLine.pin")}
-        </>
-      )}
-    </span>
   );
 }
 
