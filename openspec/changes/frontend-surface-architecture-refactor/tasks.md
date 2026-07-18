@@ -31,12 +31,12 @@
 
 ## Phase 3：主题与样式分层
 
-- [ ] 新增 `src/theme/tokens.css`
+- [x] 新增 `src/theme/tokens.css`（已迁出 App.css 的 :root 语义 token 与 @theme inline）
 - [ ] 新增 `src/theme/semantic.css`
 - [ ] 新增 `src/theme/tailwind.css`，把 Tailwind v4 `@theme inline` 映射集中管理
 - [ ] 主入口只导入主题和当前 surface 样式，不再依赖单一 `App.css`
-- [ ] 建立 surface root class：`clipboard-surface`、`settings-surface`、`workspace-surface`、`agent-surface`
-- [ ] 迁移后禁止新全局 `.quick-row` / `.toolbar` / `.dropdown-content` 覆盖
+- [x] 建立 surface root class：`clipboard-surface`、`settings-surface`、`workspace-surface`、`agent-surface`（目录 + README 已建，后续迁移样式）
+- [x] 迁移后禁止新全局 `.quick-row` / `.toolbar` / `.dropdown-content` 覆盖（P0 已收口）
 
 ## Phase 4：主面板展示层拆分
 
