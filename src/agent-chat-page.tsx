@@ -30,6 +30,7 @@ import type {
   AgentTranscriptRow,
   ClipboardAgentMessagePart,
   ClipboardAgentProviderConfig,
+  SettingsAgentModelsResult,
 } from "./services/contracts";
 import type { TranslationKey } from "./i18n";
 import {
@@ -74,6 +75,7 @@ type AgentChatPageProps = {
   activeProviderId: string | null;
   activeProvider?: ClipboardAgentProviderConfig;
   activeReadiness?: AgentProviderReadiness;
+  activeModels?: SettingsAgentModelsResult;
   canSubmit: boolean;
   contextReferences: AgentContextReference[];
   hasUnread: boolean;
@@ -127,15 +129,28 @@ function getClipTitle(clip: ClipItem) {
   return clip.analysis.title || clip.analysis.host || compactText(clip.content, 52) || clip.id;
 }
 
-function providerLabel(provider?: ClipboardAgentProviderConfig, readiness?: AgentProviderReadiness) {
+function providerLabel(provider?: ClipboardAgentProviderConfig, readiness?: AgentProviderReadiness, models?: SettingsAgentModelsResult) {
   if (!provider) return "Agent";
-  const suffix = readiness?.status ? ` - ${readiness.status}` : "";
-  return `${provider.label || provider.id}${suffix}`;
+  const readinessSuffix = readiness?.status ? ` - ${readiness.status}` : "";
+  const modelCount = models?.models?.length ?? 0;
+  const modelSuffix =
+    models?.status === "loading"
+      ? " / models loading"
+      : modelCount > 0
+        ? ` / ${modelCount} models`
+        : models?.status
+          ? ` / ${models.status}`
+          : "";
+  return `${provider.label || provider.id}${readinessSuffix}${modelSuffix}`;
 }
 
-function providerHint(provider?: ClipboardAgentProviderConfig, readiness?: AgentProviderReadiness) {
+function providerHint(provider?: ClipboardAgentProviderConfig, readiness?: AgentProviderReadiness, models?: SettingsAgentModelsResult) {
   if (!provider) return "Agent";
-  return [provider.label || provider.id, provider.kind, readiness?.status, readiness?.reason]
+  const modelSummary =
+    models?.status === "loading"
+      ? models.reason
+      : models?.message || models?.reason || (models?.models?.length ? `${models.models.length} models` : undefined);
+  return [provider.label || provider.id, provider.kind, readiness?.status, readiness?.reason, modelSummary]
     .filter(Boolean)
     .join(" / ");
 }
@@ -178,6 +193,7 @@ export function AgentChatPage({
   activeProviderId,
   activeProvider,
   activeReadiness,
+  activeModels,
   canSubmit,
   contextReferences,
   hasUnread,
@@ -270,7 +286,7 @@ export function AgentChatPage({
                 <option value="">Agent</option>
               )}
             </select>
-            <span title={providerHint(activeProvider, activeReadiness)}>{providerLabel(activeProvider, activeReadiness)}</span>
+            <span title={providerHint(activeProvider, activeReadiness, activeModels)}>{providerLabel(activeProvider, activeReadiness, activeModels)}</span>
           </div>
           <div className="agent-head-actions">
             {status === "drafting" ? (

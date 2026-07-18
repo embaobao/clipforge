@@ -1,7 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { motion, type Transition, type HTMLMotionProps } from 'motion/react';
+import {
+  motion,
+  useReducedMotion,
+  type Transition,
+  type HTMLMotionProps,
+} from 'motion/react';
 
 import {
   Highlight,
@@ -15,6 +20,10 @@ import { Slot, type WithAsChild } from '@/components/animate-ui/primitives/anima
 type TabsContextType = {
   activeValue: string;
   handleValueChange: (value: string) => void;
+  handleTriggerKeyDown: (
+    value: string,
+    event: React.KeyboardEvent<HTMLButtonElement>,
+  ) => void;
   registerTrigger: (value: string, node: HTMLElement | null) => void;
 };
 
@@ -93,11 +102,38 @@ function Tabs({
     [isControlled, onValueChange],
   );
 
+  const handleTriggerKeyDown = React.useCallback(
+    (currentValue: string, event: React.KeyboardEvent<HTMLButtonElement>) => {
+      const values = Array.from(triggersRef.current.keys());
+      if (values.length === 0) return;
+      const currentIndex = Math.max(0, values.indexOf(currentValue));
+      let nextIndex: number | null = null;
+
+      if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+        nextIndex = (currentIndex + 1) % values.length;
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+        nextIndex = (currentIndex - 1 + values.length) % values.length;
+      } else if (event.key === 'Home') {
+        nextIndex = 0;
+      } else if (event.key === 'End') {
+        nextIndex = values.length - 1;
+      }
+
+      if (nextIndex === null) return;
+      event.preventDefault();
+      const nextValue = values[nextIndex];
+      handleValueChange(nextValue);
+      triggersRef.current.get(nextValue)?.focus();
+    },
+    [handleValueChange],
+  );
+
   return (
     <TabsProvider
       value={{
         activeValue: (value ?? activeValue) as string,
         handleValueChange,
+        handleTriggerKeyDown,
         registerTrigger,
       }}
     >
@@ -115,13 +151,15 @@ function TabsHighlight({
   ...props
 }: TabsHighlightProps) {
   const { activeValue } = useTabs();
+  const prefersReducedMotion = useReducedMotion();
+  const reducedMotion = prefersReducedMotion === true;
 
   return (
     <Highlight
       data-slot="tabs-highlight"
       controlledItems
       value={activeValue}
-      transition={transition}
+      transition={reducedMotion ? { duration: 0 } : transition}
       click={false}
       {...props}
     />
@@ -155,9 +193,10 @@ function TabsTrigger({
   ref,
   value,
   asChild = false,
+  onKeyDown,
   ...props
 }: TabsTriggerProps) {
-  const { activeValue, handleValueChange, registerTrigger } = useTabs();
+  const { activeValue, handleValueChange, handleTriggerKeyDown, registerTrigger } = useTabs();
 
   const localRef = React.useRef<HTMLButtonElement | null>(null);
   React.useImperativeHandle(ref, () => localRef.current as HTMLButtonElement);
@@ -175,6 +214,10 @@ function TabsTrigger({
       data-slot="tabs-trigger"
       role="tab"
       onClick={() => handleValueChange(value)}
+      onKeyDown={(event: React.KeyboardEvent<HTMLButtonElement>) => {
+        onKeyDown?.(event);
+        if (!event.defaultPrevented) handleTriggerKeyDown(value, event);
+      }}
       data-state={activeValue === value ? 'active' : 'inactive'}
       {...props}
     />
@@ -198,6 +241,9 @@ function TabsContents({
   ...props
 }: TabsContentsProps) {
   const { activeValue } = useTabs();
+  const prefersReducedMotion = useReducedMotion();
+  const reducedMotion = prefersReducedMotion === true;
+  const resolvedTransition = reducedMotion ? { duration: 0 } : transition;
   const childrenArray = React.Children.toArray(children);
   const activeIndex = childrenArray.findIndex(
     (child): child is React.ReactElement<{ value: string }> =>
@@ -278,13 +324,13 @@ function TabsContents({
       data-slot="tabs-contents"
       style={{ overflow: 'hidden' }}
       animate={{ height }}
-      transition={transition}
+      transition={resolvedTransition}
       {...props}
     >
       <motion.div
         className="flex -mx-2"
         animate={{ x: activeIndex * -100 + '%' }}
-        transition={transition}
+        transition={resolvedTransition}
       >
         {childrenArray.map((child, index) => (
           <div
@@ -316,6 +362,8 @@ function TabsContent({
   ...props
 }: TabsContentProps) {
   const { activeValue } = useTabs();
+  const prefersReducedMotion = useReducedMotion();
+  const reducedMotion = prefersReducedMotion === true;
   const isActive = activeValue === value;
 
   const Component = asChild ? Slot : motion.div;
@@ -327,9 +375,15 @@ function TabsContent({
       inert={!isActive}
       style={{ overflow: 'hidden', ...style }}
       initial={{ filter: 'blur(0px)' }}
-      animate={{ filter: isActive ? 'blur(0px)' : 'blur(4px)' }}
+      animate={{
+        filter: isActive || reducedMotion ? 'blur(0px)' : 'blur(4px)',
+      }}
       exit={{ filter: 'blur(0px)' }}
-      transition={{ type: 'spring', stiffness: 200, damping: 25 }}
+      transition={
+        reducedMotion
+          ? { duration: 0 }
+          : { type: 'spring', stiffness: 200, damping: 25 }
+      }
       {...props}
     />
   );

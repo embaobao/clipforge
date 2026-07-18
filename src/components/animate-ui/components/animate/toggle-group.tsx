@@ -31,6 +31,8 @@ type ToggleGroupProps = {
   /** 值变化回调；空串（取消选中）会被忽略，保证设置项不可反选 */
   onValueChange: (value: string) => void;
   className?: string;
+  /** 禁用语义，仅用于容器级辅助技术提示；真正禁用由 item 承担。 */
+  'aria-disabled'?: boolean;
   /** 无障碍标签 */
   'aria-label'?: string;
   children: React.ReactNode;
@@ -40,6 +42,7 @@ function ToggleGroup({
   value,
   onValueChange,
   className,
+  'aria-disabled': ariaDisabled,
   'aria-label': ariaLabel,
   children,
 }: ToggleGroupProps) {
@@ -58,6 +61,7 @@ function ToggleGroup({
         type="single"
         value={value}
         onValueChange={handleValueChange}
+        aria-disabled={ariaDisabled}
         aria-label={ariaLabel}
         className={cn(
           'inline-flex items-center gap-1 rounded-lg bg-muted/60 p-1',

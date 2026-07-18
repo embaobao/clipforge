@@ -1,0 +1,234 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: false
+        default: "stable"
+        type: choice
+        options:
+          - stable
+          - prerelease
+
+env:
+  PRODUCT_NAME: ClipForge
+  PNPM_VERSION: "11.7.0"
+  NODE_VERSION: "22"
+
+jobs:
+  build-mac-arm64:
+    name: Build macOS (arm64)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v$(node -e 'console.log(JSON.parse(require("fs").readFileSync("package.json", "utf8")).version)')"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release (arm64)
+        env:
+          CLIPFORGE_RELEASE_REQUIRE_SIGNATURES: "1"
+          CLIPFORGE_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CLIPFORGE_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          CLIPFORGE_RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          chmod +x scripts/build-mac-release.sh
+          ./scripts/build-mac-release.sh
+
+      - name: Upload artifacts (arm64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: |
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_aarch64.dmg
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_aarch64.dmg.sig
+          retention-days: 7
+
+  build-mac-x64:
+    name: Build macOS (x64)
+    runs-on: macos-13
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v$(node -e 'console.log(JSON.parse(require("fs").readFileSync("package.json", "utf8")).version)')"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build release (x64)
+        env:
+          CLIPFORGE_RELEASE_REQUIRE_SIGNATURES: "1"
+          CLIPFORGE_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          CLIPFORGE_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          CLIPFORGE_RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          chmod +x scripts/build-mac-release.sh
+          ./scripts/build-mac-release.sh
+
+      - name: Upload artifacts (x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64
+          path: |
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_x64.dmg
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_x64.dmg.sig
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: [build-mac-arm64, build-mac-x64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v$(node -e 'console.log(JSON.parse(require("fs").readFileSync("package.json", "utf8")).version)')"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find release/* -type f -exec mv {} release/ \; 2>/dev/null || true
+          find release -mindepth 1 -type d -empty -delete 2>/dev/null || true
+          ls -la release/
+
+      - name: Generate release metadata
+        env:
+          CLIPFORGE_RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+          CLIPFORGE_RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/generate-release-metadata.mjs
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          if [ -f CHANGELOG.md ]; then
+            # 尝试从 CHANGELOG 中提取当前版本的说明
+            VERSION="${{ steps.version.outputs.version }}"
+            if grep -q "^## \\[${VERSION}\\]" CHANGELOG.md 2>/dev/null; then
+              awk "/^## \\[${VERSION}\\]/{flag=1;next}/^## \\[/{flag=0}flag" CHANGELOG.md > release-notes.md
+            else
+              echo "ClipForge ${{ steps.version.outputs.tag }}" > release-notes.md
+            fi
+          else
+            echo "ClipForge ${{ steps.version.outputs.tag }}" > release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ClipForge ${{ steps.version.outputs.tag }}
+          body_path: release-notes.md
+          prerelease: ${{ inputs.channel == 'prerelease' }}
+          files: |
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_aarch64.dmg
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_aarch64.dmg.sig
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_x64.dmg
+            release/${{ env.PRODUCT_NAME }}_${{ steps.version.outputs.version }}_x64.dmg.sig
+            release/latest.json
+            release/checksums.txt
+            release/CLIPFORGE_MUST_READ.html
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

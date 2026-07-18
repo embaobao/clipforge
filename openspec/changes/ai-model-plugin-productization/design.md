@@ -105,6 +105,20 @@ type CapabilityPolicy = {
 - 日志只记录 provider/profile id、耗时、token 估计、权限裁剪字段，不记录 prompt 全文和模型输出全文。
 - Provider health check 异步执行，不阻塞面板打开。
 
+### 2.5 Provider 失败降级
+
+Provider 失败必须按“只降级模型能力，不降级剪贴板主路径”的原则处理：
+
+| 失败类型 | UI 状态 | 降级策略 | 不允许影响 |
+|---------|---------|----------|------------|
+| 未配置 provider | 模型动作显示未配置 | 引导到设置页模型配置，不自动弹窗 | 面板打开、搜索、复制、详情查看 |
+| health check 失败 | 动作显示 reconnect / failed | 使用同 purpose 的下一个可用 profile；没有可用项则禁用模型动作 | 历史采集、滚动、选中、删除 |
+| 网络 provider 超时 | 当前 run 显示 timeout | 可切到本地 profile 或 CLI fallback；保留用户输入 | 基础编辑、tag 手动编辑 |
+| policy 拒绝 | 显示策略解释 | 不重试网络调用，返回 `permissionDecision=denied` | 同一页面其他普通动作 |
+| Tiptap AI 失败 | 回落到紧凑编辑 | 保留当前 draft，禁用富文本 AI 菜单 | `CompactClipEditor` 保存和复制 |
+
+模型调用链必须在 trace 中记录降级前后的 provider/profile id、失败类型、耗时、permission decision 和 redacted fields，但不能记录 prompt/output 全文。
+
 ## 3. 配置好模型后的默认 AI 能力
 
 第一版“配置完成即可用”的标准能力：
@@ -119,7 +133,7 @@ type CapabilityPolicy = {
 | 格式修复 | 详情页 / 插件动作 | JSON/Markdown/code/command | content patch | preview 后应用 |
 | 模板生成 | Agent 页 / 插件动作 | 引用集合、用户指令 | newClipDraft | 用户保存后入库 |
 | 命令解释 | 详情页 | shell command/code/error | renderPanel | 不自动执行 |
-| 插件草稿生成 | Agent 页 | 用户描述、上下文 | plugin draft | 用户确认、校验后保存 |
+| 插件草稿生成 | Agent 页 | 用户描述、上下文 | newClipDraft（disabled manifest 草稿） | 用户确认、校验后保存 |
 
 写入统一收敛到：
 
@@ -138,7 +152,7 @@ type AIOutput =
 详情页编辑分两层：
 
 1. `CompactClipEditor` 是基础能力：纯文本、Markdown 原文、代码、命令、tag、保存回填、AI patch preview。
-2. `TiptapClipEditor` 是富文本增强：HTML/Markdown 富文本编辑、选区工具、编辑器内 AI 菜单、Content AI / AI Toolkit 集成。
+2. `TiptapClipEditor` 是懒加载富文本增强：HTML/Markdown 富文本编辑、选区工具、编辑器内 AI 菜单、Content AI / AI Toolkit 集成。
 
 Tiptap 失败、未授权、未安装或 provider 不可用时，详情页必须自动退回紧凑编辑能力。
 
@@ -150,7 +164,7 @@ Tiptap 失败、未授权、未安装或 provider 不可用时，详情页必须
 - 插入段落、标题、列表、引用等结构化编辑。
 - 富文本 HTML 的局部 patch preview。
 - 编辑器内 slash command 或 floating menu 式 AI 动作。
-- 将 Tiptap tool calls 映射到 ClipForge 的 `editor.preview_patch`。
+- 将 Tiptap tool calls 映射到 ClipForge 的 `clipboard.editor.preview_patch`。
 
 不适合交给 Tiptap 的能力：
 
@@ -187,11 +201,45 @@ type EditorAIToolBridge = {
 };
 ```
 
-### 4.4 Markdown 策略
+### 4.4 Tiptap 上下文与 tool call 边界
+
+Tiptap selection 只允许转换为受控的 `EditorContextSnapshot`：
+
+```ts
+type EditorContextSnapshot = {
+  sessionId: string;
+  clipId: string;
+  editorMode: "compact" | "tiptap";
+  selectionText?: string;
+  selectionRange?: { from: number; to: number };
+  documentSummary?: string;
+  metadata: {
+    contentKind: "text" | "markdown" | "html" | "code" | "command";
+    tags: string[];
+    language?: string;
+  };
+  redactedFields: string[];
+};
+```
+
+默认只读取 selection、metadata 和摘要；读取全文需要 `CapabilityPolicy.allowFullClipText=true`，读取文件或图片内容需要独立授权。Tiptap tool call 必须映射到 `clipboard.editor.preview_patch`，不能直接调用 `apply_patch`、数据库写入或系统剪贴板写回。
+
+### 4.5 Markdown 策略
 
 - 第一阶段：Markdown 仍以源码编辑为准，避免 ProseMirror 往返破坏原文。
 - 富文本阶段：用户显式切换到富文本模式后，才进行 Markdown -> HTML/ProseMirror -> Markdown 或 HTML 的转换。
 - AI patch 必须展示“将从源 Markdown 改成什么”，不能只展示富文本视觉结果。
+
+### 4.6 Tiptap 失败 UI
+
+Tiptap 或 Tiptap AI 不可用时，详情页显示以下状态之一：
+
+- `unconfigured`：富文本 AI provider 未配置，显示设置入口，紧凑编辑保持可用。
+- `unauthorized`：授权失败，显示重新授权动作，禁止自动重试。
+- `loading-failed`：编辑器 bundle 或 provider 加载失败，回落到 `CompactClipEditor`。
+- `policy-disabled`：企业或本地策略禁用，展示策略解释。
+
+这些状态只影响富文本增强入口，不改变详情页查看、复制、tag 手动编辑、Markdown 源码编辑和保存回填。
 
 ## 5. 插件体系总模型
 
@@ -256,6 +304,8 @@ type ClipForgePluginManifestV2 = ClipForgePluginManifest & {
 };
 ```
 
+权限扩大检测需要比较旧 manifest 和新 manifest 的 runtime、tools、AI profile、network / file / command / full-content 权限、product tier 和 enterprise controllable 字段。任何新增 `agent`、`model-provider`、`script`、`command execution`、`full clip text`、`file content` 或远程 MCP 权限，都必须进入用户确认或企业策略审批，不能静默启用。
+
 ### 5.3 Agent 作为插件能力
 
 Agent 不再被建模为独立平台，而是插件 capability：
@@ -306,23 +356,25 @@ flowchart LR
 
 标准 MCP tools 建议分层：
 
-| Tool | 说明 |
-|------|------|
-| `clipboard.context.get` | 读取单条脱敏上下文 |
-| `clipboard.context.compose` | 按引用集合组合上下文 |
-| `clipboard.content.parse` | 智能解析可复制、可打开、可提取目标 |
-| `clipboard.editor.context` | 读取当前编辑器 session |
-| `clipboard.editor.preview_patch` | 生成编辑器 patch 预览 |
-| `clipboard.editor.apply_patch` | 用户确认后应用 patch |
-| `clipboard.ai.run` | 调用已配置模型 profile，返回受控输出 |
-| `clipboard.agent.run` | 调用 Agent plugin/provider，返回 run events |
-| `clipboard.plugin.list` | 列出可用插件和权限 |
-| `clipboard.plugin.call` | 调用插件，返回 preview/output |
-| `clipboard.plugin.draft.create` | 创建插件草稿，不自动启用 |
-| `clipboard.model.list` | 列出可用 profile，不返回 secret |
-| `clipboard.policy.explain` | 解释某次能力调用为什么被允许/拒绝 |
+| Tool | 读写级别 | 确认策略 | 后台调用策略 | 说明 |
+|------|----------|----------|--------------|------|
+| `clipboard.context.get` | 只读 | 不需要确认，但默认脱敏 | 允许 | 读取单条脱敏上下文 |
+| `clipboard.context.compose` | 只读 | 多条或全文需要确认 | 受 policy 限制 | 按引用集合组合上下文 |
+| `clipboard.content.parse` | 只读 | 不需要确认 | 允许 | 智能解析可复制、可打开、可提取目标 |
+| `clipboard.editor.context` | 只读 | selection 不需要确认，全文需要确认 | 只允许当前用户可见 session | 读取当前编辑器 session |
+| `clipboard.editor.preview_patch` | 生成预览 | 不写入，但必须显示 preview | 允许生成，不允许应用 | 生成编辑器 patch 预览 |
+| `clipboard.editor.apply_patch` | 写入草稿/历史 | 必须用户确认 | 拒绝后台调用 | 用户确认后应用 patch |
+| `clipboard.ai.run` | 生成受控输出 | 取决于输入范围和 output kind | 禁止静默写入 | 调用已配置模型 profile，返回受控输出 |
+| `clipboard.agent.run` | 生成 run events / output | 工具调用和写入必须确认 | 长任务需要显式 run | 调用 Agent plugin/provider |
+| `clipboard.plugin.list` | 只读 | 不需要确认 | 允许 | 列出可用插件和权限 |
+| `clipboard.plugin.call` | 取决于插件 | 按 manifest 和 policy 决定 | 禁止绕过 preview | 调用插件，返回 preview/output |
+| `clipboard.plugin.draft.create` | 创建禁用草稿 | 保存草稿需要确认 | 允许生成，不允许启用 | 创建插件草稿，不自动启用 |
+| `clipboard.model.list` | 只读 | 不需要确认 | 允许 | 列出可用 profile，不返回 secret |
+| `clipboard.policy.explain` | 只读 | 不需要确认 | 允许 | 解释某次能力调用为什么被允许/拒绝 |
 
 外部工具面只返回结构化结果，不直接操作 React/Tiptap instance。
+
+所有 MCP 工具返回值必须包含 `traceId`、`businessChain`、`redactedFields`、`permissionDecision`。涉及模型、Agent、插件或编辑器 patch 的工具还必须包含 `outputKind`、`confirmationState` 和 provider/plugin 标识；被拒绝时返回可读解释而不是抛出会中断主流程的错误。
 
 ## 7. 标品化方案
 
@@ -359,6 +411,31 @@ type ProductCapabilityGate = {
 - 开发者版启用插件草稿、脚本插件、MCP 扩展。
 - 团队版启用统一策略、审计、签名和禁用列表。
 
+### 7.3 设置页映射
+
+模型 provider/profile 配置后续映射到 `settings-interface-redesign` 的信息架构：
+
+| 设置分区 | 配置内容 | 默认控件 |
+|----------|----------|----------|
+| Integration / Models | provider 列表、profile purpose、health 状态 | 列表 + 状态徽标 + 连接测试动作 |
+| Integration / Agent | Agent provider、CLI adapter、allowed tools | Code Tabs + 只读 schema 预览 + 显式授权按钮 |
+| Privacy / Policy | network model、full text、file content、tool calling、command execution | Switch / segmented control / danger confirmation |
+| Diagnostics | trace redaction、provider health、policy explain | Status Panel + 导出排查包 |
+| Product Capabilities | Core、AI Edit、Agent Clip、Plugin Builder、Local Privacy、Team Governance | capability gate 列表 + disabled reason |
+
+React 设置页只能展示 redacted provider/profile 摘要；新增、编辑、删除 secret 必须通过 Tauri command 进入原生安全存储，不写入 localStorage。
+
+### 7.4 产品包能力边界
+
+- Core Clipboard：历史、搜索、详情查看、紧凑编辑、复制、删除、收藏、tag 手动编辑；不依赖模型或网络。
+- AI Edit Pack：模型配置、摘要、改写、翻译、标签建议、结构化提取、格式修复、Tiptap AI 增强；所有写入必须 preview/confirm。
+- Agent Clip Pack：Agent 页、引用集合、CLI Agent、Agent plugin、run events 和结果保存；失败只降级 Agent 能力。
+- Plugin Builder Pack：插件草稿、manifest V2 校验、脚本插件、MCP 插件、声明式面板；新插件默认 disabled draft。
+- Local Privacy Pack：本地模型、本地 CLI、本地 provider 优先、网络 provider 禁用策略、敏感字段裁剪。
+- Team Governance Pack：provider allowlist、插件签名、策略下发、审计、kill switch、禁用 network model / script plugin / command execution。
+
+第一版只实现 `ProductCapabilityGate` 和策略解释的产品边界，不实现价格、订阅、支付或远程 license 校验。
+
 ## 8. 安全与隐私
 
 必须默认成立：
@@ -382,4 +459,3 @@ type ProductCapabilityGate = {
 8. Tiptap 富文本保存格式第一版选择 HTML、Markdown，还是双 representation。
 9. 插件市场是否完全排除在第一阶段，还是只保留本地 manifest import/export。
 10. 需要支持哪些“标品模板”：日志分析、JSON 修复、Issue 生成、邮件改写、翻译、文章摘要、代码解释。
-

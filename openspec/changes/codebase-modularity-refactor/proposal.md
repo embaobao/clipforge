@@ -2,7 +2,7 @@
 
 ## 优先级
 
-横切（与功能提案并行，不独占优先级序列）。最早的两块拆分（lib.rs settings 模块、前端 settings 组件）直接服务 [settings-service-unified-protocol](../settings-service-unified-protocol/proposal.md) 和 [settings-interface-redesign](../settings-interface-redesign/proposal.md)，应先于或并行于它们推进。
+后置治理（不抢占功能开发优先级）。已有文件大小门禁和中文注释规则继续作为开发约束生效；后续校验脚本升级、模块化拆分和豁免清理，随 [settings-service-unified-protocol](../settings-service-unified-protocol/proposal.md)、[settings-interface-redesign](../settings-interface-redesign/proposal.md) 等功能任务触碰相关文件时顺手推进，不作为近期多 Agent 功能开发主线。
 
 ## 背景
 

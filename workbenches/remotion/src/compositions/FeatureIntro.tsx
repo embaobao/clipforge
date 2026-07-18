@@ -9,6 +9,7 @@ import {
 } from "remotion";
 import logo from "../../../../assets/brand/clipforge-logo-horizontal.png";
 import appScreen from "../../../../.codex-screenshots/clipforge-screen-main.png";
+import { defaultClipForgeScene } from "../scenes";
 
 const clamp = {
   extrapolateLeft: "clamp" as const,
@@ -16,15 +17,10 @@ const clamp = {
   easing: Easing.bezier(0.16, 1, 0.3, 1),
 };
 
-const features = [
-  { label: "快速唤起", detail: "Control+V 打开剪贴板面板" },
-  { label: "即时搜索", detail: "历史、收藏、片段一起筛选" },
-  { label: "复制回写", detail: "选中内容马上回到系统剪贴板" },
-];
-
 export const FeatureIntro = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const scene = defaultClipForgeScene;
   const entrance = interpolate(frame, [0, fps * 1.2], [0, 1], clamp);
   const screenLift = interpolate(frame, [28, 82], [80, 0], clamp);
   const screenOpacity = interpolate(frame, [18, 48], [0, 1], clamp);
@@ -55,8 +51,8 @@ export const FeatureIntro = () => {
               translate: `0 ${interpolate(frame, [10, 54], [34, 0], clamp)}px`,
             }}
           >
-            复制、搜索、回写
-            <span>都更快</span>
+            {scene.intro.headline[0]}
+            <span>{scene.intro.headline[1]}</span>
           </h1>
           <p
             style={{
@@ -64,7 +60,7 @@ export const FeatureIntro = () => {
               translate: `0 ${interpolate(frame, [36, 72], [20, 0], clamp)}px`,
             }}
           >
-            ClipForge 把剪贴板历史变成一个低打扰的快速工作面板。
+            {scene.intro.body}
           </p>
         </section>
 
@@ -92,7 +88,7 @@ export const FeatureIntro = () => {
 
       <Sequence from={72} durationInFrames={104} layout="none">
         <div className="feature-rail">
-          {features.map((feature, index) => {
+          {scene.featureScenarios.map((feature, index) => {
             const local = frame - 72 - index * 18;
             return (
               <article
@@ -118,8 +114,8 @@ export const FeatureIntro = () => {
           scale: interpolate(frame, [188, 224], [0.98, 1], clamp),
         }}
       >
-        <span>快速剪贴板工具</span>
-        <strong>少打断，多完成</strong>
+        <span>{scene.intro.label}</span>
+        <strong>{scene.intro.tagline}</strong>
       </div>
     </AbsoluteFill>
   );

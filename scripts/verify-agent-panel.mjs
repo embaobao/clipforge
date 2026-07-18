@@ -7,6 +7,7 @@ const appPath = path.join(root, "src/App.tsx");
 const agentPath = path.join(root, "src/agent-panel.tsx");
 const agentChatPath = path.join(root, "src/agent-chat-page.tsx");
 const contractsPath = path.join(root, "src/services/contracts.ts");
+const settingsServicePath = path.join(root, "src/services/settings.ts");
 const cssPath = path.join(root, "src/App.css");
 const rustPath = path.join(root, "src-tauri/src/lib.rs");
 const iconPath = path.join(root, "assets/brand/icons/256/agent-access.png");
@@ -20,6 +21,18 @@ function assert(condition, message) {
     console.error(`Agent panel verification failed: ${message}`);
     process.exitCode = 1;
   }
+}
+
+// 反向断言比 data-marker 断言更脆弱，保留时必须写清楚禁止原因。
+function assertDoesNotInclude(source, token, message, rationale) {
+  assert(!source.includes(token), `${message}；反向断言原因：${rationale}`);
+}
+
+function sectionBetween(source, startToken, endToken) {
+  const start = source.indexOf(startToken);
+  if (start < 0) return "";
+  const end = source.indexOf(endToken, start + startToken.length);
+  return end < 0 ? source.slice(start) : source.slice(start, end);
 }
 
 function checkLocalAgentCli(command) {
@@ -42,8 +55,10 @@ function checkLocalAgentCli(command) {
 const app = read(appPath);
 const agent = `${read(agentPath)}\n${read(agentChatPath)}`;
 const contracts = read(contractsPath);
+const settingsService = read(settingsServicePath);
 const css = read(cssPath);
 const rust = read(rustPath);
+const panelNativePath = sectionBetween(rust, "fn open_panel", "/// 面板「固定」状态");
 
 ["claude", "codex", "qwen"].forEach(checkLocalAgentCli);
 
@@ -51,24 +66,34 @@ assert(fs.existsSync(iconPath), "agent access icon asset is missing");
 assert(fs.statSync(iconPath).size > 1024, "agent access icon asset looks empty");
 assert(app.includes("agentAccessIcon"), "App does not import/use the Agent access icon");
 assert(app.includes('useState<PanelSurface>("clipboard")'), "App does not default to clipboard surface");
-assert(app.includes('className="footer-agent-slot"'), "Agent trigger is not in the bottom-left dock slot");
+assert(
+  app.includes('data-agent-trigger="top-toolbar"') &&
+    app.includes("onClick={onOpenAgent}"),
+  "Agent trigger marker is not wired to the top toolbar open action",
+);
+assert(
+  app.includes('data-agent-overlay={activeSurface === "agent" ? "open" : "closed"}') &&
+    app.includes("data-agent-overlay-panel"),
+  "Agent overlay stable data markers are missing",
+);
 assert(app.includes('className={activeSurface === "agent" ? "agent-overlay open" : "agent-overlay"}'), "Agent panel is not rendered as an overlay");
 assert(app.includes('{activeSurface === "agent" ? (\n            <AgentPanelBoundary'), "Agent panel boundary is mounted before the Agent surface is opened");
 assert(app.includes("<ClipboardAgentPanel"), "Agent panel component is missing from the lazy Agent surface");
 const openAgentBody = app.match(/onOpenAgent=\{\(\) => \{[\s\S]*?\n        \}\}/)?.[0] ?? "";
-assert(openAgentBody.includes('setActiveSurface("agent")'), "Agent footer trigger does not open the overlay synchronously");
-assert(!openAgentBody.includes("invoke(") && !openAgentBody.includes("await "), "Agent footer trigger waits on native work before opening");
+assert(openAgentBody.includes('setActiveSurface("agent")'), "Agent toolbar trigger does not open the overlay synchronously");
+assertDoesNotInclude(openAgentBody, "invoke(", "Agent toolbar trigger waits on native work before opening", "打开 Agent 面板必须同步切 surface，不能等待 Tauri/native 控制面调用");
+assertDoesNotInclude(openAgentBody, "await ", "Agent toolbar trigger waits on async work before opening", "打开 Agent 面板必须在 300ms 内给出可见反馈，不能被异步工作阻塞");
 assert(app.includes("async function saveAgentResultAsClip"), "Agent result save flow is missing");
 assert(app.includes('normalizeTagList([...normalized.tags, "AI"])'), "Saved Agent result does not default to AI tag");
 assert(app.includes('generatedBy: "agent"'), "Saved Agent result does not persist agent provenance");
 const updateClipContentBody = app.match(/async function updateClipContent[\s\S]*?\n  async function/)?.[0] ?? "";
 assert(updateClipContentBody.includes("save_editor_draft"), "Detail editor save flow does not use save_editor_draft");
 assert(updateClipContentBody.includes("tags: tags ? normalizeTagList(tags) : normalizeTagList(item.tags)"), "Ordinary detail save may not preserve user-managed tags");
-assert(!updateClipContentBody.includes('"AI"'), "Ordinary detail save appears to re-add AI tag");
-assert(!app.includes("PanelSurfaceTabs"), "Top Agent tab component still exists");
-assert(!css.includes("panel-surface-tabs"), "Top Agent tab styles still exist");
-assert(!app.includes("{activeSurface === \"clipboard\" ? (\n          <GlassSearchBar"), "Search bar is still gated by Agent surface state");
-assert(!app.includes('resetKey={`${activeSurface}:workspace'), "Workspace route is still remounted by Agent surface state");
+assertDoesNotInclude(updateClipContentBody, '"AI"', "Ordinary detail save appears to re-add AI tag", "用户手动移除 AI tag 后，普通保存不得自动加回");
+assertDoesNotInclude(app, "PanelSurfaceTabs", "Top Agent tab component still exists", "Agent 已改为 overlay surface，顶部 tab 会重新占用主面板空间");
+assertDoesNotInclude(css, "panel-surface-tabs", "Top Agent tab styles still exist", "旧顶部 tab 样式残留会让已移除的导航形态回流");
+assertDoesNotInclude(app, "{activeSurface === \"clipboard\" ? (\n          <GlassSearchBar", "Search bar is still gated by Agent surface state", "搜索栏必须属于剪贴板主路径，不应被 Agent surface 条件挂载影响焦点");
+assertDoesNotInclude(app, 'resetKey={`${activeSurface}:workspace', "Workspace route is still remounted by Agent surface state", "切换 Agent overlay 不应重挂 workspace 路由或丢失详情/滚动状态");
 assert(agent.includes('action.type === "copyResult"') && agent.includes("onCopyResult(text)"), "Agent copy result action is not wired");
 assert(agent.includes('action.type === "saveAsClip"') && agent.includes("onSaveResult(text"), "Agent save result action is not wired");
 assert(agent.includes('action.type === "favoriteSourceClip"') && agent.includes("onFavoriteClip(sourceClip)"), "Agent favorite source action is not wired");
@@ -90,9 +115,32 @@ assert(agent.includes('onAttachScope(item.scope)') && agent.includes("const atta
 assert(agent.includes("allowFullContentForRun"), "Agent full-content run authorization state is missing");
 assert(agent.includes('type AgentPermissionMode = "metadata" | "summary" | "content"'), "Agent permission mode configuration is missing");
 assert(agent.includes("suggestedPromptsForClip"), "Agent default suggested prompts are missing");
-assert(agent.includes('invoke<AgentProviderReadiness>("agent_check_provider"'), "Agent provider prewarm check is missing");
-assert(!agent.includes("agent-provider-details"), "Agent provider detail row should stay hidden from the compact Agent panel");
-assert(!agent.includes("agent-permission-strip"), "Agent permission segmented strip should stay hidden from the compact Agent panel");
+assert(agent.includes("await settingsService.agent.check(providerId)"), "Agent provider prewarm check is not routed through settingsService");
+assert(agent.includes("providerCheckSeq") && agent.includes("providerModelsSeq"), "Agent provider check/models do not guard stale async results");
+assert(
+  agent.includes('status: "checking"') &&
+    agent.indexOf('status: "checking"') < agent.indexOf("await settingsService.agent.check(providerId)"),
+  "Agent provider check does not publish checking state before awaiting network/native work",
+);
+assert(
+  agent.includes('status: "loading"') &&
+    agent.indexOf('status: "loading"') < agent.indexOf("await settingsService.agent.models(providerId)"),
+  "Agent provider models does not publish loading state before awaiting network/native work",
+);
+assert(
+  settingsService.includes("AGENT_OPERATION_TIMEOUT_MS") &&
+    settingsService.includes("withTimeout") &&
+    settingsService.includes('"agent.check"') &&
+    settingsService.includes('"agent.models"'),
+  "Agent provider check/models are not wrapped with a bounded timeout in settingsService",
+);
+assert(
+  agent.includes('status: isTimeout ? "health-timeout" : "check-failed"') &&
+    agent.includes('status: isTimeout ? "models-timeout" : "models-failed"'),
+  "Agent provider timeout/error states are not surfaced without blocking the panel",
+);
+assertDoesNotInclude(agent, "agent-provider-details", "Agent provider detail row should stay hidden from the compact Agent panel", "紧凑面板中 provider 详情属于设置面控制项，会挤压对话主路径");
+assertDoesNotInclude(agent, "agent-permission-strip", "Agent permission segmented strip should stay hidden from the compact Agent panel", "权限模式选择已收敛到受控运行态，常驻 strip 会增加主交互噪声");
 assert(agent.includes('clip.payloadKind === "file" || clip.payloadKind === "image" || source === "skill-context"'), "File/image/skill references are not metadata-only by default");
 assert(agent.includes("allowFullContent: allowFullContentForRun"), "Agent run does not carry the single-run full-content authorization");
 assert(agent.includes("getMentionQuery(input)") && agent.includes("referenceCandidates"), "Agent references should be driven by @ mention autocomplete");
@@ -139,12 +187,12 @@ assert(css.includes(".agent-overlay.open"), "Agent overlay open style is missing
 assert(css.includes("transform: translateY(0) scale(1)"), "Agent overlay enter animation is missing");
 assert(css.includes(".agent-access-icon"), "Agent icon style is missing");
 assert(css.includes(".agent-run-confirmation"), "Agent command confirmation style is missing");
-assert(!agent.includes("agent-reference-empty"), "Agent empty reference pill should not render in the compact composer");
-assert(!agent.includes("agent-suggestion-strip"), "Agent default suggested prompts should not render before the user types");
-assert(!css.includes(".agent-reference-empty"), "Agent empty reference pill style should not remain");
-assert(!css.includes(".agent-suggestion-strip"), "Agent suggested prompt strip style should not remain in the compact composer");
-assert(!css.includes(".agent-permission-strip"), "Agent permission mode strip style should not be present in the compact Agent panel");
-assert(!css.includes(".agent-provider-details"), "Agent provider detail style should not be present in the compact Agent panel");
+assertDoesNotInclude(agent, "agent-reference-empty", "Agent empty reference pill should not render in the compact composer", "空引用 pill 会在无上下文时制造无效控件并压缩输入框");
+assertDoesNotInclude(agent, "agent-suggestion-strip", "Agent default suggested prompts should not render before the user types", "默认提示条不应抢占紧凑 composer 首屏空间");
+assertDoesNotInclude(css, ".agent-reference-empty", "Agent empty reference pill style should not remain", "组件移除后样式残留会误导后续拆分判断");
+assertDoesNotInclude(css, ".agent-suggestion-strip", "Agent suggested prompt strip style should not remain in the compact composer", "组件移除后样式残留会让紧凑 composer 回退到旧布局");
+assertDoesNotInclude(css, ".agent-permission-strip", "Agent permission mode strip style should not be present in the compact Agent panel", "权限 strip 已退出紧凑面板，样式残留会鼓励重新挂载");
+assertDoesNotInclude(css, ".agent-provider-details", "Agent provider detail style should not be present in the compact Agent panel", "provider 详情属于设置面，样式残留会鼓励重新挂载");
 assert(css.includes("grid-template-columns: minmax(0, 1fr) 34px"), "Agent compact composer should only keep input plus send button");
 assert(css.includes(".agent-reference-scope-grid"), "Agent reference scope grid style is missing");
 assert(css.includes(".agent-message-scroller-provider"), "Agent message scroller provider style is missing");
@@ -178,6 +226,27 @@ assert(rust.includes('"chunkLength": line.chars().count()'), "Rust Agent output 
 assert(rust.includes("fn agent_agui_event_parts"), "Rust AG-UI to message part mapper is missing");
 assert(rust.includes('app.emit("agent_agui_event"'), "Rust does not emit agent_agui_event");
 assert(rust.includes('app.emit("agent_ui_message"'), "Rust no longer emits derived agent_ui_message");
+assert(panelNativePath.includes("fn open_panel"), "Panel native open path is missing from verification slice");
+assert(panelNativePath.includes("fn hide_panel"), "Panel native hide path is missing from verification slice");
+assert(panelNativePath.includes("fn toggle_quick_panel"), "Panel native toggle path is missing from verification slice");
+assertDoesNotInclude(
+  panelNativePath,
+  "agent_detect",
+  "Panel open/hide/toggle path calls Agent detect",
+  "Agent detect 超时不得影响主面板定位、隐藏或再次唤起",
+);
+assertDoesNotInclude(
+  panelNativePath,
+  "agent_check_provider",
+  "Panel open/hide/toggle path calls provider check",
+  "provider 健康检查属于 Agent 面板控制面，不得进入主面板热路径",
+);
+assertDoesNotInclude(
+  panelNativePath,
+  "settings_service",
+  "Panel open/hide/toggle path calls Settings Service",
+  "主面板热路径不得等待设置服务或 provider 控制面",
+);
 
 if (!process.exitCode) {
   console.log("Agent panel verification passed");

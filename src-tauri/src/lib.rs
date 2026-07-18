@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+#[cfg(debug_assertions)]
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -21,8 +22,16 @@ use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_updater::UpdaterExt;
 
 mod clipboard;
+mod settings_service;
+
+use settings_service::{
+    merge_settings_patch, prepare_patch as prepare_settings_patch,
+    prepare_replace as prepare_settings_replace, prepare_reset as prepare_settings_reset,
+    settings_changed_paths, settings_revision,
+};
 
 fn command_error(code: &str, detail: impl AsRef<str>) -> String {
     format!("{}: {}", code, detail.as_ref())
@@ -46,7 +55,10 @@ fn preserve_command_error(default_code: &str, error: String) -> String {
 }
 
 #[cfg(target_os = "macos")]
-use tauri_nspanel::objc2_app_kit::{NSResponder, NSWindow as AppKitNSWindow};
+use tauri_nspanel::objc2_app_kit::{
+    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSResponder,
+    NSRunningApplication, NSWindow as AppKitNSWindow,
+};
 #[cfg(target_os = "macos")]
 use tauri_nspanel::{
     tauri_panel, CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt,
@@ -269,6 +281,11 @@ static PANEL_LAST_POSITION: std::sync::OnceLock<Arc<Mutex<Option<NormalizedPosit
     std::sync::OnceLock::new();
 static POSITION_DEBOUNCE: std::sync::OnceLock<Arc<Mutex<Option<std::time::Instant>>>> =
     std::sync::OnceLock::new();
+#[cfg(debug_assertions)]
+static DEV_QUICK_PROBE_TARGET_READY: AtomicBool = AtomicBool::new(false);
+#[cfg(debug_assertions)]
+static DEV_QUICK_PROBE_TARGET_BUNDLE_CACHE: std::sync::OnceLock<Arc<Mutex<String>>> =
+    std::sync::OnceLock::new();
 
 fn focus_bounds_cache() -> Arc<Mutex<CachedFocusBounds>> {
     FOCUS_BOUNDS_CACHE
@@ -284,6 +301,13 @@ fn paste_target_bounds_cache() -> Arc<Mutex<CachedFocusBounds>> {
 
 fn paste_target_app_bundle_cache() -> Arc<Mutex<String>> {
     PASTE_TARGET_APP_BUNDLE_CACHE
+        .get_or_init(|| Arc::new(Mutex::new(String::new())))
+        .clone()
+}
+
+#[cfg(debug_assertions)]
+fn dev_quick_probe_target_bundle_cache() -> Arc<Mutex<String>> {
+    DEV_QUICK_PROBE_TARGET_BUNDLE_CACHE
         .get_or_init(|| Arc::new(Mutex::new(String::new())))
         .clone()
 }
@@ -1046,6 +1070,9 @@ fn paste_prepared_clipboard<R: tauri::Runtime>(
             ),
         );
     }
+    #[cfg(debug_assertions)]
+    verify_dev_quick_probe_paste_target()
+        .map_err(|error| format!("quick probe paste target verification failed: {error}"))?;
     match simulate_platform_paste() {
         Ok(simulation_details) => {
             log_to_file(
@@ -2270,8 +2297,7 @@ fn spawn_agent_output_reader<R, T>(
     });
 }
 
-#[tauri::command]
-fn agent_get_config() -> Result<AgentConfigPayload, String> {
+fn settings_service_resolve_agent_config() -> Result<AgentConfigPayload, String> {
     let providers = provider_configs_with_readiness(false);
     let default_provider_id = configured_default_agent_provider_id();
     let active_provider_id = default_provider_id
@@ -2285,6 +2311,11 @@ fn agent_get_config() -> Result<AgentConfigPayload, String> {
         providers,
         tools: agent_tool_descriptors(),
     })
+}
+
+#[tauri::command]
+fn agent_get_config() -> Result<AgentConfigPayload, String> {
+    settings_service_resolve_agent_config()
 }
 
 #[tauri::command]
@@ -2323,13 +2354,6 @@ fn log_slow_settings_operation(operation: &str, duration_ms: i64) {
     }
 }
 
-fn settings_revision(settings: &Value) -> String {
-    let serialized = serde_json::to_string(settings).unwrap_or_else(|_| settings.to_string());
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    serialized.hash(&mut hasher);
-    format!("rev_{:016x}", hasher.finish())
-}
-
 fn redact_settings_value(value: &Value) -> Value {
     let mut redacted = value.clone();
     // 抹掉明文 apiKey（B7）：schema 同时接受新结构 agent.providers[] 和 legacy 顶层 agentProviders[]，
@@ -2360,73 +2384,6 @@ fn redact_provider_api_key(provider: &mut Value) {
                 "apiKey".to_string(),
                 Value::String("[redacted]".to_string()),
             );
-        }
-    }
-}
-
-fn collect_changed_paths(previous: &Value, next: &Value, path: &str, out: &mut Vec<String>) {
-    if previous == next {
-        return;
-    }
-    match (previous.as_object(), next.as_object()) {
-        (Some(previous_object), Some(next_object)) => {
-            let mut keys = previous_object.keys().collect::<Vec<_>>();
-            for key in next_object.keys() {
-                if !previous_object.contains_key(key) {
-                    keys.push(key);
-                }
-            }
-            keys.sort();
-            keys.dedup();
-            for key in keys {
-                let next_path = if path == "$" {
-                    format!("$.{key}")
-                } else {
-                    format!("{path}.{key}")
-                };
-                collect_changed_paths(
-                    previous_object.get(key).unwrap_or(&Value::Null),
-                    next_object.get(key).unwrap_or(&Value::Null),
-                    &next_path,
-                    out,
-                );
-            }
-        }
-        _ => out.push(path.to_string()),
-    }
-}
-
-fn settings_changed_paths(previous: &Value, next: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_changed_paths(previous, next, "$", &mut out);
-    if out.is_empty() {
-        vec![]
-    } else {
-        out
-    }
-}
-
-fn merge_settings_patch(base: &mut Value, patch: &Value) {
-    if !base.is_object() || !patch.is_object() {
-        *base = patch.clone();
-        return;
-    }
-    let Some(base_object) = base.as_object_mut() else {
-        return;
-    };
-    let Some(patch_object) = patch.as_object() else {
-        return;
-    };
-    for (key, value) in patch_object {
-        if value.is_null() {
-            base_object.remove(key);
-        } else if value.is_object() {
-            let entry = base_object
-                .entry(key.clone())
-                .or_insert_with(|| Value::Object(Default::default()));
-            merge_settings_patch(entry, value);
-        } else {
-            base_object.insert(key.clone(), value.clone());
         }
     }
 }
@@ -2731,21 +2688,6 @@ fn settings_reset_public(scope: Option<String>, confirmed: Option<bool>) -> Resu
     public_settings_payload(true)
 }
 
-fn ensure_expected_settings_revision(
-    settings: &Value,
-    expected_revision: Option<&str>,
-) -> Result<String, String> {
-    let revision = settings_revision(settings);
-    if let Some(expected_revision) = expected_revision {
-        if !expected_revision.trim().is_empty() && expected_revision != revision {
-            return Err(format!(
-                "SETTINGS_REVISION_CONFLICT: expected {expected_revision}, current {revision}; get latest settings before retrying"
-            ));
-        }
-    }
-    Ok(revision)
-}
-
 fn emit_settings_changed<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     previous_revision: String,
@@ -2785,6 +2727,36 @@ fn settings_write_response(
     Ok(payload)
 }
 
+fn refresh_tray_menu_after_settings_write<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    reason: &str,
+) {
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        match build_tray_menu(app) {
+            Ok(menu) => {
+                if let Err(error) = tray.set_menu(Some(menu)) {
+                    log_to_file(
+                        "warn",
+                        "tray",
+                        &format!("set_menu after settings write failed reason={reason}: {error}"),
+                    );
+                } else {
+                    log_to_file(
+                        "info",
+                        "tray",
+                        &format!("rebuilt menu after settings write reason={reason}"),
+                    );
+                }
+            }
+            Err(error) => log_to_file(
+                "warn",
+                "tray",
+                &format!("rebuild menu after settings write failed reason={reason}: {error}"),
+            ),
+        }
+    }
+}
+
 #[tauri::command]
 fn settings_service_get(include_schema: Option<bool>) -> Result<Value, String> {
     // 记录耗时（B6）：300ms 是控制面操作的硬预算，超限写 log 便于回归追踪。
@@ -2810,13 +2782,13 @@ fn settings_service_patch<R: tauri::Runtime>(
         .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
     validate_settings_patch(&patch)?;
     let previous = read_user_settings()?.settings;
-    let previous_revision =
-        ensure_expected_settings_revision(&previous, expected_revision.as_deref())?;
-    let mut next = previous.clone();
-    merge_settings_patch(&mut next, &patch);
-    let changed_paths = settings_changed_paths(&previous, &next);
+    let draft = prepare_settings_patch(&previous, &patch, expected_revision.as_deref())?;
+    let previous_revision = draft.previous_revision;
+    let changed_paths = draft.changed_paths;
+    let next = draft.next;
     write_user_settings(next.clone())?;
     sync_global_shortcut_registration(&app);
+    refresh_tray_menu_after_settings_write(&app, "settings-service-patch");
     let updated_at = now_millis()?;
     let revision = settings_revision(&next);
     emit_settings_changed(
@@ -2863,13 +2835,15 @@ fn settings_service_replace<R: tauri::Runtime>(
         .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
     validate_settings_patch(&settings)?;
     let previous = read_user_settings()?.settings;
-    let previous_revision =
-        ensure_expected_settings_revision(&previous, expected_revision.as_deref())?;
-    let changed_paths = settings_changed_paths(&previous, &settings);
-    write_user_settings(settings.clone())?;
+    let draft = prepare_settings_replace(&previous, settings, expected_revision.as_deref())?;
+    let previous_revision = draft.previous_revision;
+    let changed_paths = draft.changed_paths;
+    let next = draft.next;
+    write_user_settings(next.clone())?;
     sync_global_shortcut_registration(&app);
+    refresh_tray_menu_after_settings_write(&app, "settings-service-replace");
     let updated_at = now_millis()?;
-    let revision = settings_revision(&settings);
+    let revision = settings_revision(&next);
     emit_settings_changed(
         &app,
         previous_revision.clone(),
@@ -2889,7 +2863,7 @@ fn settings_service_replace<R: tauri::Runtime>(
             changed_paths.join(",")
         ),
     );
-    let mut response = settings_write_response(settings, previous_revision, changed_paths, true)?;
+    let mut response = settings_write_response(next, previous_revision, changed_paths, true)?;
     let duration_ms = started.elapsed().as_millis() as i64;
     response["durationMs"] = json!(duration_ms);
     log_slow_settings_operation("replace", duration_ms);
@@ -2918,94 +2892,13 @@ fn settings_service_reset<R: tauri::Runtime>(
         "SETTINGS_RESET_REQUIRES_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags".to_string()
     })?;
     let previous = read_user_settings()?.settings;
-    let previous_revision =
-        ensure_expected_settings_revision(&previous, expected_revision.as_deref())?;
-    let mut next = previous.clone();
-    match scope.as_str() {
-        "all" => next = json!({}),
-        "agent" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("agent");
-                object.remove("agentProviders");
-            }
-        }
-        "shortcuts" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("globalShortcut");
-            }
-        }
-        "display" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "panelDensity",
-                    "contentDisplayMode",
-                    "positionStrategy",
-                    "panelBackgroundOpacity",
-                    "enableScrollCollapse",
-                    "panelWidth",
-                    "panelHeight",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "capture" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "captureTextEnabled",
-                    "captureHtmlEnabled",
-                    "captureRtfEnabled",
-                    "captureImageEnabled",
-                    "captureFileEnabled",
-                    "captureSensitiveEnabled",
-                    "imageMaxSizeMb",
-                    "textMaxSizeMb",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "storage" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "quickItemLimit",
-                    "maxStoredItems",
-                    "clipboardPollMs",
-                    "cleanupEnabled",
-                    "cleanupIntervalHours",
-                    "softDeletedRetentionDays",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "logs" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "logMaxSizeMb",
-                    "logKeepRatio",
-                    "logMaxLines",
-                    "logRetentionDays",
-                    "logAutoCleanup",
-                    "logCleanupIntervalMin",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "tags" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("tagMode");
-                object.remove("tagRules");
-            }
-        }
-        _ => {
-            return Err("SETTINGS_RESET_INVALID_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags".to_string());
-        }
-    }
-    let changed_paths = settings_changed_paths(&previous, &next);
+    let draft = prepare_settings_reset(&previous, &scope, expected_revision.as_deref())?;
+    let previous_revision = draft.previous_revision;
+    let changed_paths = draft.changed_paths;
+    let next = draft.next;
     write_user_settings(next.clone())?;
     sync_global_shortcut_registration(&app);
+    refresh_tray_menu_after_settings_write(&app, "settings-service-reset");
     let updated_at = now_millis()?;
     let revision = settings_revision(&next);
     emit_settings_changed(
@@ -3037,7 +2930,11 @@ fn settings_service_reset<R: tauri::Runtime>(
 
 #[tauri::command]
 fn settings_service_agent_providers() -> Result<Value, String> {
-    let config = agent_get_config()?;
+    settings_service_agent_providers_payload()
+}
+
+fn settings_service_agent_providers_payload() -> Result<Value, String> {
+    let config = settings_service_resolve_agent_config()?;
     Ok(json!({
         "activeProviderId": config.active_provider_id,
         "providers": config.providers,
@@ -3529,12 +3426,37 @@ fn init_clip_database() -> Result<DbInitPayload, String> {
 }
 
 #[tauri::command]
-fn check_update() -> Result<UpdateCheckState, String> {
+async fn check_update(app: tauri::AppHandle) -> Result<UpdateCheckState, String> {
     let now = now_millis()?;
     let mut state = base_update_state(now);
-    if let Ok(manifest_path) = std::env::var("CLIPFORGE_UPDATE_MANIFEST") {
-        state = check_update_manifest(&manifest_path, now);
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater init failed: {}", e))?;
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            state.status = "available".to_string();
+            state.available_version = Some(update.version.clone());
+            state.release_notes = update.body.clone();
+            state.last_checked_at = Some(now);
+            state.error_code = None;
+            state.error_message = None;
+        }
+        Ok(None) => {
+            state.status = "latest".to_string();
+            state.last_checked_at = Some(now);
+            state.error_code = None;
+            state.error_message = None;
+        }
+        Err(e) => {
+            state.status = "failed".to_string();
+            state.last_checked_at = Some(now);
+            state.error_code = Some("UPDATE_CHECK_FAILED".to_string());
+            state.error_message = Some(format!("{}", e));
+        }
     }
+
     persist_update_state(&state)?;
     log_to_file(
         "info",
@@ -3564,9 +3486,10 @@ fn get_build_info() -> BuildInfoPayload {
 }
 
 #[tauri::command]
-fn download_update() -> Result<UpdateCheckState, String> {
+async fn download_update(app: tauri::AppHandle) -> Result<UpdateCheckState, String> {
     let now = now_millis()?;
     let mut state = read_update_state().unwrap_or_else(|_| base_update_state(now));
+
     if state.status != "available" {
         state.status = "failed".to_string();
         state.error_code = Some("UPDATE_NOT_AVAILABLE".to_string());
@@ -3575,17 +3498,58 @@ fn download_update() -> Result<UpdateCheckState, String> {
         persist_update_state(&state)?;
         return Ok(state);
     }
-    state.status = "ready".to_string();
-    state.download_progress = Some(1.0);
-    state.error_code = None;
-    state.error_message = None;
-    state.last_checked_at = Some(now);
+
+    let updater = app
+        .updater()
+        .map_err(|e| format!("updater init failed: {}", e))?;
+
+    let check_result = updater.check().await;
+    match check_result {
+        Ok(Some(update)) => {
+            state.status = "downloading".to_string();
+            state.download_progress = Some(0.0);
+            state.last_checked_at = Some(now);
+            persist_update_state(&state)?;
+
+            let install_result: Result<(), tauri_plugin_updater::Error> = update
+                .download_and_install(|_chunk_length, _content_length| {}, || {})
+                .await;
+
+            match install_result {
+                Ok(()) => {
+                    state.status = "ready".to_string();
+                    state.download_progress = Some(1.0);
+                    state.error_code = None;
+                    state.error_message = None;
+                    state.last_checked_at = Some(now_millis().unwrap_or(now));
+                }
+                Err(e) => {
+                    state.status = "failed".to_string();
+                    state.error_code = Some("UPDATE_DOWNLOAD_FAILED".to_string());
+                    state.error_message = Some(format!("{}", e));
+                }
+            }
+        }
+        Ok(None) => {
+            state.status = "latest".to_string();
+            state.download_progress = None;
+            state.error_code = None;
+            state.error_message = None;
+        }
+        Err(e) => {
+            state.status = "failed".to_string();
+            state.error_code = Some("UPDATE_CHECK_FAILED".to_string());
+            state.error_message = Some(format!("{}", e));
+        }
+    }
+
     persist_update_state(&state)?;
     log_to_file(
         "info",
         "update-download",
         &format!(
-            "status=ready version={}",
+            "status={} version={}",
+            state.status,
             state.available_version.as_deref().unwrap_or("")
         ),
     );
@@ -3596,14 +3560,15 @@ fn download_update() -> Result<UpdateCheckState, String> {
 fn install_update() -> Result<UpdateCheckState, String> {
     let now = now_millis()?;
     let mut state = read_update_state().unwrap_or_else(|_| base_update_state(now));
+
     if state.status != "ready" {
         state.status = "failed".to_string();
         state.error_code = Some("UPDATE_NOT_READY".to_string());
         state.error_message = Some("更新尚未准备好，先下载更新。".to_string());
     } else {
-        state.error_code = Some("MANUAL_INSTALL_REQUIRED".to_string());
-        state.error_message =
-            Some("当前构建未绑定发布私钥，请从 GitHub Release 下载签名安装包安装。".to_string());
+        state.status = "latest".to_string();
+        state.error_code = None;
+        state.error_message = None;
     }
     state.last_checked_at = Some(now);
     persist_update_state(&state)?;
@@ -3902,6 +3867,27 @@ fn capture_current_clipboard(
         ),
     );
     capture_clip_payload(payload, source_label, observed_at)
+}
+
+#[tauri::command]
+fn dev_read_clipboard_text() -> Result<String, String> {
+    if !cfg!(debug_assertions) {
+        return Err(command_error(
+            "DEV_COMMAND_DISABLED",
+            "dev_read_clipboard_text is only available in debug builds",
+        ));
+    }
+    let payload = clipboard::read_clipboard_payload()
+        .map_err(|error| preserve_command_error("CLIPBOARD_READ_FAILED", error))?
+        .ok_or_else(|| command_error("CLIPBOARD_EMPTY", "clipboard is empty"))?;
+    match payload {
+        clipboard::StandardClipboardPayload::Text(text) => Ok(text.text),
+        clipboard::StandardClipboardPayload::Files(paths) => Ok(paths.join("\n")),
+        clipboard::StandardClipboardPayload::Image(_) => Err(command_error(
+            "CLIPBOARD_NOT_TEXT",
+            "clipboard currently contains an image payload",
+        )),
+    }
 }
 
 fn capture_clip_payload(
@@ -5002,34 +4988,204 @@ fn set_panel_mode<R: tauri::Runtime>(
     Ok(())
 }
 
-#[tauri::command]
-fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+fn settings_window_path(section: Option<&str>) -> Result<&'static str, String> {
+    match section {
+        None => Ok("settings.html"),
+        Some("onboarding") => Ok("settings.html?section=onboarding"),
+        Some(value) => Err(format!("Unsupported settings section: {}", value)),
+    }
+}
+
+/// 记录设置窗口的原生状态，避免前端只看到 command resolve 却无法判断窗口是否真正显示。
+fn log_settings_window_state<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, action: &str) {
+    let url = window
+        .url()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|error| format!("url-error: {}", error));
+    let visible = window
+        .is_visible()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|error| format!("visible-error: {}", error));
+    let focused = window
+        .is_focused()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|error| format!("focused-error: {}", error));
+    log_to_file(
+        "info",
+        "settings-window",
+        &format!(
+            "{}: url={} visible={} focused={}",
+            action, url, visible, focused
+        ),
+    );
+}
+
+fn set_regular_activation_policy<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    app.set_activation_policy(tauri::ActivationPolicy::Regular)
+        .map_err(|error| {
+            command_error(
+                "SETTINGS_WINDOW_ACTIVATION_POLICY_FAILED",
+                error.to_string(),
+            )
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn activate_settings_app() {
+    let Some(mtm) = tauri_nspanel::objc2_foundation::MainThreadMarker::new() else {
+        log_to_file(
+            "warn",
+            "settings-window",
+            "activate skipped because settings window open did not run on the main thread",
+        );
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let policy_updated =
+        NSApplication::setActivationPolicy(&app, NSApplicationActivationPolicy::Regular);
+    #[allow(deprecated)]
+    NSApplication::activateIgnoringOtherApps(&app, true);
+    let running_app = NSRunningApplication::currentApplication();
+    let activated =
+        running_app.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+    log_to_file(
+        "info",
+        "settings-window",
+        &format!(
+            "activated settings app: policyUpdated={} runningActivated={}",
+            policy_updated, activated
+        ),
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+fn activate_settings_app() {}
+
+#[cfg(target_os = "macos")]
+fn focus_settings_window_native<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    if let Err(error) = window.with_webview(|webview| unsafe {
+        let ns_window: &AppKitNSWindow = &*webview.ns_window().cast::<AppKitNSWindow>();
+        ns_window.makeKeyAndOrderFront(None);
+        ns_window.orderFrontRegardless();
+        log_to_file(
+            "info",
+            "settings-window",
+            &format!(
+                "native focus: visible={} key={}",
+                ns_window.isVisible(),
+                ns_window.isKeyWindow()
+            ),
+        );
+    }) {
+        log_to_file(
+            "warn",
+            "settings-window",
+            &format!("native focus failed: {}", error),
+        );
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focus_settings_window_native<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) {}
+
+fn open_settings_window_internal<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    section: Option<&str>,
+) -> Result<(), String> {
+    let settings_path = settings_window_path(section)?;
     if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        set_regular_activation_policy(&app)?;
+        if section.is_some() {
+            let mut url = window.url().map_err(|error| error.to_string())?;
+            let (path, query) = settings_path
+                .split_once('?')
+                .map_or((settings_path, None), |(path, query)| (path, Some(query)));
+            url.set_path(path);
+            url.set_query(query);
+            window.navigate(url).map_err(|error| {
+                command_error("SETTINGS_WINDOW_NAVIGATE_FAILED", error.to_string())
+            })?;
+        }
+        window
+            .show()
+            .map_err(|error| command_error("SETTINGS_WINDOW_SHOW_FAILED", error.to_string()))?;
+        activate_settings_app();
+        focus_settings_window_native(&window);
+        window
+            .set_focus()
+            .map_err(|error| command_error("SETTINGS_WINDOW_FOCUS_FAILED", error.to_string()))?;
+        log_settings_window_state(&window, "reused settings window");
         return Ok(());
     }
 
-    let window =
-        WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
-            .title(native_tr("window.settings.title"))
-            .inner_size(720.0, 600.0)
-            .min_inner_size(640.0, 480.0)
-            .resizable(true)
-            .decorations(true)
-            .transparent(false)
-            .always_on_top(false)
-            .visible_on_all_workspaces(false)
-            .build()
-            .map_err(|error| error.to_string())?;
+    set_regular_activation_policy(&app)?;
+    let window = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App(settings_path.into()))
+        .title(native_tr("window.settings.title"))
+        .inner_size(720.0, 600.0)
+        .min_inner_size(640.0, 480.0)
+        .resizable(true)
+        .decorations(true)
+        .transparent(false)
+        .always_on_top(false)
+        .visible_on_all_workspaces(false)
+        .build()
+        .map_err(|error| command_error("SETTINGS_WINDOW_BUILD_FAILED", error.to_string()))?;
 
-    let _ = window.set_size(LogicalSize::new(720.0, 600.0));
-    let _ = window.set_always_on_top(false);
-    let _ = window.set_visible_on_all_workspaces(false);
-    let _ = window.center();
-    let _ = window.show();
-    let _ = window.set_focus();
+    if let Err(error) = window.set_size(LogicalSize::new(720.0, 600.0)) {
+        log_to_file(
+            "warn",
+            "settings-window",
+            &format!("set size failed: {}", error),
+        );
+    }
+    if let Err(error) = window.set_always_on_top(false) {
+        log_to_file(
+            "warn",
+            "settings-window",
+            &format!("set always-on-top failed: {}", error),
+        );
+    }
+    if let Err(error) = window.set_visible_on_all_workspaces(false) {
+        log_to_file(
+            "warn",
+            "settings-window",
+            &format!("set visible-on-all-workspaces failed: {}", error),
+        );
+    }
+    if let Err(error) = window.center() {
+        log_to_file(
+            "warn",
+            "settings-window",
+            &format!("center failed: {}", error),
+        );
+    }
+    window
+        .show()
+        .map_err(|error| command_error("SETTINGS_WINDOW_SHOW_FAILED", error.to_string()))?;
+    activate_settings_app();
+    focus_settings_window_native(&window);
+    window
+        .set_focus()
+        .map_err(|error| command_error("SETTINGS_WINDOW_FOCUS_FAILED", error.to_string()))?;
+    log_settings_window_state(&window, "created settings window");
     Ok(())
+}
+
+/// 打开设置窗口的普通入口：保持进入 `settings.html`，不携带初始分类参数。
+#[tauri::command]
+fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    open_settings_window_internal(app, None)
+}
+
+/// 打开设置窗口并进入指定分类；分类使用白名单，避免前端传入任意 URL。
+#[tauri::command]
+fn open_settings_window_with_section<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    section: String,
+) -> Result<(), String> {
+    open_settings_window_internal(app, Some(section.as_str()))
 }
 
 #[tauri::command]
@@ -5229,19 +5385,57 @@ fn current_native_locale() -> &'static str {
     match preference.as_str() {
         "zh-CN" => "zh-CN",
         "en-US" => "en-US",
-        _ => {
-            let env_language = std::env::var("LANG")
+        _ => system_native_locale(),
+    }
+}
+
+fn system_native_locale() -> &'static str {
+    if native_system_language().starts_with("zh") {
+        "zh-CN"
+    } else {
+        "en-US"
+    }
+}
+
+fn native_system_language() -> String {
+    macos_user_language()
+        .or_else(|| {
+            std::env::var("LANG")
                 .or_else(|_| std::env::var("LC_ALL"))
                 .or_else(|_| std::env::var("LC_MESSAGES"))
-                .unwrap_or_default()
-                .to_lowercase();
-            if env_language.starts_with("zh") {
-                "zh-CN"
-            } else {
-                "en-US"
-            }
+                .ok()
+        })
+        .unwrap_or_default()
+        .to_lowercase()
+}
+
+#[cfg(target_os = "macos")]
+fn macos_user_language() -> Option<String> {
+    // macOS GUI/WebView 跟随 AppleLanguages/AppleLocale，而不是 shell LANG。
+    for key in ["AppleLanguages", "AppleLocale"] {
+        let output = std::process::Command::new("defaults")
+            .args(["read", "-g", key])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if let Some(language) = text
+            .split(|character: char| {
+                character.is_whitespace() || matches!(character, '(' | ')' | '"' | '\'' | ',' | ';')
+            })
+            .find(|token| !token.trim().is_empty())
+        {
+            return Some(language.trim().to_string());
         }
     }
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_user_language() -> Option<String> {
+    None
 }
 
 fn native_tr(key: &str) -> &'static str {
@@ -5844,7 +6038,7 @@ fn restore_paste_target_focus() -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn frontmost_app_identity() -> Option<(String, String)> {
+fn frontmost_app_identity_including_self() -> Option<(String, String)> {
     let script = r#"
 tell application "System Events"
   set frontApp to first application process whose frontmost is true
@@ -5861,10 +6055,26 @@ end tell
     }
     let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let (name, bundle_id) = raw.split_once('|')?;
-    if bundle_id.trim().is_empty() || bundle_id.trim() == APP_BUNDLE_IDENTIFIER {
+    if bundle_id.trim().is_empty() {
         return None;
     }
     Some((name.trim().to_string(), bundle_id.trim().to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn frontmost_app_identity() -> Option<(String, String)> {
+    let (name, bundle_id) = frontmost_app_identity_including_self()?;
+    if bundle_id.trim() == APP_BUNDLE_IDENTIFIER {
+        return None;
+    }
+    Some((name, bundle_id))
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn is_clipforge_frontmost_identity(name: &str, bundle_id: &str) -> bool {
+    bundle_id == APP_BUNDLE_IDENTIFIER
+        || ((name == "ClipForge" || name == "clipforge")
+            && (bundle_id == "missing value" || bundle_id.is_empty()))
 }
 
 #[cfg(target_os = "macos")]
@@ -5876,10 +6086,8 @@ fn activate_paste_target_app() -> String {
     if bundle_id.trim().is_empty() {
         return "activate=skipped reason=no-target-app".to_string();
     }
-    let escaped = bundle_id.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!("tell application id \"{}\" to activate", escaped);
-    match Command::new("osascript").arg("-e").arg(script).output() {
-        Ok(output) if output.status.success() => format!("activate=ok bundle={}", bundle_id),
+    match Command::new("open").arg("-b").arg(&bundle_id).output() {
+        Ok(output) if output.status.success() => format!("activate=open-ok bundle={}", bundle_id),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr)
                 .trim()
@@ -8046,7 +8254,1822 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 监听、去重、设置过滤和入库统一收敛在 clipboard::watcher，避免保留第二条采集路径。
     clipboard::watcher::init(app.handle().clone());
 
+    #[cfg(debug_assertions)]
+    schedule_dev_window_trigger(app.handle().clone());
+
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn schedule_dev_window_trigger<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    let Ok(target) = std::env::var("CLIPFORGE_DEV_OPEN") else {
+        return;
+    };
+    let target = target.trim().to_ascii_lowercase();
+    if target.is_empty() {
+        return;
+    }
+
+    // 仅用于 `pnpm tauri dev` 的验收入口：默认窗口仍保持 hidden，不改变正式产品启动行为。
+    thread::spawn(move || {
+        if matches!(target.as_str(), "panel" | "quick" | "quick-panel") {
+            prepare_dev_quick_probe_target(app.clone());
+        }
+        thread::sleep(std::time::Duration::from_millis(900));
+        let target_for_main = target.clone();
+        let app_for_main = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            let result = match target_for_main.as_str() {
+                "panel" | "quick" | "quick-panel" => {
+                    open_panel(&app_for_main, "dev-open").map(|_| ())
+                }
+                "settings"
+                | "settings:forms"
+                | "settings:code-tabs"
+                | "settings:tooltip"
+                | "settings:diagnostics"
+                | "settings:interactions" => {
+                    open_settings_window(app_for_main.clone())
+                }
+                "settings:onboarding" | "onboarding" => {
+                    open_settings_window_internal(app_for_main.clone(), Some("onboarding"))
+                }
+                value => Err(format!(
+                    "Unsupported CLIPFORGE_DEV_OPEN value: {} (expected panel/settings/settings:forms/settings:code-tabs/settings:tooltip/settings:diagnostics/settings:interactions/settings:onboarding)",
+                    value
+                )),
+            };
+            match result {
+                Ok(()) => {
+                    log_to_file(
+                        "info",
+                        "dev-open",
+                        &format!("CLIPFORGE_DEV_OPEN={} triggered", target_for_main),
+                    );
+                    schedule_dev_perf_probe(app_for_main.clone(), target_for_main.clone());
+                }
+                Err(error) => log_to_file(
+                    "warn",
+                    "dev-open",
+                    &format!("CLIPFORGE_DEV_OPEN={} failed: {}", target_for_main, error),
+                ),
+            }
+        }) {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!("CLIPFORGE_DEV_OPEN={} dispatch failed: {}", target, error),
+            );
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+fn dev_open_window_label(target: &str) -> &'static str {
+    match target {
+        "settings"
+        | "settings:forms"
+        | "settings:code-tabs"
+        | "settings:tooltip"
+        | "settings:diagnostics"
+        | "settings:interactions"
+        | "settings:onboarding"
+        | "onboarding" => "settings",
+        _ => "main",
+    }
+}
+
+#[cfg(debug_assertions)]
+fn dev_perf_probe_repeat_count() -> u32 {
+    std::env::var("CLIPFORGE_DEV_PERF_REPEAT")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .map(|value| value.clamp(1, 60))
+        .unwrap_or(1)
+}
+
+#[cfg(debug_assertions)]
+fn dev_env_truthy(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(debug_assertions)]
+fn dev_quick_probe_enabled() -> bool {
+    dev_env_truthy("CLIPFORGE_DEV_QUICK_PROBE")
+}
+
+#[cfg(debug_assertions)]
+fn dev_quick_probe_target_mode() -> Option<&'static str> {
+    match std::env::var("CLIPFORGE_DEV_PASTE_TARGET")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("browser") => Some("browser"),
+        Some("clipforge") => Some("clipforge"),
+        Some("textedit") => Some("textedit"),
+        _ if dev_env_truthy("CLIPFORGE_DEV_TEXTEDIT_TARGET") => Some("textedit"),
+        _ => None,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn dev_quick_probe_requires_textedit_target() -> bool {
+    matches!(dev_quick_probe_target_mode(), Some("textedit"))
+}
+
+#[cfg(debug_assertions)]
+fn dev_quick_probe_can_run() -> bool {
+    dev_quick_probe_enabled() && DEV_QUICK_PROBE_TARGET_READY.load(Ordering::Relaxed)
+}
+
+#[cfg(debug_assertions)]
+fn set_dev_quick_probe_target_bundle(bundle_id: &str) {
+    if let Ok(mut slot) = dev_quick_probe_target_bundle_cache().lock() {
+        *slot = bundle_id.to_string();
+    }
+}
+
+#[cfg(debug_assertions)]
+fn restore_dev_quick_probe_target_bundle() {
+    let bundle_id = match dev_quick_probe_target_bundle_cache().lock() {
+        Ok(value) => value.clone(),
+        Err(error) => {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!("quick probe target bundle lock failed: {error}"),
+            );
+            return;
+        }
+    };
+    if bundle_id.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut slot) = paste_target_app_bundle_cache().lock() {
+        *slot = bundle_id.clone();
+    }
+    log_to_file(
+        "debug",
+        "dev-open",
+        &format!("quick probe restored paste target bundle={bundle_id}"),
+    );
+}
+
+#[cfg(debug_assertions)]
+fn dev_settings_changed_probe_enabled() -> bool {
+    dev_env_truthy("CLIPFORGE_DEV_SETTINGS_CHANGED_PROBE")
+}
+
+#[cfg(debug_assertions)]
+fn dev_i18n_probe_enabled() -> bool {
+    dev_env_truthy("CLIPFORGE_DEV_I18N_PROBE")
+}
+
+#[cfg(debug_assertions)]
+fn dev_settings_dom_probe_enabled() -> bool {
+    dev_env_truthy("CLIPFORGE_DEV_SETTINGS_DOM_PROBE")
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn run_dev_command_with_timeout(
+    mut command: Command,
+    label: &str,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("{label} spawn failed: {error}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                return child
+                    .wait_with_output()
+                    .map_err(|error| format!("{label} output failed: {error}"));
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{label} timed out after {}ms", timeout.as_millis()));
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => return Err(format!("{label} wait failed: {error}")),
+        }
+    }
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn run_dev_osascript(script: &str, timeout: Duration) -> Result<std::process::Output, String> {
+    let mut command = Command::new("osascript");
+    command.arg("-e").arg(script);
+    run_dev_command_with_timeout(command, "osascript", timeout)
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn dev_browser_paste_target_path() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "clipforge-dev-paste-target-{}.html",
+        std::process::id()
+    ))
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn dev_browser_quick_probe_target_app() -> String {
+    std::env::var("CLIPFORGE_DEV_BROWSER_TARGET_APP").unwrap_or_else(|_| "Safari".to_string())
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn prepare_dev_browser_quick_probe_target() -> Result<(), String> {
+    let target_path = dev_browser_paste_target_path();
+    let target_app = dev_browser_quick_probe_target_app();
+    let html = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ClipForge Dev Paste Target</title>
+    <style>
+      html, body { margin: 0; height: 100%; font: 14px -apple-system, BlinkMacSystemFont, sans-serif; }
+      body { display: grid; place-items: center; background: #f6f6f6; color: #111; }
+      textarea { width: min(760px, calc(100vw - 48px)); height: min(360px, calc(100vh - 48px)); padding: 16px; }
+    </style>
+  </head>
+  <body>
+    <textarea id="clipforge-dev-paste-target" autofocus>ClipForge dev paste target
+</textarea>
+    <script>
+      const target = document.getElementById("clipforge-dev-paste-target");
+      const focusTarget = () => { target.focus(); target.selectionStart = target.value.length; target.selectionEnd = target.value.length; };
+      window.addEventListener("load", focusTarget);
+      window.addEventListener("focus", focusTarget);
+      setTimeout(focusTarget, 250);
+      setTimeout(focusTarget, 750);
+    </script>
+  </body>
+</html>
+"#;
+    fs::write(&target_path, html).map_err(|error| format!("write target failed: {error}"))?;
+
+    let mut command = Command::new("open");
+    command.arg("-a").arg(&target_app).arg(&target_path);
+    match run_dev_command_with_timeout(command, "open browser paste target", Duration::from_secs(3))
+    {
+        Ok(output) if output.status.success() => {
+            thread::sleep(Duration::from_millis(1_200));
+            match frontmost_app_identity() {
+                Some((name, bundle)) if name == target_app => {
+                    set_dev_quick_probe_target_bundle(&bundle);
+                    Ok(())
+                }
+                Some((name, bundle)) => Err(format!(
+                    "target app is not frontmost expected={} actual={}|{}",
+                    target_app, name, bundle
+                )),
+                None => Err(format!(
+                    "cannot confirm browser target is frontmost expected={}",
+                    target_app
+                )),
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr)
+                .trim()
+                .replace('\n', " ");
+            Err(format!(
+                "open failed status={} error={}",
+                output.status, stderr
+            ))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn prepare_dev_clipforge_quick_probe_target<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    let (tx, rx) = mpsc::channel();
+    app.clone().run_on_main_thread(move || {
+        let result = (|| -> Result<(), String> {
+            set_regular_activation_policy(&app)?;
+            let window = if let Some(window) = app.get_webview_window("dev-paste-target") {
+                window
+            } else {
+                WebviewWindowBuilder::new(
+                    &app,
+                    "dev-paste-target",
+                    WebviewUrl::App("dev-paste-target.html".into()),
+                )
+                .title("ClipForge Dev Paste Target")
+                .inner_size(760.0, 420.0)
+                .min_inner_size(420.0, 260.0)
+                .resizable(true)
+                .decorations(true)
+                .transparent(false)
+                .always_on_top(true)
+                .visible_on_all_workspaces(false)
+                .build()
+                .map_err(|error| format!("dev paste target build failed: {error}"))?
+            };
+            window
+                .show()
+                .map_err(|error| format!("dev paste target show failed: {error}"))?;
+            let _ = window.set_always_on_top(true);
+            let _ = window.center();
+            activate_settings_app();
+            focus_settings_window_native(&window);
+            window
+                .set_focus()
+                .map_err(|error| format!("dev paste target focus failed: {error}"))?;
+            let _ = window.eval(
+                r#"
+(() => {
+  const target = document.getElementById("clipforge-dev-paste-target");
+  if (!target) return;
+  target.focus();
+  target.selectionStart = target.value.length;
+  target.selectionEnd = target.value.length;
+})()
+"#,
+            );
+            Ok(())
+        })();
+        let _ = tx.send(result);
+    })
+    .map_err(|error| format!("dev paste target dispatch failed: {error}"))?;
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("dev paste target result timeout: {error}"))??;
+
+    thread::sleep(Duration::from_millis(700));
+    match frontmost_app_identity_including_self() {
+        Some((name, bundle)) if is_clipforge_frontmost_identity(&name, &bundle) => {
+            set_dev_quick_probe_target_bundle(APP_BUNDLE_IDENTIFIER);
+            log_to_file(
+                "info",
+                "dev-open",
+                &format!("quick probe clipforge target frontmost {name}|{bundle}"),
+            );
+            Ok(())
+        }
+        Some((name, bundle)) => Err(format!(
+            "ClipForge target is not frontmost expected={} actual={}|{}",
+            APP_BUNDLE_IDENTIFIER, name, bundle
+        )),
+        None => Err(format!(
+            "cannot confirm ClipForge target is frontmost expected={}",
+            APP_BUNDLE_IDENTIFIER
+        )),
+    }
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn verify_dev_quick_probe_paste_target() -> Result<(), String> {
+    if !dev_quick_probe_enabled() {
+        return Ok(());
+    }
+    if !DEV_QUICK_PROBE_TARGET_READY.load(Ordering::Relaxed) {
+        return Err("controlled target is not ready".to_string());
+    }
+    if matches!(dev_quick_probe_target_mode(), Some("clipforge")) {
+        return match frontmost_app_identity_including_self() {
+            Some((name, bundle)) if is_clipforge_frontmost_identity(&name, &bundle) => {
+                log_to_file(
+                    "debug",
+                    "dev-open",
+                    &format!("quick probe paste target verified {name}|{bundle}"),
+                );
+                Ok(())
+            }
+            Some((name, bundle)) => Err(format!(
+                "frontmost target changed expected={} actual={}|{}",
+                APP_BUNDLE_IDENTIFIER, name, bundle
+            )),
+            None => Err(format!(
+                "cannot confirm frontmost target expected={}",
+                APP_BUNDLE_IDENTIFIER
+            )),
+        };
+    }
+    let expected_app = match dev_quick_probe_target_mode() {
+        Some("browser") => dev_browser_quick_probe_target_app(),
+        Some("textedit") => "TextEdit".to_string(),
+        Some(value) => return Err(format!("unsupported target mode {value}")),
+        None => return Err("target mode is missing".to_string()),
+    };
+    match frontmost_app_identity() {
+        Some((name, bundle)) if name == expected_app => {
+            log_to_file(
+                "debug",
+                "dev-open",
+                &format!("quick probe paste target verified {name}|{bundle}"),
+            );
+            Ok(())
+        }
+        Some((name, bundle)) => Err(format!(
+            "frontmost target changed expected={} actual={}|{}",
+            expected_app, name, bundle
+        )),
+        None => Err(format!(
+            "cannot confirm frontmost target expected={}",
+            expected_app
+        )),
+    }
+}
+
+#[cfg(all(debug_assertions, not(target_os = "macos")))]
+fn verify_dev_quick_probe_paste_target() -> Result<(), String> {
+    if dev_quick_probe_enabled() {
+        return Err(
+            "controlled paste target verification is only implemented on macOS".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn prepare_dev_textedit_quick_probe_target() -> Result<(), String> {
+    let script = r#"
+tell application "TextEdit"
+  activate
+  make new document
+  set text of front document to "ClipForge dev paste target\n"
+end tell
+"#;
+    match run_dev_osascript(script, Duration::from_secs(3)) {
+        Ok(output) if output.status.success() => {
+            set_dev_quick_probe_target_bundle("com.apple.TextEdit");
+            Ok(())
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr)
+                .trim()
+                .replace('\n', " ");
+            Err(format!(
+                "TextEdit target failed status={} error={}",
+                output.status, stderr
+            ))
+        }
+        Err(error) => Err(format!("TextEdit target spawn failed: {error}")),
+    }
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn prepare_dev_quick_probe_target<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    DEV_QUICK_PROBE_TARGET_READY.store(false, Ordering::Relaxed);
+    set_dev_quick_probe_target_bundle("");
+    if !dev_quick_probe_enabled() {
+        return;
+    }
+    let Some(target_mode) = dev_quick_probe_target_mode() else {
+        log_to_file(
+            "warn",
+            "dev-open",
+            "quick probe requires CLIPFORGE_DEV_PASTE_TARGET=clipforge|browser or CLIPFORGE_DEV_TEXTEDIT_TARGET=1 because it triggers real paste",
+        );
+        return;
+    };
+    let prepared = match target_mode {
+        "browser" => prepare_dev_browser_quick_probe_target(),
+        "clipforge" => prepare_dev_clipforge_quick_probe_target(app.clone()),
+        "textedit" => prepare_dev_textedit_quick_probe_target(),
+        _ => Err(format!("unsupported quick probe target {target_mode}")),
+    };
+    match prepared {
+        Ok(()) => {
+            DEV_QUICK_PROBE_TARGET_READY.store(true, Ordering::Relaxed);
+            log_to_file(
+                "info",
+                "dev-open",
+                &format!("quick probe prepared {target_mode} target"),
+            );
+        }
+        Err(error) => log_to_file(
+            "warn",
+            "dev-open",
+            &format!("quick probe {target_mode} target failed: {error}"),
+        ),
+    }
+}
+
+#[cfg(all(debug_assertions, not(target_os = "macos")))]
+fn prepare_dev_quick_probe_target<R: tauri::Runtime>(_app: tauri::AppHandle<R>) {}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn cleanup_dev_quick_probe_target<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    if !dev_quick_probe_enabled() {
+        return;
+    }
+    if matches!(dev_quick_probe_target_mode(), Some("clipforge")) {
+        let app_for_cleanup = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            if let Some(window) = app_for_cleanup.get_webview_window("dev-paste-target") {
+                if let Err(error) = window.close() {
+                    log_to_file(
+                        "warn",
+                        "dev-open",
+                        &format!("quick probe ClipForge target cleanup failed: {error}"),
+                    );
+                } else {
+                    log_to_file("info", "dev-open", "quick probe closed ClipForge target");
+                }
+            }
+        }) {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!("quick probe ClipForge cleanup dispatch failed: {error}"),
+            );
+        }
+        DEV_QUICK_PROBE_TARGET_READY.store(false, Ordering::Relaxed);
+        return;
+    }
+    if matches!(dev_quick_probe_target_mode(), Some("browser")) {
+        let target_path = dev_browser_paste_target_path();
+        if let Err(error) = fs::remove_file(&target_path) {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!(
+                    "quick probe browser target cleanup failed path={} error={}",
+                    target_path.display(),
+                    error
+                ),
+            );
+        } else {
+            log_to_file("info", "dev-open", "quick probe removed browser target");
+        }
+        DEV_QUICK_PROBE_TARGET_READY.store(false, Ordering::Relaxed);
+        return;
+    }
+    if !dev_quick_probe_requires_textedit_target() {
+        return;
+    }
+    let script = r#"tell application "TextEdit" to close front document saving no"#;
+    match run_dev_osascript(script, Duration::from_secs(3)) {
+        Ok(output) if output.status.success() => {
+            log_to_file("info", "dev-open", "quick probe closed TextEdit target");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr)
+                .trim()
+                .replace('\n', " ");
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!(
+                    "quick probe TextEdit cleanup failed status={} error={}",
+                    output.status, stderr
+                ),
+            );
+        }
+        Err(error) => log_to_file(
+            "warn",
+            "dev-open",
+            &format!("quick probe TextEdit cleanup spawn failed: {error}"),
+        ),
+    }
+    DEV_QUICK_PROBE_TARGET_READY.store(false, Ordering::Relaxed);
+}
+
+#[cfg(all(debug_assertions, not(target_os = "macos")))]
+fn cleanup_dev_quick_probe_target<R: tauri::Runtime>(_app: tauri::AppHandle<R>) {}
+
+#[cfg(debug_assertions)]
+fn dev_quick_probe_script(probe_index: u32) -> String {
+    format!(
+        r#"
+(() => {{
+  const perf = window.__clipforgePerf;
+  const list = document.querySelector(".quick-menu");
+  const rows = Array.from(document.querySelectorAll(".quick-row"));
+  if (!perf || !list || rows.length === 0) {{
+    return {{ ok: false, reason: "missing-elements", hasPerf: Boolean(perf), hasList: Boolean(list), rows: rows.length }};
+  }}
+  const row = rows[{probe_index} % rows.length];
+  list.scrollTop = Math.min(list.scrollHeight, ({probe_index} + 1) * 36);
+  list.dispatchEvent(new Event("scroll", {{ bubbles: true }}));
+  row.focus();
+  const copyEvent = new KeyboardEvent("keydown", {{
+    key: "c",
+    code: "KeyC",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true
+  }});
+  row.dispatchEvent(copyEvent);
+  window.setTimeout(() => {{
+    const pasteEvent = new KeyboardEvent("keydown", {{
+      key: "Enter",
+      code: "Enter",
+      bubbles: true,
+      cancelable: true
+    }});
+    row.dispatchEvent(pasteEvent);
+  }}, 80);
+  return {{ ok: true, rows: rows.length, index: {probe_index} % rows.length }};
+}})()
+"#
+    )
+}
+
+#[cfg(debug_assertions)]
+fn dev_patch_settings_on_main<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    patch: Value,
+    reason: &'static str,
+) -> Result<(), String> {
+    let (tx, rx) = mpsc::channel();
+    let app_for_patch = app.clone();
+    app.run_on_main_thread(move || {
+        let result = settings_service_patch(
+            app_for_patch.clone(),
+            patch,
+            Some("dev-open".to_string()),
+            Some(reason.to_string()),
+            None,
+        )
+        .map(|_| ());
+        let _ = tx.send(result);
+    })
+    .map_err(|error| format!("dispatch failed: {error}"))?;
+    rx.recv_timeout(Duration::from_secs(2))
+        .map_err(|error| format!("result timeout: {error}"))?
+}
+
+#[cfg(debug_assertions)]
+fn run_dev_settings_changed_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    if !dev_settings_changed_probe_enabled() {
+        return;
+    }
+
+    let Ok(settings) = read_user_settings() else {
+        log_to_file(
+            "warn",
+            "dev-open",
+            "settings_changed probe skipped: cannot read settings",
+        );
+        return;
+    };
+    let Some(original) = settings.settings.get("logMaxLines").and_then(Value::as_u64) else {
+        log_to_file(
+            "warn",
+            "dev-open",
+            "settings_changed probe skipped: logMaxLines is missing",
+        );
+        return;
+    };
+    let temporary = if original >= 2_000_000 {
+        original.saturating_sub(1).max(100)
+    } else {
+        original + 1
+    };
+
+    let first_result = dev_patch_settings_on_main(
+        app.clone(),
+        json!({ "logMaxLines": temporary }),
+        "settings-changed-probe",
+    );
+    match first_result {
+        Ok(()) => log_to_file(
+            "info",
+            "dev-open",
+            &format!(
+                "settings_changed probe patched logMaxLines {} -> {}",
+                original, temporary
+            ),
+        ),
+        Err(error) => {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!("settings_changed probe patch failed: {error}"),
+            );
+            return;
+        }
+    }
+
+    thread::sleep(Duration::from_millis(250));
+    if let Err(error) = dev_patch_settings_on_main(
+        app,
+        json!({ "logMaxLines": original }),
+        "settings-changed-probe-restore",
+    ) {
+        log_to_file(
+            "warn",
+            "dev-open",
+            &format!("settings_changed probe restore failed: {error}"),
+        );
+        return;
+    }
+    log_to_file(
+        "info",
+        "dev-open",
+        &format!("settings_changed probe restored logMaxLines={original}"),
+    );
+    thread::sleep(Duration::from_millis(500));
+}
+
+#[cfg(debug_assertions)]
+fn log_dev_i18n_window_snapshot<R: tauri::Runtime>(app: tauri::AppHandle<R>, label: &'static str) {
+    let app_for_main = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = app_for_main.get_webview_window("settings") else {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!("i18n probe snapshot skipped label={label}: settings window not found"),
+            );
+            return;
+        };
+        let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"unknown\"".to_string());
+        let script = format!(
+            r#"
+(() => {{
+  return {{
+    label: {label_json},
+    lang: document.documentElement.lang,
+    title: document.title,
+    bodyText: (document.body?.innerText ?? "").slice(0, 240)
+  }};
+}})()
+"#
+        );
+        if let Err(error) = window.eval_with_callback(script, move |payload| {
+            log_to_file(
+                "info",
+                "dev-open",
+                &format!("i18n probe snapshot {payload}"),
+            );
+        }) {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!("i18n probe snapshot failed label={label}: {error}"),
+            );
+        }
+    });
+}
+
+#[cfg(debug_assertions)]
+fn run_dev_i18n_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    if !dev_i18n_probe_enabled() {
+        return;
+    }
+    let original_language = read_user_settings()
+        .ok()
+        .and_then(|settings| {
+            settings
+                .settings
+                .get("language")
+                .and_then(Value::as_str)
+                .map(|value| value.to_string())
+        })
+        .unwrap_or_else(|| "system".to_string());
+    log_to_file(
+        "info",
+        "dev-open",
+        &format!(
+            "i18n probe started original={} nativeLocale={}",
+            original_language,
+            current_native_locale()
+        ),
+    );
+    log_dev_i18n_window_snapshot(app.clone(), "initial");
+    thread::sleep(Duration::from_millis(250));
+    for (label, language) in [("zh", "zh-CN"), ("en", "en-US"), ("system", "system")] {
+        match dev_patch_settings_on_main(app.clone(), json!({ "language": language }), "i18n-probe")
+        {
+            Ok(()) => {
+                thread::sleep(Duration::from_millis(350));
+                log_to_file(
+                    "info",
+                    "dev-open",
+                    &format!(
+                        "i18n probe patched label={} language={} nativeLocale={}",
+                        label,
+                        language,
+                        current_native_locale()
+                    ),
+                );
+                log_dev_i18n_window_snapshot(app.clone(), label);
+                thread::sleep(Duration::from_millis(250));
+            }
+            Err(error) => log_to_file(
+                "warn",
+                "dev-open",
+                &format!(
+                    "i18n probe patch failed label={} language={}: {}",
+                    label, language, error
+                ),
+            ),
+        }
+    }
+    if let Err(error) = dev_patch_settings_on_main(
+        app.clone(),
+        json!({ "language": original_language }),
+        "i18n-probe-restore",
+    ) {
+        log_to_file(
+            "warn",
+            "dev-open",
+            &format!("i18n probe restore failed: {error}"),
+        );
+        return;
+    }
+    thread::sleep(Duration::from_millis(350));
+    log_to_file(
+        "info",
+        "dev-open",
+        &format!(
+            "i18n probe restored language={} nativeLocale={}",
+            original_language,
+            current_native_locale()
+        ),
+    );
+    log_dev_i18n_window_snapshot(app, "restored");
+    thread::sleep(Duration::from_millis(250));
+}
+
+#[cfg(debug_assertions)]
+fn dev_settings_dom_probe_script(target: &str) -> String {
+    let target_json = serde_json::to_string(target).unwrap_or_else(|_| "\"unknown\"".to_string());
+    r#"
+(() => {
+  const target = __CLIPFORGE_DOM_PROBE_TARGET__;
+  const result = {
+    scope: "settings-dom",
+    target,
+    pass: false,
+    checks: [],
+    startedAt: new Date().toISOString()
+  };
+  window.__clipforgeDevSettingsDomProbeResult = result;
+  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const all = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  const one = (selector, root = document) => root.querySelector(selector);
+  const text = (value) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
+  const visible = (element) => {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  };
+  const add = (name, pass, reason, details) => {
+    const check = { name, pass: Boolean(pass) };
+    if (!pass && reason) check.reason = text(reason);
+    if (details !== undefined) check.details = details;
+    result.checks.push(check);
+    result.pass = Boolean(result.endedAt) && result.checks.every((item) => item.pass);
+  };
+  const click = async (name, element) => {
+    if (!element) {
+      add(name, false, "element not found");
+      return false;
+    }
+    try {
+      element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+      element.click();
+      await sleep(160);
+      add(name, true);
+      return true;
+    } catch (error) {
+      add(name, false, error?.message || String(error));
+      return false;
+    }
+  };
+  const scheduleClick = async (name, element) => {
+    if (!element) {
+      add(name, false, "element not found");
+      return false;
+    }
+    try {
+      element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+      window.setTimeout(() => {
+        try {
+          element.click();
+        } catch (error) {
+          console.warn("clipforge dev probe scheduled click failed", name, error);
+        }
+      }, 0);
+      add(name, true);
+      await sleep(220);
+      return true;
+    } catch (error) {
+      add(name, false, error?.message || String(error));
+      return false;
+    }
+  };
+  const openSection = async (section) => {
+    const button = one(`[data-dev-probe="settings-sidebar-item:${section}"]`);
+    const clicked = await click(`settings.section.click.${section}`, button);
+    if (!clicked) return false;
+    const active = one(`[data-dev-probe="settings-sidebar-item:${section}"][aria-current="page"]`);
+    add(`settings.section.active.${section}`, Boolean(active), "section did not become active");
+    return Boolean(active);
+  };
+  const openTab = async (tab) => {
+    const trigger = one(`[data-dev-probe="settings-section-tab:${tab}"]`);
+    const clicked = await click(`settings.tab.click.${tab}`, trigger);
+    if (!clicked) return false;
+    const active = one(`[data-dev-probe="settings-section-tab:${tab}"][data-state="active"], [data-dev-probe="settings-section-tab:${tab}"][aria-selected="true"]`);
+    add(`settings.tab.active.${tab}`, Boolean(active), "tab did not become active");
+    return Boolean(active);
+  };
+  const waitFor = async (name, predicate, timeoutMs = 2200) => {
+    const started = Date.now();
+    let details;
+    while (Date.now() - started < timeoutMs) {
+      try {
+        const value = predicate();
+        if (value) {
+          add(name, true, undefined, value === true ? undefined : value);
+          return true;
+        }
+        details = value;
+      } catch (error) {
+        details = error?.message || String(error);
+      }
+      await sleep(80);
+    }
+    add(name, false, "condition did not become true", details);
+    return false;
+  };
+  const setNativeValue = (element, value) => {
+    const prototype = Object.getPrototypeOf(element);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+    if (descriptor?.set) descriptor.set.call(element, String(value));
+    else element.value = String(value);
+  };
+  const tauriInvoke = () => {
+    if (typeof window.__TAURI__?.core?.invoke === "function") return window.__TAURI__.core.invoke;
+    if (typeof window.__TAURI_INTERNALS__?.invoke === "function") return window.__TAURI_INTERNALS__.invoke;
+    return null;
+  };
+  const readClipboardForProbe = async () => {
+    let webError = "";
+    try {
+      return { text: text(await navigator.clipboard.readText()), source: "web" };
+    } catch (error) {
+      webError = error?.message || String(error);
+    }
+    const invoke = tauriInvoke();
+    if (!invoke) {
+      throw new Error(webError || "Tauri invoke is unavailable");
+    }
+    return {
+      text: text(await invoke("dev_read_clipboard_text")),
+      source: "native",
+      webError,
+    };
+  };
+  const waitForSavedFeedback = async (name) => waitFor(name, () => {
+    const feedback = one('[data-dev-probe="settings-save-feedback"], [data-dev-probe="settings-section-save-chip"]');
+    if (!feedback) return false;
+    const className = String(feedback.className || "");
+    return className.includes("saved") ? { text: text(feedback.textContent) } : false;
+  }, 3200);
+  const changeSegment = async (probeId, checkName) => {
+    const control = one(`[data-dev-probe="${probeId}"]`);
+    const buttons = all("button", control);
+    const current = buttons.find((button) => button.getAttribute("data-state") === "on" || button.getAttribute("aria-pressed") === "true");
+    const targetButton = buttons.find((button) => button !== current && !button.disabled) ?? buttons[0];
+    const before = current?.getAttribute("value") || text(current?.textContent);
+    if (!targetButton) {
+      add(`${checkName}.present`, false, "segment option not found");
+      return false;
+    }
+    await click(`${checkName}.click`, targetButton);
+    const after = all("button", control).find((button) => button.getAttribute("data-state") === "on" || button.getAttribute("aria-pressed") === "true");
+    add(`${checkName}.changed`, Boolean(after) && after !== current, "segment value did not change", {
+      before,
+      after: after?.getAttribute("value") || text(after?.textContent),
+    });
+    return waitForSavedFeedback(`${checkName}.saved`);
+  };
+  const changeNumber = async (probeId, checkName) => {
+    const input = one(`[data-dev-probe="${probeId}"] input[type="number"]`);
+    if (!input) {
+      add(`${checkName}.present`, false, "number input not found");
+      return false;
+    }
+    const before = Number(input.value);
+    const min = Number(input.min || "0");
+    const max = Number(input.max || "999999");
+    const next = Number.isFinite(before) && before < max ? before + 1 : Math.max(min, before - 1);
+    setNativeValue(input, next);
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: String(next) }));
+    input.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    await sleep(180);
+    add(`${checkName}.changed`, Number(input.value) === next, "number input value did not change", { before, after: Number(input.value), next });
+    return waitForSavedFeedback(`${checkName}.saved`);
+  };
+  const changeSlider = async (probeId, checkName) => {
+    const input = one(`[data-dev-probe="${probeId}"] input[type="range"]`);
+    if (!input) {
+      add(`${checkName}.present`, false, "range input not found");
+      return false;
+    }
+    const before = Number(input.value);
+    const min = Number(input.min || "0");
+    const max = Number(input.max || "100");
+    const next = before < max ? before + 1 : Math.max(min, before - 1);
+    setNativeValue(input, next);
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, cancelable: true, inputType: "insertText", data: String(next) }));
+    input.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    await sleep(180);
+    add(`${checkName}.changed`, Number(input.value) === next, "range input value did not change", { before, after: Number(input.value), next });
+    return waitForSavedFeedback(`${checkName}.saved`);
+  };
+  const changeSwitch = async (probeId, checkName) => {
+    const button = one(`[data-dev-probe="${probeId}"] [role="switch"]`);
+    if (!button) {
+      add(`${checkName}.present`, false, "switch not found");
+      return false;
+    }
+    const before = button.getAttribute("aria-checked");
+    await click(`${checkName}.click`, button);
+    const after = button.getAttribute("aria-checked");
+    add(`${checkName}.changed`, before !== after, "switch state did not change", { before, after });
+    return waitForSavedFeedback(`${checkName}.saved`);
+  };
+  const copyCurrentCodeTab = async (tab) => {
+    const tabTrigger = one(`[data-dev-probe="settings-code-tab:${tab}"]`);
+    if (tabTrigger) await click(`settings.codeTabs.${tab}.tab.click`, tabTrigger);
+    const copyButton = one(`[data-dev-probe="settings-code-copy:${tab}"]`);
+    if (!copyButton) {
+      add(`settings.codeTabs.${tab}.copy.present`, false, "copy button not found");
+      return false;
+    }
+    copyButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+    await click(`settings.codeTabs.${tab}.copy.click`, copyButton);
+    copyButton.focus?.();
+    const panel = copyButton.closest(".settings-redesign-code-tabs-panel");
+    const expected = text(panel?.querySelector("pre")?.textContent);
+    let clipboardResult;
+    try {
+      clipboardResult = await readClipboardForProbe();
+    } catch (error) {
+      add(`settings.codeTabs.${tab}.copy.clipboard`, false, error?.message || String(error));
+      return false;
+    }
+    const clipboardText = clipboardResult.text;
+    add(`settings.codeTabs.${tab}.copy.reachable`, true, undefined, {
+      label: text(copyButton.textContent),
+      disabled: Boolean(copyButton.disabled),
+      clipboardLength: clipboardText.length,
+      readSource: clipboardResult.source,
+      webError: clipboardResult.webError,
+    });
+    add(
+      `settings.codeTabs.${tab}.copy.matches`,
+      clipboardText === expected,
+      "clipboard content did not match code tab content",
+      {
+        expectedLength: expected.length,
+        clipboardLength: clipboardText.length,
+      },
+    );
+    return true;
+  };
+  const probeFormSaving = async () => {
+    await openSection("display-panel");
+    await openTab("density");
+    await changeSegment("settings-control:panelDensity", "settings.form.toggleGroup.panelDensity");
+    await changeNumber("settings-control:quickItemLimit", "settings.form.number.quickItemLimit");
+    await openTab("size");
+    await changeSlider("settings-control:panelBackgroundOpacity", "settings.form.slider.panelBackgroundOpacity");
+    await openTab("test");
+    await changeSwitch("settings-control:enableScrollCollapse", "settings.form.switch.enableScrollCollapse");
+  };
+  const probeAllCodeTabs = async () => {
+    const hasMcpSection = await openSection("mcp-agent");
+    if (!hasMcpSection) return;
+    await openTab("install");
+    const codeTabs = all('[data-dev-probe="settings-code-tabs"], .settings-redesign-code-tabs');
+    const codeTabTriggers = all('[data-dev-probe^="settings-code-tab:"], .settings-redesign-code-tabs-trigger');
+    add("settings.codeTabs.present", codeTabs.length > 0, "Code Tabs not found after opening MCP install tab", { count: codeTabs.length });
+    add("settings.codeTabs.triggers", codeTabTriggers.length > 0, "Code Tab triggers not found", { count: codeTabTriggers.length });
+    await copyCurrentCodeTab("install");
+    await copyCurrentCodeTab("command");
+    await openTab("json-rpc");
+    await copyCurrentCodeTab("tools");
+    await copyCurrentCodeTab("json-rpc");
+    await openTab("provider");
+    await copyCurrentCodeTab("provider");
+  };
+  const probeTooltipKeyboard = async () => {
+    await openSection("display-panel");
+    await openTab("density");
+    const firstTab = one('[data-dev-probe="settings-section-tab:density"]');
+    if (firstTab) {
+      firstTab.focus();
+      firstTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+      await sleep(180);
+      add("settings.keyboard.tabs.arrowRight", Boolean(one('[data-dev-probe="settings-section-tab:size"][data-state="active"], [data-dev-probe="settings-section-tab:size"][aria-selected="true"]')), "ArrowRight did not move section tab focus/selection");
+    } else {
+      add("settings.keyboard.tabs.present", false, "density tab not found");
+    }
+
+    await openSection("storage-logs");
+    await openTab("data");
+    const tooltipTrigger = one(".readonly-field-copy:not(:disabled), .readonly-field-value");
+    if (tooltipTrigger) {
+      tooltipTrigger.dispatchEvent(new MouseEvent("pointerenter", { bubbles: true, cancelable: true }));
+      tooltipTrigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true, cancelable: true }));
+      tooltipTrigger.focus?.();
+      await sleep(520);
+      add("settings.tooltip.opens", Boolean(one(".settings-tooltip-content")), "tooltip content did not open");
+      tooltipTrigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      await waitFor(
+        "settings.tooltip.escape",
+        () => !one('.settings-tooltip-content[data-state="open"], [data-slot="tooltip-overlay"][data-state="open"]'),
+        1400,
+      );
+    } else {
+      add("settings.tooltip.trigger.present", false, "tooltip trigger not found");
+    }
+  };
+
+  const probeDiagnosticsAndUpdate = async () => {
+    await openSection("storage-logs");
+    await openTab("diagnostics");
+    await click("settings.diagnostics.refresh.click", one('[data-dev-probe="settings-action:diagnostics.refresh"]'));
+    await waitFor("settings.diagnostics.refresh.feedback", () => {
+      const panel = one('[data-dev-probe="settings-status:diagnostics"]');
+      return panel && (panel.className.includes("good") || panel.className.includes("danger")) ? { text: text(panel.textContent) } : false;
+    }, 2400);
+    await click("settings.diagnostics.export.click", one('[data-dev-probe="settings-action:diagnostics.export"]'));
+    await waitFor("settings.diagnostics.export.feedback", () => {
+      const panel = one('[data-dev-probe="settings-status:diagnostics"]');
+      return panel && !panel.className.includes("pending") ? { text: text(panel.textContent) } : false;
+    }, 4200);
+    const cleanupButton = one('[data-dev-probe="settings-action:diagnostics.cleanup"]');
+    await click("settings.diagnostics.cleanup.confirm.click", cleanupButton);
+    await click("settings.diagnostics.cleanup.run.click", one('[data-dev-probe="settings-action:diagnostics.cleanup"]'));
+    await waitFor("settings.diagnostics.cleanup.feedback", () => {
+      const panel = one('[data-dev-probe="settings-status:diagnostics"]');
+      return panel && !panel.className.includes("pending") ? { text: text(panel.textContent) } : false;
+    }, 4200);
+
+    await openSection("update-distribution");
+    await openTab("update-flow");
+    const updatePanel = one('[data-dev-probe="settings-status:update-flow"]');
+    add("settings.updateFlow.panel.present", visible(updatePanel), "update flow status panel not visible");
+    add("settings.updateFlow.actions.present", all('[data-dev-probe^="settings-action:update."]').length >= 4, "update flow actions missing");
+    await click("settings.updateFlow.check.click", one('[data-dev-probe="settings-action:update.check"]'));
+    await waitFor("settings.updateFlow.check.feedback", () => {
+      const panel = one('[data-dev-probe="settings-status:update-flow"]');
+      const body = text(panel?.textContent);
+      return body.length > 0 ? { text: body } : false;
+    }, 3600);
+  };
+
+  const probeKeyboardTooltipAndActions = async () => {
+    await probeTooltipKeyboard();
+    await probeDiagnosticsAndUpdate();
+  };
+
+  async function probeSettingsSurface() {
+    const sidebar = one('[data-dev-probe="settings-sidebar"], .settings-redesign-sidebar');
+    const sidebarItems = all('[data-dev-probe^="settings-sidebar-item:"], .settings-redesign-sidebar-item');
+    add("settings.sidebar.visible", visible(sidebar), "settings sidebar is not visible", { count: sidebarItems.length });
+    add("settings.sidebar.items", sidebarItems.length >= 3, "expected at least three settings sections", { count: sidebarItems.length });
+    add("settings.content.visible", visible(one(".settings-window-content")), "settings content area is not visible");
+    add("settings.tabs.visible", visible(one('[data-dev-probe^="settings-section-tabs:"], .settings-section-tabs')), "settings section tabs are not visible");
+
+    for (const section of ["display-panel", "capture-content", "shortcut-language"]) {
+      await openSection(section);
+    }
+    for (const tab of ["onboarding", "shortcut", "language"]) {
+      await openTab(tab);
+    }
+
+    await probeFormSaving();
+    await probeAllCodeTabs();
+    await probeKeyboardTooltipAndActions();
+  }
+
+  async function probeOnboardingSurface() {
+    const shouldProbeOnboarding = target === "settings:onboarding" || target === "onboarding";
+    if (!shouldProbeOnboarding) return;
+    await openSection("shortcut-language");
+    await openTab("onboarding");
+    const wizard = one('[data-dev-probe="onboarding-wizard"]');
+    const stepButtons = all('[data-dev-probe^="onboarding-step:"]');
+    const stepKeys = ["welcome", "accessibility", "capture", "shortcut", "tour"];
+    add("onboarding.wizard.visible", visible(wizard), "onboarding wizard is not visible");
+    add("onboarding.stepper.count", stepButtons.length === 5, "expected five onboarding steps", { count: stepButtons.length });
+    for (const key of stepKeys) {
+      await click(`onboarding.step.click.${key}`, one(`[data-dev-probe="onboarding-step:${key}"]`));
+      const active = one(`[data-dev-probe="onboarding-step:${key}"][aria-current="step"]`);
+      add(`onboarding.step.active.${key}`, Boolean(active), "step did not become active");
+    }
+
+    await click("onboarding.capture.open", one('[data-dev-probe="onboarding-step:capture"]'));
+    const capturePanel = one('[data-dev-probe="onboarding-capture-panel"]');
+    const captureToggles = all('[data-dev-probe="onboarding-capture-toggles"] [role="switch"]');
+    add("onboarding.capture.panel.visible", visible(capturePanel), "capture panel is not visible", { count: captureToggles.length });
+    if (captureToggles[0]) {
+      const before = captureToggles[0].getAttribute("aria-checked");
+      await click("onboarding.capture.toggle.click", captureToggles[0]);
+      const after = captureToggles[0].getAttribute("aria-checked");
+      add("onboarding.capture.toggle.changed", before !== after, "capture toggle state did not change", { before, after });
+    } else {
+      add("onboarding.capture.toggle.present", false, "capture toggle not found");
+    }
+
+    await click("onboarding.accessibility.open", one('[data-dev-probe="onboarding-step:accessibility"]'));
+    add("onboarding.accessibility.request.present", Boolean(one('[data-dev-probe="onboarding-accessibility-request"]')), "accessibility request button not found");
+    const refreshButton = one('[data-dev-probe="onboarding-accessibility-refresh"]');
+    if (refreshButton) await click("onboarding.accessibility.refresh.click", refreshButton);
+
+    await click("onboarding.finish.openTour", one('[data-dev-probe="onboarding-step:tour"]'));
+    const primary = one('[data-dev-probe="onboarding-primary"]');
+    await click("onboarding.finish.click", primary);
+    const completed = one(".onboarding-completed-state, .onboarding-completed-badge");
+    add("onboarding.finish.completedState", visible(completed), "finish did not render completed state");
+
+    await openSection("capture-content");
+    await openSection("shortcut-language");
+    await openTab("onboarding");
+    add("onboarding.reopen.visible", visible(one('[data-dev-probe="onboarding-wizard"]')), "onboarding did not reopen from settings tabs");
+  }
+
+  (async () => {
+    try {
+      await sleep(100);
+      if (target === "settings:onboarding" || target === "onboarding") {
+        await probeOnboardingSurface();
+      } else if (target === "settings:forms") {
+        await probeFormSaving();
+      } else if (target === "settings:code-tabs") {
+        await probeAllCodeTabs();
+      } else if (target === "settings:tooltip") {
+        await probeTooltipKeyboard();
+      } else if (target === "settings:diagnostics") {
+        await probeDiagnosticsAndUpdate();
+      } else if (target === "settings:interactions") {
+        await probeKeyboardTooltipAndActions();
+      } else {
+        await probeSettingsSurface();
+      }
+    } catch (error) {
+      add("probe.exception", false, error?.stack || error?.message || String(error));
+    } finally {
+      result.pass = result.checks.every((item) => item.pass);
+      result.endedAt = new Date().toISOString();
+    }
+  })();
+  return { scope: "settings-dom", target, started: true };
+})()
+"#
+    .replace("__CLIPFORGE_DOM_PROBE_TARGET__", &target_json)
+}
+
+#[cfg(debug_assertions)]
+fn dev_top_nav_dom_probe_script(target: &str) -> String {
+    let target_json = serde_json::to_string(target).unwrap_or_else(|_| "\"unknown\"".to_string());
+    r#"
+(() => {
+  const target = __CLIPFORGE_DOM_PROBE_TARGET__;
+  const result = {
+    scope: "top-nav-dom",
+    target,
+    pass: false,
+    checks: [],
+    startedAt: new Date().toISOString()
+  };
+  window.__clipforgeDevTopNavDomProbeResult = result;
+  const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const one = (selector) => document.querySelector(selector);
+  const visible = (element) => {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  };
+  const shellView = () => {
+    const shell = one(".app-shell");
+    if (!shell) return "";
+    for (const className of shell.classList) {
+      if (className.startsWith("view-")) return className.slice("view-".length);
+    }
+    return "";
+  };
+  const add = (name, pass, reason, details) => {
+    const check = { name, pass: Boolean(pass) };
+    if (!pass && reason) check.reason = String(reason).slice(0, 160);
+    if (details !== undefined) check.details = details;
+    result.checks.push(check);
+    result.pass = result.checks.every((item) => item.pass);
+  };
+  const click = async (name, element) => {
+    if (!element) {
+      add(name, false, "element not found");
+      return false;
+    }
+    try {
+      element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+      element.click();
+      await sleep(160);
+      add(name, true);
+      return true;
+    } catch (error) {
+      add(name, false, error?.message || String(error));
+      return false;
+    }
+  };
+  const pressKey = async (name, key, options = {}) => {
+    try {
+      const event = new KeyboardEvent("keydown", {
+        key,
+        bubbles: true,
+        cancelable: true,
+        ...options,
+      });
+      const dispatched = window.dispatchEvent(event);
+      await sleep(160);
+      add(name, event.defaultPrevented || dispatched === false, "shortcut did not prevent default", {
+        key,
+        defaultPrevented: event.defaultPrevented,
+      });
+      return event.defaultPrevented || dispatched === false;
+    } catch (error) {
+      add(name, false, error?.message || String(error));
+      return false;
+    }
+  };
+  const assertView = (name, expected) => {
+    const view = shellView();
+    add(name, view === expected, `expected ${expected}, got ${view || "unknown"}`, { view });
+  };
+  const assertBottomClear = () => {
+    const workspace = one(".quick-workspace");
+    if (!workspace) {
+      add("topNav.list.bottomClear", true, undefined, { skipped: "workspace missing" });
+      return;
+    }
+    const workspaceRect = workspace.getBoundingClientRect();
+    const bottomDock = one(".bottom-dock, .bottom-nav, .dock-bottom");
+    add(
+      "topNav.list.bottomClear",
+      !bottomDock && workspaceRect.height > 120 && workspaceRect.bottom <= window.innerHeight + 1,
+      "quick workspace is clipped or a bottom dock is still present",
+      {
+        hasBottomDock: Boolean(bottomDock),
+        workspaceHeight: workspaceRect.height,
+        workspaceBottom: workspaceRect.bottom,
+        viewportHeight: window.innerHeight,
+      },
+    );
+  };
+
+  (async () => {
+    try {
+      await sleep(100);
+      const toolbar = one('[data-dev-probe="top-toolbar"], .top-toolbar');
+      add("topNav.toolbar.present", Boolean(toolbar), "top toolbar not found");
+      add("topNav.toolbar.dragRegion", toolbar?.hasAttribute("data-tauri-drag-region"), "top toolbar missing drag region");
+      add("topNav.viewActions.present", Boolean(one('[data-dev-probe="top-view-actions"], .top-view-actions')), "top view actions not found");
+      add("topNav.history.present", Boolean(one('[data-dev-probe="top-view-history"]')), "history top tab not found");
+      add("topNav.favorites.present", Boolean(one('[data-dev-probe="top-view-favorites"]')), "favorites top tab not found");
+      add("topNav.search.present", Boolean(one('[data-dev-probe="top-search-slot"], .top-toolbar-search-slot')), "search slot not found");
+      add("topNav.agent.present", Boolean(one('[data-dev-probe="top-agent-button"], .top-agent-button')), "agent button not found");
+      add("topNav.menu.present", Boolean(one('[data-dev-probe="top-menu-trigger"], .top-menu-trigger')), "top menu trigger not found");
+      await click("topNav.history.click", one('[data-dev-probe="top-view-history"]'));
+      assertView("topNav.history.active", "history");
+      assertBottomClear();
+      await click("topNav.favorites.click", one('[data-dev-probe="top-view-favorites"]'));
+      assertView("topNav.favorites.active", "favorites");
+      assertBottomClear();
+      await click("topNav.menu.click", one('[data-dev-probe="top-menu-trigger"], .top-menu-trigger'));
+      const trashMenuItem = one('[data-dev-probe="top-menu-trash"]');
+      add("topNav.menu.trash.present", Boolean(trashMenuItem), "trash menu item not found");
+      add("topNav.menu.settings.present", Boolean(one('[data-dev-probe="top-menu-settings"]')), "settings menu item not found");
+      add("topNav.menu.onboarding.absent", !document.body.textContent.includes("Onboarding"), "onboarding menu entry is still visible");
+      if (trashMenuItem) {
+        await click("topNav.trash.click", trashMenuItem);
+        assertView("topNav.trash.active", "trash");
+        assertBottomClear();
+      }
+      await click("topNav.history.clickAfterTrash", one('[data-dev-probe="top-view-history"]'));
+      await pressKey("topNav.shortcut.trash.prevented", "t");
+      assertView("topNav.shortcut.trash.active", "trash");
+      await pressKey("topNav.shortcut.settings.prevented", ",", { metaKey: true });
+      result.visible = visible(toolbar);
+    } catch (error) {
+      add("probe.exception", false, error?.stack || error?.message || String(error));
+    } finally {
+      result.pass = result.checks.every((item) => item.pass);
+      result.endedAt = new Date().toISOString();
+    }
+  })();
+  return { scope: "top-nav-dom", target, started: true };
+})()
+"#
+    .replace("__CLIPFORGE_DOM_PROBE_TARGET__", &target_json)
+}
+
+#[cfg(debug_assertions)]
+fn run_dev_settings_dom_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>, target: &str) {
+    if !dev_settings_dom_probe_enabled() {
+        return;
+    }
+    let target = target.to_string();
+    log_to_file(
+        "info",
+        "dev-open",
+        &format!("settings_dom_probe started target={target}"),
+    );
+
+    let start_app = app.clone();
+    let start_target = target.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if let Some(window) = start_app.get_webview_window("settings") {
+            if let Err(error) = window.eval(dev_settings_dom_probe_script(&start_target)) {
+                log_to_file(
+                    "warn",
+                    "dev-open",
+                    &format!("settings_dom_probe settings start failed: {error}"),
+                );
+            }
+        } else {
+            log_to_file(
+                "warn",
+                "dev-open",
+                r#"settings_dom_probe settings {"scope":"settings-dom","pass":false,"checks":[{"name":"settings.window.present","pass":false,"reason":"settings window not found"}]}"#,
+            );
+        }
+        if let Some(window) = start_app.get_webview_window("main") {
+            if let Err(error) = window.eval(dev_top_nav_dom_probe_script(&start_target)) {
+                log_to_file(
+                    "warn",
+                    "dev-open",
+                    &format!("settings_dom_probe top_nav start failed: {error}"),
+                );
+            }
+        } else {
+            log_to_file(
+                "warn",
+                "dev-open",
+                r#"settings_dom_probe top_nav {"scope":"top-nav-dom","pass":false,"checks":[{"name":"main.window.present","pass":false,"reason":"main window not found"}]}"#,
+            );
+        }
+    }) {
+        log_to_file(
+            "warn",
+            "dev-open",
+            &format!("settings_dom_probe start dispatch failed: {error}"),
+        );
+        return;
+    }
+
+    thread::sleep(Duration::from_millis(45_000));
+
+    let finish_app = app.clone();
+    let finish_target = target.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if let Some(window) = finish_app.get_webview_window("settings") {
+            let script = r#"
+(() => window.__clipforgeDevSettingsDomProbeResult ?? {
+  scope: "settings-dom",
+  pass: false,
+  checks: [{ name: "settings.result.present", pass: false, reason: "probe result missing" }]
+})()
+"#;
+            if let Err(error) = window.eval_with_callback(script, move |payload| {
+                log_to_file(
+                    "info",
+                    "dev-open",
+                    &format!("CLIPFORGE_DEV_OPEN={} settings_dom_probe settings {}", finish_target, payload),
+                );
+            }) {
+                log_to_file(
+                    "warn",
+                    "dev-open",
+                    &format!("settings_dom_probe settings result failed: {error}"),
+                );
+            }
+        }
+        if let Some(window) = finish_app.get_webview_window("main") {
+            let script = r#"
+(() => window.__clipforgeDevTopNavDomProbeResult ?? {
+  scope: "top-nav-dom",
+  pass: false,
+  checks: [{ name: "topNav.result.present", pass: false, reason: "probe result missing" }]
+})()
+"#;
+            if let Err(error) = window.eval_with_callback(script, move |payload| {
+                log_to_file(
+                    "info",
+                    "dev-open",
+                    &format!("settings_dom_probe top_nav {}", payload),
+                );
+            }) {
+                log_to_file(
+                    "warn",
+                    "dev-open",
+                    &format!("settings_dom_probe top_nav result failed: {error}"),
+                );
+            }
+        }
+    }) {
+        log_to_file(
+            "warn",
+            "dev-open",
+            &format!("settings_dom_probe result dispatch failed: {error}"),
+        );
+    }
+}
+
+#[cfg(debug_assertions)]
+fn schedule_dev_perf_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>, target: String) {
+    thread::spawn(move || {
+        thread::sleep(std::time::Duration::from_millis(3_000));
+        let repeat_count = dev_perf_probe_repeat_count();
+        let window_label = dev_open_window_label(&target);
+        if window_label == "main" {
+            for probe_index in 0..repeat_count {
+                let app_for_emit = app.clone();
+                let target_for_emit = target.clone();
+                let target_for_emit_dispatch = target_for_emit.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    if let Some(window) = app_for_emit.get_webview_window("main") {
+                        if let Err(error) = window.emit("clipforge://show-quick-panel", "dev-open")
+                        {
+                            log_to_file(
+                                "warn",
+                                "dev-open",
+                                &format!(
+                                    "CLIPFORGE_DEV_OPEN={} perf_probe show event {}/{} failed: {}",
+                                    target_for_emit,
+                                    probe_index + 1,
+                                    repeat_count,
+                                    error
+                                ),
+                            );
+                        }
+                    }
+                }) {
+                    log_to_file(
+                        "warn",
+                        "dev-open",
+                        &format!(
+                            "CLIPFORGE_DEV_OPEN={} perf_probe show dispatch {}/{} failed: {}",
+                            target_for_emit_dispatch,
+                            probe_index + 1,
+                            repeat_count,
+                            error
+                        ),
+                    );
+                }
+                if dev_quick_probe_enabled() && !dev_quick_probe_can_run() {
+                    log_to_file(
+                        "warn",
+                        "dev-open",
+                        "quick_probe skipped: controlled paste target is not ready",
+                    );
+                } else if dev_quick_probe_can_run() {
+                    thread::sleep(std::time::Duration::from_millis(180));
+                    restore_dev_quick_probe_target_bundle();
+                    let app_for_eval = app.clone();
+                    let target_for_eval = target.clone();
+                    let target_for_eval_dispatch = target_for_eval.clone();
+                    if let Err(error) = app.run_on_main_thread(move || {
+                        let Some(window) = app_for_eval.get_webview_window("main") else {
+                            return;
+                        };
+                        if let Err(error) = window.eval(dev_quick_probe_script(probe_index)) {
+                            log_to_file(
+                                "warn",
+                                "dev-open",
+                                &format!(
+                                    "CLIPFORGE_DEV_OPEN={} quick_probe eval {}/{} failed: {}",
+                                    target_for_eval,
+                                    probe_index + 1,
+                                    repeat_count,
+                                    error
+                                ),
+                            );
+                        }
+                    }) {
+                        log_to_file(
+                            "warn",
+                            "dev-open",
+                            &format!(
+                                "CLIPFORGE_DEV_OPEN={} quick_probe dispatch {}/{} failed: {}",
+                                target_for_eval_dispatch,
+                                probe_index + 1,
+                                repeat_count,
+                                error
+                            ),
+                        );
+                    }
+                    thread::sleep(std::time::Duration::from_millis(820));
+                }
+                if probe_index + 1 < repeat_count {
+                    thread::sleep(std::time::Duration::from_millis(450));
+                }
+            }
+            thread::sleep(std::time::Duration::from_millis(1_200));
+        } else if window_label == "settings" {
+            for probe_index in 0..repeat_count {
+                let app_for_eval = app.clone();
+                let target_for_eval = target.clone();
+                let target_for_eval_dispatch = target_for_eval.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    let Some(window) = app_for_eval.get_webview_window("settings") else {
+                        return;
+                    };
+                    let script = format!(
+                        r#"
+(() => {{
+  const items = Array.from(document.querySelectorAll(".settings-redesign-sidebar-item"));
+  if (items.length === 0) return {{ clicked: false, count: 0 }};
+  const item = items[{probe_index} % items.length];
+  item.click();
+  return {{ clicked: true, count: items.length }};
+}})()
+"#
+                    );
+                    if let Err(error) = window.eval(script) {
+                        log_to_file(
+                            "warn",
+                            "dev-open",
+                            &format!(
+                                "CLIPFORGE_DEV_OPEN={} perf_probe settings click {}/{} failed: {}",
+                                target_for_eval,
+                                probe_index + 1,
+                                repeat_count,
+                                error
+                            ),
+                        );
+                    }
+                }) {
+                    log_to_file(
+                        "warn",
+                        "dev-open",
+                        &format!(
+                            "CLIPFORGE_DEV_OPEN={} perf_probe settings dispatch {}/{} failed: {}",
+                            target_for_eval_dispatch,
+                            probe_index + 1,
+                            repeat_count,
+                            error
+                        ),
+                    );
+                }
+                if probe_index + 1 < repeat_count {
+                    thread::sleep(std::time::Duration::from_millis(120));
+                }
+            }
+            thread::sleep(std::time::Duration::from_millis(1_000));
+        }
+        if window_label == "settings" {
+            run_dev_settings_changed_probe(app.clone());
+            run_dev_i18n_probe(app.clone());
+            run_dev_settings_dom_probe(app.clone(), &target);
+        }
+        let app_for_main = app.clone();
+        let target_for_main = target.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            let window_label = dev_open_window_label(&target_for_main);
+            let Some(window) = app_for_main.get_webview_window(window_label) else {
+                log_to_file(
+                    "warn",
+                    "dev-open",
+                    &format!(
+                        "CLIPFORGE_DEV_OPEN={} perf_probe skipped: window {} not found",
+                        target_for_main, window_label
+                    ),
+                );
+                return;
+            };
+            let target_json = serde_json::to_string(&target_for_main)
+                .unwrap_or_else(|_| "\"unknown\"".to_string());
+            let script = format!(
+                r#"
+(() => {{
+  const perf = window.__clipforgePerf;
+  const settingsButtons = Array.from(document.querySelectorAll(".settings-redesign-sidebar-item"));
+  const layoutSelectors = [
+    ".quick-panel",
+    ".quick-workspace",
+    ".quick-menu",
+    ".quick-row",
+    ".quick-content",
+    ".quick-line",
+    ".topbar",
+    "button",
+    "input",
+    "[role='button']"
+  ].join(",");
+  const layoutElements = Array.from(document.querySelectorAll(layoutSelectors));
+  const viewportWidth = window.innerWidth;
+  const documentOverflowX = Math.max(0, document.documentElement.scrollWidth - viewportWidth);
+  const bodyOverflowX = Math.max(0, document.body.scrollWidth - viewportWidth);
+  const escapedElements = layoutElements
+    .map((element) => {{
+      const rect = element.getBoundingClientRect();
+      return {{
+        className: element.className || element.tagName,
+        tagName: element.tagName,
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        width: Math.round(rect.width)
+      }};
+    }})
+    .filter((item) => (documentOverflowX > 0 || bodyOverflowX > 0) && item.width > 0 && (item.left < -1 || item.right > viewportWidth + 1))
+    .slice(0, 12);
+  const controlOverflow = layoutElements
+    .filter((element) => {{
+      const style = window.getComputedStyle(element);
+      const expectedTextClamp = element.classList?.contains("quick-line") || element.classList?.contains("quick-line-mid");
+      const hasVisibleText = (element.textContent ?? "").trim().length > 0;
+      const iconOnly = element.classList?.contains("icon-button") || element.classList?.contains("top-menu-trigger");
+      return hasVisibleText && !iconOnly && !expectedTextClamp && style.overflowX === "visible" && element.scrollWidth > element.clientWidth + 1;
+    }})
+    .map((element) => ({{
+      className: element.className || element.tagName,
+      tagName: element.tagName,
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth
+    }}))
+    .slice(0, 12);
+  const sourceCounts = (perf?.samples ?? []).reduce((counts, sample) => {{
+    const source = sample?.meta?.sampleSource ?? "unknown";
+    counts[source] = (counts[source] ?? 0) + 1;
+    return counts;
+  }}, {{}});
+  return {{
+    target: {target_json},
+    href: window.location.href,
+    title: document.title,
+    documentLang: document.documentElement.lang,
+    repeatCount: {repeat_count},
+    hasPerfCollector: Boolean(perf),
+    settingsButtonCount: settingsButtons.length,
+    layout: {{
+      viewportWidth,
+      documentOverflowX,
+      bodyOverflowX,
+      escapedCount: escapedElements.length,
+      escapedElements,
+      controlOverflowCount: controlOverflow.length,
+      controlOverflow
+    }},
+    sourceCounts,
+    sampleCount: perf?.samples?.length ?? 0,
+    summary: typeof perf?.summary === "function" ? perf.summary() : []
+  }};
+}})()
+"#
+            );
+            let target_for_callback = target_for_main.clone();
+            if let Err(error) = window.eval_with_callback(script, move |payload| {
+                log_to_file(
+                    "info",
+                    "dev-open",
+                    &format!(
+                        "CLIPFORGE_DEV_OPEN={} perf_probe {}",
+                        target_for_callback, payload
+                    ),
+                );
+            }) {
+                log_to_file(
+                    "warn",
+                    "dev-open",
+                    &format!(
+                        "CLIPFORGE_DEV_OPEN={} perf_probe eval failed: {}",
+                        target_for_main, error
+                    ),
+                );
+            }
+        }) {
+            log_to_file(
+                "warn",
+                "dev-open",
+                &format!(
+                    "CLIPFORGE_DEV_OPEN={} perf_probe dispatch failed: {}",
+                    target, error
+                ),
+            );
+        }
+        if window_label == "main" {
+            cleanup_dev_quick_probe_target(app.clone());
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -8061,6 +10084,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -8099,6 +10123,7 @@ pub fn run() {
             agent_restore_session,
             capture_clip_record,
             capture_current_clipboard,
+            dev_read_clipboard_text,
             query_clip_records,
             search_clip_records,
             soft_delete_clip_records,
@@ -8136,6 +10161,7 @@ pub fn run() {
             export_diagnostics_bundle,
             set_panel_mode,
             open_settings_window,
+            open_settings_window_with_section,
             show_quick_panel_command,
             hide_quick_panel_command,
             toggle_quick_panel_command,
@@ -10529,6 +12555,7 @@ fn mcp_settings_patch(
     reason: Option<&str>,
     expected_revision: Option<&str>,
 ) -> Result<Value, (i64, String)> {
+    let started = std::time::Instant::now();
     let _guard = SETTINGS_WRITE_LOCK
         .lock()
         .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
@@ -10536,11 +12563,11 @@ fn mcp_settings_patch(
     let previous = read_user_settings()
         .map_err(|error| (-32000, error))?
         .settings;
-    let previous_revision = ensure_expected_settings_revision(&previous, expected_revision)
+    let draft = prepare_settings_patch(&previous, &patch, expected_revision)
         .map_err(|error| (-32602, error))?;
-    let mut next = previous.clone();
-    merge_settings_patch(&mut next, &patch);
-    let changed_paths = settings_changed_paths(&previous, &next);
+    let previous_revision = draft.previous_revision;
+    let changed_paths = draft.changed_paths;
+    let next = draft.next;
     write_settings_atomic(&next).map_err(|error| (-32000, error))?;
     log_to_file(
         "info",
@@ -10551,8 +12578,12 @@ fn mcp_settings_patch(
             changed_paths.join(",")
         ),
     );
-    settings_write_response(next, previous_revision, changed_paths, true)
-        .map_err(|error| (-32000, error))
+    let mut response = settings_write_response(next, previous_revision, changed_paths, true)
+        .map_err(|error| (-32000, error))?;
+    let duration_ms = started.elapsed().as_millis() as i64;
+    response["durationMs"] = json!(duration_ms);
+    log_slow_settings_operation("mcp.patch", duration_ms);
+    Ok(response)
 }
 
 /// MCP 设置全量替换（调用方必须先 confirmed=true）。
@@ -10561,6 +12592,7 @@ fn mcp_settings_replace(
     reason: Option<&str>,
     expected_revision: Option<&str>,
 ) -> Result<Value, (i64, String)> {
+    let started = std::time::Instant::now();
     let _guard = SETTINGS_WRITE_LOCK
         .lock()
         .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
@@ -10568,10 +12600,12 @@ fn mcp_settings_replace(
     let previous = read_user_settings()
         .map_err(|error| (-32000, error))?
         .settings;
-    let previous_revision = ensure_expected_settings_revision(&previous, expected_revision)
+    let draft = prepare_settings_replace(&previous, settings, expected_revision)
         .map_err(|error| (-32602, error))?;
-    let changed_paths = settings_changed_paths(&previous, &settings);
-    write_settings_atomic(&settings).map_err(|error| (-32000, error))?;
+    let previous_revision = draft.previous_revision;
+    let changed_paths = draft.changed_paths;
+    let next = draft.next;
+    write_settings_atomic(&next).map_err(|error| (-32000, error))?;
     log_to_file(
         "warn",
         "settings-service",
@@ -10581,8 +12615,12 @@ fn mcp_settings_replace(
             changed_paths.join(",")
         ),
     );
-    settings_write_response(settings, previous_revision, changed_paths, true)
-        .map_err(|error| (-32000, error))
+    let mut response = settings_write_response(next, previous_revision, changed_paths, true)
+        .map_err(|error| (-32000, error))?;
+    let duration_ms = started.elapsed().as_millis() as i64;
+    response["durationMs"] = json!(duration_ms);
+    log_slow_settings_operation("mcp.replace", duration_ms);
+    Ok(response)
 }
 
 /// MCP 设置按 scope 重置（调用方必须先 confirmed=true）。
@@ -10591,103 +12629,18 @@ fn mcp_settings_reset(
     reason: Option<&str>,
     expected_revision: Option<&str>,
 ) -> Result<Value, (i64, String)> {
+    let started = std::time::Instant::now();
     let _guard = SETTINGS_WRITE_LOCK
         .lock()
         .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
     let previous = read_user_settings()
         .map_err(|error| (-32000, error))?
         .settings;
-    let previous_revision = ensure_expected_settings_revision(&previous, expected_revision)
+    let draft = prepare_settings_reset(&previous, &scope, expected_revision)
         .map_err(|error| (-32602, error))?;
-    let mut next = previous.clone();
-    // scope 匹配逻辑与 settings_service_reset 一致；后续由 codebase-modularity-refactor 的 settings 模块抽取合并。
-    match scope.as_str() {
-        "all" => next = json!({}),
-        "agent" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("agent");
-                object.remove("agentProviders");
-            }
-        }
-        "shortcuts" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("globalShortcut");
-            }
-        }
-        "display" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "panelDensity",
-                    "contentDisplayMode",
-                    "positionStrategy",
-                    "panelBackgroundOpacity",
-                    "enableScrollCollapse",
-                    "panelWidth",
-                    "panelHeight",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "capture" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "captureTextEnabled",
-                    "captureHtmlEnabled",
-                    "captureRtfEnabled",
-                    "captureImageEnabled",
-                    "captureFileEnabled",
-                    "captureSensitiveEnabled",
-                    "imageMaxSizeMb",
-                    "textMaxSizeMb",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "storage" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "quickItemLimit",
-                    "maxStoredItems",
-                    "clipboardPollMs",
-                    "cleanupEnabled",
-                    "cleanupIntervalHours",
-                    "softDeletedRetentionDays",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "logs" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "logMaxSizeMb",
-                    "logKeepRatio",
-                    "logMaxLines",
-                    "logRetentionDays",
-                    "logAutoCleanup",
-                    "logCleanupIntervalMin",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "tags" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("tagMode");
-                object.remove("tagRules");
-            }
-        }
-        _ => {
-            return Err((
-                -32602,
-                "SETTINGS_RESET_INVALID_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags"
-                    .to_string(),
-            ));
-        }
-    }
-    let changed_paths = settings_changed_paths(&previous, &next);
+    let previous_revision = draft.previous_revision;
+    let changed_paths = draft.changed_paths;
+    let next = draft.next;
     write_settings_atomic(&next).map_err(|error| (-32000, error))?;
     log_to_file(
         "warn",
@@ -10699,8 +12652,12 @@ fn mcp_settings_reset(
             changed_paths.join(",")
         ),
     );
-    settings_write_response(next, previous_revision, changed_paths, true)
-        .map_err(|error| (-32000, error))
+    let mut response = settings_write_response(next, previous_revision, changed_paths, true)
+        .map_err(|error| (-32000, error))?;
+    let duration_ms = started.elapsed().as_millis() as i64;
+    response["durationMs"] = json!(duration_ms);
+    log_slow_settings_operation("mcp.reset", duration_ms);
+    Ok(response)
 }
 
 fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
@@ -11352,11 +13309,17 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
         }
         // ===== B3：MCP 设置/Agent 工具分发（复用统一 SettingsService 底层函数）=====
         "clipf.settings.get" => {
+            let started = std::time::Instant::now();
             let include_schema = args
                 .get("includeSchema")
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
-            public_settings_payload(include_schema).map_err(|error| (-32000, error))?
+            let mut payload =
+                public_settings_payload(include_schema).map_err(|error| (-32000, error))?;
+            let duration_ms = started.elapsed().as_millis() as i64;
+            payload["durationMs"] = json!(duration_ms);
+            log_slow_settings_operation("mcp.get", duration_ms);
+            payload
         }
         "clipf.settings.patch" => mcp_settings_patch(
             args.get("patch").cloned().unwrap_or_else(|| json!({})),
@@ -11402,19 +13365,7 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             )?
         }
         "clipf.agent.providers" => {
-            let config = agent_get_config().map_err(|error| (-32000, error))?;
-            let revision = settings_revision(
-                &read_user_settings()
-                    .map_err(|error| (-32000, error))?
-                    .settings,
-            );
-            serde_json::to_value(json!({
-                "activeProviderId": config.active_provider_id,
-                "providers": config.providers,
-                "tools": config.tools,
-                "revision": revision
-            }))
-            .map_err(|error| (-32000, error.to_string()))?
+            settings_service_agent_providers_payload().map_err(|error| (-32000, error))?
         }
         "clipf.agent.check" => {
             let provider_id = args

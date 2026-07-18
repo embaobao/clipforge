@@ -108,3 +108,10 @@
 - [ ] `pnpm tauri dev` 验证文件复制为路径
 - [ ] `pnpm tauri dev` 验证写回后无重复入库
 - [ ] `pnpm tauri dev` 验证删除图片/文件条目后磁盘文件清理
+
+### Phase 10 复跑记录（2026-07-16）
+
+- 已复跑 `cargo test parses_png_dimensions`：通过，PNG 尺寸解析单测 1/1 通过。
+- 已复跑 `cargo test clipboard::write`：通过，HTML rich/plain、RTF、图片写回计划、文件 rich/path 计划 5/5 通过；测试不触发系统剪贴板。
+- 已运行 `pnpm openspec validate file-image-clipboard-support --strict`：通过。
+- 剩余 `pnpm tauri dev` 项仍需要真实系统剪贴板、文件系统清理和前端显示/粘贴证据；本轮不勾选。

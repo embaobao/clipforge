@@ -16,6 +16,9 @@ import path from "node:path";
 const root = process.cwd();
 const rustPath = path.join(root, "src-tauri/src/lib.rs");
 const settingsTsPath = path.join(root, "src/services/settings.ts");
+const appPath = path.join(root, "src/App.tsx");
+const settingsWindowPath = path.join(root, "src/settings.tsx");
+const perfCollectorPath = path.join(root, "src/performance-smoke.ts");
 
 const PERF_BUDGET_MS = 300;
 
@@ -49,6 +52,9 @@ function extractRustFn(src, name) {
 // ---- 文件存在性 -----------------------------------------------------------
 assert(fs.existsSync(rustPath), `${rustPath} not found`);
 assert(fs.existsSync(settingsTsPath), `${settingsTsPath} not found`);
+assert(fs.existsSync(appPath), `${appPath} not found`);
+assert(fs.existsSync(settingsWindowPath), `${settingsWindowPath} not found`);
+assert(fs.existsSync(perfCollectorPath), `${perfCollectorPath} not found`);
 
 // ---- 静态断言 1：后端 settings_service_* 埋点 ------------------------------
 const rust = read(rustPath);
@@ -79,6 +85,9 @@ for (const fn of settingsFns) {
 
 // ---- 静态断言 2：前端 settings.ts 计时 + dev warn --------------------------
 const settingsTs = read(settingsTsPath);
+const appTsx = read(appPath);
+const settingsWindowTsx = read(settingsWindowPath);
+const perfCollector = read(perfCollectorPath);
 assert(
   settingsTs.includes("PERF_BUDGET_MS") && settingsTs.includes("= 300"),
   "settings.ts 未定义 300ms 性能预算常量",
@@ -105,22 +114,48 @@ assert(
   "settings.ts 未通过统一命令调用 settings_service_get / patch",
 );
 
+// ---- 静态断言 3：GUI P95 采样点存在 ---------------------------------------
+assert(
+  perfCollector.includes("window.__clipforgePerf") &&
+    perfCollector.includes("summary(label?: string)") &&
+    perfCollector.includes("p95"),
+  "缺少 window.__clipforgePerf P95 采样收集器",
+);
+assert(
+  appTsx.includes('startPerfSpan("panel.open"') &&
+    appTsx.includes('recordNextFramePerf("quick.select"') &&
+    appTsx.includes('recordNextFramePerf("quick.scroll"') &&
+    appTsx.includes('startPerfSpan("quick.copy"') &&
+    appTsx.includes('startPerfSpan("quick.paste"'),
+  "主面板缺少 panel.open / quick.select / quick.scroll / quick.copy / quick.paste 采样点",
+);
+assert(
+  settingsWindowTsx.includes('recordNextFramePerf("settings.section"') &&
+    settingsWindowTsx.includes('recordNextFramePerf("settings.changed"'),
+  "设置页缺少 settings.section / settings.changed 采样点",
+);
+
 // ---- 手动采样清单（tauri dev 里用 performance.mark 完成） ------------------
 const manualChecklist = [
   {
     scenario: "主面板快捷键打开（trayCenter/followCursor → 首屏可交互）",
-    method: "performance.mark('panel:open:start') 于快捷键触发；panel:open:end 于首帧 list mount",
+    method: "采样 label=panel.open；在 devtools 执行 window.__clipforgePerf.summary('panel.open')",
     target: `P95 <= ${PERF_BUDGET_MS}ms`,
   },
   {
     scenario: "列表选中 / 滚动 / 复制（热路径，不可阻塞）",
-    method: "选中/滚动/复制各采样 N>=30，mark onAction:start → onAction:end",
+    method: "采样 label=quick.select / quick.scroll / quick.copy / quick.paste；各采样 N>=30 后执行 window.__clipforgePerf.summary()",
     target: `P95 <= ${PERF_BUDGET_MS}ms`,
   },
   {
     scenario: "设置页 tab 切换（surface 切换不重拉全量 schema）",
-    method: "performance.mark('settings:tab:start'/'settings:tab:end')，复用 schema 缓存",
+    method: "采样 label=settings.section；切换侧边栏 N>=30 后执行 window.__clipforgePerf.summary('settings.section')",
     target: `P95 <= ${PERF_BUDGET_MS}ms`,
+  },
+  {
+    scenario: "设置窗口收到 settings_changed 后轻量刷新",
+    method: "采样 label=settings.changed；设置页打开时从另一入口写入设置后执行 window.__clipforgePerf.summary('settings.changed')",
+    target: `收到事件且刷新反馈 P95 <= ${PERF_BUDGET_MS}ms`,
   },
   {
     scenario: "settings.get(includeSchema=false)",

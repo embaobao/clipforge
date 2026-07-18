@@ -21,6 +21,7 @@ const FORBIDDEN = [
   "agent_check_provider",
   "agent_detect",
   "agent_list_provider_models",
+  "settings_changed",
   "clipf.settings",
   "clipf.agent",
   "settingsService",

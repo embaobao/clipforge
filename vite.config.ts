@@ -17,6 +17,7 @@ export default defineConfig(async () => ({
   build: {
     rollupOptions: {
       input: {
+        devPasteTarget: fileURLToPath(new URL("./dev-paste-target.html", import.meta.url)),
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
       },

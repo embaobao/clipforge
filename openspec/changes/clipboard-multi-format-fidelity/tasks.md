@@ -40,3 +40,9 @@
 - [ ] 验证文件 rich/path 写回
 - [ ] 验证图片 rich 写回
 - [ ] 验证写回后不会重复入库
+
+### Phase 5 复跑记录（2026-07-16）
+
+- 已复跑 `cargo test clipboard::write`：通过，HTML rich/plain、RTF、图片、文件 rich/path 的写回计划层 5/5 通过。
+- 已运行 `pnpm openspec validate clipboard-multi-format-fidelity --strict`：通过。
+- 剩余 4 项仍需要真实系统剪贴板和 Tauri 运行证据，计划层单测不足以证明平台剪贴板写回与监听去重，因此不勾选。

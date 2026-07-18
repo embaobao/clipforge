@@ -26,8 +26,10 @@ import { detectSensitiveEditorFields } from "../editor/sensitive";
 import { applyEditorSuggestion, buildLocalEditorSuggestion } from "../editor/suggestions";
 import { formatCommandError, type TranslationKey } from "../i18n";
 import { getImagePath, type FilePathStatus } from "../services/clipboard";
+import type { ClipAiSummary } from "../services/ai-summary";
 import type { EditorSuggestionResult } from "../services/contracts";
 import { analyzeSmartFormats } from "../smart-format";
+import { DetailAiSummaryPanel } from "./ai-summary-panel";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -100,6 +102,7 @@ function getPayloadKindIcon(kind: ClipPayloadKind) {
 
 type ClipDetailWorkspaceProps = {
   clip: ClipItem | null;
+  candidates?: ClipItem[];
   filePathStatuses?: Record<string, FilePathStatus>;
   links: string[];
   tr: WorkspaceTr;
@@ -109,6 +112,8 @@ type ClipDetailWorkspaceProps = {
   onOpen: (clip: ClipItem) => void;
   onOpenPath?: (path: string) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
+  onGenerateAiSummary?: (clip: ClipItem) => Promise<ClipAiSummary | void> | ClipAiSummary | void;
+  onOpenRecommendation?: (clip: ClipItem) => void;
   onPrevious?: () => void;
   onNext?: () => void;
   onSearchTag: (tag: string) => void;
@@ -675,6 +680,7 @@ function DetailQuickEditor({
   onTagsChange,
   onVariableDrawerOpen,
   onSave,
+  onSaveAndCopy,
   onSaveAndPaste,
 }: {
   content: string;
@@ -694,6 +700,7 @@ function DetailQuickEditor({
   onTagsChange: (tags: string[]) => void;
   onVariableDrawerOpen: () => void;
   onSave: () => void;
+  onSaveAndCopy: () => void;
   onSaveAndPaste: () => void;
 }) {
   const [tagInput, setTagInput] = useState("");
@@ -757,6 +764,14 @@ function DetailQuickEditor({
           <button disabled={!hasChanges || isSaving || !content.trim()} type="button" onClick={onSave}>
             <Save size={11} />
             {isSaving ? tr("main.detail.saving") : tr("agent.action.save")}
+          </button>
+          <button disabled={!hasChanges || isSaving || !content.trim()} type="button" onClick={onSaveAndCopy}>
+            <Copy size={11} />
+            {tr("main.detail.saveAndCopy")}
+          </button>
+          <button disabled={!hasChanges || isSaving || !content.trim()} type="button" onClick={onSaveAndPaste}>
+            <Clipboard size={11} />
+            {tr("main.detail.saveAndPaste")}
           </button>
         </div>
       </div>
@@ -992,6 +1007,7 @@ function FileListPreview({
 
 export function ClipDetailWorkspace({
   clip,
+  candidates = [],
   filePathStatuses,
   links,
   tr,
@@ -1001,6 +1017,8 @@ export function ClipDetailWorkspace({
   onOpen,
   onOpenPath,
   onPasteText,
+  onGenerateAiSummary,
+  onOpenRecommendation,
   onPrevious,
   onNext,
   onSearchTag,
@@ -1027,7 +1045,7 @@ export function ClipDetailWorkspace({
 
   if (!clip) {
     return (
-      <section className="workspace-page workspace-detail-page">
+      <section className="workspace-page workspace-detail-page" data-surface="workspace">
         <WorkspaceCrumb title={tr("main.detail.title")} onBack={onBack} tr={tr} />
         <div className="workspace-empty">{tr("main.detail.missing")}</div>
       </section>
@@ -1091,7 +1109,7 @@ export function ClipDetailWorkspace({
   };
 
   const saveDraftContent = async (
-    afterSave: "stay" | "paste" = "stay",
+    afterSave: "stay" | "copy" | "paste" = "stay",
     override?: { content: string; tags: string[] },
   ) => {
     const nextContent = override?.content ?? draftContent;
@@ -1110,13 +1128,22 @@ export function ClipDetailWorkspace({
     setIsSaving(true);
     setEditError("");
     try {
-      await onUpdateContent(clip, nextContent, nextTags, {
+      const savedClip = await onUpdateContent(clip, nextContent, nextTags, {
         sessionId: editorSessionId || `editor_${clip.id}`,
         draftVersion,
       });
+      const postSaveClip = savedClip ?? { ...clip, content: nextContent, tags: nextTags };
       setDraftContent(nextContent);
       setDraftTags(nextTags);
       setDraftVersion((current) => current + 1);
+      if (afterSave === "copy") {
+        appendWorkspacePanelLog("info", "detail-editor-save-and-copy", {
+          clipId: clip.id,
+          sessionId: editorSessionId,
+          draftVersion,
+        });
+        onCopy(postSaveClip);
+      }
       if (afterSave === "paste") {
         onPasteText(nextContent, "detail-editor:save-and-paste", {
           businessChain: "detail -> compact-editor -> save_editor_draft -> paste",
@@ -1149,7 +1176,7 @@ export function ClipDetailWorkspace({
   const menuActions = quickActions.filter((action) => action.id !== "open-target" && action.id !== "copy");
 
   return (
-    <section className="workspace-page workspace-detail-page">
+    <section className="workspace-page workspace-detail-page" data-surface="workspace">
       <WorkspaceCrumb title={tr("main.detail.contentTitle")} subtitle={mode} onBack={handleBack} tr={tr}>
         <button
           aria-label={tr("main.detail.previous")}
@@ -1272,6 +1299,13 @@ export function ClipDetailWorkspace({
       ) : null}
 
       <DetailContentBoundary clip={clip} onBack={onBack} onCopy={onCopy} tr={tr}>
+        <DetailAiSummaryPanel
+          clip={clip}
+          candidates={candidates}
+          tr={tr}
+          onGenerateSummary={onGenerateAiSummary}
+          onOpenRecommendation={onOpenRecommendation}
+        />
         <div className="detail-content">
           {isEditing ? (
             <DetailQuickEditor
@@ -1314,6 +1348,7 @@ export function ClipDetailWorkspace({
                 });
               }}
               onSave={() => void saveDraftContent()}
+              onSaveAndCopy={() => void saveDraftContent("copy")}
               onSaveAndPaste={() => void saveDraftContent("paste")}
             />
           ) : clip.payloadKind === "image" ? (
@@ -1373,7 +1408,7 @@ export function MultiAggregateWorkspace({
   const linkCount = items.reduce((sum, item) => sum + (item.analysis.url ? 1 : 0), 0);
 
   return (
-    <section className="workspace-page workspace-aggregate-page">
+    <section className="workspace-page workspace-aggregate-page" data-surface="workspace">
       <WorkspaceCrumb title={tr("main.aggregate.title")} subtitle={tr("main.aggregate.subtitle", { count: items.length, chars: totalChars })} onBack={onBack} tr={tr}>
         <button className="icon-button" onClick={onExportTable} type="button" aria-label={tr("main.aggregate.exportTable")}>
           <Table2 size={14} />

@@ -8,15 +8,27 @@ import {
   FileJson,
   Heart,
   History,
-  Image as ImageIcon,
-  Inbox,
+  MoreHorizontal,
   Pin,
   RotateCcw,
   Search,
+  Sparkles,
   Square,
   Trash2,
   X,
 } from "lucide-react";
+import { ClipboardEmptyState } from "./clipboard/components/ClipboardEmptyState";
+import { ClipboardContentPreview } from "./clipboard/components/ClipboardContentPreview";
+import { ClipboardRowActions } from "./clipboard/components/ClipboardRowActions";
+import { AppTooltip } from "./clipboard/components/AppTooltip";
+import {
+  getDisplayText,
+  getFilePathsFromClip,
+  getItemTooltip,
+  isFileClipMissing,
+  middleEllipsis,
+  splitLineForMiddleEllipsis,
+} from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -64,9 +76,16 @@ import {
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
 import { ClipboardAgentPanel } from "./agent-panel";
+import {
+  generateClipAiSummary,
+  getClipAiSummaryErrorLogMetadata,
+  getClipAiSummaryLogMetadata,
+  getStoredClipAiSummary,
+  type ClipAiSummary,
+} from "./services/ai-summary";
 import type { AgentContextReference } from "./services/contracts";
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
-import { Avatar, AvatarFallback, AvatarImage } from "./components/ui/avatar";
+import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,7 +97,6 @@ import {
 } from "./components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "./components/animate-ui/components/animate/tabs";
 import agentAccessIcon from "../assets/brand/icons/256/agent-access.png";
-import clipforgeAppIcon from "../src-tauri/icons/64x64.png";
 import "./App.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
@@ -270,10 +288,6 @@ type AccessibilityFirstPromptPayload = {
   createdAt: number;
 };
 
-type McpStatusPayload = {
-  command: string;
-};
-
 type CaptureClipPayload = {
   status: "created" | "promoted";
   item: ClipItem;
@@ -312,7 +326,7 @@ const DEFAULT_SHORTCUT = "Control+V";
 const ROW_HEIGHT = 36;
 const OVERSCAN = 5;
 const DEFAULT_PANEL_HEIGHT = 400;
-function getOnboardingSampleContent(tr: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+function getStarterSampleContent(tr: (key: TranslationKey, params?: Record<string, string | number>) => string) {
   return [
     tr("main.sample.title"),
     "",
@@ -388,26 +402,6 @@ export function extractHashTags(content: string): string[] {
   return normalizeTagList(
     Array.from(content.matchAll(/(^|[\s([{])#([\p{L}\p{N}_-]{1,32})/gu)).map((match) => match[2]),
   );
-}
-
-function middleEllipsis(value: string, head = 34, tail = 14) {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= head + tail + 3) return normalized;
-  return `${normalized.slice(0, head)}...${normalized.slice(-tail)}`;
-}
-
-/** 把单行长文案拆成「头 + 尾」两段交给 CSS flex 布局：头部可收缩并末尾省略，尾部固定不裁。
- *  修复旧实现「JS 先拼 head...tail，再被 .quick-line 的 text-overflow:ellipsis 二次裁掉尾部」的问题。
- *  文本较短（不超过单行容量）时返回单段，走普通末尾省略。 */
-function splitLineForMiddleEllipsis(text: string, tailLen = 16) {
-  const normalized = (text || "").replace(/\s+/g, " ").trim();
-  if (normalized.length <= 50) return { split: false as const, text: normalized };
-  return {
-    split: true as const,
-    head: normalized.slice(0, Math.max(1, normalized.length - tailLen)),
-    tail: normalized.slice(-tailLen),
-    full: normalized,
-  };
 }
 
 function extractFirstUrl(content: string) {
@@ -1061,43 +1055,6 @@ function buildSearchClipsRequest({
   };
 }
 
-function getDisplayText(item: ClipItem, settings: AppSettings) {
-  if (settings.contentDisplayMode === "raw") return item.content.replace(/\s+/g, " ").trim();
-  if (settings.contentDisplayMode === "middle") return middleEllipsis(item.content);
-  return item.analysis.summary || middleEllipsis(item.content);
-}
-
-function getClipboardLine(item: ClipItem) {
-  if (item.payloadKind === "image") {
-    return item.imageFile || item.analysis.attachment?.name || item.content || item.analysis.title || "Image";
-  }
-  if (item.payloadKind === "file") {
-    const files = getFilePathsFromClip(item);
-    const first = files[0]?.split(/[\\/]/).filter(Boolean).at(-1);
-    return first ? `${first}${files.length > 1 ? ` +${files.length - 1}` : ""}` : item.analysis.title || item.content;
-  }
-  // 优先用纯文本渲染：HTML/RTF 等 clip 的 content 是源码，plainText 才是用户可见的文字。
-  // 修复前：复制 HTML 后列表把它当 HTML 源码显示；修复后：默认渲染为文字内容。
-  const source = item.plainText || item.content;
-  const firstLine = (source || "").split(/\r?\n/, 1)[0] ?? "";
-  const line = firstLine.replace(/\s+/g, " ").trim();
-  return line || item.analysis.title || "";
-}
-
-function getFilePathsFromClip(item: ClipItem) {
-  if (item.payloadKind !== "file") return [];
-  return item.content
-    .split(/\r?\n/)
-    .map((path) => path.trim())
-    .filter(Boolean);
-}
-
-function isFileClipMissing(item: ClipItem, statuses: Record<string, FilePathStatus>) {
-  const paths = getFilePathsFromClip(item);
-  if (!paths.length) return false;
-  return paths.some((path) => statuses[path]?.exists === false);
-}
-
 function useDebouncedValue<T>(value: T, delayMs: number) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -1144,196 +1101,6 @@ function waitForPasteTriggerRelease(source: string): Promise<number> {
 
 function getShortcutModLabel() {
   return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "Cmd" : "Ctrl";
-}
-
-type AppTooltipContent = {
-  title: string;
-  description: string;
-  body: string;
-};
-
-type OnboardingStep = {
-  title: string;
-  content: ReactNode;
-};
-
-function getItemTooltip(item: ClipItem, tr: (key: TranslationKey, params?: Record<string, string | number>) => string): AppTooltipContent {
-  const source = item.sourceApp?.name || item.analysis.sourceName || tr("main.tooltip.clipboardHistory");
-  const title = item.analysis.title || source;
-  const description = item.analysis.url ? tr("main.tooltip.linkContent") : item.analysis.attachment ? tr("main.tooltip.attachmentContent") : source;
-  // tooltip 每个可见行都常驻挂载在 DOM（仅 opacity:0）。把整篇大文案塞进 body，
-  // 大文本条目会让打开那一帧布局/提交暴涨 200–340ms、阻塞输入。截断到预览长度即可；
-  // 复制/粘贴走 item.content 本体，不受影响。
-  // 优先纯文本：HTML/RTF 不把源码塞进 tooltip（与列表渲染一致，默认显示文字）。
-  const fullBody = item.plainText || item.content || getClipboardLine(item);
-  const body =
-    fullBody.length > 600
-      ? `${fullBody.slice(0, 600)}\n${tr("main.tooltip.omitted", { total: fullBody.length, omitted: fullBody.length - 600 })}`
-      : fullBody;
-  return { title, description, body };
-}
-
-function AppTooltip({
-  children,
-  content,
-}: {
-  children: ReactNode;
-  content: AppTooltipContent;
-}) {
-  return (
-    <div className="app-tooltip">
-      {children}
-      <div
-        className="app-tooltip-card"
-        onClick={(event) => event.stopPropagation()}
-        onContextMenu={(event) => event.stopPropagation()}
-        onDoubleClick={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-        role="tooltip"
-      >
-        <div className="app-tooltip-main">
-          <strong>{content.title}</strong>
-          <span>{content.description}</span>
-        </div>
-        <div className="app-tooltip-body">{content.body}</div>
-      </div>
-    </div>
-  );
-}
-
-function ShortcutDemo({ icon, keys, label }: { icon: ReactNode; keys: string[]; label: string }) {
-  return (
-    <div className="onboarding-shortcut-demo">
-      <span className="onboarding-action-icon">{icon}</span>
-      <div className="onboarding-key-chain">
-        {keys.map((key) => (
-          <kbd key={key}>{key}</kbd>
-        ))}
-      </div>
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function OnboardingInlineAction({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button className="onboarding-inline-action" onClick={onClick} type="button">
-      <Copy size={12} />
-      {label}
-    </button>
-  );
-}
-
-function OnboardingAnchors({ active }: { active: boolean }) {
-  return (
-    <div aria-hidden="true" className={active ? "onboarding-anchors active" : "onboarding-anchors"}>
-      <span className="onboarding-anchor anchor-panel" />
-      <span className="onboarding-anchor anchor-search" />
-      <span className="onboarding-anchor anchor-list" />
-      <span className="onboarding-anchor anchor-index" />
-      <span className="onboarding-anchor anchor-row-action" />
-      <span className="onboarding-anchor anchor-footer" />
-      <span className="onboarding-anchor anchor-pin" />
-    </div>
-  );
-}
-
-function ScenarioOnboardingLayer({
-  index,
-  run,
-  steps,
-  tr,
-  onBack,
-  onClose,
-  onNext,
-}: {
-  index: number;
-  run: boolean;
-  steps: OnboardingStep[];
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-  onBack: () => void;
-  onClose: () => void;
-  onNext: () => void;
-}) {
-  if (!run) return null;
-  const step = steps[Math.min(index, Math.max(0, steps.length - 1))];
-  if (!step) return null;
-  const isLastStep = index >= steps.length - 1;
-  return (
-    <div className="scenario-onboarding-layer" role="dialog" aria-modal="true" aria-label={step.title}>
-      <button className="scenario-onboarding-scrim" aria-label={tr("main.joyride.close")} onClick={onClose} type="button" />
-      <section className="scenario-onboarding-card">
-        <button className="centered-onboarding-close" type="button" onClick={onClose} aria-label={tr("main.joyride.close")}>
-          <X size={12} />
-        </button>
-        <div className="centered-onboarding-copy">
-          <strong>{step.title}</strong>
-          <div>{step.content}</div>
-        </div>
-        <div className="scenario-onboarding-stepper" aria-label={`${index + 1}/${steps.length}`}>
-          {steps.map((item, itemIndex) => (
-            <span className={itemIndex === index ? "active" : ""} key={item.title} />
-          ))}
-        </div>
-        <div className="centered-onboarding-footer">
-          <span>{index + 1}/{steps.length}</span>
-          <div>
-            {index > 0 ? (
-              <button className="centered-onboarding-ghost" type="button" onClick={onBack}>
-                {tr("main.joyride.back")}
-              </button>
-            ) : null}
-            <button className="centered-onboarding-ghost" type="button" onClick={onClose}>
-              {tr("main.joyride.skip")}
-            </button>
-            <button className="centered-onboarding-primary" type="button" onClick={onNext}>
-              {isLastStep ? tr("main.joyride.last") : tr("main.joyride.next")}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function makeOnboardingSteps(
-  mod: string,
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string,
-  onCopyMcpInstallPrompt: () => void,
-): OnboardingStep[] {
-  return [
-    {
-      title: tr("main.onboarding.sceneSelect.title"),
-      content: (
-        <div className="onboarding-step">
-          <p>{tr("main.onboarding.sceneSelect.body")}</p>
-          <ShortcutDemo icon={<CheckSquare size={12} />} keys={["↑", "↓"]} label={tr("main.onboarding.selection.move")} />
-          <ShortcutDemo icon={<Clipboard size={12} />} keys={[mod, "0-9"]} label={tr("main.onboarding.number.paste")} />
-        </div>
-      ),
-    },
-    {
-      title: tr("main.onboarding.scenePreview.title"),
-      content: (
-        <div className="onboarding-step">
-          <p>{tr("main.onboarding.scenePreview.body")}</p>
-          <ShortcutDemo icon={<History size={12} />} keys={[mod, "↑/↓"]} label={tr("main.onboarding.selection.page")} />
-          <ShortcutDemo icon={<ExternalLink size={12} />} keys={["→"]} label={tr("main.onboarding.scenePreview.drill")} />
-        </div>
-      ),
-    },
-    {
-      title: tr("main.onboarding.sceneAi.title"),
-      content: (
-        <div className="onboarding-step">
-          <p>{tr("main.onboarding.sceneAi.body")}</p>
-          <ShortcutDemo icon={<Bot size={12} />} keys={[mod, "I"]} label={tr("main.onboarding.agent.shortcut")} />
-          <ShortcutDemo icon={<Bot size={12} />} keys={["@"]} label={tr("main.onboarding.agent.reference")} />
-          <OnboardingInlineAction label={tr("main.onboarding.agent.copyMcp")} onClick={onCopyMcpInstallPrompt} />
-        </div>
-      ),
-    },
-  ];
 }
 
 type ErrorBoundaryCopy = {
@@ -1486,8 +1253,6 @@ function ClipForgeApp() {
   const [nativeStatus, setNativeStatus] = useState(() => t(initialLocale, "main.status.clipboardReady"));
   const [completionToast, setCompletionToast] = useState<string | null>(null);
   const [filePathStatuses, setFilePathStatuses] = useState<Record<string, FilePathStatus>>({});
-  const [onboardingRun, setOnboardingRun] = useState(false);
-  const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
   const completionToastTimerRef = useRef<number | null>(null);
   const showCompletionToast = useCallback((message: string) => {
     setCompletionToast(message);
@@ -1499,9 +1264,7 @@ function ClipForgeApp() {
   const [, setIsReadingClipboard] = useState(false);
   const [isPanelEntering, setIsPanelEntering] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
-  const [isFooterHidden, setFooterHidden] = useState(false);
   const [isSearchCompact, setSearchCompact] = useState(false);
-  const lastScrollRef = useRef(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 120);
@@ -1509,6 +1272,7 @@ function ClipForgeApp() {
   const searchRequestRef = useRef<SearchClipsRequest>({ bucket: "all", limit: 200 });
   const shellRef = useRef<HTMLElement | null>(null);
   const settingsRef = useRef<AppSettings>(settings);
+  const skipNextSettingsPersistRef = useRef(false);
   const configReadyRef = useRef(false);
   const configWriteTimerRef = useRef<number | null>(null);
   const captureInFlightRef = useRef(false);
@@ -1534,50 +1298,6 @@ function ClipForgeApp() {
     }),
     [tr],
   );
-  const copyMcpInstallPrompt = useCallback(async () => {
-    const fallbackCommand = "/Applications/ClipForge.app/Contents/MacOS/clipforge --mcp";
-    let command = fallbackCommand;
-    try {
-      const mcp = await invoke<McpStatusPayload>("get_mcp_status");
-      command = mcp.command || fallbackCommand;
-    } catch {
-      command = fallbackCommand;
-    }
-    await navigator.clipboard.writeText(
-      [
-        "请帮我安装 ClipForge MCP 接入。",
-        "使用 stdio transport，server command 如下：",
-        command,
-        "安装后优先使用 clipf.list / clipf.get / clipf.copy / clipf.search 工具读取和操作剪贴板。",
-      ].join("\n"),
-    );
-    setNativeStatus(tr("main.status.mcpInstallPromptCopied"));
-  }, [tr]);
-  const onboardingSteps = useMemo(() => makeOnboardingSteps(getShortcutModLabel(), tr, copyMcpInstallPrompt), [copyMcpInstallPrompt, tr]);
-  const markOnboardingCompleted = useCallback(() => {
-    setOnboardingRun(false);
-    setOnboardingStepIndex(0);
-    setSettings((prev) => ({ ...prev, onboardingCompleted: true }));
-    setNativeStatus(tr("main.status.onboardingCompleted"));
-  }, [tr]);
-  const startOnboarding = useCallback(() => {
-    setOnboardingStepIndex(0);
-    setOnboardingRun(true);
-    setNativeStatus(tr("main.status.onboardingShowing"));
-  }, [tr]);
-  const showPreviousOnboardingStep = useCallback(() => {
-    setOnboardingStepIndex((current) => Math.max(0, current - 1));
-  }, []);
-  const showNextOnboardingStep = useCallback(() => {
-    setOnboardingStepIndex((current) => {
-      if (current >= onboardingSteps.length - 1) {
-        window.setTimeout(markOnboardingCompleted, 0);
-        return current;
-      }
-      return current + 1;
-    });
-  }, [markOnboardingCompleted, onboardingSteps.length]);
-
   useEffect(() => {
     clipsRef.current = clips;
   }, [clips]);
@@ -1624,37 +1344,29 @@ function ClipForgeApp() {
     }
   }, [appendLoadedClips, isLoadingMore, nextCursor, tr]);
 
-  const handleScroll = useCallback(
-    (event: UIEvent<HTMLElement>) => {
-      if (!settings.enableScrollCollapse) return;
-      const node = event.currentTarget;
-      const top = node.scrollTop;
-      const delta = top - lastScrollRef.current;
-      lastScrollRef.current = top;
-      setScrollOffset(top);
-      setSearchCompact(top > 18);
-      if (delta > 6 && top > 40) {
-        setFooterHidden(true);
-      } else if (delta < -6 || top <= 10) {
-        setFooterHidden(false);
-      }
-    },
-    [settings.enableScrollCollapse],
-  );
+  const handleScroll = useCallback((event: UIEvent<HTMLElement>) => {
+    const top = event.currentTarget.scrollTop;
+    setScrollOffset(top);
+    setSearchCompact(top > 18);
+  }, []);
 
   useEffect(() => {
     settingsRef.current = settings;
     const locale = resolveAppLocale(settings.language);
     setDocumentLocale(locale);
+    window.document.title = t(locale, "window.main.title");
     void getCurrentWindow().setTitle(t(locale, "window.main.title")).catch((error) =>
       logAppError("warn", "Set main window title failed", String(error)),
     );
+    if (skipNextSettingsPersistRef.current) {
+      skipNextSettingsPersistRef.current = false;
+      return;
+    }
     if (configReadyRef.current) {
       if (configWriteTimerRef.current) window.clearTimeout(configWriteTimerRef.current);
       configWriteTimerRef.current = window.setTimeout(() => {
-        invoke("write_user_settings", { settings }).catch((error) =>
-          logAppError("warn", "Sync user settings failed", String(error)),
-        );
+        invoke<void>("write_user_settings", { settings })
+          .catch((error) => logAppError("warn", "Sync user settings failed", String(error)));
       }, 220);
     }
     return () => {
@@ -1817,7 +1529,7 @@ function ClipForgeApp() {
         if (!items.length) {
           try {
             const seedPayload = await invoke<CaptureClipPayload>("capture_clip_record", {
-              content: getOnboardingSampleContent(tr),
+              content: getStarterSampleContent(tr),
               sourceLabel: "ClipForge",
               observedAt: Date.now(),
             });
@@ -1826,10 +1538,10 @@ function ClipForgeApp() {
             if (seedItem) {
               items = [seedItem];
               setSelectedId(seedItem.id);
-              logAppError("info", "onboarding: seeded intro clip", { id: seedItem.id });
+              logAppError("info", "starter-sample: seeded intro clip", { id: seedItem.id });
             }
           } catch (error) {
-            logAppError("warn", "Seed onboarding clip failed", String(error));
+            logAppError("warn", "Seed starter sample clip failed", String(error));
           }
         }
         if (cancelled) return;
@@ -1851,13 +1563,23 @@ function ClipForgeApp() {
       .then((payload) => {
         if (cancelled) return;
         const merged = mergeSettings(payload?.settings);
+        skipNextSettingsPersistRef.current = true;
         configReadyRef.current = true;
         settingsRef.current = merged;
         setSettings(merged);
         if (!isSettingsWindow) {
           setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
+          logAppError("info", "onboarding: startup settings loaded", {
+            onboardingCompleted: merged.onboardingCompleted,
+          });
           if (!merged.onboardingCompleted) {
-            window.setTimeout(() => startOnboarding(), 650);
+            window.setTimeout(() => {
+              if (cancelled) return;
+              logAppError("info", "onboarding: opening settings window");
+              invoke("open_settings_window_with_section", { section: "onboarding" })
+                .then(() => logAppError("info", "onboarding: settings window requested"))
+                .catch((error) => logAppError("warn", "Open onboarding settings failed", String(error)));
+            }, 650);
           }
         }
       })
@@ -1868,7 +1590,7 @@ function ClipForgeApp() {
     return () => {
       cancelled = true;
     };
-  }, [isSettingsWindow, startOnboarding, tr]);
+  }, [isSettingsWindow, tr]);
 
   const syncCapturedClipboardPayload = useCallback(async (payload: CaptureClipPayload) => {
     if (!isCaptureClipPayload(payload)) throw new Error("Invalid capture payload");
@@ -1945,6 +1667,7 @@ function ClipForgeApp() {
 
   const showQuickPanel = useCallback(
     async (reason: "shortcut" | "tray") => {
+      const finishPanelOpenPerf = startPerfSpan("panel.open", { reason });
       blurHideInFlightRef.current = false;
       // 唤起后只在极短窗口内忽略失焦（吸收 show_and_make_key 引发的一瞬 blur→focus 抖动）。
       // 原值 2400ms 太长：唤起提速后，用户在 2.4s 内点别的窗口，那次 blur 被吞掉、之后不再有
@@ -1976,6 +1699,7 @@ function ClipForgeApp() {
             searchRef.current?.focus();
           }
           if (delay === 60) {
+            finishPanelOpenPerf({ searchFocused: document.activeElement === searchRef.current });
             logAppError("info", "panel-keyboard: search focus settle", {
               active: document.activeElement === searchRef.current,
               reason,
@@ -1998,8 +1722,13 @@ function ClipForgeApp() {
 
   const handleWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest("button, input, textarea, select, a, [role='menuitem']")) return;
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, input, textarea, select, a, [role='menuitem']")
+    ) {
+      return;
+    }
     getCurrentWindow()
       .startDragging()
       .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
@@ -2420,6 +2149,8 @@ function ClipForgeApp() {
   }, []);
 
   async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
+    const finishCopyPerf = startPerfSpan("quick.copy", { source: "ui", pasteMode });
+    let perfStatus = "ok";
     try {
       const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode, source: "ui" });
       const normalized = normalizeClip(payload, settingsRef.current);
@@ -2440,8 +2171,11 @@ function ClipForgeApp() {
             : tr("main.status.copiedRich"),
       );
     } catch {
+      perfStatus = "fallback";
       await navigator.clipboard.writeText(item.content);
       markClipCopied(item, tr("main.status.copiedBrowser"));
+    } finally {
+      finishCopyPerf({ status: perfStatus });
     }
   }
 
@@ -2500,6 +2234,8 @@ function ClipForgeApp() {
   }
 
   async function copyText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
+    const finishCopyPerf = startPerfSpan("quick.copy", { source });
+    let perfStatus = "ok";
     logAppError("info", "copy-text: invoke start", {
       source,
       chars: text.length,
@@ -2526,14 +2262,19 @@ function ClipForgeApp() {
         ...context,
       });
     } catch (error) {
+      perfStatus = "fallback";
       logAppError("warn", "Copy text failed", { source, error: String(error), ...context });
       await navigator.clipboard.writeText(text);
       setNativeStatus(tr("main.status.copiedCodeBrowser"));
       showCompletionToast(tr("main.toast.copiedCode"));
+    } finally {
+      finishCopyPerf({ status: perfStatus });
     }
   }
 
   async function pasteText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
+    const finishPastePerf = startPerfSpan("quick.paste", { source });
+    let perfStatus = "ok";
     const releaseWaitMs = await waitForPasteTriggerRelease(source);
     if (releaseWaitMs > 0) {
       logAppError("info", "paste-text: shortcut release settled", {
@@ -2569,13 +2310,18 @@ function ClipForgeApp() {
         ...context,
       });
     } catch (error) {
+      perfStatus = "fallback-copy";
       logAppError("warn", "Paste text failed", { source, error: String(error), ...context });
       await copyText(text, `${source}:fallback-copy`, context);
       setNativeStatus(tr("main.status.pasteCodeFallback"));
+    } finally {
+      finishPastePerf({ status: perfStatus });
     }
   }
 
   async function pasteClip(item: ClipItem, source = "unknown") {
+    const finishPastePerf = startPerfSpan("quick.paste", { source });
+    let perfStatus = "ok";
     const releaseWaitMs = await waitForPasteTriggerRelease(source);
     if (releaseWaitMs > 0) {
       logAppError("info", "paste-ui: shortcut release settled", {
@@ -2608,9 +2354,12 @@ function ClipForgeApp() {
       markClipCopied(normalized ?? item, tr("main.status.pastedToApp"));
       logAppError("info", "paste-ui: invoke success", { id: item.id, source });
     } catch (error) {
+      perfStatus = "fallback-copy";
       logAppError("warn", "Paste clip failed", String(error));
       await copyClip(item);
       setNativeStatus(formatNativeError(error));
+    } finally {
+      finishPastePerf({ status: perfStatus });
     }
   }
 
@@ -2696,8 +2445,11 @@ function ClipForgeApp() {
       if (event.defaultPrevented) return;
       if (event.isComposing) return;
 
-      const target = event.target as HTMLElement | null;
-      const editable = target?.closest("input, textarea, select, [contenteditable='true']");
+      const target = event.target;
+      const editable =
+        target instanceof Element
+          ? target.closest("input, textarea, select, [contenteditable='true']")
+          : null;
       const allowListShortcutFromSearch = editable === searchRef.current && !query.trim();
       const quickItems = filteredClips;
       const key = event.key.toLowerCase();
@@ -2709,12 +2461,30 @@ function ClipForgeApp() {
         return;
       }
 
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === ",") {
+        event.preventDefault();
+        invoke("open_settings_window").catch((error) =>
+          logAppError("warn", "Open settings window failed", String(error)),
+        );
+        return;
+      }
+
       if (activeSurface === "agent") {
         if (event.key === "Escape" && !editable) {
           event.preventDefault();
           setActiveSurface("clipboard");
           window.setTimeout(() => searchRef.current?.focus(), 0);
         }
+        return;
+      }
+
+      if (!editable && !event.ctrlKey && !event.metaKey && !event.altKey && key === "t") {
+        event.preventDefault();
+        setActiveView("trash");
+        setSelectedIds(new Set());
+        setMultiSelectMode(false);
+        setMultiPreviewOpen(false);
+        void navigateWorkspaceList();
         return;
       }
 
@@ -3103,6 +2873,81 @@ function ClipForgeApp() {
     });
   }
 
+  async function writeClipAiSummary(item: ClipItem, summary: ClipAiSummary) {
+    const metadata = {
+      ...item.metadata,
+      aiSummary: summary,
+    };
+    const payload = await invoke<Partial<ClipItem>>("update_clip_record", {
+      input: { id: item.id, metadata },
+    });
+    const normalized = normalizeClip(payload, settingsRef.current) ?? {
+      ...item,
+      metadata,
+      updatedAt: Date.now(),
+    };
+    setClips((current) => {
+      const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+      clipsRef.current = next;
+      return next;
+    });
+    return normalized;
+  }
+
+  async function generateAiSummaryForClip(item: ClipItem): Promise<ClipAiSummary> {
+    const jobId = `clip_ai_${item.id}_${Date.now().toString(36)}`;
+    const pending: ClipAiSummary = {
+      status: "pending",
+      jobId,
+      generatedAt: Date.now(),
+    };
+    setNativeStatus(tr("main.status.aiSummaryPending"));
+    let currentItem = item;
+    try {
+      currentItem = await writeClipAiSummary(currentItem, pending);
+      const result = await generateClipAiSummary(currentItem, jobId);
+      await writeClipAiSummary(currentItem, result);
+      if (result.status === "ready") {
+        setNativeStatus(tr("main.status.aiSummaryReady"));
+        showCompletionToast(tr("main.toast.aiSummaryReady"));
+      } else {
+        setNativeStatus(tr("main.status.aiSummaryFailed"));
+      }
+      logAppError("info", "ai-summary: job finished", getClipAiSummaryLogMetadata(item.id, result, jobId));
+      return result;
+    } catch (error) {
+      const failed: ClipAiSummary = {
+        status: "failed",
+        jobId,
+        generatedAt: Date.now(),
+        errorCode: "AI_SUMMARY_UPDATE_FAILED",
+        message: String(error),
+      };
+      try {
+        await writeClipAiSummary(currentItem, failed);
+      } catch (writeError) {
+        logAppError(
+          "warn",
+          "ai-summary: failed-state write failed",
+          getClipAiSummaryErrorLogMetadata(
+            item.id,
+            jobId,
+            "AI_SUMMARY_FAILED_STATE_WRITE_FAILED",
+            writeError,
+            "failed-state-write-failed",
+          ),
+        );
+      }
+      setNativeStatus(tr("main.status.aiSummaryFailed"));
+      logAppError(
+        "warn",
+        "ai-summary: job failed",
+        getClipAiSummaryErrorLogMetadata(item.id, jobId, "AI_SUMMARY_UPDATE_FAILED", error),
+      );
+      return failed;
+    }
+  }
+
   async function saveAgentResultAsClip(
     content: string,
     context: { sourceClipId?: string; conversationId: string },
@@ -3330,41 +3175,65 @@ function ClipForgeApp() {
 
   return (
     <main
-      className={`app-shell view-${activeView} route-${workspaceRoute.name} surface-${activeSurface} density-${settings.panelDensity}${showSearchBar && (isSearchActive || query) ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isFooterHidden ? " footer-hidden" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
+      data-surface="clipboard"
+      className={`app-shell view-${activeView} route-${workspaceRoute.name} surface-${activeSurface} density-${settings.panelDensity}${showSearchBar && (isSearchActive || query) ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
       ref={shellRef}
       style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
     >
-      <div aria-hidden="true" className="drag-strip" data-tauri-drag-region onPointerDown={handleWindowDrag} />
-      <OnboardingAnchors active={onboardingRun} />
+      <TopToolbar
+        activeSurface={activeSurface}
+        activeView={activeView}
+        agentContextCount={selectedClip ? 1 : 0}
+        onDrag={handleWindowDrag}
+        onOpenAgent={() => {
+          setActiveSurface("agent");
+          setSelectedIds(new Set());
+          setMultiSelectMode(false);
+          setMultiPreviewOpen(false);
+        }}
+        onOpenSettings={() => {
+          invoke("open_settings_window").catch((error) =>
+            logAppError("warn", "Open settings window failed", String(error)),
+          );
+        }}
+        onViewChange={(view) => {
+          setActiveSurface("clipboard");
+          setActiveView(view);
+          setSelectedIds(new Set());
+          setMultiSelectMode(false);
+          void navigateWorkspaceList();
+        }}
+        searchBar={showSearchBar ? (
+          <GlassSearchBar
+            activeFilterLabels={parsedSearchCommand.ast.labels}
+            inputRef={searchRef}
+            onApplySuggestion={applySearchSuggestion}
+            activeSuggestionIndex={activeSuggestionIndex}
+            onSelectSuggestionIndex={setActiveSuggestionIndex}
+            onBlur={closeSearchIfEmpty}
+            onChange={handleSearchChange}
+            onClear={() => {
+              setQuery("");
+              setActiveTag(null);
+              setFilterFavorite(false);
+              setActiveTypeFilter("all");
+              searchRef.current?.focus();
+            }}
+            onFocus={focusSearch}
+            onRemoveFilter={removeSearchFilter}
+            parsedSearchCommand={parsedSearchCommand}
+            query={query}
+            suggestions={searchSuggestions}
+            tr={tr}
+          />
+        ) : null}
+        status={nativeStatus}
+        tr={tr}
+      />
 
       <section className="content-column" onScroll={handleScroll}>
-        {showSearchBar ? (
-        <GlassSearchBar
-          activeFilterLabels={parsedSearchCommand.ast.labels}
-          inputRef={searchRef}
-          onApplySuggestion={applySearchSuggestion}
-          activeSuggestionIndex={activeSuggestionIndex}
-          onSelectSuggestionIndex={setActiveSuggestionIndex}
-          onBlur={closeSearchIfEmpty}
-          onChange={handleSearchChange}
-          onClear={() => {
-            setQuery("");
-            setActiveTag(null);
-            setFilterFavorite(false);
-            setActiveTypeFilter("all");
-            searchRef.current?.focus();
-          }}
-          onFocus={focusSearch}
-          onRemoveFilter={removeSearchFilter}
-          parsedSearchCommand={parsedSearchCommand}
-          query={query}
-          suggestions={searchSuggestions}
-          tr={tr}
-        />
-        ) : null}
-
         {multiSelectMode ? (
-        <MultiSelectToolbar
+          <MultiSelectToolbar
             allSelected={selectedInList.length > 0 && selectedInList.length === filteredClips.length}
             count={selectedInList.length}
             onClose={() => {
@@ -3471,6 +3340,9 @@ function ClipForgeApp() {
                   onCopyMode={(item, mode) => {
                     void copyClip(item, mode);
                   }}
+                  onGenerateAiSummary={(item) => {
+                    void generateAiSummaryForClip(item);
+                  }}
                   onDelete={(item) => {
                     void deleteClips([item.id]);
                   }}
@@ -3520,6 +3392,7 @@ function ClipForgeApp() {
               return (
                 <ClipDetailWorkspace
                   clip={clip}
+                  candidates={detailItems}
                   filePathStatuses={filePathStatuses}
                   links={clip ? extractUrls(clip.content) : []}
                   tr={tr}
@@ -3531,6 +3404,8 @@ function ClipForgeApp() {
                   onOpen={openClipTarget}
                   onOpenPath={openSystemPath}
                   onPasteText={pasteText}
+                  onGenerateAiSummary={generateAiSummaryForClip}
+                  onOpenRecommendation={navigateDetailClip}
                   onPrevious={previousClip ? () => navigateDetailClip(previousClip) : undefined}
                   onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
                   onSearchTag={searchByTag}
@@ -3610,9 +3485,10 @@ function ClipForgeApp() {
       <div
         aria-hidden={activeSurface !== "agent"}
         className={activeSurface === "agent" ? "agent-overlay open" : "agent-overlay"}
+        data-agent-overlay={activeSurface === "agent" ? "open" : "closed"}
       >
         <div className="agent-overlay-scrim" />
-        <div className="agent-overlay-panel" role="dialog" aria-label={tr("agent.aria.panel")} aria-modal={activeSurface === "agent"}>
+        <div className="agent-overlay-panel" data-agent-overlay-panel data-surface="agent" role="dialog" aria-label={tr("agent.aria.panel")} aria-modal={activeSurface === "agent"}>
           {activeSurface === "agent" ? (
             <AgentPanelBoundary
               copy={errorBoundaryCopy}
@@ -3657,44 +3533,6 @@ function ClipForgeApp() {
       </button>
       {completionToast ? (
         <div className="completion-toast" role="status">{completionToast}</div>
-      ) : null}
-      <BottomDock
-        activeSurface={activeSurface}
-        activeView={activeView}
-        agentContextCount={selectedClip ? 1 : 0}
-        onDrag={handleWindowDrag}
-        onOpenAgent={() => {
-          setActiveSurface("agent");
-          setSelectedIds(new Set());
-          setMultiSelectMode(false);
-          setMultiPreviewOpen(false);
-        }}
-        onOpenSettings={() => {
-          invoke("open_settings_window").catch((error) =>
-            logAppError("warn", "Open settings window failed", String(error)),
-          );
-        }}
-        onStartOnboarding={startOnboarding}
-        tr={tr}
-        onViewChange={(view) => {
-          setActiveSurface("clipboard");
-          setActiveView(view);
-          setSelectedIds(new Set());
-          setMultiSelectMode(false);
-          void navigateWorkspaceList();
-        }}
-        status={nativeStatus}
-      />
-      {!isSettingsWindow ? (
-        <ScenarioOnboardingLayer
-          index={onboardingStepIndex}
-          onBack={showPreviousOnboardingStep}
-          onClose={markOnboardingCompleted}
-          onNext={showNextOnboardingStep}
-          run={onboardingRun}
-          steps={onboardingSteps}
-          tr={tr}
-        />
       ) : null}
     </main>
   );
@@ -3958,15 +3796,15 @@ function MultiSelectToolbar({
   );
 }
 
-function BottomDock({
+function TopToolbar({
   activeSurface,
   activeView,
   agentContextCount,
   onDrag,
   onOpenAgent,
   onOpenSettings,
-  onStartOnboarding,
   onViewChange,
+  searchBar,
   status,
   tr,
 }: {
@@ -3976,28 +3814,66 @@ function BottomDock({
   onDrag: (event: PointerEvent<HTMLElement>) => void;
   onOpenAgent: () => void;
   onOpenSettings: () => void;
-  onStartOnboarding: () => void;
   onViewChange: (view: ViewKey) => void;
+  searchBar: ReactNode;
   status: string;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
   const reduceMotion = useReducedMotion();
-  const dockValue = activeSurface === "agent" ? "agent" : activeView;
-  const handleDockValueChange = (value: string) => {
-    if (value === "history" || value === "favorites" || value === "trash") {
+  const toolbarValue = activeSurface === "agent" ? "agent" : activeView;
+  const agentShortcutLabel = `${tr("main.dock.openAgent")} · Ctrl/Cmd+I`;
+  const handleToolbarValueChange = (value: string) => {
+    if (value === "history" || value === "favorites") {
       onViewChange(value);
     }
   };
 
   return (
-    <footer className="list-footer" data-tauri-drag-region onPointerDown={onDrag}>
-      <div className="footer-agent-slot" onPointerDown={(event) => event.stopPropagation()}>
+    <header className="top-toolbar" data-dev-probe="top-toolbar" data-tauri-drag-region onPointerDown={onDrag}>
+      <Tabs className="top-view-tabs" data-dev-probe="top-view-tabs" value={toolbarValue} onValueChange={handleToolbarValueChange}>
+        <TabsList className="top-view-actions" data-dev-probe="top-view-actions" onPointerDown={(event) => event.stopPropagation()}>
+          <TabsTrigger
+            aria-label={tr("main.dock.history")}
+            className={activeSurface === "clipboard" && activeView === "history" ? "icon-button active" : "icon-button subtle"}
+            data-dev-probe="top-view-history"
+            data-tooltip={tr("main.dock.history")}
+            title={tr("main.dock.history")}
+            transition={dockTabTransition}
+            value="history"
+            whileHover={reduceMotion ? undefined : { y: -1 }}
+            whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+          >
+            <History size={13} />
+            <span>{tr("main.dock.history")}</span>
+          </TabsTrigger>
+          <TabsTrigger
+            aria-label={tr("main.dock.favorites")}
+            className={activeSurface === "clipboard" && activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
+            data-dev-probe="top-view-favorites"
+            data-tooltip={tr("main.dock.favorites")}
+            title={tr("main.dock.favorites")}
+            transition={dockTabTransition}
+            value="favorites"
+            whileHover={reduceMotion ? undefined : { y: -1 }}
+            whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+          >
+            <Heart size={13} />
+            <span>{tr("main.dock.favorites")}</span>
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+      <div className="top-toolbar-search-slot" data-dev-probe="top-search-slot" onPointerDown={(event) => event.stopPropagation()}>
+        {searchBar}
+      </div>
+      <div className="top-toolbar-action-slot" data-dev-probe="top-action-slot" onPointerDown={(event) => event.stopPropagation()}>
         <motion.button
           aria-label={tr("main.dock.openAgent")}
-          className={activeSurface === "agent" ? "icon-button active" : "icon-button subtle"}
-          data-tooltip="Agent · Ctrl/Cmd+I"
+          className={activeSurface === "agent" ? "icon-button active top-agent-button" : "icon-button subtle top-agent-button"}
+          data-agent-trigger="top-toolbar"
+          data-dev-probe="top-agent-button"
+          data-tooltip={agentShortcutLabel}
           onClick={onOpenAgent}
-          title="Agent · Ctrl/Cmd+I"
+          title={agentShortcutLabel}
           transition={dockButtonTransition}
           type="button"
           whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
@@ -4006,51 +3882,13 @@ function BottomDock({
           <img alt="" className="agent-access-icon" src={agentAccessIcon} />
           {agentContextCount ? <em>{agentContextCount}</em> : null}
         </motion.button>
-      </div>
-      <StatusLine status={status} tr={tr} />
-      <Tabs className="footer-view-tabs" value={dockValue} onValueChange={handleDockValueChange}>
-        <TabsList className="footer-actions" onPointerDown={(event) => event.stopPropagation()}>
-        <TabsTrigger
-          aria-label={tr("main.dock.history")}
-          className={activeSurface === "clipboard" && activeView === "history" ? "icon-button active" : "icon-button subtle"}
-          data-tooltip={tr("main.dock.history")}
-          title={tr("main.dock.history")}
-          transition={dockTabTransition}
-          value="history"
-          whileHover={reduceMotion ? undefined : { y: -1 }}
-          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-        >
-          <History size={13} />
-        </TabsTrigger>
-        <TabsTrigger
-          aria-label={tr("main.dock.favorites")}
-          className={activeSurface === "clipboard" && activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
-          data-tooltip={tr("main.dock.favorites")}
-          title={tr("main.dock.favorites")}
-          transition={dockTabTransition}
-          value="favorites"
-          whileHover={reduceMotion ? undefined : { y: -1 }}
-          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-        >
-          <Heart size={13} />
-        </TabsTrigger>
-        <TabsTrigger
-          aria-label={tr("main.dock.trash")}
-          className={activeSurface === "clipboard" && activeView === "trash" ? "icon-button active" : "icon-button subtle"}
-          data-tooltip={tr("main.dock.trash")}
-          title={tr("main.dock.trash")}
-          transition={dockTabTransition}
-          value="trash"
-          whileHover={reduceMotion ? undefined : { y: -1 }}
-          whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-        >
-          <Trash2 size={13} />
-        </TabsTrigger>
+        <StatusLine status={status} tr={tr} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <motion.button
               aria-label={tr("main.dock.menu")}
-              className="footer-profile-trigger"
+              className="top-menu-trigger"
+              data-dev-probe="top-menu-trigger"
               data-tooltip={tr("main.dock.menu")}
               title={tr("main.dock.menu")}
               transition={dockButtonTransition}
@@ -4058,39 +3896,41 @@ function BottomDock({
               whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
               whileTap={reduceMotion ? undefined : { scale: 0.94 }}
             >
-              <Avatar className="footer-profile-avatar">
-                <AvatarImage alt="" src={clipforgeAppIcon} />
-                <AvatarFallback>CF</AvatarFallback>
-              </Avatar>
+              <MoreHorizontal size={16} />
             </motion.button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="footer-profile-menu" side="top" align="end" sideOffset={8}>
-            <DropdownMenuLabel className="footer-profile-label">
+          <DropdownMenuContent className="top-toolbar-menu" side="bottom" align="end" sideOffset={8}>
+            <DropdownMenuLabel className="top-toolbar-menu-header">
               <span>ClipForge</span>
               <small>{tr("main.dock.shortcutHint")}</small>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={onOpenSettings}>
+              <DropdownMenuItem data-dev-probe="top-menu-trash" onSelect={() => onViewChange("trash")}>
+                <span className="top-toolbar-menu-label">
+                  <Trash2 size={13} />
+                  <span>{tr("main.dock.trash")}</span>
+                </span>
+                <span className="top-toolbar-menu-shortcut">
+                  {activeSurface === "clipboard" && activeView === "trash" ? <Check size={12} /> : null}
+                  <kbd>T</kbd>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem data-dev-probe="top-menu-settings" onSelect={onOpenSettings}>
                 <span>{tr("main.dock.settings")}</span>
                 <kbd>,</kbd>
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={onStartOnboarding}>
-                <span>{tr("main.dock.onboarding")}</span>
-                <kbd>?</kbd>
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        </TabsList>
-      </Tabs>
-    </footer>
+      </div>
+    </header>
   );
 }
 
 function StatusLine({ status, tr }: { status: string; tr: (key: TranslationKey, params?: Record<string, string | number>) => string }) {
   return (
-    <span className="footer-status">
+    <span className="toolbar-status">
       {status || (
         <>
           <kbd>Tab</kbd> {tr("main.statusLine.navigate")} · <kbd>Enter</kbd> {tr("main.statusLine.paste")} · <kbd>→</kbd> {tr("main.statusLine.detail")} · <kbd>Ctrl/Cmd</kbd>+<kbd>J</kbd> {tr("main.statusLine.openTarget")} · <kbd>Ctrl/Cmd</kbd>+<kbd>P</kbd> {tr("main.statusLine.pin")}
@@ -4181,13 +4021,7 @@ function TrashPanel({
   }, [closeContextMenu, contextMenu]);
 
   if (!clips.length) {
-    return (
-      <div className="empty-list">
-        <Trash2 size={30} />
-        <h2>{tr("main.empty.trashTitle")}</h2>
-        <p>{emptySummary ?? tr("main.empty.trashBody")}</p>
-      </div>
-    );
+    return <ClipboardEmptyState variant="trash" emptySummary={emptySummary} tr={tr} />;
   }
   return (
     <section className="quick-panel">
@@ -4512,6 +4346,7 @@ function VirtualList<T extends { id: string }>({
       className={`${className} virtual-list${isScrollFeedback ? " is-scroll-feedback" : ""}`}
       onScroll={(event) => {
         const node = event.currentTarget;
+        recordNextFramePerf("quick.scroll", { className });
         setScrollTop(node.scrollTop);
         setFeedback(true);
         if (hasMore && !isLoadingMore && node.scrollHeight - node.scrollTop - node.clientHeight < itemHeight * 6) {
@@ -4563,6 +4398,7 @@ function QuickPastePanel({
   onPaste,
   onCopySelected,
   onCopyMode,
+  onGenerateAiSummary,
   onDelete,
   onDeleteSelected,
   onSelect,
@@ -4595,6 +4431,7 @@ function QuickPastePanel({
   onPaste: (item: ClipItem, source?: string) => void;
   onCopySelected: () => void;
   onCopyMode: (item: ClipItem, mode: PasteMode) => void;
+  onGenerateAiSummary: (item: ClipItem) => void;
   onDelete: (item: ClipItem) => void;
   onDeleteSelected: () => void;
   onSelect: (item: ClipItem) => void;
@@ -4646,13 +4483,7 @@ function QuickPastePanel({
   }, [closeContextMenu, contextMenu]);
 
   if (!clips.length) {
-    return (
-      <div className="empty-list">
-        <Inbox size={30} />
-        <h2>{emptySummary ? tr("main.empty.noMatchesTitle") : tr("main.empty.noClipboardTitle")}</h2>
-        <p>{emptySummary ?? tr("main.empty.noClipboardBody")}</p>
-      </div>
-    );
+    return <ClipboardEmptyState variant="history" emptySummary={emptySummary} tr={tr} />;
   }
 
   return (
@@ -4672,6 +4503,7 @@ function QuickPastePanel({
           scrollToGroupStart={groupScrollTarget}
           renderItem={(item, index) => {
             const fileMissing = isFileClipMissing(item, filePathStatuses);
+            const aiSummary = getStoredClipAiSummary(item);
             return (
           <article
             className={[
@@ -4687,6 +4519,7 @@ function QuickPastePanel({
               .join(" ")}
             key={item.id}
             onClick={() => {
+              recordNextFramePerf("quick.select", { source: "click" });
               if (multiSelectMode) {
                 onToggleSelected(item.id);
                 return;
@@ -4697,7 +4530,10 @@ function QuickPastePanel({
             onContextMenu={(event) => {
               openContextMenu(event, item);
             }}
-            onFocus={() => onSelect(item)}
+            onFocus={() => {
+              recordNextFramePerf("quick.select", { source: "focus" });
+              onSelect(item);
+            }}
             tabIndex={0}
           >
             <button
@@ -4722,55 +4558,8 @@ function QuickPastePanel({
                 <Square size={12} />
               )}
             </button>
-            <div className="quick-content">
-              {item.payloadKind === "image" ? (
-                <span className="quick-media-thumb" title={item.imageFile ?? tr("main.searchSuggestion.image")}>
-                  <ImageIcon size={13} />
-                </span>
-              ) : item.payloadKind === "file" ? (
-                <span className="quick-media-file" title={fileMissing ? tr("main.list.fileMissing") : (item.fileTypes ?? tr("main.searchSuggestion.file"))}>
-                  <FileJson size={13} />
-                  <em>{Math.max(1, item.content.split(/\r?\n/).filter(Boolean).length)}</em>
-                </span>
-              ) : null}
-              {(() => {
-                const parts = splitLineForMiddleEllipsis(getClipboardLine(item));
-                if (!parts.split) {
-                  return (
-                      <AppTooltip content={getItemTooltip(item, tr)}>
-                      <p className="quick-line" aria-label={parts.text}>{parts.text}</p>
-                    </AppTooltip>
-                  );
-                }
-                return (
-                  <AppTooltip content={getItemTooltip(item, tr)}>
-                    <p className="quick-line quick-line-mid" aria-label={parts.full}>
-                      <span className="ql-head">{parts.head}</span>
-                      <span className="ql-tail">{parts.tail}</span>
-                    </p>
-                  </AppTooltip>
-                );
-              })()}
-            </div>
-            <div className={item.favorite ? "row-actions has-favorite" : "row-actions"} onClick={(event) => event.stopPropagation()}>
-              {item.analysis.url || item.analysis.attachment ? (
-                <button className="icon-button" data-tooltip={tr("main.list.openTarget")} onClick={() => onOpen(item)} title={tr("main.list.openTarget")} type="button">
-                  <ExternalLink size={14} />
-                </button>
-              ) : null}
-              <button
-                className={item.favorite ? "quick-fav faved" : "quick-fav"}
-                data-tooltip={item.favorite ? tr("main.list.unfavorite") : tr("main.list.favorite")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onFavorite(item);
-                }}
-                title={item.favorite ? tr("main.list.unfavorite") : tr("main.list.favorite")}
-                type="button"
-              >
-                <Heart size={13} />
-              </button>
-            </div>
+            <ClipboardContentPreview aiSummary={aiSummary} fileMissing={fileMissing} item={item} tr={tr} />
+            <ClipboardRowActions item={item} onFavorite={onFavorite} onOpen={onOpen} tr={tr} />
           </article>
           );
           }}
@@ -4787,6 +4576,7 @@ function QuickPastePanel({
             onOpenAggregate={onOpenAggregate}
             onPaste={onPaste}
             onCopyMode={(mode) => onCopyMode(contextMenu.item, mode)}
+            onGenerateAiSummary={onGenerateAiSummary}
             onCopySelected={onCopySelected}
             onStartMultiSelect={onStartMultiSelect}
             onClearSelection={onClearSelection}
@@ -4812,6 +4602,7 @@ function ClipContextMenu({
   onOpenAggregate,
   onPaste,
   onCopyMode,
+  onGenerateAiSummary,
   onCopySelected,
   onStartMultiSelect,
   onClearSelection,
@@ -4830,6 +4621,7 @@ function ClipContextMenu({
   onOpenAggregate: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
   onCopyMode: (mode: PasteMode) => void;
+  onGenerateAiSummary: (item: ClipItem) => void;
   onCopySelected: () => void;
   onStartMultiSelect: (id: string) => void;
   onClearSelection: () => void;
@@ -4909,6 +4701,15 @@ function ClipContextMenu({
           >
             <span className="clip-context-label"><Copy size={13} />{tr("main.context.copyPath")}</span>
             <kbd>Path</kbd>
+          </button>
+          <button
+            className="clip-context-item"
+            onClick={() => run(() => onGenerateAiSummary(item))}
+            role="menuitem"
+            type="button"
+          >
+            <span className="clip-context-label"><Sparkles size={13} />{tr("main.context.generateAiSummary")}</span>
+            <kbd>AI</kbd>
           </button>
           <button
             className="clip-context-item"

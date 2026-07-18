@@ -7,6 +7,7 @@ import {
 } from "remotion";
 import logo from "../../../../assets/brand/clipforge-logo-horizontal.png";
 import appScreen from "../../../../.codex-screenshots/clipforge-screen.png";
+import { defaultClipForgeScene } from "../scenes";
 
 const clamp = {
   extrapolateLeft: "clamp" as const,
@@ -14,15 +15,9 @@ const clamp = {
   easing: Easing.bezier(0.16, 1, 0.3, 1),
 };
 
-const steps = [
-  { title: "唤起面板", body: "用快捷键打开历史记录。" },
-  { title: "输入关键词", body: "直接筛选文本、链接和片段。" },
-  { title: "回写剪贴板", body: "选中结果后继续粘贴。" },
-  { title: "整理长期内容", body: "收藏、归档、删除都在同一处。" },
-];
-
 export const OnboardingGuide = () => {
   const frame = useCurrentFrame();
+  const steps = defaultClipForgeScene.onboarding;
   const stepIndex = Math.min(steps.length - 1, Math.floor(frame / 72));
   const activeStep = steps[stepIndex];
   const progress = interpolate(frame, [0, 300], [0, 1], clamp);
@@ -39,7 +34,7 @@ export const OnboardingGuide = () => {
           }}
         />
         <div className="progress-track">
-          <div className="progress-fill" style={{ transform: `scaleX(${progress})` }} />
+          <div className="progress-fill" style={{ scale: `${progress} 1` }} />
         </div>
       </header>
 

@@ -1,2 +1,6 @@
+packages:
+  - "."
+  - "workbenches/*"
+
 allowBuilds:
   esbuild: true

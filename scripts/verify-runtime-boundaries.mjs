@@ -5,6 +5,7 @@ const root = process.cwd();
 const appPath = path.join(root, "src/App.tsx");
 const workspacePath = path.join(root, "src/workspace/workspace-panels.tsx");
 const settingsPath = path.join(root, "src/settings.tsx");
+const settingsCatalogPath = path.join(root, "src/settings/settings-field-catalog.ts");
 const zhLocalePath = path.join(root, "src/i18n/locales/zh-CN.json");
 
 function read(file) {
@@ -28,6 +29,7 @@ function sliceBetween(source, start, end) {
 const app = read(appPath);
 const workspace = read(workspacePath);
 const settings = read(settingsPath);
+const settingsCatalog = read(settingsCatalogPath);
 const zhLocale = read(zhLocalePath);
 
 assert(app.includes("class PanelContentBoundary"), "Panel content boundary is missing");
@@ -56,7 +58,7 @@ assert(!detailActions.includes("throw error"), "Workspace action strip rethrows 
 
 assert(settings.includes("async function safeInvokeUpdateCheck"), "Settings update check is not isolated");
 assert(settings.includes('tr("settings.accessibility.title")'), "Settings accessibility title is not wired to i18n");
-assert(settings.includes('labelKey: "settings.section.shortcut"'), "Settings section navigation is not wired to i18n keys");
+assert(settingsCatalog.includes('labelKey: "settings.section.shortcutLanguage"'), "Settings section navigation is not wired to i18n keys");
 assert(settings.includes('tr(item.labelKey)'), "Settings section navigation labels are not translated at render time");
 assert(settings.includes('tr("settings.shortcut.quickOpen")'), "Settings shortcut copy is not wired to i18n");
 assert(settings.includes('tr("settings.display.density")'), "Settings display density copy is not wired to i18n");
@@ -67,8 +69,9 @@ assert(zhLocale.includes('"settings.accessibility.title": "macOS 辅助功能权
 const safeUpdate = sliceBetween(settings, "async function safeInvokeUpdateCheck", "const tagModeLabels");
 assert(safeUpdate.includes('status: "failed"'), "Failed update checks do not return a failed state");
 assert(safeUpdate.includes('errorCode: "UPDATE_CHECK_FAILED"'), "Failed update checks do not expose a stable error code");
-const settingsBootstrap = sliceBetween(settings, "const [settings, configPath", "]);");
-assert(settingsBootstrap.includes("safeInvokeUpdateCheck()"), "Settings bootstrap still calls check_update directly");
+const settingsBootstrap = sliceBetween(settings, "Promise.all([", "]);");
+assert(!settingsBootstrap.includes('"check_update"'), "Settings bootstrap still calls check_update directly");
+assert(settings.includes("void safeInvokeUpdateCheck().then"), "Settings update check is not deferred after bootstrap");
 
 if (!process.exitCode) {
   console.log("Runtime boundary verification passed");

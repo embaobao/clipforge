@@ -104,6 +104,16 @@ Monthly quota exceeded. Create a free API key at https://context7.com/dashboard 
 - 没有模型和插件标品边界，后续很容易把 ClipForge 做成重型 AI 工作台。
 - 先讨论完整标品方案，再拆实现，可以避免 Tiptap、AI SDK、MCP、Agent runtime 各自扩张。
 
+## 方案评审结论（2026-07-16）
+
+- 优先级：本提案保留为 P4 / P5 级产品化总方案，不前置到 P0-P3；后续实现必须拆为独立 change，不把模型、Tiptap、插件 V2 和企业治理揉进一次大改。
+- 拆分方式：模型 provider / AI 摘要推荐可继续由 `vercel-ai-sdk-integration` 承接；详情页富文本与 Tiptap AI 另拆编辑器增强 change；插件 manifest V2 / Agent capability 另拆插件运行时 change；产品包与企业策略先保持文档化能力门禁。
+- 长期原则：Agent 是 plugin capability，不是独立平台。Agent 页、详情页 AI 建议、插件草稿生成都只是调用 Agent capability 的不同 UI surface。
+- 第一版标品包：保留 Core Clipboard、AI Edit Pack、Agent Clip Pack、Plugin Builder Pack、Local Privacy Pack、Team Governance Pack 六层；第一版只做 capability gate 和策略解释，不做计费系统。
+- 第一版模型接入范围：沿用本地 CLI、OpenAI-compatible、AI SDK provider、本地模型服务、Tiptap AI provider 五类；其中 AI SDK / Tiptap 细节必须等 Context7 恢复后再进入实现。
+- Tiptap AI Toolkit：定位为可选增强依赖，不是基础剪贴板和紧凑编辑的硬依赖；未配置、授权失败或加载失败时必须降级到 `CompactClipEditor`。
+- 隐私默认值：默认只发送 summary / metadata / selection 摘要；完整正文、文件内容、图片 OCR、跨条目集合和网络模型调用都需要用户显式授权或策略允许。
+
 ---
 
 ## v2 增量：内部智能推荐与外部 Agent 依赖弱化
@@ -167,4 +177,3 @@ Monthly quota exceeded. Create a free API key at https://context7.com/dashboard 
   - P3.5 context-plugin-agent-runtime v2（场景感知能力）
   - P4 clipboard-agent-panel v1 + v2（Agent 页基础设施）
   - P4.5 ai-model-plugin-productization v1（模型配置框架）
-

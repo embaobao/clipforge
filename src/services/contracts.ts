@@ -698,12 +698,37 @@ export type SettingsChangedEvent = {
   updatedAt: number;
 };
 
+/** Settings Service 暴露的 Agent provider 配置摘要。 */
+export type SettingsAgentProvidersResult = {
+  activeProviderId?: string | null;
+  providers: ClipboardAgentProviderConfig[];
+  tools?: unknown[];
+  revision: string;
+};
+
+/** Settings Service 暴露的 Agent model 列表摘要；具体 provider 差异保留为可扩展字段。 */
+export type SettingsAgentModelsResult = {
+  providerId?: string | null;
+  activeModelId?: string | null;
+  status?: string;
+  reason?: string;
+  source?: string;
+  message?: string;
+  models?: Array<{ id: string; label?: string } | string>;
+  checkedAt?: number;
+};
+
 /** 统一设置服务契约（前端设置页 / Agent 配置区共用）。 */
 export type SettingsService = {
   get(includeSchema?: boolean): Promise<SettingsDocument>;
   patch(request: SettingsPatchRequest): Promise<SettingsWriteResult>;
   replace(request: SettingsReplaceRequest): Promise<SettingsWriteResult>;
   reset(request: SettingsResetRequest): Promise<SettingsWriteResult>;
+  agent: {
+    providers(): Promise<SettingsAgentProvidersResult>;
+    check(providerId?: string | null): Promise<AgentProviderReadiness>;
+    models(providerId?: string | null): Promise<SettingsAgentModelsResult>;
+  };
   subscribe(handler: (event: SettingsChangedEvent) => void): Promise<() => void>;
 };
 

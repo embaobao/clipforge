@@ -1,7 +1,8 @@
 # agent-runtime Specification
 
 ## Purpose
-TBD - created by archiving change context-plugin-agent-runtime. Update Purpose after archive.
+定义 ClipForge 中插件、Agent、MCP 和详情页编辑会话之间的安全运行边界。该规范约束 Agent 输出必须先进入建议或预览流程，插件和 MCP 只能读取脱敏上下文，生成内容必须保留 provenance，并且任何插件、Agent 或升级能力都不能阻塞快速剪贴板主路径。
+
 ## Requirements
 ### Requirement: Agent suggestion boundary
 
@@ -41,4 +42,3 @@ ClipForge SHALL expose only safe provenance summaries in context snapshots and M
 - **WHEN** a plugin, Agent, or MCP client requests the context snapshot
 - **THEN** the response may include safe provenance fields and default tag summaries
 - **AND** the response does not include full clip body text unless the permission policy allows it
-

@@ -76,7 +76,7 @@ const TypeCard = ({
       <div
         className="cursor-bar"
         style={{
-          transform: `scaleY(${interpolate(frame, [0, 42], [0, 1], clamp)})`,
+          scale: `1 ${interpolate(frame, [0, 42], [0, 1], clamp)}`,
         }}
       />
       <div className="title-brand">
@@ -162,7 +162,7 @@ const FloatingPanelPreview = ({ frame }: { frame: number }) => {
           <Img src={appIcon} />
           <strong>ClipForge</strong>
         </div>
-        <span>Control+V</span>
+        <span>Control + V</span>
       </header>
       <div className="panel-search">
         <Img src={searchIcon} />

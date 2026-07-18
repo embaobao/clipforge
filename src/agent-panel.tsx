@@ -26,14 +26,11 @@ import type {
   AgentTranscriptRow,
   ClipboardAgentMessagePart,
   ClipboardAgentProviderConfig,
+  SettingsAgentModelsResult,
+  SettingsAgentProvidersResult,
 } from "./services/contracts";
 import { parseSmartTargets } from "./plugin-actions";
 import { useI18n, type AppLanguagePreference, type TranslationKey } from "./i18n";
-
-type AgentConfigPayload = {
-  activeProviderId?: string | null;
-  providers: ClipboardAgentProviderConfig[];
-};
 
 type AgentPreparedRunPayload = {
   run: AgentRunPayload;
@@ -380,6 +377,7 @@ export function ClipboardAgentPanel({
   const [providers, setProviders] = useState<ClipboardAgentProviderConfig[]>([]);
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
   const [providerReadiness, setProviderReadiness] = useState<AgentProviderReadiness[]>([]);
+  const [providerModels, setProviderModels] = useState<SettingsAgentModelsResult[]>([]);
   const [prewarmingProviderId, setPrewarmingProviderId] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(restoredSession.activeRunId ?? null);
   const [pendingRun, setPendingRun] = useState<PendingPreparedRun | null>(null);
@@ -391,6 +389,8 @@ export function ClipboardAgentPanel({
   const standardMessageRunIds = useRef<Set<string>>(new Set());
   const visibleRowRef = useRef<{ id: string; offset: number } | null>(null);
   const liveEdgeRef = useRef(liveEdge);
+  const providerCheckSeq = useRef(0);
+  const providerModelsSeq = useRef(0);
   const runningPrefix = tr("agent.run.runningPrefix");
   const allowFullContentForRun = permissionMode === "content";
 
@@ -460,10 +460,11 @@ export function ClipboardAgentPanel({
     liveEdgeRef.current = liveEdge;
   }, [liveEdge]);
 
-  // Gap1：刷新 provider 配置——mount 加载与 settings_changed 事件复用同一逻辑（agent_get_config 是本地读取，非网络）。
+  // Gap1：刷新 provider 配置——mount 加载与 settings_changed 事件复用同一 Settings Service 入口（本地读取，非网络）。
   const refreshProviderConfig = useCallback(() => {
-    invoke<AgentConfigPayload>("agent_get_config")
-      .then((payload) => {
+    settingsService.agent
+      .providers()
+      .then((payload: SettingsAgentProvidersResult) => {
         setProviders(payload.providers);
         setActiveProviderId(payload.activeProviderId ?? payload.providers[0]?.id ?? null);
       })
@@ -524,39 +525,122 @@ export function ClipboardAgentPanel({
   const prewarmProvider = useCallback(
     async (providerId: string | null = activeProviderId) => {
       if (!providerId) return;
+      const requestId = providerCheckSeq.current + 1;
+      providerCheckSeq.current = requestId;
+      const provider = providers.find((item) => item.id === providerId);
       setPrewarmingProviderId(providerId);
+      setProviderReadiness((current) => {
+        const next = current.filter((item) => item.providerId !== providerId);
+        return [
+          {
+            providerId,
+            status: "checking",
+            reason: tr("agent.provider.checking"),
+            checkedAt: Date.now(),
+            commandPreview: provider?.commandPreview ?? "",
+          },
+          ...next,
+        ];
+      });
       try {
-        const readiness = await invoke<AgentProviderReadiness>("agent_check_provider", { providerId });
+        const readiness = await settingsService.agent.check(providerId);
+        if (providerCheckSeq.current !== requestId) return;
         setProviderReadiness((current) => {
           const next = current.filter((item) => item.providerId !== readiness.providerId);
           return [readiness, ...next];
         });
-      } catch {
+      } catch (error) {
+        if (providerCheckSeq.current !== requestId) return;
+        const reason = String(error instanceof Error ? error.message : error || "provider prewarm failed");
+        const isTimeout = reason.includes("TIMEOUT") || reason.includes("exceeded");
         setProviderReadiness((current) => {
           const next = current.filter((item) => item.providerId !== providerId);
           return [
             {
               providerId,
-              status: "health-timeout",
-              reason: "provider prewarm failed",
+              status: isTimeout ? "health-timeout" : "check-failed",
+              reason,
               checkedAt: Date.now(),
-              commandPreview: providers.find((provider) => provider.id === providerId)?.commandPreview ?? "",
+              commandPreview: provider?.commandPreview ?? "",
             },
             ...next,
           ];
         });
       } finally {
-        setPrewarmingProviderId((current) => (current === providerId ? null : current));
+        if (providerCheckSeq.current === requestId) {
+          setPrewarmingProviderId((current) => (current === providerId ? null : current));
+        }
       }
     },
-    [activeProviderId, providers],
+    [activeProviderId, providers, tr],
   );
 
   useEffect(() => {
     if (!activeProviderId) return;
-    const timer = window.setTimeout(() => void prewarmProvider(activeProviderId), 1600);
+    const timer = window.setTimeout(() => void prewarmProvider(activeProviderId), 260);
     return () => window.clearTimeout(timer);
   }, [activeProviderId, prewarmProvider]);
+
+  const refreshProviderModels = useCallback(
+    async (providerId: string | null = activeProviderId) => {
+      if (!providerId) return;
+      const requestId = providerModelsSeq.current + 1;
+      providerModelsSeq.current = requestId;
+      setProviderModels((current) => {
+        const next = current.filter((item) => item.providerId !== providerId);
+        return [
+          {
+            providerId,
+            status: "loading",
+            reason: tr("agent.provider.modelsLoading"),
+            checkedAt: Date.now(),
+            models: [],
+          },
+          ...next,
+        ];
+      });
+      try {
+        const models = await settingsService.agent.models(providerId);
+        if (providerModelsSeq.current !== requestId) return;
+        setProviderModels((current) => {
+          const next = current.filter((item) => item.providerId !== (models.providerId ?? providerId));
+          return [
+            {
+              ...models,
+              providerId: models.providerId ?? providerId,
+              status: models.status ?? "ready",
+              checkedAt: models.checkedAt ?? Date.now(),
+            },
+            ...next,
+          ];
+        });
+      } catch (error) {
+        if (providerModelsSeq.current !== requestId) return;
+        const reason = String(error instanceof Error ? error.message : error || "provider models failed");
+        const isTimeout = reason.includes("TIMEOUT") || reason.includes("exceeded");
+        setProviderModels((current) => {
+          const next = current.filter((item) => item.providerId !== providerId);
+          return [
+            {
+              providerId,
+              status: isTimeout ? "models-timeout" : "models-failed",
+              reason,
+              checkedAt: Date.now(),
+              models: [],
+            },
+            ...next,
+          ];
+        });
+      }
+    },
+    [activeProviderId, tr],
+  );
+
+  useEffect(() => {
+    if (!activeProviderId) return;
+    const timer = window.setTimeout(() => void refreshProviderModels(activeProviderId), 260);
+    return () => window.clearTimeout(timer);
+  }, [activeProviderId, refreshProviderModels]);
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -1260,6 +1344,7 @@ export function ClipboardAgentPanel({
     : null;
   const activeProvider = providers.find((provider) => provider.id === activeProviderId);
   const activeReadiness = providerReadiness.find((item) => item.providerId === activeProviderId);
+  const activeModels = providerModels.find((item) => item.providerId === activeProviderId);
   const prewarmingProvider = Boolean(activeProviderId && prewarmingProviderId === activeProviderId);
   const suggestedPrompts = useMemo(() => suggestedPromptsForClip(activeClip, tr), [activeClip, tr]);
   const runStatusLabel = prewarmingProvider
@@ -1315,6 +1400,7 @@ export function ClipboardAgentPanel({
     <AgentChatPage
       activeProvider={activeProvider}
       activeProviderId={activeProviderId}
+      activeModels={activeModels}
       activeReadiness={activeReadiness}
       canSubmit={status !== "drafting" && Boolean(input.trim())}
       contextReferences={contextSet.references}

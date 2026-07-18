@@ -13,7 +13,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AgentProviderReadiness,
   SettingsChangedEvent,
+  SettingsAgentModelsResult,
+  SettingsAgentProvidersResult,
   SettingsDocument,
   SettingsPatchRequest,
   SettingsReplaceRequest,
@@ -22,6 +25,16 @@ import type {
 } from "./contracts.js";
 
 const PERF_BUDGET_MS = 300;
+const AGENT_OPERATION_TIMEOUT_MS = 3500;
+
+/** 普通浏览器预览没有 Tauri event runtime；设置页截图/Story 只需要跳过订阅。 */
+function hasTauriEventRuntime(): boolean {
+  const runtime = globalThis as typeof globalThis & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return Boolean(runtime.__TAURI__ || runtime.__TAURI_INTERNALS__);
+}
 
 /** 开发环境记录调用耗时，超 300ms 输出 warn。 */
 function withTiming<T>(label: string, promise: Promise<T>): Promise<T> {
@@ -36,6 +49,19 @@ typeof performance !== "undefined" ? performance.now() : Date.now();
       console.warn(`[settings] slow ${label} durationMs=${durationMs} > ${PERF_BUDGET_MS}`);
     }
     return value;
+  });
+}
+
+/** 控制面 Agent 操作不能无限挂起；真实底层调用可能继续完成，但调用方会按请求序号忽略过期结果。 */
+function withTimeout<T>(label: string, promise: Promise<T>, timeoutMs = AGENT_OPERATION_TIMEOUT_MS): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`SETTINGS_AGENT_TIMEOUT: ${label} exceeded ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
   });
 }
 
@@ -85,10 +111,41 @@ export const settingsService = {
     );
   },
 
+  /** Agent provider 配置能力；复用 Settings Service 的 redaction / provider 解析边界。 */
+  agent: {
+    providers(): Promise<SettingsAgentProvidersResult> {
+      return withTiming(
+        "agent.providers",
+        invoke<SettingsAgentProvidersResult>("settings_service_agent_providers"),
+      );
+    },
+
+    check(providerId?: string | null) {
+      return withTimeout(
+        "agent.check",
+        withTiming(
+          "agent.check",
+          invoke<AgentProviderReadiness>("settings_service_agent_check", { providerId }),
+        ),
+      );
+    },
+
+    models(providerId?: string | null): Promise<SettingsAgentModelsResult> {
+      return withTimeout(
+        "agent.models",
+        withTiming(
+          "agent.models",
+          invoke<SettingsAgentModelsResult>("settings_service_agent_models", { providerId }),
+        ),
+      );
+    },
+  },
+
   /** 订阅 settings_changed 事件。返回取消订阅函数。 */
   async subscribe(
     handler: (event: SettingsChangedEvent) => void,
   ): Promise<UnlistenFn> {
+    if (!hasTauriEventRuntime()) return () => {};
     return listen<SettingsChangedEvent>("settings_changed", (event) => {
       handler(event.payload);
     });
