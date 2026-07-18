@@ -45,7 +45,7 @@
 - [x] 新建 `src/clipboard/components/ClipboardRowActions.tsx`（历史行 open-target/favorite + stopPropagation）
 - [x] 新建 `src/clipboard/components/ClipboardEmptyState.tsx`（合并 history/trash 两处空态，`variant` 复用）
 - [x] 新建 `src/clipboard/clipboard-domain.ts`（迁纯 helper 消除循环依赖）+ `src/clipboard/components/AppTooltip.tsx`
-- [ ] 新建 `src/clipboard/components/PanelStatusFeedback.tsx`
+- [x] 新建 `src/clipboard/components/PanelStatusFeedback.tsx`
 - [ ] 迁移对应样式到 `src/clipboard/styles/clipboard-row.css`（独立成步，需 tauri dev 视觉验证）
 - [ ] 保持现有选择、复制、搜索、虚拟滚动行为不变
 - [x] 复跑 `node scripts/verify-hot-path.mjs`（通过）
