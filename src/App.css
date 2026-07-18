@@ -10194,8 +10194,11 @@ body,
   left: 8px;
   z-index: 82;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
+  /* 两行布局：第一行搜索槽 + 操作按钮，第二行视图 Tab 跨满整行单独显示 */
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 8px;
+  row-gap: 6px;
   align-items: center;
   min-width: 0;
   min-height: 40px;
@@ -10225,64 +10228,49 @@ body,
   gap: 4px;
 }
 
+/* 视图 Tab：直接用 animate-ui Tabs 默认 segmented 外观（bg-muted 圆角 + 激活态滑块）。
+   仅去掉外层 highlight 的冗余边框/阴影（避免双层框感），并适配面板高度与字号。 */
 .app-shell .top-view-tabs [data-slot="tabs-highlight"] {
-  position: relative;
-  display: inline-flex;
-  gap: 3px;
-  min-height: 30px;
-  padding: 2px;
-  border-radius: 11px;
-  background: oklch(0.96 0 0 / 0.72);
-  border: 1px solid oklch(0 0 0 / 0.06);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .app-shell .top-view-tabs [data-slot="tabs-list"] {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  gap: 3px;
-}
-
-.app-shell .top-view-tabs [data-slot="tabs-highlight-item"] {
-  position: relative;
-  display: inline-flex;
-}
-
-.app-shell .top-view-tabs [data-slot="highlight"] {
-  position: absolute;
-  z-index: -1;
-  border: 1px solid oklch(0 0 0 / 0.08);
-  border-radius: 9px;
-  background: oklch(1 0 0 / 0.9);
-  box-shadow: 0 1px 4px oklch(0 0 0 / 0.08);
+  height: 30px;
+  min-height: 30px;
+  padding: 2px;
+  font-size: 12px;
 }
 
 .app-shell .top-view-tabs [data-slot="tabs-trigger"] {
-  gap: 4px;
-  width: auto !important;
-  min-width: 0;
-  min-height: 26px !important;
-  padding: 0 8px !important;
-  border-radius: 9px !important;
-}
-
-.app-shell .top-view-tabs [data-slot="tabs-trigger"][data-state="active"] {
-  color: oklch(0.14 0 0 / 0.86) !important;
-  background: transparent !important;
-  box-shadow: none !important;
+  min-height: 24px !important;
+  padding: 0 12px !important;
+  font-size: 12px;
 }
 
 .app-shell .top-view-tabs [data-slot="tabs-trigger"] span {
-  overflow: hidden;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .app-shell .top-toolbar-search-slot {
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
+}
+
+.app-shell .top-toolbar-action-slot {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/* 第二行：视图 Tab 跨满整行，居中显示，不再与搜索栏挤在一行 */
+.app-shell .top-view-tabs {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  justify-content: center;
 }
 
 .app-shell .top-toolbar .toolbar,
@@ -10438,27 +10426,23 @@ body,
 .app-shell.multi-selecting .quick-panel,
 .app-shell.multi-selecting.search-active .quick-panel,
 .app-shell.multi-selecting:not(.search-active) .quick-panel {
-  padding-top: 44px !important;
+  padding-top: 78px !important;
   padding-bottom: 10px !important;
 }
 
 .app-shell .workspace-detail-page {
-  padding-top: 44px !important;
+  padding-top: 78px !important;
   padding-bottom: 12px !important;
 }
 
 .app-shell .workspace-aggregate-page {
-  padding-top: 44px !important;
+  padding-top: 78px !important;
 }
 
 @media (max-width: 520px) {
   .app-shell .top-toolbar {
-    gap: 6px;
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .app-shell .top-view-tabs [data-slot="tabs-trigger"] span {
-    display: none;
+    column-gap: 6px;
+    row-gap: 4px;
   }
 
   .app-shell .top-toolbar-action-slot {

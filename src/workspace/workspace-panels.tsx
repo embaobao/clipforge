@@ -1265,39 +1265,6 @@ export function ClipDetailWorkspace({
         </DropdownMenu>
       </WorkspaceCrumb>
 
-      <div className="detail-meta" aria-label={tr("main.detail.meta")}>
-        <span className="clip-id-chip" title={clip.id}>
-          ID {clip.id.slice(0, 8)}…{clip.id.slice(-6)}
-        </span>
-        <span className={`kind-chip ${clip.payloadKind}`} title={getPayloadKindLabel(clip.payloadKind, tr)}>
-          {(() => {
-            const Icon = getPayloadKindIcon(clip.payloadKind);
-            return <Icon size={10} />;
-          })()}
-          <span>{getPayloadKindLabel(clip.payloadKind, tr)}</span>
-        </span>
-        {clip.sourceApp?.name ? (
-          <span className="source-chip" title={clip.sourceApp.executablePath}>
-            {clip.sourceApp.iconBase64 ? (
-              <img alt="" className="source-icon" src={clip.sourceApp.iconBase64} />
-            ) : (
-              <AppWindow size={10} />
-            )}
-            <span>{clip.sourceApp.name}</span>
-          </span>
-        ) : null}
-      </div>
-      {clip.tags.length ? (
-        <div className="detail-tag-row" aria-label={tr("main.detail.tagList")}>
-          {clip.tags.map((tag) => (
-            <button key={tag} onClick={() => onSearchTag(tag)} type="button">
-              <Tag size={10} />
-              #{tag}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
       <DetailContentBoundary clip={clip} onBack={onBack} onCopy={onCopy} tr={tr}>
         <DetailAiSummaryPanel
           clip={clip}
@@ -1373,6 +1340,39 @@ export function ClipDetailWorkspace({
           )}
         </div>
       </DetailContentBoundary>
+
+      <div className="detail-meta" aria-label={tr("main.detail.meta")}>
+        <span className="clip-id-chip" title={clip.id}>
+          ID {clip.id.slice(0, 8)}…{clip.id.slice(-6)}
+        </span>
+        <span className={`kind-chip ${clip.payloadKind}`} title={getPayloadKindLabel(clip.payloadKind, tr)}>
+          {(() => {
+            const Icon = getPayloadKindIcon(clip.payloadKind);
+            return <Icon size={10} />;
+          })()}
+          <span>{getPayloadKindLabel(clip.payloadKind, tr)}</span>
+        </span>
+        {clip.sourceApp?.name ? (
+          <span className="source-chip" title={clip.sourceApp.executablePath}>
+            {clip.sourceApp.iconBase64 ? (
+              <img alt="" className="source-icon" src={clip.sourceApp.iconBase64} />
+            ) : (
+              <AppWindow size={10} />
+            )}
+            <span>{clip.sourceApp.name}</span>
+          </span>
+        ) : null}
+      </div>
+      {clip.tags.length ? (
+        <div className="detail-tag-row" aria-label={tr("main.detail.tagList")}>
+          {clip.tags.map((tag) => (
+            <button key={tag} onClick={() => onSearchTag(tag)} type="button">
+              <Tag size={10} />
+              #{tag}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {safeLinks.length ? (
         <div className="detail-link-grid" aria-label={tr("main.detail.linkList")}>

@@ -22,6 +22,7 @@
 - [x] `ClipboardEmptyState.tsx`：合并 history/trash 两处重复空态，`variant: "history" | "trash"`，零状态依赖
 - [x] `ClipboardContentPreview.tsx`：抽出历史行 `div.quick-content`（AI 摘要徽标 / 图片缩略 / 文件计数 / middle-ellipsis 文本 + AppTooltip），纯展示；IIFE→三元等价（review 确认）
 - [x] `ClipboardRowActions.tsx`：抽出历史行 `div.row-actions`（open-target / favorite），纯按钮组 + `stopPropagation`
+- [x] `ClipContextMenu.tsx`：抽出右键菜单（单条/多选双模式 + 复制模式 rich/plain/filesAsPaths + AI 摘要 + 收藏/删除/多选入口）；detail 的 `logAppError`+`navigateWorkspaceDetail` 收为 `onOpenDetail` prop，`PasteMode` 改从 `services/clipboard` 导入——纯哑组件零运行时依赖 App（与 ClipboardRow 一致）。tsc + pnpm build + 四项边界校验（hot-path/runtime/file-size/surface）全绿；右键菜单事件顺序待 tauri dev 实机验证。
 - [ ] `PanelStatusFeedback.tsx`：把 `StatusLine` 移入文件 + 抽出 completion toast。`showCompletionToast` 的 timer 留父级，子组件只渲染 `status` / `toast` props
 - [ ] `ClipboardRow.tsx`：组合 ContentPreview + RowActions，处理 `index` / 激活分组 `in-active-group` / `quick-index-num` / 右键菜单回调 + TrashPanel 行 `variant` 复用。**需 `pnpm tauri dev` 实机验证**行选中/复制/右键菜单/分组滚动的事件顺序（tsc 查不出）
 

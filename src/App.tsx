@@ -1,6 +1,5 @@
 import {
   Check,
-  CheckSquare,
   Bot,
   Clipboard,
   Copy,
@@ -10,19 +9,20 @@ import {
   Pin,
   RotateCcw,
   Search,
-  Sparkles,
   Square,
   Trash2,
   X,
 } from "lucide-react";
 import { ClipboardEmptyState } from "./clipboard/components/ClipboardEmptyState";
 import { ClipboardRow } from "./clipboard/components/ClipboardRow";
+import { ClipContextMenu } from "./clipboard/components/ClipContextMenu";
 import { TopToolbar } from "./clipboard/components/TopToolbar";
 import { AppTooltip } from "./clipboard/components/AppTooltip";
 import {
   getDisplayText,
   getFilePathsFromClip,
   getItemTooltip,
+  getShortcutModLabel,
   middleEllipsis,
   splitLineForMiddleEllipsis,
 } from "./clipboard/clipboard-domain";
@@ -1079,10 +1079,6 @@ function waitForPasteTriggerRelease(source: string): Promise<number> {
     // 120ms 足以等到修饰键释放（首个 keyup 即 resolve），同时把整体延迟压下来。
     timer = window.setTimeout(finish, 120);
   });
-}
-
-function getShortcutModLabel() {
-  return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "Cmd" : "Ctrl";
 }
 
 type ErrorBoundaryCopy = {
@@ -4377,6 +4373,14 @@ function QuickPastePanel({
             onCopySelected={onCopySelected}
             onStartMultiSelect={onStartMultiSelect}
             onClearSelection={onClearSelection}
+            onOpenDetail={() => {
+              logAppError("info", "context-menu-detail", {
+                id: contextMenu.item.id,
+                hasUrl: Boolean(contextMenu.item.analysis.url),
+                hasAttachment: Boolean(contextMenu.item.analysis.attachment),
+              });
+              void navigateWorkspaceDetail(contextMenu.item.id);
+            }}
             selectedCount={selectedIds.size}
             tr={tr}
             x={contextMenu.x}
@@ -4385,167 +4389,6 @@ function QuickPastePanel({
         ) : null}
       </div>
     </section>
-  );
-}
-
-function ClipContextMenu({
-  item,
-  multiSelectMode,
-  onClose,
-  onDelete,
-  onDeleteSelected,
-  onFavorite,
-  onFavoriteSelected,
-  onOpenAggregate,
-  onPaste,
-  onCopyMode,
-  onGenerateAiSummary,
-  onCopySelected,
-  onStartMultiSelect,
-  onClearSelection,
-  selectedCount,
-  tr,
-  x,
-  y,
-}: {
-  item: ClipItem;
-  multiSelectMode: boolean;
-  onClose: () => void;
-  onDelete: () => void;
-  onDeleteSelected: () => void;
-  onFavorite: (item: ClipItem) => void;
-  onFavoriteSelected: () => void;
-  onOpenAggregate: () => void;
-  onPaste: (item: ClipItem, source?: string) => void;
-  onCopyMode: (mode: PasteMode) => void;
-  onGenerateAiSummary: (item: ClipItem) => void;
-  onCopySelected: () => void;
-  onStartMultiSelect: (id: string) => void;
-  onClearSelection: () => void;
-  selectedCount: number;
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-  x: number;
-  y: number;
-}) {
-  const mod = getShortcutModLabel();
-  const run = (action: () => void) => {
-    action();
-    onClose();
-  };
-  return (
-    <div
-      aria-label={tr("main.context.clipMenu")}
-      className="clip-context-menu"
-      onClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.preventDefault()}
-      role="menu"
-      style={{ left: x, top: y }}
-    >
-      {multiSelectMode ? (
-        <>
-          <button className="clip-context-item" onClick={() => run(onOpenAggregate)} role="menuitem" type="button">
-            <span className="clip-context-label"><CheckSquare size={13} />{tr("main.context.aggregate")}</span>
-            <kbd>{selectedCount}</kbd>
-          </button>
-          <button className="clip-context-item" onClick={() => run(onCopySelected)} role="menuitem" type="button">
-            <span className="clip-context-label"><Copy size={13} />{tr("main.context.copySelected")}</span>
-            <kbd>{mod}+C</kbd>
-          </button>
-          <button className="clip-context-item" onClick={() => run(onFavoriteSelected)} role="menuitem" type="button">
-            <span className="clip-context-label"><Heart size={13} />{tr("main.context.favoriteSelected")}</span>
-            <kbd>{mod}+F</kbd>
-          </button>
-          <button className="clip-context-item danger" onClick={() => run(onDeleteSelected)} role="menuitem" type="button">
-            <span className="clip-context-label"><Trash2 size={13} />{tr("main.context.deleteSelected")}</span>
-            <kbd>Del</kbd>
-          </button>
-          <div className="clip-context-separator" role="separator" />
-          <button className="clip-context-item" onClick={() => run(onClearSelection)} role="menuitem" type="button">
-            <span className="clip-context-label"><X size={13} />{tr("main.context.exitMultiSelect")}</span>
-            <kbd>Esc</kbd>
-          </button>
-        </>
-      ) : (
-        <>
-          <button className="clip-context-item" onClick={() => run(() => onPaste(item, "context-menu"))} role="menuitem" type="button">
-            <span className="clip-context-label"><Clipboard size={13} />{tr("main.context.paste")}</span>
-            <kbd>Enter</kbd>
-          </button>
-          <button className="clip-context-item" onClick={() => run(() => onCopyMode("rich"))} role="menuitem" type="button">
-            <span className="clip-context-label"><Copy size={13} />{tr("main.context.copyRich")}</span>
-            <kbd>Rich</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            data-tooltip={item.payloadKind === "image" ? tr("main.context.copyPlainImageUnavailable") : tr("main.context.copyPlainTooltip")}
-            disabled={item.payloadKind === "image"}
-            onClick={() => run(() => onCopyMode("plain"))}
-            role="menuitem"
-            title={item.payloadKind === "image" ? tr("main.context.copyPlainImageUnavailable") : tr("main.context.copyPlainTitle")}
-            type="button"
-          >
-            <span className="clip-context-label"><Copy size={13} />{tr("main.context.copyPlain")}</span>
-            <kbd>Plain</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            data-tooltip={item.payloadKind !== "file" ? tr("main.context.copyPathFileOnly") : tr("main.context.copyPathTooltip")}
-            disabled={item.payloadKind !== "file"}
-            onClick={() => run(() => onCopyMode("filesAsPaths"))}
-            role="menuitem"
-            title={item.payloadKind !== "file" ? tr("main.context.copyPathFileOnly") : tr("main.context.copyPathTitle")}
-            type="button"
-          >
-            <span className="clip-context-label"><Copy size={13} />{tr("main.context.copyPath")}</span>
-            <kbd>Path</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            onClick={() => run(() => onGenerateAiSummary(item))}
-            role="menuitem"
-            type="button"
-          >
-            <span className="clip-context-label"><Sparkles size={13} />{tr("main.context.generateAiSummary")}</span>
-            <kbd>AI</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            onClick={() => run(() => {
-              logAppError("info", "context-menu-detail", {
-                id: item.id,
-                hasUrl: Boolean(item.analysis.url),
-                hasAttachment: Boolean(item.analysis.attachment),
-              });
-              void navigateWorkspaceDetail(item.id);
-            })}
-            role="menuitem"
-            type="button"
-          >
-            <span className="clip-context-label"><FileJson size={13} />{tr("main.context.detail")}</span>
-            <kbd>→</kbd>
-          </button>
-          {item.analysis.url || item.analysis.attachment ? (
-            <div className="clip-context-item is-hint" role="presentation">
-              <span className="clip-context-label"><ExternalLink size={13} />{tr("main.context.openTarget")}</span>
-              <kbd>{mod}+J</kbd>
-            </div>
-          ) : null}
-          <button className="clip-context-item" onClick={() => run(() => onFavorite(item))} role="menuitem" type="button">
-            <span className="clip-context-label"><Heart size={13} />{item.favorite ? tr("main.context.unfavorite") : tr("main.context.favorite")}</span>
-            <kbd>{mod}+F</kbd>
-          </button>
-          <button className="clip-context-item danger" onClick={() => run(onDelete)} role="menuitem" type="button">
-            <span className="clip-context-label"><Trash2 size={13} />{tr("main.context.delete")}</span>
-            <kbd>Del</kbd>
-          </button>
-          <div className="clip-context-separator" role="separator" />
-          <button className="clip-context-item" onClick={() => run(() => onStartMultiSelect(item.id))} role="menuitem" type="button">
-            <span className="clip-context-label"><Square size={13} />{tr("main.context.selectItem")}</span>
-            <kbd>Space</kbd>
-          </button>
-        </>
-      )}
-    </div>
   );
 }
 

@@ -102,3 +102,8 @@ export function getItemTooltip(item: ClipItem, tr: TrFunction): AppTooltipConten
       : fullBody;
   return { title, description, body };
 }
+
+/** 返回当前平台的修饰键标签：macOS 为 Cmd，其它为 Ctrl。 */
+export function getShortcutModLabel() {
+  return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "Cmd" : "Ctrl";
+}

@@ -27,7 +27,7 @@ export function ClipboardContentPreview({ item, fileMissing, aiSummary, tr }: Cl
   const parts = splitLineForMiddleEllipsis(getClipboardLine(item));
   return (
     <div className="quick-content">
-      {aiSummary ? (
+      {aiSummary && aiSummary.status !== "failed" ? (
         <span className={`quick-ai-summary-badge ${aiSummary.status}`} title={getAiSummaryStatusLabel(aiSummary, tr)}>
           <Sparkles size={11} />
         </span>
