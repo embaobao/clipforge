@@ -1,0 +1,135 @@
+/* 剪贴板主面板的小窗体收口样式。
+ * 作用域限定在 clipboard surface，避免影响 settings / workspace / agent。
+ * 使用 CSS 变量统一管理高度，移除媒体查询，保持一套样式。 */
+
+:root {
+  --cf-toolbar-height: 40px;
+  --cf-search-height: 30px;
+  --cf-panel-padding-top: calc(var(--cf-toolbar-height) + 8px);
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar {
+  top: 6px;
+  right: 6px;
+  left: 6px;
+  column-gap: 6px;
+  row-gap: 4px;
+  min-height: var(--cf-toolbar-height);
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar .toolbar {
+  min-height: var(--cf-search-height);
+  height: var(--cf-search-height);
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar .floating-search-surface,
+.app-shell[data-surface="clipboard"] .top-toolbar .search-wrap {
+  min-height: var(--cf-search-height);
+  height: var(--cf-search-height);
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar .search-wrap {
+  padding-inline: 8px;
+  grid-template-columns: 16px minmax(0, 1fr) 24px 24px;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar .search-wrap input {
+  height: var(--cf-search-height);
+  min-height: var(--cf-search-height);
+  line-height: var(--cf-search-height);
+  font-size: 11.5px;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar .search-wrap .icon-button,
+.app-shell[data-surface="clipboard"] .top-toolbar .search-wrap .input-addon-start {
+  width: 16px;
+  height: 16px;
+}
+
+.app-shell[data-surface="clipboard"] .top-agent-button,
+.app-shell[data-surface="clipboard"] .top-menu-trigger {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  border-radius: 8px;
+}
+
+.app-shell[data-surface="clipboard"] .top-agent-button .agent-access-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.app-shell[data-surface="clipboard"] .top-view-actions {
+  gap: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 3px;
+}
+
+.app-shell[data-surface="clipboard"] .top-view-tabs [data-slot="tabs-highlight"] {
+  display: none;
+}
+
+.app-shell[data-surface="clipboard"] .top-view-tabs [data-slot="tabs-trigger"],
+.app-shell[data-surface="clipboard"] .top-view-actions .icon-button {
+  color: oklch(0.18 0 0 / 0.54);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.app-shell[data-surface="clipboard"] .top-view-tabs [data-slot="tabs-trigger"],
+.app-shell[data-surface="clipboard"] .top-view-actions .icon-button {
+  min-height: 26px;
+  height: 26px;
+  width: 28px;
+  padding: 0;
+  font-size: 11px;
+  border-radius: 4px;
+  justify-content: center;
+}
+
+.app-shell[data-surface="clipboard"] .top-view-tabs [data-slot="tabs-trigger"]:hover,
+.app-shell[data-surface="clipboard"] .top-view-actions .icon-button:hover {
+  color: oklch(0.1 0 0 / 0.9);
+  background: oklch(0 0 0 / 0.06);
+}
+
+.app-shell[data-surface="clipboard"] .top-view-actions .icon-button.active {
+  color: oklch(0.08 0 0 / 0.95);
+  background: oklch(1 0 0);
+}
+
+.app-shell[data-surface="clipboard"] .top-view-actions .icon-button span {
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar-action-slot {
+  gap: 3px;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar .toolbar-status {
+  display: none;
+}
+
+.app-shell[data-surface="clipboard"] .quick-panel {
+  padding-top: var(--cf-panel-padding-top);
+}
+
+.app-shell[data-surface="clipboard"] .workspace-detail-page,
+.app-shell[data-surface="clipboard"] .workspace-aggregate-page {
+  padding-top: var(--cf-panel-padding-top);
+}
+
+/* 搜索激活时保持一致的 padding-top */
+.app-shell[data-surface="clipboard"].search-active .quick-panel,
+.app-shell[data-surface="clipboard"].multi-selecting .quick-panel,
+.app-shell[data-surface="clipboard"].multi-selecting.search-active .quick-panel {
+  padding-top: var(--cf-panel-padding-top);
+}
+
+.app-shell[data-surface="clipboard"].route-detail .workspace-detail-page {
+  padding-top: 0;
+}

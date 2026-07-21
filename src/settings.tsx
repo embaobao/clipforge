@@ -60,14 +60,14 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/animate-ui/primitives/animate/tooltip";
+} from "@/components/animate-ui/primitives/radix/tooltip";
 import {
   Tabs,
   TabsContent,
   TabsContents,
   TabsList,
   TabsTrigger,
-} from "@/components/animate-ui/components/animate/tabs";
+} from "@/components/animate-ui/components/radix/tabs";
 import {
   SidebarInset,
   SidebarProvider,
@@ -962,7 +962,7 @@ export function SettingsApp() {
   }
 
   return (
-    <TooltipProvider closeDelay={120} openDelay={300}>
+    <TooltipProvider delayDuration={300}>
       <div className="settings-surface min-h-dvh bg-white text-slate-900" data-surface="settings">
         <header className="flex h-14 items-center justify-between gap-4 border-b border-slate-200 bg-white px-6">
         <div className="flex min-w-0 items-center gap-2">
@@ -1807,7 +1807,7 @@ export function SettingsApp() {
                             value={rule.query}
                           />
                         </label>
-                        <Tooltip side="top" sideOffset={8}>
+                        <Tooltip>
                           <TooltipTrigger asChild>
                             <button
                               aria-label={tr("settings.tags.deleteRule")}
@@ -1818,7 +1818,7 @@ export function SettingsApp() {
                               <Trash2 size={14} />
                             </button>
                           </TooltipTrigger>
-                          <TooltipContent className="settings-tooltip-content">{tr("settings.tags.deleteRule")}</TooltipContent>
+                          <TooltipContent className="settings-tooltip-content" side="top" sideOffset={8}>{tr("settings.tags.deleteRule")}</TooltipContent>
                         </Tooltip>
                       </div>
                     ))}

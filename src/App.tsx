@@ -82,6 +82,7 @@ import type { AgentContextReference } from "./services/contracts";
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
 import "./App.css";
+import "./clipboard/styles/clipboard-panel.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
 export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "rtf" | "file" | "image" | "json" | "chart" | "table";
@@ -2468,7 +2469,7 @@ function ClipForgeApp() {
 
       if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
-        const views: ViewKey[] = ["history", "favorites", "trash"];
+        const views: ViewKey[] = ["history", "favorites"];
         const currentIndex = Math.max(0, views.indexOf(activeView));
         const nextIndex = event.shiftKey
           ? (currentIndex - 1 + views.length) % views.length
@@ -3158,56 +3159,59 @@ function ClipForgeApp() {
       ref={shellRef}
       style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
     >
-      <TopToolbar
-        activeSurface={activeSurface}
-        activeView={activeView}
-        agentContextCount={selectedClip ? 1 : 0}
-        onDrag={handleWindowDrag}
-        onOpenAgent={() => {
-          setActiveSurface("agent");
-          setSelectedIds(new Set());
-          setMultiSelectMode(false);
-          setMultiPreviewOpen(false);
-        }}
-        onOpenSettings={() => {
-          invoke("open_settings_window").catch((error) =>
-            logAppError("warn", "Open settings window failed", String(error)),
-          );
-        }}
-        onViewChange={(view) => {
-          setActiveSurface("clipboard");
-          setActiveView(view);
-          setSelectedIds(new Set());
-          setMultiSelectMode(false);
-          void navigateWorkspaceList();
-        }}
-        searchBar={showSearchBar ? (
-          <GlassSearchBar
-            activeFilterLabels={parsedSearchCommand.ast.labels}
-            inputRef={searchRef}
-            onApplySuggestion={applySearchSuggestion}
-            activeSuggestionIndex={activeSuggestionIndex}
-            onSelectSuggestionIndex={setActiveSuggestionIndex}
-            onBlur={closeSearchIfEmpty}
-            onChange={handleSearchChange}
-            onClear={() => {
-              setQuery("");
-              setActiveTag(null);
-              setFilterFavorite(false);
-              setActiveTypeFilter("all");
-              searchRef.current?.focus();
-            }}
-            onFocus={focusSearch}
-            onRemoveFilter={removeSearchFilter}
-            parsedSearchCommand={parsedSearchCommand}
-            query={query}
-            suggestions={searchSuggestions}
-            tr={tr}
-          />
-        ) : null}
-        status={nativeStatus}
-        tr={tr}
-      />
+      {workspaceRoute.name !== "detail" && (
+        <TopToolbar
+          activeSurface={activeSurface}
+          activeView={activeView}
+          agentContextCount={selectedClip ? 1 : 0}
+          onDrag={handleWindowDrag}
+          onOpenAgent={() => {
+            setActiveSurface("agent");
+            setSelectedIds(new Set());
+            setMultiSelectMode(false);
+            setMultiPreviewOpen(false);
+          }}
+          onOpenSettings={() => {
+            invoke("open_settings_window").catch((error) =>
+              logAppError("warn", "Open settings window failed", String(error)),
+            );
+          }}
+          onViewChange={(view) => {
+            setActiveSurface("clipboard");
+            setActiveView(view);
+            setSelectedIds(new Set());
+            setMultiSelectMode(false);
+            void navigateWorkspaceList();
+          }}
+          searchBar={showSearchBar ? (
+            <GlassSearchBar
+              activeFilterLabels={parsedSearchCommand.ast.labels}
+              inputRef={searchRef}
+              onApplySuggestion={applySearchSuggestion}
+              activeSuggestionIndex={activeSuggestionIndex}
+              onSelectSuggestionIndex={setActiveSuggestionIndex}
+              onBlur={closeSearchIfEmpty}
+              onChange={handleSearchChange}
+              onClear={() => {
+                setQuery("");
+                setActiveTag(null);
+                setFilterFavorite(false);
+                setActiveTypeFilter("all");
+                searchRef.current?.focus();
+              }}
+              onFocus={focusSearch}
+              onRemoveFilter={removeSearchFilter}
+              parsedSearchCommand={parsedSearchCommand}
+              query={query}
+              suggestions={searchSuggestions}
+              tr={tr}
+            />
+          ) : null}
+          showTabs={showSearchBar}
+          status={nativeStatus}
+          tr={tr}
+        />
+      )}
 
       <section className="content-column" onScroll={handleScroll}>
         {multiSelectMode ? (

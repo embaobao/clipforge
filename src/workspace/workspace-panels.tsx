@@ -19,8 +19,8 @@ import {
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { Component, useEffect, useMemo, useState } from "react";
-import type { ErrorInfo, ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type { ClipItem, ClipPayloadKind } from "../App";
 import { detectSensitiveEditorFields } from "../editor/sensitive";
 import { applyEditorSuggestion, buildLocalEditorSuggestion } from "../editor/suggestions";
@@ -38,7 +38,21 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../components/ui/dropdown-menu";
+} from "../components/animate-ui/components/radix/dropdown-menu";
+import { ButtonGroup } from "../components/ui/button-group";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from '../components/animate-ui/components/radix/accordion';
+import {
+  Tabs,
+  TabsContent,
+  TabsContents,
+  TabsList,
+  TabsTrigger,
+} from "../components/animate-ui/components/radix/tabs";
 
 type WorkspaceTr = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
@@ -448,59 +462,6 @@ function MarkdownPreview({
       })}
     </div>
   );
-}
-
-class DetailContentBoundary extends Component<
-  { children: ReactNode; clip: ClipItem; onBack: () => void; onCopy: (clip: ClipItem) => void; tr: WorkspaceTr },
-  { failed: boolean; message: string }
-> {
-  state = { failed: false, message: "" };
-
-  static getDerivedStateFromError(error: Error) {
-    return { failed: true, message: error.message };
-  }
-
-  componentDidUpdate(previous: { clip: ClipItem }) {
-    if (previous.clip.id !== this.props.clip.id && this.state.failed) {
-      this.setState({ failed: false, message: "" });
-    }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("Clip detail render failed", error, info.componentStack);
-    appendWorkspacePanelLog(
-      "error",
-      "clip-detail-render-error",
-      getClipRenderDiagnostics(this.props.clip, {
-        errorMessage: error.message,
-        errorName: error.name,
-        componentStack: info.componentStack,
-      }),
-    );
-  }
-
-  render() {
-    if (!this.state.failed) return this.props.children;
-
-    return (
-      <div className="detail-render-fallback">
-        <div className="panel-fallback">
-          <FileText size={22} />
-          <strong>{this.props.tr("main.detail.previewFailedTitle")}</strong>
-          <span title={this.state.message}>{this.props.tr("main.detail.previewFailedBody")}</span>
-          <div className="copy-layout-grid">
-            <button type="button" onClick={() => this.props.onCopy(this.props.clip)}>
-              {this.props.tr("main.detail.copyOriginal")}
-            </button>
-            <button type="button" onClick={this.props.onBack}>
-              {this.props.tr("main.workspace.backToList")}
-            </button>
-          </div>
-        </div>
-        <pre>{this.props.clip.content}</pre>
-      </div>
-    );
-  }
 }
 
 function LinkPreview({ clip, links, onOpen, tr }: { clip: ClipItem; links: string[]; onOpen: (clip: ClipItem) => void; tr: WorkspaceTr }) {
@@ -1177,213 +1138,262 @@ export function ClipDetailWorkspace({
 
   return (
     <section className="workspace-page workspace-detail-page" data-surface="workspace">
-      <WorkspaceCrumb title={tr("main.detail.contentTitle")} subtitle={mode} onBack={handleBack} tr={tr}>
-        <button
-          aria-label={tr("main.detail.previous")}
-          className="icon-button detail-nav-button"
-          disabled={!onPrevious}
-          onClick={onPrevious}
-          title={tr("main.detail.previousShortcut")}
-          type="button"
-        >
-          <ChevronUp size={14} />
-        </button>
-        <button
-          aria-label={tr("main.detail.next")}
-          className="icon-button detail-nav-button"
-          disabled={!onNext}
-          onClick={onNext}
-          title={tr("main.detail.nextShortcut")}
-          type="button"
-        >
-          <ChevronDown size={14} />
-        </button>
-        <button
-          aria-label={isEditing ? tr("main.detail.editingContent") : tr("main.detail.editContent")}
-          className={isEditing ? "detail-edit-button active" : "detail-edit-button"}
-          onClick={() => {
-            setDraftContent(clip.content);
-            setDraftTags(normalizeDetailTags(clip.tags));
-            setEditError("");
-            setIsEditing(true);
-          }}
-          title={tr("main.detail.quickEditTooltip")}
-          type="button"
-        >
-          <Pencil size={12} />
-          <span>{isEditing ? tr("main.detail.editing") : tr("main.detail.edit")}</span>
-        </button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="icon-button detail-more-button" type="button" aria-label={tr("main.detail.moreActions")} title={tr("main.detail.moreActions")}>
-              <MoreHorizontal size={15} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent className="detail-action-menu" side="bottom" align="end" sideOffset={8}>
-            <DropdownMenuLabel>{tr("main.detail.quickActions")}</DropdownMenuLabel>
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(`use clipf.get id=${clip.id}`)}>
-                <Clipboard size={13} />
-                <span>{tr("main.detail.copyMcp")}</span>
-              </DropdownMenuItem>
-              {clip.analysis.url || clip.analysis.attachment ? (
-                <DropdownMenuItem onSelect={() => onOpen(clip)}>
-                  <ExternalLink size={13} />
-                  <span>{tr("main.detail.openContent")}</span>
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem onSelect={() => onCopy(clip)}>
-                <Copy size={13} />
-                <span>{tr("main.detail.copyContent")}</span>
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            {menuActions.length ? <DropdownMenuSeparator /> : null}
-            {menuActions.length ? (
-            <DropdownMenuGroup>
-            {menuActions.map((action) => (
-              <DropdownMenuItem
-                disabled={action.disabled}
-                key={action.id}
-                onSelect={() => {
-                  try {
-                    action.onSelect();
-                  } catch (error) {
-                    appendWorkspacePanelLog("warn", "workspace-plugin-action-failed", {
-                      actionId: action.id,
-                      error: String(error),
-                    });
-                  }
-                }}
+      {!isEditing ? (
+        <>
+          <WorkspaceCrumb title={tr("main.detail.title")} subtitle={mode} onBack={handleBack} tr={tr}>
+            <ButtonGroup className="detail-action-group">
+              <button
+                aria-label={tr("main.detail.previous")}
+                className="icon-button detail-nav-button"
+                disabled={!onPrevious}
+                onClick={onPrevious}
+                title={tr("main.detail.previousShortcut")}
+                type="button"
               >
-                {action.icon}
-                <span>{action.label}</span>
-              </DropdownMenuItem>
-            ))}
-            </DropdownMenuGroup>
+                <ChevronUp size={12} />
+              </button>
+              <button
+                aria-label={tr("main.detail.next")}
+                className="icon-button detail-nav-button"
+                disabled={!onNext}
+                onClick={onNext}
+                title={tr("main.detail.nextShortcut")}
+                type="button"
+              >
+                <ChevronDown size={12} />
+              </button>
+              <button
+                aria-label={tr("main.detail.editContent")}
+                className="detail-edit-button"
+                onClick={() => {
+                  setDraftContent(clip.content);
+                  setDraftTags(normalizeDetailTags(clip.tags));
+                  setEditError("");
+                  setIsEditing(true);
+                }}
+                title={tr("main.detail.quickEditTooltip")}
+                type="button"
+              >
+                <Pencil size={12} />
+              </button>
+            </ButtonGroup>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="icon-button detail-more-button" type="button" aria-label={tr("main.detail.moreActions")} title={tr("main.detail.moreActions")}>
+                  <MoreHorizontal size={14} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="detail-action-menu" side="bottom" align="end" sideOffset={8}>
+                <DropdownMenuLabel>{tr("main.detail.quickActions")}</DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(`use clipf.get id=${clip.id}`)}>
+                    <Clipboard size={13} />
+                    <span>{tr("main.detail.copyMcp")}</span>
+                  </DropdownMenuItem>
+                  {clip.analysis.url || clip.analysis.attachment ? (
+                    <DropdownMenuItem onSelect={() => onOpen(clip)}>
+                      <ExternalLink size={13} />
+                      <span>{tr("main.detail.openContent")}</span>
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuItem onSelect={() => onCopy(clip)}>
+                    <Copy size={13} />
+                    <span>{tr("main.detail.copyContent")}</span>
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                {menuActions.length ? <DropdownMenuSeparator /> : null}
+                {menuActions.length ? (
+                  <DropdownMenuGroup>
+                    {menuActions.map((action) => (
+                      <DropdownMenuItem
+                        disabled={action.disabled}
+                        key={action.id}
+                        onSelect={() => {
+                          try {
+                            action.onSelect();
+                          } catch (error) {
+                            appendWorkspacePanelLog("warn", "workspace-plugin-action-failed", {
+                              actionId: action.id,
+                              error: String(error),
+                            });
+                          }
+                        }}
+                      >
+                        {action.icon}
+                        <span>{action.label}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </WorkspaceCrumb>
+          <div className="detail-summary-bar" aria-label={tr("main.detail.meta")}>
+            <div className="detail-summary-main">
+              <span className={`kind-chip ${clip.payloadKind}`} title={getPayloadKindLabel(clip.payloadKind, tr)}>
+                {(() => {
+                  const Icon = getPayloadKindIcon(clip.payloadKind);
+                  return <Icon size={10} />;
+                })()}
+                <span>{getPayloadKindLabel(clip.payloadKind, tr)}</span>
+              </span>
+              {clip.sourceApp?.name ? (
+                <span className="source-chip" title={clip.sourceApp.executablePath}>
+                  {clip.sourceApp.iconBase64 ? (
+                    <img alt="" className="source-icon" src={clip.sourceApp.iconBase64} />
+                  ) : (
+                    <AppWindow size={10} />
+                  )}
+                  <span>{clip.sourceApp.name}</span>
+                </span>
+              ) : null}
+            </div>
+            {clip.tags.length ? (
+              <div className="detail-summary-tags" aria-label={tr("main.detail.tagList")}>
+                {clip.tags.slice(0, 3).map((tag) => (
+                  <button key={tag} onClick={() => onSearchTag(tag)} type="button">
+                    <Tag size={10} />
+                    #{tag}
+                  </button>
+                ))}
+                {clip.tags.length > 3 ? <span className="detail-summary-more">+{clip.tags.length - 3}</span> : null}
+              </div>
             ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </WorkspaceCrumb>
+          </div>
+        </>
+      ) : null}
 
-      <DetailContentBoundary clip={clip} onBack={onBack} onCopy={onCopy} tr={tr}>
-        <DetailAiSummaryPanel
-          clip={clip}
-          candidates={candidates}
-          tr={tr}
-          onGenerateSummary={onGenerateAiSummary}
-          onOpenRecommendation={onOpenRecommendation}
-        />
-        <div className="detail-content">
-          {isEditing ? (
-            <DetailQuickEditor
-              content={draftContent}
-              draftVersion={draftVersion}
-              error={editError}
-              hasChanges={hasDraftChanges}
-              isSaving={isSaving}
-              sessionId={editorSessionId || `editor_${clip.id}`}
-              suggestedTags={suggestedTags}
-              tags={draftTags}
-              variableRows={editorVariableRows}
-              tr={tr}
-              onApplySuggestion={(content, tags) => {
-                setDraftContent(content);
-                setDraftTags(normalizeDetailTags(tags));
-                setDraftVersion((current) => current + 1);
-                setEditError("");
-              }}
-              onApplySuggestionAndSave={(content, tags) => void saveDraftContent("stay", { content, tags })}
-              onCancel={handleCancelEdit}
-              onChange={(value) => {
-                setDraftContent(value);
-                if (editError) setEditError("");
-              }}
-              onTagsChange={setDraftTags}
-              onVariableDrawerOpen={() => {
-                const sensitive = detectSensitiveEditorFields(draftContent);
-                appendWorkspacePanelLog("info", "editor-variable-snapshot", {
-                  traceId: `editor_variable_${clip.id}_${Date.now().toString(36)}`,
-                  contextSchema: "EditorVariableSnapshot.v1",
-                  clipId: clip.id,
-                  sessionId: editorSessionId || `editor_${clip.id}`,
-                  draftVersion,
-                  variableKeys: editorVariableRows.map((row) => row.key),
-                  contentLength: draftContent.length,
-                  tagCount: draftTags.length,
-                  suggestedTagCount: suggestedTags.length,
-                  sensitiveKinds: sensitive.map((finding) => finding.kind),
-                });
-              }}
-              onSave={() => void saveDraftContent()}
-              onSaveAndCopy={() => void saveDraftContent("copy")}
-              onSaveAndPaste={() => void saveDraftContent("paste")}
-            />
-          ) : clip.payloadKind === "image" ? (
-            <ImageFilePreview clip={clip} tr={tr} onOpenPath={onOpenPath} />
-          ) : clip.payloadKind === "file" ? (
-            <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />
-          ) : imageUrl ? (
-            <img src={imageUrl} alt={clip.analysis.title} />
-          ) : clip.payloadKind === "html" ? (
-            <HtmlPreview clip={clip} content={clip.content} onCopy={onCopy} tr={tr} />
-          ) : clip.analysis.url || clip.kind === "link" ? (
-            <LinkPreview clip={clip} links={links} onOpen={onOpen} tr={tr} />
-          ) : isLikelyJson(clip) ? (
-            <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
-          ) : isLikelyMarkdown(clip) ? (
-            <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
-          ) : (
-            <>
-              <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
-              <pre>{clip.content}</pre>
-            </>
-          )}
-        </div>
-      </DetailContentBoundary>
+      {/* 详情主体：按类型渲染，统一用 Accordion 组织可折叠区域 */}
+      <div className="detail-content">
+        {isEditing ? (
+          <DetailQuickEditor
+            content={draftContent}
+            draftVersion={draftVersion}
+            error={editError}
+            hasChanges={hasDraftChanges}
+            isSaving={isSaving}
+            sessionId={editorSessionId || `editor_${clip.id}`}
+            suggestedTags={suggestedTags}
+            tags={draftTags}
+            variableRows={editorVariableRows}
+            tr={tr}
+            onApplySuggestion={(content, tags) => {
+              setDraftContent(content);
+              setDraftTags(normalizeDetailTags(tags));
+              setDraftVersion((current) => current + 1);
+              setEditError("");
+            }}
+            onApplySuggestionAndSave={(content, tags) => void saveDraftContent("stay", { content, tags })}
+            onCancel={handleCancelEdit}
+            onChange={(value) => {
+              setDraftContent(value);
+              if (editError) setEditError("");
+            }}
+            onTagsChange={setDraftTags}
+            onVariableDrawerOpen={() => {
+              const sensitive = detectSensitiveEditorFields(draftContent);
+              appendWorkspacePanelLog("info", "editor-variable-snapshot", {
+                traceId: `editor_variable_${clip.id}_${Date.now().toString(36)}`,
+                contextSchema: "EditorVariableSnapshot.v1",
+                clipId: clip.id,
+                sessionId: editorSessionId || `editor_${clip.id}`,
+                draftVersion,
+                variableKeys: editorVariableRows.map((row) => row.key),
+                contentLength: draftContent.length,
+                tagCount: draftTags.length,
+                suggestedTagCount: suggestedTags.length,
+                sensitiveKinds: sensitive.map((finding) => finding.kind),
+              });
+            }}
+            onSave={() => void saveDraftContent()}
+            onSaveAndCopy={() => void saveDraftContent("copy")}
+            onSaveAndPaste={() => void saveDraftContent("paste")}
+          />
+        ) : (
+          <Accordion type="single" collapsible defaultValue="content" className="detail-accordion">
+            <AccordionItem value="content">
+              <AccordionTrigger className="detail-accordion-trigger">
+                <FileText size={14} />
+                <span>{tr("main.detail.contentTitle")}</span>
+                <em>{tr("main.detail.editorStats", { chars: clip.content.length, lines: clip.content.split(/\r?\n/).length })}</em>
+              </AccordionTrigger>
+              <AccordionContent className="detail-accordion-panel">
+                {clip.payloadKind === "image" ? (
+                  <ImageFilePreview clip={clip} tr={tr} onOpenPath={onOpenPath} />
+                ) : clip.payloadKind === "file" ? (
+                  <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />
+                ) : imageUrl ? (
+                  <img src={imageUrl} alt={clip.analysis.title} />
+                ) : clip.payloadKind === "html" ? (
+                  <HtmlPreview clip={clip} content={clip.content} onCopy={onCopy} tr={tr} />
+                ) : clip.analysis.url || clip.kind === "link" ? (
+                  <LinkPreview clip={clip} links={links} onOpen={onOpen} tr={tr} />
+                ) : isLikelyJson(clip) ? (
+                  <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
+                ) : isLikelyMarkdown(clip) ? (
+                  <Tabs defaultValue="rendered" className="detail-tabs">
+                    <TabsList className="detail-tabs-list">
+                      <TabsTrigger value="rendered">渲染后</TabsTrigger>
+                      <TabsTrigger value="raw">原内容</TabsTrigger>
+                    </TabsList>
+                    <TabsContents className="detail-tabs-content">
+                      <TabsContent value="rendered">
+                        <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
+                      </TabsContent>
+                      <TabsContent value="raw">
+                        <pre className="detail-raw-content">{clip.content}</pre>
+                      </TabsContent>
+                    </TabsContents>
+                  </Tabs>
+                ) : (
+                  <>
+                    <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
+                    <pre className="detail-raw-content">{clip.content}</pre>
+                  </>
+                )}
+              </AccordionContent>
+            </AccordionItem>
 
-      <div className="detail-meta" aria-label={tr("main.detail.meta")}>
-        <span className="clip-id-chip" title={clip.id}>
-          ID {clip.id.slice(0, 8)}…{clip.id.slice(-6)}
-        </span>
-        <span className={`kind-chip ${clip.payloadKind}`} title={getPayloadKindLabel(clip.payloadKind, tr)}>
-          {(() => {
-            const Icon = getPayloadKindIcon(clip.payloadKind);
-            return <Icon size={10} />;
-          })()}
-          <span>{getPayloadKindLabel(clip.payloadKind, tr)}</span>
-        </span>
-        {clip.sourceApp?.name ? (
-          <span className="source-chip" title={clip.sourceApp.executablePath}>
-            {clip.sourceApp.iconBase64 ? (
-              <img alt="" className="source-icon" src={clip.sourceApp.iconBase64} />
-            ) : (
-              <AppWindow size={10} />
-            )}
-            <span>{clip.sourceApp.name}</span>
-          </span>
-        ) : null}
+            <AccordionItem value="ai-summary">
+              <AccordionTrigger className="detail-accordion-trigger">
+                <Sparkles size={14} />
+                <span>{tr("main.detail.aiSummary.title")}</span>
+              </AccordionTrigger>
+              <AccordionContent className="detail-accordion-panel">
+                <DetailAiSummaryPanel
+                  clip={clip}
+                  candidates={candidates}
+                  tr={tr}
+                  onGenerateSummary={onGenerateAiSummary}
+                  onOpenRecommendation={onOpenRecommendation}
+                />
+              </AccordionContent>
+            </AccordionItem>
+
+            {safeLinks.length ? (
+              <AccordionItem value="links">
+                <AccordionTrigger className="detail-accordion-trigger">
+                  <ExternalLink size={14} />
+                  <span>{tr("main.detail.linkList")}</span>
+                  <em>{safeLinks.length}</em>
+                </AccordionTrigger>
+                <AccordionContent className="detail-accordion-panel">
+                  <div className="detail-link-grid" aria-label={tr("main.detail.linkList")}>
+                    {safeLinks.slice(0, 12).map((url) => (
+                      <button key={url.href} type="button" onClick={() => window.open(url.href, "_blank", "noopener,noreferrer")}>
+                        <ExternalLink size={12} />
+                        <span>{url.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            ) : null}
+
+
+          </Accordion>
+        )}
       </div>
-      {clip.tags.length ? (
-        <div className="detail-tag-row" aria-label={tr("main.detail.tagList")}>
-          {clip.tags.map((tag) => (
-            <button key={tag} onClick={() => onSearchTag(tag)} type="button">
-              <Tag size={10} />
-              #{tag}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {safeLinks.length ? (
-        <div className="detail-link-grid" aria-label={tr("main.detail.linkList")}>
-          {safeLinks.slice(0, 8).map((url) => (
-            <button key={url.href} type="button" onClick={() => window.open(url.href, "_blank", "noopener,noreferrer")}>
-              <ExternalLink size={12} />
-              <span>{url.label}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -1532,19 +1542,21 @@ function WorkspaceCrumb({
 }) {
   return (
     <header className="workspace-crumb">
-      <button className="icon-button subtle" onClick={onBack} type="button" aria-label={tr("main.workspace.backToList")}>
-        <RotateCcw size={14} />
-      </button>
+      <ButtonGroup className="workspace-crumb-left">
+        <button className="icon-button crumb-back" onClick={onBack} type="button" aria-label={tr("main.workspace.backToList")}>
+          <RotateCcw size={14} />
+        </button>
+      </ButtonGroup>
       <div className="workspace-crumb-title">
         <strong>{title}</strong>
         {subtitle ? <em>{subtitle}</em> : null}
       </div>
-      <div className="workspace-crumb-actions">
+      <ButtonGroup className="workspace-crumb-actions">
         {children}
-        <button className="icon-button subtle" onClick={onBack} type="button" aria-label={tr("main.detail.close")}>
+        <button className="icon-button crumb-close" onClick={onBack} type="button" aria-label={tr("main.detail.close")}>
           <X size={14} />
         </button>
-      </div>
+      </ButtonGroup>
     </header>
   );
 }

@@ -597,20 +597,11 @@ button {
   min-height: 38px;
   padding: 0 8px 0 10px;
   background: transparent;
-  border: 1px solid rgba(0, 0, 0, 0.14);
-  border-radius: var(--cf-radius-pill);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  border: none;
+  transition: none;
 }
 
-.search-wrap:focus-within {
-  border-color: rgba(0, 0, 0, 0.3);
-  box-shadow:
-    0 0 0 3px rgba(0, 0, 0, 0.06),
-    0 4px 16px rgba(0, 0, 0, 0.04);
-}
+
 
 .search-wrap svg {
   color: var(--accent);
@@ -2119,21 +2110,29 @@ button {
   min-width: 190px;
   padding: 6px;
   color: var(--foreground);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(60, 60, 67, 0.16);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(60, 60, 67, 0.14);
   border-radius: 10px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.14);
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+.dropdown-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
 }
 
 .dropdown-item,
 .dropdown-label {
   display: flex;
-  gap: 8px;
   align-items: center;
-  min-height: 30px;
-  padding: 0 8px;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
   border-radius: 7px;
   font-size: 12px;
   outline: none;
@@ -2141,22 +2140,51 @@ button {
 
 .dropdown-item {
   cursor: default;
+  transition: background-color 120ms ease;
 }
 
 .dropdown-item:hover,
-.dropdown-item:focus {
+.dropdown-item:focus-visible {
   background: rgba(17, 17, 17, 0.06);
 }
 
+.dropdown-item[data-state="checked"] {
+  background: rgba(17, 17, 17, 0.04);
+}
+
 .dropdown-label {
-  color: var(--muted);
-  font-weight: 700;
+  color: var(--muted-foreground);
+  font-weight: 600;
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .dropdown-separator {
   height: 1px;
-  margin: 5px;
-  background: var(--border);
+  margin: 5px 0;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.dropdown-shortcut {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+.dropdown-sub-content {
+  z-index: 51;
+  min-width: 160px;
+  padding: 6px;
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(60, 60, 67, 0.14);
+  border-radius: 10px;
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
 .hover-card-content {
@@ -3410,12 +3438,12 @@ body,
 .quick-panel {
   display: block;
   min-height: 0;
-  padding: calc(var(--cf-float-search-height) + 14px) 10px 8px;
+  padding: 60px 10px 8px;
   overflow: hidden;
 }
 
 .app-shell.search-active .quick-panel {
-  padding-top: calc(var(--cf-float-search-height) + 14px);
+  padding-top: calc(var(--cf-float-search-height) + 16px);
 }
 
 .app-shell.preview-active .quick-panel {
@@ -3672,9 +3700,12 @@ body,
   display: none !important;
 }
 
-.quick-panel,
-.app-shell.search-active .quick-panel {
+.quick-panel {
   padding: 8px 10px 8px !important;
+}
+
+.app-shell.search-active .quick-panel {
+  padding: calc(var(--cf-float-search-height) + 40px) 10px 8px !important;
 }
 
 .app-shell.preview-active .quick-panel {
@@ -3917,7 +3948,7 @@ body,
   --cf-search-inline: 8px;
   --cf-search-bar-height: 28px;
   --cf-search-suggestion-height: 28px;
-  --cf-row-focus-accent: oklch(0.54 0.11 205);
+  --cf-row-focus-accent: oklch(0.1 0 0);
 }
 
 .content-column {
@@ -4128,11 +4159,11 @@ body,
 .quick-panel,
 .app-shell:not(.search-active) .quick-panel,
 .app-shell.search-active .quick-panel {
-  padding: 38px 8px 7px !important;
+  padding: 48px 8px 7px !important;
 }
 
 .app-shell.search-active .quick-panel {
-  padding-top: 68px !important;
+  padding-top: 48px !important;
 }
 
 .app-shell.preview-active .quick-panel {
@@ -4412,45 +4443,54 @@ body,
 }
 
 .workspace-crumb {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  display: flex;
   gap: 8px;
   align-items: center;
-  min-height: 34px;
-  padding: 4px;
-  background: oklch(1 0 0 / 0.34);
-  border: 1px solid oklch(0 0 0 / 0.12);
-  border-radius: 4px;
-  backdrop-filter: blur(18px) saturate(1.45);
-  -webkit-backdrop-filter: blur(18px) saturate(1.45);
+  min-height: 32px;
+  padding: 2px 0;
 }
 
-.workspace-crumb > div:first-of-type {
+.workspace-crumb-title {
+  flex: 1;
   display: flex;
-  gap: 5px;
-  align-items: baseline;
+  gap: 6px;
+  align-items: center;
   min-width: 0;
 }
 
-.workspace-crumb span,
-.workspace-crumb em {
-  color: oklch(0.28 0 0 / 0.58);
+.workspace-crumb-title strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-crumb-title em {
+  color: oklch(0.4 0 0);
   font-size: 11px;
   font-style: normal;
   white-space: nowrap;
 }
 
-.workspace-crumb strong {
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 680;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.workspace-crumb .icon-button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: oklch(0.4 0 0);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+}
+
+.workspace-crumb .icon-button:hover {
+  color: oklch(0.18 0 0);
+  background: oklch(0 0 0 / 0.06);
 }
 
 .workspace-crumb-actions {
-  display: inline-flex;
-  gap: 4px;
+  display: flex;
+  gap: 0;
   align-items: center;
   min-width: 0;
   max-width: 100%;
@@ -4498,24 +4538,11 @@ body,
 }
 
 .app-shell.route-detail .workspace-crumb {
-  grid-template-columns: 28px minmax(0, 1fr) minmax(0, auto);
+  min-height: 32px;
 }
 
 .app-shell.route-detail .workspace-crumb-actions {
   max-width: min(170px, 42vw);
-}
-
-.app-shell.route-detail .workspace-crumb .icon-button,
-.app-shell.route-detail .workspace-crumb-actions .agent-mcp-copy-button,
-.app-shell.route-detail .workspace-crumb-actions .detail-edit-button,
-.app-shell.route-detail .workspace-action-strip.compact button {
-  flex: 0 0 30px !important;
-  width: 30px !important;
-  min-width: 30px !important;
-  height: 30px !important;
-  min-height: 30px !important;
-  padding: 0 !important;
-  border-radius: 9px !important;
 }
 
 .app-shell.route-detail .workspace-crumb-actions .agent-mcp-copy-button span,
@@ -6371,7 +6398,7 @@ body,
 }
 
 .app-shell.search-active .quick-panel {
-  padding-top: 68px !important;
+  padding-top: 48px !important;
 }
 
 .app-shell.search-active.preview-active .quick-panel,
@@ -7413,28 +7440,18 @@ body,
 
 /* ---- 6. 工作区顶部导航沉浸 ---- */
 .workspace-crumb {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  display: flex;
   gap: 8px;
   align-items: center;
-  min-height: 36px;
-  padding: 4px 5px 4px 4px;
-  background:
-    linear-gradient(180deg, oklch(1 0 0 / 0.52), oklch(1 0 0 / 0.22)),
-    oklch(1 0 0 / 0.14);
-  border: 1px solid oklch(1 0 0 / 0.42);
-  border-radius: var(--cf-radius-lg);
-  box-shadow:
-    0 8px 24px oklch(0 0 0 / 0.08),
-    inset 0 1px 0 oklch(1 0 0 / 0.68);
-  backdrop-filter: blur(22px) saturate(1.55) contrast(1.04);
-  -webkit-backdrop-filter: blur(22px) saturate(1.55) contrast(1.04);
+  min-height: 32px;
+  padding: 2px 0;
 }
 
 .workspace-crumb-title {
+  flex: 1;
   display: flex;
   gap: 6px;
-  align-items: baseline;
+  align-items: center;
   min-width: 0;
 }
 
@@ -7442,7 +7459,7 @@ body,
   overflow: hidden;
   color: var(--foreground);
   font-size: 13px;
-  font-weight: 640;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7455,47 +7472,47 @@ body,
 }
 
 .workspace-crumb .icon-button {
-  width: 28px;
-  min-height: 28px;
-  color: oklch(0.22 0 0 / 0.7);
-  background: oklch(1 0 0 / 0.28);
-  border: 1px solid oklch(1 0 0 / 0.36);
-  border-radius: var(--cf-radius-md);
-  backdrop-filter: blur(10px) saturate(1.4);
-  -webkit-backdrop-filter: blur(10px) saturate(1.4);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: oklch(0.4 0 0);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
 }
 
 .workspace-crumb .icon-button:hover {
-  background: oklch(1 0 0 / 0.48);
+  color: oklch(0.18 0 0);
+  background: oklch(0 0 0 / 0.06);
 }
 
 .workspace-crumb-actions {
-  display: inline-flex;
-  gap: 4px;
+  display: flex;
+  gap: 0;
   align-items: center;
 }
 
 .workspace-action-strip button,
 .detail-link-grid button {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
   height: 28px;
   padding: 0 9px;
-  color: oklch(0.16 0 0 / 0.84);
-  background: oklch(1 0 0 / 0.32);
-  border: 1px solid oklch(1 0 0 / 0.38);
-  border-radius: var(--cf-radius-md);
+  color: oklch(0.18 0 0 / 0.78);
+  background: transparent;
+  border: none;
   font-size: 11px;
-  transition: background 120ms ease;
+  cursor: pointer;
 }
 
 .workspace-action-strip button:hover,
 .detail-link-grid button:hover {
-  background: oklch(1 0 0 / 0.52);
+  color: oklch(0.16 0 0);
+  text-decoration: underline;
 }
 
 .detail-content {
-  background: oklch(1 0 0 / 0.28);
-  border: 1px solid oklch(1 0 0 / 0.34);
-  border-radius: var(--cf-radius-lg);
 }
 
 /* ---- 7. 类型与来源标签 ---- */
@@ -7733,7 +7750,11 @@ body,
 }
 
 .app-shell:not(.search-active) .quick-panel {
-  padding-top: 22px !important;
+  padding-top: 6px !important;
+}
+
+.app-shell.search-active .quick-panel {
+  padding-top: calc(var(--cf-float-search-height, 28px) + 16px) !important;
 }
 
 .app-shell.search-active .search-wrap,
@@ -7821,10 +7842,10 @@ body,
   height: 14px !important;
 }
 
-/* === 右上角悬浮 pin 按钮：液态模糊玻璃圆按钮，激活黑 / 未激活灰 === */
+/* === 右下角悬浮 pin 按钮：液态模糊玻璃圆按钮，激活黑 / 未激活灰 === */
 .panel-pin-fab {
-  position: fixed;
-  top: 4px;
+  position: absolute;
+  bottom: 4px;
   right: 4px;
   z-index: 50;
   display: inline-flex;
@@ -8257,10 +8278,10 @@ body,
 }
 
 .app-shell .panel-pin-fab {
-  position: fixed !important;
-  top: 4px !important;
+  position: absolute !important;
+  top: auto !important;
   right: 6px !important;
-  bottom: auto !important;
+  bottom: 6px !important;
   left: auto !important;
   z-index: 80 !important;
   width: 26px !important;
@@ -8335,6 +8356,42 @@ body,
 [data-tooltip]:focus-visible::after {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+/* animate-ui Tooltip 卡片样式：使用深色卡片保证浅色背景下仍可读 */
+.app-shell [data-slot="tooltip-content"],
+.app-shell [data-slot="tooltip-content"].animate-tooltip,
+div.animate-tooltip,
+div.animate-tooltip[data-slot="tooltip-content"] {
+  z-index: 60 !important;
+  width: fit-content;
+  max-width: 280px;
+  padding: 4px 10px !important;
+  color: oklch(0.99 0 0) !important;
+  background-color: oklch(0.16 0 0 / 0.94) !important;
+  background-image: none !important;
+  border: 1px solid oklch(1 0 0 / 0.08) !important;
+  border-radius: 8px !important;
+  box-shadow:
+    0 10px 28px rgba(0, 0, 0, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+}
+
+.app-shell [data-slot="tooltip-content"] > *,
+div.animate-tooltip > * {
+  color: oklch(0.99 0 0) !important;
+  background: transparent !important;
+}
+
+.animate-tooltip-inner {
+  color: oklch(0.99 0 0);
+  background: transparent;
+}
+
+.animate-tooltip-arrow {
+  fill: oklch(0.16 0 0 / 0.94);
 }
 
 .quick-content .app-tooltip {
@@ -8790,22 +8847,22 @@ body,
   height: 100% !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
-  padding-bottom: 24px !important;
-  grid-template-rows: auto auto auto auto auto !important;
+  padding: 6px 8px 12px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   overscroll-behavior: contain;
 }
 
 .app-shell .workspace-detail-page .detail-content {
-  min-height: 0 !important;
+  min-height: 200px !important;
+  flex: 1 1 auto;
+  overflow: auto !important;
   max-height: none !important;
-  overflow: visible !important;
 }
 
-.app-shell .workspace-detail-page .detail-content pre,
-.app-shell .workspace-detail-page .markdown-preview,
-.app-shell .workspace-detail-page .link-preview {
-  max-height: none !important;
-  overflow: visible !important;
+.app-shell .workspace-detail-page .detail-ai-summary-panel {
+  flex-shrink: 0;
 }
 
 /* P-FINAL.17 详情页解析渲染：链接/Markdown 提供可读预览和快速复制布局。 */
@@ -9778,7 +9835,8 @@ body,
 
 .app-shell .workspace-detail-page .detail-content {
   max-height: none !important;
-  overflow: visible !important;
+  overflow: auto !important;
+  min-height: 200px !important;
 }
 
 .app-shell .workspace-detail-page .smart-format-panel {
@@ -9925,12 +9983,218 @@ body,
 }
 
 .app-shell.route-detail .workspace-page {
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-  padding-top: 8px;
+  padding: 0 8px 8px !important;
+  gap: 6px;
 }
 
 .app-shell.route-detail .toolbar {
   display: none;
+}
+
+/* 下钻页：单列全宽布局，操作栏直接顶到顶部 */
+.app-shell.route-detail {
+  grid-template-columns: 1fr !important;
+  grid-template-rows: 1fr !important;
+}
+
+.app-shell.route-detail .content-column {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  padding-top: 0 !important;
+}
+
+.detail-tabs {
+  width: 100%;
+}
+
+.detail-tabs-list {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  background: oklch(0.95 0 0 / 0.6);
+  border-radius: 8px;
+}
+
+.detail-tabs-list button {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  background: transparent;
+  color: oklch(0.35 0 0);
+  transition: all 150ms ease;
+}
+
+.detail-tabs-list button[data-state="active"] {
+  background: oklch(1 0 0);
+  color: oklch(0.15 0 0);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.detail-tabs-content {
+  margin-top: 8px;
+}
+
+.detail-raw-content {
+  padding: 12px;
+  background: oklch(0.98 0 0 / 0.6);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 8px;
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.detail-accordion {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* 详情页顶部紧凑摘要条 */
+.detail-summary-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.detail-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: oklch(0.4 0 0 / 0.72);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.detail-back-btn:hover {
+  color: oklch(0.18 0 0);
+  background: oklch(0 0 0 / 0.06);
+}
+
+.detail-summary-main {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.detail-summary-tags {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  flex: 1;
+}
+
+.detail-summary-tags button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 6px;
+  color: oklch(0.18 0 0 / 0.78);
+  background: transparent;
+  border: none;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.detail-summary-tags button:hover {
+  color: oklch(0.16 0 0 / 0.92);
+  text-decoration: underline;
+}
+
+.detail-summary-more {
+  color: oklch(0.4 0 0 / 0.72);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.detail-summary-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.detail-summary-actions .icon-button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.detail-summary-actions .detail-edit-button {
+  height: 24px;
+  padding: 0 6px;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.detail-summary-mode {
+  color: oklch(0.5 0 0 / 0.72);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.detail-accordion-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  background: transparent;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: oklch(0.18 0 0);
+  cursor: pointer;
+  transition: all 150ms ease;
+  width: 100%;
+  text-align: left;
+}
+
+.detail-accordion-trigger:hover {
+  background: oklch(0 0 0 / 0.03);
+}
+
+.detail-accordion-trigger[data-state="open"] {
+  background: transparent;
+}
+
+.detail-accordion-trigger em {
+  margin-left: auto;
+  font-size: 11px;
+  font-style: normal;
+  color: oklch(0.45 0 0);
+}
+
+.detail-accordion-panel {
+  padding: 0 0 12px 22px;
+  background: transparent;
+}
+
+[data-slot="accordion-trigger"] {
+  display: flex;
+  align-items: center;
+}
+
+[data-slot="accordion-panel"] {
+  overflow: hidden;
 }
 
 /* 旧 WebKit 兜底：不支持 oklch/color-mix 时才启用，避免透明壳拖拽或颜色声明失效。 */
@@ -10194,11 +10458,11 @@ body,
   left: 8px;
   z-index: 82;
   display: grid;
-  /* 两行布局：第一行搜索槽 + 操作按钮，第二行视图 Tab 跨满整行单独显示 */
-  grid-template-columns: minmax(0, 1fr) auto;
+  /* 两行布局：第一行 Tab + 操作按钮，第二行搜索框 */
+  grid-template-columns: auto 1fr auto;
   grid-template-rows: auto auto;
   column-gap: 8px;
-  row-gap: 6px;
+  row-gap: 4px;
   align-items: center;
   min-width: 0;
   min-height: 40px;
@@ -10228,49 +10492,39 @@ body,
   gap: 4px;
 }
 
-/* 视图 Tab：直接用 animate-ui Tabs 默认 segmented 外观（bg-muted 圆角 + 激活态滑块）。
-   仅去掉外层 highlight 的冗余边框/阴影（避免双层框感），并适配面板高度与字号。 */
-.app-shell .top-view-tabs [data-slot="tabs-highlight"] {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.app-shell .top-view-tabs [data-slot="tabs-list"] {
-  height: 30px;
-  min-height: 30px;
-  padding: 2px;
-  font-size: 12px;
-}
-
-.app-shell .top-view-tabs [data-slot="tabs-trigger"] {
-  min-height: 24px !important;
-  padding: 0 12px !important;
-  font-size: 12px;
-}
-
-.app-shell .top-view-tabs [data-slot="tabs-trigger"] span {
-  font-size: 12px;
-  font-weight: 600;
-}
+/* 视图 Tab：直接用 animate-ui Tabs 默认外观（带文字 segmented），不覆盖样式。 */
 
 .app-shell .top-toolbar-search-slot {
-  grid-column: 1;
-  grid-row: 1;
+  grid-column: 1 / -1;
+  grid-row: 2;
   min-width: 0;
+  display: none;
+}
+
+.app-shell.search-active .top-toolbar-search-slot {
+  display: block;
+}
+
+/* 搜索激活时，工具栏使用两行；否则只一行 */
+.app-shell .top-toolbar {
+  grid-template-rows: auto;
+}
+
+.app-shell.search-active .top-toolbar {
+  grid-template-rows: auto auto;
 }
 
 .app-shell .top-toolbar-action-slot {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
 }
 
-/* 第二行：视图 Tab 跨满整行，居中显示，不再与搜索栏挤在一行 */
+/* 第一行：视图 Tab 左对齐 */
 .app-shell .top-view-tabs {
-  grid-column: 1 / -1;
-  grid-row: 2;
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
-  justify-content: center;
+  align-items: center;
 }
 
 .app-shell .top-toolbar .toolbar,
@@ -10392,32 +10646,85 @@ body,
 }
 
 .app-shell .top-toolbar-menu.dropdown-content {
-  min-width: 168px;
+  min-width: 180px;
+  padding: 8px;
 }
 
 .app-shell .top-toolbar-menu-header.dropdown-label {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
+  padding: 4px 10px 8px;
+  margin-bottom: 2px;
+}
+
+.app-shell .top-toolbar-menu-header .top-toolbar-menu-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+}
+
+.app-shell .top-toolbar-menu-header > span:first-child {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
 }
 
 .app-shell .top-toolbar-menu-header small {
-  color: oklch(0.18 0 0 / 0.52);
+  color: var(--muted-foreground);
   font-size: 10px;
   font-weight: 500;
 }
 
+.app-shell .top-toolbar-menu .dropdown-group {
+  gap: 0;
+}
+
 .app-shell .top-toolbar-menu .dropdown-item {
-  gap: 10px;
+  gap: 8px;
+  min-height: 30px;
 }
 
 .app-shell .top-toolbar-menu-label {
-  gap: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.app-shell .top-toolbar-menu-shortcut {
+.app-shell .top-toolbar-menu-label em {
+  margin-left: 2px;
+  padding: 0 4px;
+  color: var(--foreground);
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.app-shell .top-toolbar-menu-shortcut,
+.app-shell .top-toolbar-menu .dropdown-shortcut {
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
   margin-left: auto;
-  color: oklch(0.18 0 0 / 0.58);
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.app-shell .top-toolbar-menu-shortcut kbd,
+.app-shell .top-toolbar-menu .dropdown-shortcut kbd {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0 5px;
+  color: var(--muted-foreground);
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 10px;
+  text-align: center;
 }
 
 .app-shell .quick-panel,
@@ -10431,8 +10738,8 @@ body,
 }
 
 .app-shell .workspace-detail-page {
-  padding-top: 78px !important;
-  padding-bottom: 12px !important;
+  padding-top: 4px !important;
+  padding-bottom: 8px !important;
 }
 
 .app-shell .workspace-aggregate-page {

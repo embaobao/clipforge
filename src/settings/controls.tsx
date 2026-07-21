@@ -8,12 +8,12 @@ import { Copy } from "lucide-react";
 import {
   ToggleGroup,
   ToggleGroupItem,
-} from "@/components/animate-ui/components/animate/toggle-group";
+} from "@/components/animate-ui/components/radix/toggle-group";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/animate-ui/primitives/animate/tooltip";
+} from "@/components/animate-ui/components/radix/tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,12 +56,13 @@ export function SegmentSetting<T extends string>({
   return (
     <div data-dev-probe={probeId}>
       <ToggleGroup
+        type="single"
         aria-label={label}
         aria-disabled={disabled || undefined}
         value={selected}
-        onValueChange={(value) => {
+        onValueChange={(value: T) => {
           // 设置项不允许反选：原语在取消选中时会回传空串，这里再次忽略，双重保险。
-          if (value && !disabled) onChange(value as T);
+          if (value && !disabled) onChange(value);
         }}
       >
         {options.map((option) => (
@@ -195,18 +196,18 @@ export function ReadonlyField({
   return (
     <div className="setting-row readonly-field">
       <Label htmlFor={fieldId}>{label}</Label>
-      <Tooltip side="top" sideOffset={8}>
+      <Tooltip>
         <TooltipTrigger asChild>
           <code className="readonly-field-value path" id={fieldId} tabIndex={disabled ? undefined : 0}>
             {value || "-"}
           </code>
         </TooltipTrigger>
-        <TooltipContent className="settings-tooltip-content">
+        <TooltipContent className="settings-tooltip-content" side="top" sideOffset={8}>
           {value || "-"}
         </TooltipContent>
       </Tooltip>
       {description ? <small className="readonly-field-description">{description}</small> : null}
-      <Tooltip side="top" sideOffset={8}>
+      <Tooltip>
         <TooltipTrigger asChild>
           <Button
             aria-label={`${copyLabel}: ${label}`}
@@ -221,7 +222,7 @@ export function ReadonlyField({
             {copyLabel}
           </Button>
         </TooltipTrigger>
-        <TooltipContent className="settings-tooltip-content">
+        <TooltipContent className="settings-tooltip-content" side="top" sideOffset={8}>
           {copyLabel}
         </TooltipContent>
       </Tooltip>
