@@ -33,9 +33,9 @@ function assertMetadataOnly(value, message) {
 }
 
 const service = read("src/services/ai-summary.ts");
-const panel = read("src/workspace/ai-summary-panel.tsx");
 const workspace = read("src/workspace/workspace-panels.tsx");
 const app = read("src/App.tsx");
+const contextMenu = read("src/clipboard/components/ClipContextMenu.tsx");
 const clipboardPreview = read("src/clipboard/components/ClipboardContentPreview.tsx");
 const clipboardRow = read("src/clipboard/components/ClipboardRow.tsx");
 const zh = readJson("src/i18n/locales/zh-CN.json");
@@ -234,28 +234,19 @@ assert(!service.includes("fetch("), "AI summary provider boundary must not perfo
 assert(!service.includes("console.log("), "AI summary service must not log prompt/output bodies");
 assert(service.includes("__CLIPFORGE_AI_TEST_FLAGS__"), "AI summary runtime test flags are missing");
 
-assert(panel.includes("findSimilarClipRecommendations(clip, candidates, 4)"), "detail panel does not compute recommendations from current candidates");
-assert(panel.includes('aria-label={tr("main.detail.aiRecommend.aria")}'), "recommendation section is missing an accessible label");
-assert(panel.includes("onOpenRecommendation?.(recommendation.clip)"), "recommendation click does not use the detail navigation callback");
-assert(panel.includes('summary?.status === "pending"'), "pending summary state is not rendered");
-assert(panel.includes('summary?.status === "ready"'), "ready summary state is not rendered");
-assert(panel.includes('summary?.status === "failed"'), "failed summary state is not rendered");
-assert(panel.includes("detail-ai-summary-points"), "ready summary key points are not rendered");
-assert(panel.includes("detail-ai-summary-meta"), "summary provenance metadata is not rendered");
-assert(panel.includes("getSummaryProviderLabel"), "summary provider/model label helper is missing");
-assert(panel.includes("getGeneratedAtLabel"), "summary generated-at label helper is missing");
-
-assert(workspace.includes("candidates?: ClipItem[]"), "ClipDetailWorkspace props do not accept recommendation candidates");
-assert(workspace.includes("onOpenRecommendation?: (clip: ClipItem) => void"), "ClipDetailWorkspace props do not accept recommendation navigation");
+assert(!workspace.includes("DetailAiSummaryPanel"), "detail page still imports the removed AI summary panel");
+assert(!workspace.includes('AccordionItem value="ai-summary"'), "detail page still renders the removed AI summary accordion");
+assert(!workspace.includes("candidates?: ClipItem[]"), "ClipDetailWorkspace still exposes removed recommendation candidates prop");
+assert(!workspace.includes("onOpenRecommendation?: (clip: ClipItem) => void"), "ClipDetailWorkspace still exposes removed recommendation navigation prop");
 assert(
-  workspace.includes("<DetailAiSummaryPanel") &&
-    workspace.includes("candidates={candidates}") &&
-    workspace.includes("onGenerateSummary={onGenerateAiSummary}") &&
-    workspace.includes("onOpenRecommendation={onOpenRecommendation}"),
-  "DetailAiSummaryPanel is not wired with candidates, generation, and navigation",
+  workspace.includes('data-ai-summary-action="detail"') &&
+    workspace.includes("await onGenerateAiSummary(clip)") &&
+    workspace.includes('tr("main.context.generateAiSummary")') &&
+    workspace.includes('tr("main.detail.aiSummary.pending")'),
+  "detail page does not expose AI summary as a direct action button",
 );
-assert(app.includes("candidates={detailItems}"), "App does not pass current detail context as recommendation candidates");
-assert(app.includes("onOpenRecommendation={navigateDetailClip}"), "App does not reuse detail navigation for recommendations");
+assert(!app.includes("candidates={detailItems}"), "App still passes removed detail recommendation candidates");
+assert(!app.includes("onOpenRecommendation={navigateDetailClip}"), "App still passes removed recommendation navigation callback");
 assert(app.includes("async function generateAiSummaryForClip"), "App does not provide a manual AI summary action");
 assert(app.includes('input: { id: item.id, metadata }'), "AI summary action does not persist metadata through update_clip_record");
 assert(app.includes("getClipAiSummaryLogMetadata(item.id, result, jobId)"), "AI summary completion log does not use metadata-only helper");
@@ -269,25 +260,13 @@ assert(
   clipboardPreview.includes("quick-ai-summary-badge"),
   "quick list AI summary badge is missing in ClipboardContentPreview",
 );
-assert(app.includes('tr("main.context.generateAiSummary")'), "context menu generate summary label is missing");
+assert(contextMenu.includes('tr("main.context.generateAiSummary")'), "context menu generate summary label is missing");
 assert(app.includes("onGenerateAiSummary={(item) =>"), "context menu does not receive the generate summary action");
 assert(app.includes('logAppError("info", "ai-summary: job finished"'), "AI summary metadata-only completion log is missing");
 
 for (const key of [
-  "main.detail.aiRecommend.aria",
-  "main.detail.aiRecommend.title",
-  "main.detail.aiRecommend.empty",
-  "main.detail.aiRecommend.reasonTag",
-  "main.detail.aiRecommend.reasonHost",
-  "main.detail.aiRecommend.reasonFormat",
-  "main.detail.aiRecommend.reasonSource",
-  "main.detail.aiRecommend.reasonFavorite",
-  "main.detail.aiRecommend.reasonKeywords",
   "main.context.generateAiSummary",
-  "main.detail.aiSummary.keyPoints",
-  "main.detail.aiSummary.category",
-  "main.detail.aiSummary.provider",
-  "main.detail.aiSummary.generatedAt",
+  "main.detail.aiSummary.pending",
   "main.list.aiSummaryReady",
   "main.list.aiSummaryPending",
   "main.list.aiSummaryFailed",

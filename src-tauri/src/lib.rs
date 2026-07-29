@@ -937,6 +937,21 @@ struct ExportClipPayload {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ExportTextFileInput {
+    title: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportTextFilesPayload {
+    directory: String,
+    count: i64,
+    files: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportClipInput {
     id: Option<String>,
     content: String,
@@ -4963,6 +4978,64 @@ fn export_clip_records(include_deleted: Option<bool>) -> Result<ExportClipPayloa
             .map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?,
         count: items.len() as i64,
         items,
+    })
+}
+
+fn text_export_file_stem(title: &str, index: usize) -> String {
+    let stem = title
+        .trim()
+        .chars()
+        .filter(|character| character.is_alphanumeric() || matches!(character, '-' | '_'))
+        .take(80)
+        .collect::<String>();
+    if stem.is_empty() {
+        format!("item-{}", index + 1)
+    } else {
+        stem
+    }
+}
+
+/// 将多选详情中的每条内容分别写入 Downloads，返回导出目录和文件路径。
+/// 文件名只使用安全字符并带有序号，避免标题中的路径片段覆盖导出目录外的文件。
+#[tauri::command]
+fn export_clip_text_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    items: Vec<ExportTextFileInput>,
+) -> Result<ExportTextFilesPayload, String> {
+    if items.is_empty() {
+        return Err(command_error(
+            "CLIP_TEXT_EXPORT_EMPTY",
+            "No text items were selected",
+        ));
+    }
+
+    let download_dir = app
+        .path()
+        .download_dir()
+        .map_err(|error| command_error("CLIP_TEXT_EXPORT_PATH_FAILED", error.to_string()))?;
+    let timestamp =
+        now_millis().map_err(|error| preserve_command_error("CLIP_TEXT_EXPORT_FAILED", error))?;
+    let export_dir = download_dir.join(format!("ClipForge-Text-Export-{}", timestamp));
+    fs::create_dir_all(&export_dir)
+        .map_err(|error| command_error("CLIP_TEXT_EXPORT_DIRECTORY_FAILED", error.to_string()))?;
+
+    let mut files = Vec::with_capacity(items.len());
+    for (index, item) in items.into_iter().enumerate() {
+        let file_name = format!(
+            "{:02}-{}.txt",
+            index + 1,
+            text_export_file_stem(&item.title, index)
+        );
+        let path = export_dir.join(file_name);
+        fs::write(&path, item.content.as_bytes())
+            .map_err(|error| command_error("CLIP_TEXT_EXPORT_FILE_FAILED", error.to_string()))?;
+        files.push(path.to_string_lossy().to_string());
+    }
+
+    Ok(ExportTextFilesPayload {
+        directory: export_dir.to_string_lossy().to_string(),
+        count: files.len() as i64,
+        files,
     })
 }
 
@@ -10132,6 +10205,7 @@ pub fn run() {
             update_clip_record,
             save_editor_draft,
             export_clip_records,
+            export_clip_text_files,
             import_clip_records,
             check_file_paths,
             cleanup_clip_records,

@@ -3,34 +3,89 @@
  * 使用 CSS 变量统一管理高度，移除媒体查询，保持一套样式。 */
 
 :root {
-  --cf-toolbar-height: 40px;
+  --cf-toolbar-height: 32px;
   --cf-search-height: 30px;
-  --cf-panel-padding-top: calc(var(--cf-toolbar-height) + 8px);
+  --cf-panel-padding-top: calc(var(--cf-toolbar-height) + 12px);
 }
 
 .app-shell[data-surface="clipboard"] .top-toolbar {
   top: 6px;
   right: 6px;
   left: 6px;
+  display: grid;
+  grid-template-columns: max-content minmax(92px, 1fr) max-content !important;
+  grid-template-rows: var(--cf-toolbar-height) !important;
   column-gap: 6px;
-  row-gap: 4px;
+  row-gap: 0;
   min-height: var(--cf-toolbar-height);
+  height: var(--cf-toolbar-height);
+  align-items: center;
 }
 
 .app-shell[data-surface="clipboard"] .top-toolbar .toolbar {
+  position: static !important;
+  inset: auto !important;
+  width: 100% !important;
   min-height: var(--cf-search-height);
   height: var(--cf-search-height);
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
 }
 
 .app-shell[data-surface="clipboard"] .top-toolbar .floating-search-surface,
 .app-shell[data-surface="clipboard"] .top-toolbar .search-wrap {
+  width: 100% !important;
   min-height: var(--cf-search-height);
   height: var(--cf-search-height);
 }
 
+.app-shell[data-surface="clipboard"] .top-toolbar-search-slot {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  min-width: 0;
+  align-self: center;
+}
+
+.app-shell[data-surface="clipboard"]:not(.search-active) .top-toolbar-search-slot {
+  display: none !important;
+}
+
+.app-shell[data-surface="clipboard"].search-active .top-toolbar-search-slot {
+  display: block !important;
+}
+
+.app-shell[data-surface="clipboard"] .top-view-tabs {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar-action-slot {
+  grid-column: 3 !important;
+  grid-row: 1 !important;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar .floating-search-surface {
+  padding: 0 !important;
+  background: oklch(1 0 0 / 0.42) !important;
+  border: 1px solid oklch(0 0 0 / 0.09) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.05) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 .app-shell[data-surface="clipboard"] .top-toolbar .search-wrap {
-  padding-inline: 8px;
-  grid-template-columns: 16px minmax(0, 1fr) 24px 24px;
+  padding-inline: 8px !important;
+  display: grid !important;
+  grid-template-columns: 16px minmax(0, 1fr) 22px !important;
+  gap: 5px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 9px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 .app-shell[data-surface="clipboard"] .top-toolbar .search-wrap input {
@@ -38,6 +93,7 @@
   min-height: var(--cf-search-height);
   line-height: var(--cf-search-height);
   font-size: 11.5px;
+  text-align: left !important;
 }
 
 .app-shell[data-surface="clipboard"] .top-toolbar .search-wrap .icon-button,
@@ -114,22 +170,200 @@
   display: none;
 }
 
-.app-shell[data-surface="clipboard"] .quick-panel {
-  padding-top: var(--cf-panel-padding-top);
+[data-surface="clipboard"].top-toolbar-menu {
+  z-index: 100;
+  width: 264px;
+  min-width: 264px;
+  padding: 6px;
+  color: oklch(0.18 0 0 / 0.9);
+  background: oklch(0.99 0 0 / 0.98);
+  border: 1px solid oklch(0 0 0 / 0.12);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px oklch(0 0 0 / 0.16);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
-.app-shell[data-surface="clipboard"] .workspace-detail-page,
-.app-shell[data-surface="clipboard"] .workspace-aggregate-page {
-  padding-top: var(--cf-panel-padding-top);
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: center;
+  min-height: 32px;
+  margin: 0;
+  padding: 2px 8px 5px;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-brand {
+  min-width: 0;
+  color: oklch(0.16 0 0 / 0.92);
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.2;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-hint {
+  color: oklch(0.3 0 0 / 0.56);
+  font-size: 10px;
+  font-weight: 560;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-separator {
+  margin: 2px 0 5px;
+  background: oklch(0 0 0 / 0.09);
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-group {
+  gap: 1px;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-item {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: oklch(0.16 0 0 / 0.88);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-item:hover,
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-item:focus-visible {
+  color: oklch(0.1 0 0 / 0.96);
+  background: oklch(0 0 0 / 0.06);
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-label {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-item-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  color: oklch(0.22 0 0 / 0.64);
+  stroke-width: 1.8;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-label em {
+  flex: 0 0 auto;
+  margin-left: 0;
+  padding: 1px 5px;
+  color: oklch(0.18 0 0 / 0.72);
+  background: oklch(0 0 0 / 0.06);
+  border-radius: 4px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-shortcut {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 30px;
+  margin-left: 10px;
+  color: oklch(0.28 0 0 / 0.52);
+  font-size: 10px;
+}
+
+[data-surface="clipboard"].top-toolbar-menu .top-toolbar-menu-shortcut kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0 4px;
+  color: oklch(0.25 0 0 / 0.62);
+  background: oklch(0 0 0 / 0.05);
+  border: 1px solid oklch(0 0 0 / 0.08);
+  border-radius: 4px;
+  font-family: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.app-shell[data-surface="clipboard"] .content-column > .empty-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-height: 100%;
+  height: 100%;
+  padding: calc(var(--cf-panel-padding-top) + 12px) 28px 52px;
+  color: oklch(0.24 0 0 / 0.52);
+}
+
+.app-shell[data-surface="clipboard"] .content-column > .empty-list svg {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 4px;
+  color: oklch(0.22 0 0 / 0.26);
+  stroke-width: 1.7;
+}
+
+.app-shell[data-surface="clipboard"] .content-column > .empty-list h2 {
+  margin: 0;
+  color: oklch(0.18 0 0 / 0.52);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.app-shell[data-surface="clipboard"] .content-column > .empty-list p {
+  max-width: 260px;
+  margin: 0;
+  color: oklch(0.26 0 0 / 0.36);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.app-shell[data-surface="clipboard"] .panel-pin-fab {
+  right: 8px !important;
+  bottom: 8px !important;
+  width: 26px !important;
+  height: 26px !important;
+  color: oklch(0.18 0 0 / 0.48) !important;
+  background: oklch(1 0 0 / 0.34) !important;
+  border-color: oklch(0 0 0 / 0.08) !important;
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.05) !important;
+}
+
+.app-shell[data-surface="clipboard"] .panel-pin-fab:hover,
+.app-shell[data-surface="clipboard"] .panel-pin-fab:focus-visible {
+  color: oklch(0.12 0 0 / 0.82) !important;
+  background: oklch(1 0 0 / 0.5) !important;
+}
+
+.app-shell[data-surface="clipboard"] .quick-panel {
+  padding-top: var(--cf-panel-padding-top) !important;
 }
 
 /* 搜索激活时保持一致的 padding-top */
 .app-shell[data-surface="clipboard"].search-active .quick-panel,
 .app-shell[data-surface="clipboard"].multi-selecting .quick-panel,
 .app-shell[data-surface="clipboard"].multi-selecting.search-active .quick-panel {
-  padding-top: var(--cf-panel-padding-top);
-}
-
-.app-shell[data-surface="clipboard"].route-detail .workspace-detail-page {
-  padding-top: 0;
+  padding-top: var(--cf-panel-padding-top) !important;
 }

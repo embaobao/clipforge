@@ -5,6 +5,7 @@ import {
   Copy,
   ExternalLink,
   FileJson,
+  FileText,
   Heart,
   Pin,
   RotateCcw,
@@ -83,6 +84,7 @@ import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-
 import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
 import "./App.css";
 import "./clipboard/styles/clipboard-panel.css";
+import "./workspace/styles/detail-page.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
 export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "rtf" | "file" | "image" | "json" | "chart" | "table";
@@ -280,6 +282,12 @@ type QueryClipPayload = {
   items: ClipItem[];
   nextCursor?: string;
   limit: number;
+};
+
+type ExportTextFilesPayload = {
+  directory: string;
+  count: number;
+  files: string[];
 };
 
 type SearchClipsRequest = {
@@ -1972,7 +1980,10 @@ function ClipForgeApp() {
   }, [clips, filteredClips, selectedId]);
 
   const selectedInList = useMemo(() => {
-    return filteredClips.filter((item) => selectedIds.has(item.id));
+    const itemsById = new Map(filteredClips.map((item) => [item.id, item]));
+    return Array.from(selectedIds)
+      .map((id) => itemsById.get(id))
+      .filter((item): item is ClipItem => Boolean(item));
   }, [filteredClips, selectedIds]);
 
   const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
@@ -2417,6 +2428,31 @@ function ClipForgeApp() {
     setSelectedIds(new Set());
     setMultiSelectMode(false);
     setMultiPreviewOpen(false);
+  }
+
+  async function exportSelectedTextFiles(items: ClipItem[]) {
+    if (!items.length) {
+      setNativeStatus(tr("main.status.selectBeforeExportTextFiles"));
+      return;
+    }
+    try {
+      const result = await invoke<ExportTextFilesPayload>("export_clip_text_files", {
+        items: items.map((item) => ({
+          title: item.analysis.title || item.analysis.sourceName || item.payloadKind,
+          content: item.content,
+        })),
+      });
+      setNativeStatus(
+        tr("main.status.exportedTextFiles", {
+          count: result.count,
+          directory: result.directory,
+        }),
+      );
+      showCompletionToast(tr("main.toast.exportedTextFiles", { count: result.count }));
+    } catch (error) {
+      logAppError("warn", "Export selected text files failed", String(error));
+      setNativeStatus(formatNativeError(error));
+    }
   }
 
   useEffect(() => {
@@ -3225,6 +3261,12 @@ function ClipForgeApp() {
               void navigateWorkspaceList();
             }}
             onCopy={() => copySelectedClips(selectedInList)}
+            onOpenAggregate={() => {
+              if (!selectedInList.length) return;
+              setMultiPreviewOpen(true);
+              setMultiSelectMode(false);
+              void navigateWorkspaceAggregate();
+            }}
             onDelete={() => deleteClips(selectedInList.map((item) => item.id))}
             onEmptyTrash={activeView === "trash" ? emptyTrash : undefined}
             onFavorite={() => favoriteSelectedClips(selectedInList)}
@@ -3313,6 +3355,7 @@ function ClipForgeApp() {
                   }}
                   onOpenAggregate={() => {
                     setMultiPreviewOpen(true);
+                    setMultiSelectMode(false);
                     void navigateWorkspaceAggregate();
                   }}
                   onPointerActive={() => setKeyboardNavigating(false)}
@@ -3374,7 +3417,6 @@ function ClipForgeApp() {
               return (
                 <ClipDetailWorkspace
                   clip={clip}
-                  candidates={detailItems}
                   filePathStatuses={filePathStatuses}
                   links={clip ? extractUrls(clip.content) : []}
                   tr={tr}
@@ -3382,12 +3424,12 @@ function ClipForgeApp() {
                     void navigateWorkspaceList();
                   }}
                   onCopy={copyClip}
+                  onCopyPlain={(item) => copyClip(item, "plain")}
                   onCopyText={copyText}
                   onOpen={openClipTarget}
                   onOpenPath={openSystemPath}
                   onPasteText={pasteText}
                   onGenerateAiSummary={generateAiSummaryForClip}
-                  onOpenRecommendation={navigateDetailClip}
                   onPrevious={previousClip ? () => navigateDetailClip(previousClip) : undefined}
                   onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
                   onSearchTag={searchByTag}
@@ -3445,10 +3487,14 @@ function ClipForgeApp() {
                 tr={tr}
                 onBack={() => {
                   setMultiPreviewOpen(false);
+                  setMultiSelectMode(selectedInList.length > 0);
                   void navigateWorkspaceList();
                 }}
-                onCopy={() => copySelectedClips(selectedInList)}
+                onCopy={() => {
+                  void copySelectedClips(selectedInList).then(() => navigateWorkspaceList());
+                }}
                 onCopyItem={(clip) => copyClip(clip)}
+                onExportTextFiles={() => exportSelectedTextFiles(selectedInList)}
                 onExportTable={() => {
                   const table = selectedInList.map((item) => [item.analysis.title, item.content.replace(/\s+/g, " ")]).map((row) => row.join("\t")).join("\n");
                   void navigator.clipboard.writeText(table);
@@ -3705,6 +3751,7 @@ function MultiSelectToolbar({
   onDelete,
   onEmptyTrash,
   onFavorite,
+  onOpenAggregate,
   onRestore,
   onToggleAll,
   tr,
@@ -3717,6 +3764,7 @@ function MultiSelectToolbar({
   onDelete: () => void;
   onEmptyTrash?: () => void;
   onFavorite: () => void;
+  onOpenAggregate: () => void;
   onRestore?: () => void;
   onToggleAll: (checked: boolean) => void;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -3751,6 +3799,9 @@ function MultiSelectToolbar({
             </>
           ) : (
             <>
+              <button aria-label={tr("main.multiSelect.openDetail")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.openDetail")} disabled={count === 0} onClick={onOpenAggregate} title={tr("main.multiSelect.openDetail")} type="button">
+                <FileText size={14} />
+              </button>
               <button aria-label={tr("main.multiSelect.aggregateCopy")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.aggregateCopy")} disabled={count === 0} onClick={onCopy} title={tr("main.multiSelect.aggregateCopy")} type="button">
                 <Copy size={14} />
               </button>

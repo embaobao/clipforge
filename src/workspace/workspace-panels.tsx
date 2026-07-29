@@ -4,14 +4,15 @@ import {
   ChevronDown,
   ChevronUp,
   Clipboard,
+  ClipboardType,
   Copy,
   ExternalLink,
+  FileDown,
   FileJson,
   FileText,
   Image,
   MoreHorizontal,
   Pencil,
-  RotateCcw,
   Save,
   Sparkles,
   Tag,
@@ -29,7 +30,6 @@ import { getImagePath, type FilePathStatus } from "../services/clipboard";
 import type { ClipAiSummary } from "../services/ai-summary";
 import type { EditorSuggestionResult } from "../services/contracts";
 import { analyzeSmartFormats } from "../smart-format";
-import { DetailAiSummaryPanel } from "./ai-summary-panel";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -114,20 +114,26 @@ function getPayloadKindIcon(kind: ClipPayloadKind) {
   }
 }
 
+function getClipAiSummaryStatus(clip: ClipItem): ClipAiSummary["status"] | null {
+  const value = clip.metadata.aiSummary;
+  if (!value || typeof value !== "object") return null;
+  const status = (value as Partial<ClipAiSummary>).status;
+  return status === "pending" || status === "ready" || status === "failed" ? status : null;
+}
+
 type ClipDetailWorkspaceProps = {
   clip: ClipItem | null;
-  candidates?: ClipItem[];
   filePathStatuses?: Record<string, FilePathStatus>;
   links: string[];
   tr: WorkspaceTr;
   onBack: () => void;
   onCopy: (clip: ClipItem) => void;
+  onCopyPlain: (clip: ClipItem) => void;
   onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
   onOpen: (clip: ClipItem) => void;
   onOpenPath?: (path: string) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
   onGenerateAiSummary?: (clip: ClipItem) => Promise<ClipAiSummary | void> | ClipAiSummary | void;
-  onOpenRecommendation?: (clip: ClipItem) => void;
   onPrevious?: () => void;
   onNext?: () => void;
   onSearchTag: (tag: string) => void;
@@ -155,6 +161,7 @@ type MultiAggregateWorkspaceProps = {
   onBack: () => void;
   onCopy: () => void;
   onCopyItem: (clip: ClipItem) => void;
+  onExportTextFiles: () => Promise<void> | void;
   onExportTable: () => void;
   onOpenItem: (clip: ClipItem) => void;
 };
@@ -874,37 +881,42 @@ function AvailableFormatsRow({ clip, tr }: { clip: ClipItem; tr: WorkspaceTr }) 
   );
 }
 
-function ImageFilePreview({ clip, tr, onOpenPath }: { clip: ClipItem; tr: WorkspaceTr; onOpenPath?: (path: string) => void }) {
+function getImageOpenPath(clip: ClipItem) {
+  return clip.imageFile || (clip.analysis.attachment?.targetType === "path" ? clip.analysis.attachment.target : "");
+}
+
+function getDetailSourceAddress(clip: ClipItem) {
+  return clip.analysis.url || clip.analysis.attachment?.target || clip.imageFile || "";
+}
+
+/** 图片详情只负责紧凑预览；扩展操作由详情页顶部的溢出菜单统一承载。 */
+function ImageFilePreview({
+  actualSize,
+  clip,
+  onClosePreview,
+  onOpenPreview,
+  previewOpen,
+  tr,
+}: {
+  actualSize: boolean;
+  clip: ClipItem;
+  onClosePreview: () => void;
+  onOpenPreview: () => void;
+  previewOpen: boolean;
+  tr: WorkspaceTr;
+}) {
   const src = clipImageSrc(clip);
   const name = clip.imageFile || clip.analysis.attachment?.name || clip.content;
-  const openablePath = clip.imageFile || (clip.analysis.attachment?.targetType === "path" ? clip.analysis.attachment.target : "");
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [actualSize, setActualSize] = useState(false);
   return (
     <div className="detail-binary-preview">
       <div className={actualSize ? "detail-image-stage actual-size" : "detail-image-stage"}>
         {src ? (
-          <button className="detail-image-button" onClick={() => setPreviewOpen(true)} title={tr("main.detail.imagePreview")} type="button">
+          <button className="detail-image-button" onClick={onOpenPreview} title={tr("main.detail.imagePreview")} type="button">
             <img alt={clip.analysis.title || name || "Clipboard image"} src={src} />
           </button>
         ) : (
           <span>{tr("main.payloadKind.image")}</span>
         )}
-      </div>
-      <div className="detail-image-actions">
-        <button disabled={!src} onClick={() => setPreviewOpen(true)} type="button">
-          <Image size={12} />
-          {tr("main.detail.imagePreview")}
-        </button>
-        <button disabled={!src} onClick={() => setActualSize((current) => !current)} type="button">
-          {actualSize ? tr("main.detail.imageFit") : tr("main.detail.imageActual")}
-        </button>
-        {openablePath && onOpenPath ? (
-          <button onClick={() => onOpenPath(openablePath)} type="button">
-            <ExternalLink size={12} />
-            {tr("main.detail.openSystem")}
-          </button>
-        ) : null}
       </div>
       <div className="detail-binary-meta">
         <span>{clip.width && clip.height ? `${clip.width} x ${clip.height}` : tr("main.payloadKind.image")}</span>
@@ -914,7 +926,7 @@ function ImageFilePreview({ clip, tr, onOpenPath }: { clip: ClipItem; tr: Worksp
       <AvailableFormatsRow clip={clip} tr={tr} />
       {previewOpen && src ? (
         <div className="detail-image-lightbox" role="dialog" aria-modal="true" aria-label={tr("main.detail.imagePreview")}>
-          <button className="detail-image-lightbox-close" onClick={() => setPreviewOpen(false)} type="button" aria-label={tr("main.detail.close")}>
+          <button className="detail-image-lightbox-close" onClick={onClosePreview} type="button" aria-label={tr("main.detail.close")}>
             <X size={14} />
           </button>
           <img alt={clip.analysis.title || name || "Clipboard image"} src={src} />
@@ -968,18 +980,17 @@ function FileListPreview({
 
 export function ClipDetailWorkspace({
   clip,
-  candidates = [],
   filePathStatuses,
   links,
   tr,
   onBack,
   onCopy,
+  onCopyPlain,
   onCopyText,
   onOpen,
   onOpenPath,
   onPasteText,
   onGenerateAiSummary,
-  onOpenRecommendation,
   onPrevious,
   onNext,
   onSearchTag,
@@ -991,6 +1002,9 @@ export function ClipDetailWorkspace({
   const [draftTags, setDraftTags] = useState<string[]>([]);
   const [editError, setEditError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
+  const [imageActualSize, setImageActualSize] = useState(false);
   const [editorSessionId, setEditorSessionId] = useState("");
   const [draftVersion, setDraftVersion] = useState(1);
 
@@ -1002,6 +1016,9 @@ export function ClipDetailWorkspace({
     setIsEditing(false);
     setEditError("");
     setIsSaving(false);
+    setIsGeneratingAiSummary(false);
+    setImagePreviewOpen(false);
+    setImageActualSize(false);
   }, [clip?.id, clip?.content, clip?.tags]);
 
   if (!clip) {
@@ -1014,6 +1031,10 @@ export function ClipDetailWorkspace({
   }
 
   const mode = getDetailModeLabel(clip, tr);
+  const sourceAddress = getDetailSourceAddress(clip);
+  const imageOpenPath = getImageOpenPath(clip);
+  const aiSummaryStatus = getClipAiSummaryStatus(clip);
+  const isAiSummaryPending = isGeneratingAiSummary || aiSummaryStatus === "pending";
   const imageUrl = clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url"
     ? clip.analysis.attachment.target
     : null;
@@ -1057,6 +1078,15 @@ export function ClipDetailWorkspace({
   const droppedLinkCount = links.length - safeLinks.length;
   const droppedLinkLogKey = `${clip.id}:${links.length}:${safeLinks.length}`;
   const confirmDiscardDraft = () => !hasDraftChanges || window.confirm(tr("main.detail.confirmDiscard"));
+  const runAiSummaryAction = async () => {
+    if (!onGenerateAiSummary || isAiSummaryPending) return;
+    setIsGeneratingAiSummary(true);
+    try {
+      await onGenerateAiSummary(clip);
+    } finally {
+      setIsGeneratingAiSummary(false);
+    }
+  };
   const handleBack = () => {
     if (isEditing && !confirmDiscardDraft()) return;
     onBack();
@@ -1135,6 +1165,7 @@ export function ClipDetailWorkspace({
   }
 
   const menuActions = quickActions.filter((action) => action.id !== "open-target" && action.id !== "copy");
+  const hasImageActions = clip.payloadKind === "image";
 
   return (
     <section className="workspace-page workspace-detail-page" data-surface="workspace">
@@ -1163,6 +1194,18 @@ export function ClipDetailWorkspace({
                 <ChevronDown size={12} />
               </button>
               <button
+                aria-busy={isAiSummaryPending}
+                aria-label={tr("main.context.generateAiSummary")}
+                className="icon-button detail-ai-summary-button"
+                data-ai-summary-action="detail"
+                disabled={!onGenerateAiSummary || isAiSummaryPending}
+                onClick={() => void runAiSummaryAction()}
+                title={isAiSummaryPending ? tr("main.detail.aiSummary.pending") : tr("main.context.generateAiSummary")}
+                type="button"
+              >
+                <Sparkles size={12} />
+              </button>
+              <button
                 aria-label={tr("main.detail.editContent")}
                 className="detail-edit-button"
                 onClick={() => {
@@ -1186,7 +1229,11 @@ export function ClipDetailWorkspace({
               <DropdownMenuContent className="detail-action-menu" side="bottom" align="end" sideOffset={8}>
                 <DropdownMenuLabel>{tr("main.detail.quickActions")}</DropdownMenuLabel>
                 <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={() => void navigator.clipboard.writeText(`use clipf.get id=${clip.id}`)}>
+                  <DropdownMenuItem
+                    onSelect={() =>
+                      onCopyText(`use clipf.get id=${clip.id}`, "detail:copy-mcp-command", { clipId: clip.id })
+                    }
+                  >
                     <Clipboard size={13} />
                     <span>{tr("main.detail.copyMcp")}</span>
                   </DropdownMenuItem>
@@ -1196,12 +1243,27 @@ export function ClipDetailWorkspace({
                       <span>{tr("main.detail.openContent")}</span>
                     </DropdownMenuItem>
                   ) : null}
-                  <DropdownMenuItem onSelect={() => onCopy(clip)}>
-                    <Copy size={13} />
-                    <span>{tr("main.detail.copyContent")}</span>
-                  </DropdownMenuItem>
                 </DropdownMenuGroup>
-                {menuActions.length ? <DropdownMenuSeparator /> : null}
+                {hasImageActions || menuActions.length ? <DropdownMenuSeparator /> : null}
+                {hasImageActions ? (
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem disabled={!clipImageSrc(clip)} onSelect={() => setImagePreviewOpen(true)}>
+                      <Image size={13} />
+                      <span>{tr("main.detail.imagePreview")}</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!clipImageSrc(clip)} onSelect={() => setImageActualSize((current) => !current)}>
+                      <Image size={13} />
+                      <span>{imageActualSize ? tr("main.detail.imageFit") : tr("main.detail.imageActual")}</span>
+                    </DropdownMenuItem>
+                    {imageOpenPath && onOpenPath ? (
+                      <DropdownMenuItem onSelect={() => onOpenPath(imageOpenPath)}>
+                        <ExternalLink size={13} />
+                        <span>{tr("main.detail.openSystem")}</span>
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuGroup>
+                ) : null}
+                {hasImageActions && menuActions.length ? <DropdownMenuSeparator /> : null}
                 {menuActions.length ? (
                   <DropdownMenuGroup>
                     {menuActions.map((action) => (
@@ -1260,10 +1322,53 @@ export function ClipDetailWorkspace({
               </div>
             ) : null}
           </div>
+          <div className="detail-source-row" aria-label={tr("main.detail.meta")}>
+            <div className="detail-source-address" title={sourceAddress || clip.analysis.sourceName}>
+              <ExternalLink size={12} aria-hidden="true" />
+              <span>{sourceAddress || clip.analysis.sourceName || tr("main.detail.clipContentFallback")}</span>
+            </div>
+            <div className="detail-source-actions">
+              <button
+                aria-label={tr("main.detail.copyContent")}
+                data-tooltip={tr("main.detail.copyContent")}
+                onClick={() => onCopy(clip)}
+                title={tr("main.detail.copyContent")}
+                type="button"
+              >
+                <Copy size={13} />
+              </button>
+              <button
+                aria-label={tr("main.context.copyPlainTitle")}
+                data-tooltip={tr("main.context.copyPlainTooltip")}
+                disabled={clip.payloadKind === "image"}
+                onClick={() => onCopyPlain(clip)}
+                title={clip.payloadKind === "image" ? tr("main.context.copyPlainImageUnavailable") : tr("main.context.copyPlainTitle")}
+                type="button"
+              >
+                <ClipboardType size={13} />
+              </button>
+              {sourceAddress ? (
+                <button
+                  aria-label={tr("main.detail.copyAddress")}
+                  data-tooltip={tr("main.detail.copyAddress")}
+                  onClick={() =>
+                    onCopyText(sourceAddress, "detail:copy-source-address", {
+                      clipId: clip.id,
+                      sourceAddress,
+                    })
+                  }
+                  title={tr("main.detail.copyAddress")}
+                  type="button"
+                >
+                  <ExternalLink size={13} />
+                </button>
+              ) : null}
+            </div>
+          </div>
         </>
       ) : null}
 
-      {/* 详情主体：按类型渲染，统一用 Accordion 组织可折叠区域 */}
+      {/* 详情主体：按类型渲染，保留内容与链接的分区折叠 */}
       <div className="detail-content">
         {isEditing ? (
           <DetailQuickEditor
@@ -1319,7 +1424,14 @@ export function ClipDetailWorkspace({
               </AccordionTrigger>
               <AccordionContent className="detail-accordion-panel">
                 {clip.payloadKind === "image" ? (
-                  <ImageFilePreview clip={clip} tr={tr} onOpenPath={onOpenPath} />
+                  <ImageFilePreview
+                    actualSize={imageActualSize}
+                    clip={clip}
+                    onClosePreview={() => setImagePreviewOpen(false)}
+                    onOpenPreview={() => setImagePreviewOpen(true)}
+                    previewOpen={imagePreviewOpen}
+                    tr={tr}
+                  />
                 ) : clip.payloadKind === "file" ? (
                   <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />
                 ) : imageUrl ? (
@@ -1351,22 +1463,6 @@ export function ClipDetailWorkspace({
                     <pre className="detail-raw-content">{clip.content}</pre>
                   </>
                 )}
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="ai-summary">
-              <AccordionTrigger className="detail-accordion-trigger">
-                <Sparkles size={14} />
-                <span>{tr("main.detail.aiSummary.title")}</span>
-              </AccordionTrigger>
-              <AccordionContent className="detail-accordion-panel">
-                <DetailAiSummaryPanel
-                  clip={clip}
-                  candidates={candidates}
-                  tr={tr}
-                  onGenerateSummary={onGenerateAiSummary}
-                  onOpenRecommendation={onOpenRecommendation}
-                />
               </AccordionContent>
             </AccordionItem>
 
@@ -1405,21 +1501,30 @@ export function MultiAggregateWorkspace({
   onBack,
   onCopy,
   onCopyItem,
+  onExportTextFiles,
   onExportTable,
   onOpenItem,
 }: MultiAggregateWorkspaceProps) {
-  const grouped = items.reduce<Record<string, ClipItem[]>>((acc, item) => {
-    const key = getPayloadKindLabel(item.payloadKind, tr);
-    acc[key] = acc[key] ?? [];
-    acc[key].push(item);
-    return acc;
-  }, {});
+  const [isExporting, setIsExporting] = useState(false);
   const totalChars = items.reduce((sum, item) => sum + item.content.length, 0);
   const linkCount = items.reduce((sum, item) => sum + (item.analysis.url ? 1 : 0), 0);
+  const kindCount = new Set(items.map((item) => item.payloadKind)).size;
+  const handleExportTextFiles = async () => {
+    if (isExporting || !items.length) return;
+    setIsExporting(true);
+    try {
+      await onExportTextFiles();
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <section className="workspace-page workspace-aggregate-page" data-surface="workspace">
       <WorkspaceCrumb title={tr("main.aggregate.title")} subtitle={tr("main.aggregate.subtitle", { count: items.length, chars: totalChars })} onBack={onBack} tr={tr}>
+        <button className="icon-button" onClick={() => void handleExportTextFiles()} type="button" aria-label={tr("main.aggregate.exportTexts")} disabled={!items.length || isExporting} title={tr("main.aggregate.exportTexts")}>
+          <FileDown size={14} />
+        </button>
         <button className="icon-button" onClick={onExportTable} type="button" aria-label={tr("main.aggregate.exportTable")}>
           <Table2 size={14} />
         </button>
@@ -1436,6 +1541,10 @@ export function MultiAggregateWorkspace({
           <Table2 size={13} />
           {tr("main.aggregate.exportTable")}
         </button>
+        <button type="button" onClick={() => void handleExportTextFiles()} disabled={!items.length || isExporting} aria-busy={isExporting}>
+          <FileDown size={13} />
+          {tr("main.aggregate.exportTexts")}
+        </button>
         <button type="button" disabled>
           <FileText size={13} />
           {tr("main.aggregate.template")}
@@ -1448,7 +1557,7 @@ export function MultiAggregateWorkspace({
       {items.length ? (
         <div className="aggregate-summary" aria-label={tr("main.aggregate.summary")}>
           <span><strong>{items.length}</strong> {tr("main.aggregate.items")}</span>
-          <span><strong>{Object.keys(grouped).length}</strong> {tr("main.aggregate.kinds")}</span>
+          <span><strong>{kindCount}</strong> {tr("main.aggregate.kinds")}</span>
           <span><strong>{linkCount}</strong> {tr("main.aggregate.links")}</span>
         </div>
       ) : null}
@@ -1462,63 +1571,62 @@ export function MultiAggregateWorkspace({
             <pre>{aggregatePreview}</pre>
           </section>
 
-          {Object.entries(grouped).map(([group, groupItems]) => (
-            <section className="aggregate-group" key={group}>
-              <div className="aggregate-section-title">
-                <strong>{group}</strong>
-                <span>{tr("main.aggregate.itemCount", { count: groupItems.length })}</span>
-              </div>
-              <div className="aggregate-item-list">
-                {groupItems.map((item) => {
-                  const Icon = getPayloadKindIcon(item.payloadKind);
-                  const links = safeHttpUrls([item.analysis.url ?? "", item.analysis.attachment?.target ?? ""]);
-                  return (
-                    <article className="aggregate-item" key={item.id}>
-                      <header className="aggregate-item-head">
-                        <span className={`kind-chip ${item.payloadKind}`}>
-                          <Icon size={11} />
-                          {getPayloadKindLabel(item.payloadKind, tr)}
-                        </span>
-                        <strong title={item.analysis.title}>{item.analysis.title || item.analysis.sourceName || tr("main.detail.clipContentFallback")}</strong>
-                        <div className="aggregate-item-actions">
-                          <button type="button" onClick={() => onOpenItem(item)}>
-                            <FileJson size={12} />
-                            {tr("main.detail.title")}
-                          </button>
-                          <button type="button" onClick={() => onCopyItem(item)}>
-                            <Copy size={12} />
-                            {tr("agent.action.copy")}
-                          </button>
-                        </div>
-                      </header>
-                      <div className="aggregate-item-body">
-                        {item.analysis.url || item.kind === "link" ? (
-                          <div className="aggregate-link-preview">
-                            {links[0] ? (
-                              <a href={links[0].href} onClick={(event) => event.preventDefault()} title={links[0].href}>
-                                <ExternalLink size={12} />
-                                {links[0].label}
-                              </a>
-                            ) : null}
-                            <pre>{item.content}</pre>
-                          </div>
-                        ) : isLikelyMarkdown(item) ? (
-                          <MarkdownPreview
-                            clip={item}
-                            content={item.content}
-                            onCopyCode={(text) => navigator.clipboard.writeText(text)}
-                            onPasteCode={(text) => navigator.clipboard.writeText(text)}
-                          />
-                        ) : (
-                          <pre>{item.content}</pre>
-                        )}
+          <section className="aggregate-group">
+            <div className="aggregate-section-title">
+              <strong>{tr("main.aggregate.itemList")}</strong>
+              <span>{tr("main.aggregate.itemCount", { count: items.length })}</span>
+            </div>
+            <div className="aggregate-item-list">
+              {items.map((item, index) => {
+                const Icon = getPayloadKindIcon(item.payloadKind);
+                const links = safeHttpUrls([item.analysis.url ?? "", item.analysis.attachment?.target ?? ""]);
+                return (
+                  <article className="aggregate-item" data-order={index + 1} key={item.id}>
+                    <header className="aggregate-item-head">
+                      <span className="aggregate-item-index" aria-label={tr("main.aggregate.itemPosition", { index: index + 1, count: items.length })}>{index + 1}</span>
+                      <span className={`kind-chip ${item.payloadKind}`}>
+                        <Icon size={11} />
+                        {getPayloadKindLabel(item.payloadKind, tr)}
+                      </span>
+                      <strong title={item.analysis.title}>{item.analysis.title || item.analysis.sourceName || tr("main.detail.clipContentFallback")}</strong>
+                      <div className="aggregate-item-actions">
+                        <button type="button" onClick={() => onOpenItem(item)}>
+                          <FileJson size={12} />
+                          {tr("main.detail.title")}
+                        </button>
+                        <button type="button" onClick={() => onCopyItem(item)}>
+                          <Copy size={12} />
+                          {tr("agent.action.copy")}
+                        </button>
                       </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+                    </header>
+                    <div className="aggregate-item-body">
+                      {item.analysis.url || item.kind === "link" ? (
+                        <div className="aggregate-link-preview">
+                          {links[0] ? (
+                            <a href={links[0].href} onClick={(event) => event.preventDefault()} title={links[0].href}>
+                              <ExternalLink size={12} />
+                              {links[0].label}
+                            </a>
+                          ) : null}
+                          <pre>{item.content}</pre>
+                        </div>
+                      ) : isLikelyMarkdown(item) ? (
+                        <MarkdownPreview
+                          clip={item}
+                          content={item.content}
+                          onCopyCode={(text) => navigator.clipboard.writeText(text)}
+                          onPasteCode={(text) => navigator.clipboard.writeText(text)}
+                        />
+                      ) : (
+                        <pre>{item.content}</pre>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
         </div>
       ) : (
         <div className="workspace-empty">{tr("main.aggregate.empty")}</div>
@@ -1542,15 +1650,11 @@ function WorkspaceCrumb({
 }) {
   return (
     <header className="workspace-crumb">
-      <ButtonGroup className="workspace-crumb-left">
-        <button className="icon-button crumb-back" onClick={onBack} type="button" aria-label={tr("main.workspace.backToList")}>
-          <RotateCcw size={14} />
-        </button>
-      </ButtonGroup>
       <div className="workspace-crumb-title">
         <strong>{title}</strong>
         {subtitle ? <em>{subtitle}</em> : null}
       </div>
+      <div aria-hidden="true" className="workspace-crumb-drag-region" data-tauri-drag-region />
       <ButtonGroup className="workspace-crumb-actions">
         {children}
         <button className="icon-button crumb-close" onClick={onBack} type="button" aria-label={tr("main.detail.close")}>

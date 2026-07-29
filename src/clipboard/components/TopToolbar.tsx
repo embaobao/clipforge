@@ -2,7 +2,7 @@
 // 从 App.tsx 抽出：视图切换、搜索槽、Agent 按钮、更多菜单。
 import type { PointerEvent, ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Check, Heart, History, MoreHorizontal, Trash2 } from "lucide-react";
+import { Bot, Check, Heart, History, MoreHorizontal, Settings2, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +20,6 @@ import {
   TooltipTrigger,
 } from "@/components/animate-ui/components/radix/tooltip";
 import type { TranslationKey } from "@/i18n";
-import agentAccessIcon from "../../../assets/brand/icons/256/agent-access.png";
 import type { PanelSurface, ViewKey } from "../../App";
 import { PanelStatusFeedback } from "./PanelStatusFeedback";
 
@@ -121,36 +120,50 @@ export function TopToolbar({
               <MoreHorizontal size={16} />
             </motion.button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="top-toolbar-menu" side="bottom" align="end" sideOffset={8}>
+          <DropdownMenuContent className="top-toolbar-menu" data-surface="clipboard" side="bottom" align="end" sideOffset={8}>
             <DropdownMenuLabel className="top-toolbar-menu-header">
-              <span>ClipForge</span>
-              <small>{tr("main.dock.shortcutHint")}</small>
+              <span className="top-toolbar-menu-brand">ClipForge</span>
+              <small className="top-toolbar-menu-hint">{tr("main.dock.shortcutHint")}</small>
             </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem data-agent-trigger="top-toolbar" data-dev-probe="top-menu-agent" onSelect={onOpenAgent}>
+            <DropdownMenuSeparator className="top-toolbar-menu-separator" />
+            <DropdownMenuGroup className="top-toolbar-menu-group">
+              <DropdownMenuItem
+                className="top-toolbar-menu-item"
+                data-agent-trigger="top-toolbar"
+                data-dev-probe="top-menu-agent"
+                onSelect={onOpenAgent}
+              >
                 <span className="top-toolbar-menu-label">
-                  <img alt="" className="agent-access-icon" src={agentAccessIcon} />
-                  <span>{tr("main.dock.openAgent")}</span>
+                  <Bot aria-hidden="true" className="top-toolbar-menu-item-icon" />
+                  <span className="top-toolbar-menu-item-title">{tr("main.dock.openAgent")}</span>
                   {agentContextCount ? <em>{agentContextCount}</em> : null}
                 </span>
                 <DropdownMenuShortcut className="top-toolbar-menu-shortcut">
-                  {activeSurface === "agent" ? <Check size={12} /> : null}
+                  {activeSurface === "agent" ? <Check aria-hidden="true" size={14} /> : null}
                 </DropdownMenuShortcut>
               </DropdownMenuItem>
-              <DropdownMenuItem data-dev-probe="top-menu-trash" onSelect={() => onViewChange("trash")}>
+              <DropdownMenuItem
+                className="top-toolbar-menu-item"
+                data-dev-probe="top-menu-trash"
+                onSelect={() => onViewChange("trash")}
+              >
                 <span className="top-toolbar-menu-label">
-                  <Trash2 size={13} />
-                  <span>{tr("main.dock.trash")}</span>
+                  <Trash2 aria-hidden="true" className="top-toolbar-menu-item-icon" />
+                  <span className="top-toolbar-menu-item-title">{tr("main.dock.trash")}</span>
                 </span>
                 <DropdownMenuShortcut className="top-toolbar-menu-shortcut">
-                  {activeSurface === "clipboard" && activeView === "trash" ? <Check size={12} /> : null}
+                  {activeSurface === "clipboard" && activeView === "trash" ? <Check aria-hidden="true" size={14} /> : null}
                   <kbd>T</kbd>
                 </DropdownMenuShortcut>
               </DropdownMenuItem>
-              <DropdownMenuItem data-dev-probe="top-menu-settings" onSelect={onOpenSettings}>
-                <span>{tr("main.dock.settings")}</span>
-                <DropdownMenuShortcut>
+              <DropdownMenuItem className="top-toolbar-menu-item" data-dev-probe="top-menu-settings" onSelect={onOpenSettings}>
+                <span className="top-toolbar-menu-label">
+                  <Settings2 aria-hidden="true" className="top-toolbar-menu-item-icon" />
+                  <span className="top-toolbar-menu-item-title">{tr("main.dock.settings")}</span>
+                </span>
+                <DropdownMenuShortcut className="top-toolbar-menu-shortcut">
+                  <kbd>Ctrl/Cmd</kbd>
+                  <span aria-hidden="true">+</span>
                   <kbd>,</kbd>
                 </DropdownMenuShortcut>
               </DropdownMenuItem>
