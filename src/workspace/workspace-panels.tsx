@@ -324,6 +324,38 @@ function safeHttpUrls(values: string[]) {
   });
 }
 
+function getApplicationContextSummary(clip: ClipItem) {
+  const context = clip.captureContext?.applicationContext;
+  if (!context || typeof context !== "object") return null;
+  const values: string[] = [];
+  const window = context.window;
+  if (window && typeof window === "object") {
+    const title = (window as Record<string, unknown>).title;
+    if (typeof title === "string" && title.trim()) values.push(title.trim());
+  }
+  const browser = context.browser;
+  if (browser && typeof browser === "object") {
+    const browserRecord = browser as Record<string, unknown>;
+    const title = browserRecord.title;
+    const url = browserRecord.url;
+    if (typeof title === "string" && title.trim() && !values.includes(title.trim())) values.push(title.trim());
+    if (typeof url === "string" && url.trim()) values.push(url.trim());
+  }
+  for (const key of ["workspace", "document"] as const) {
+    const entry = context[key];
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const value = record.path || record.name;
+    if (typeof value === "string" && value.trim() && !values.includes(value.trim())) values.push(value.trim());
+  }
+  const selection = context.selection;
+  if (selection && typeof selection === "object") {
+    const count = (selection as Record<string, unknown>).count;
+    if (typeof count === "number" && count > 0) values.push(`selection ${count}`);
+  }
+  return values.length ? values.join(" · ") : null;
+}
+
 function splitMarkdownBlocks(content: string) {
   const blocks: Array<{ type: string; text: string; language?: string; level?: number; cells?: string[] }> = [];
   const lines = content.split(/\r?\n/);
@@ -886,7 +918,13 @@ function getImageOpenPath(clip: ClipItem) {
 }
 
 function getDetailSourceAddress(clip: ClipItem) {
-  return clip.analysis.url || clip.analysis.attachment?.target || clip.imageFile || "";
+  const context = clip.captureContext?.applicationContext;
+  const browser = context && typeof context === "object" ? context.browser : null;
+  const browserUrl = browser && typeof browser === "object" ? (browser as Record<string, unknown>).url : null;
+  return clip.analysis.url
+    || clip.analysis.attachment?.target
+    || clip.imageFile
+    || (typeof browserUrl === "string" ? browserUrl : "");
 }
 
 /** 图片详情只负责紧凑预览；扩展操作由详情页顶部的溢出菜单统一承载。 */
@@ -1032,6 +1070,7 @@ export function ClipDetailWorkspace({
 
   const mode = getDetailModeLabel(clip, tr);
   const sourceAddress = getDetailSourceAddress(clip);
+  const applicationContextSummary = getApplicationContextSummary(clip);
   const imageOpenPath = getImageOpenPath(clip);
   const aiSummaryStatus = getClipAiSummaryStatus(clip);
   const isAiSummaryPending = isGeneratingAiSummary || aiSummaryStatus === "pending";
@@ -1365,6 +1404,16 @@ export function ClipDetailWorkspace({
               ) : null}
             </div>
           </div>
+          {applicationContextSummary ? (
+            <div
+              aria-label={tr("main.detail.appContext")}
+              className="detail-context-row"
+              title={applicationContextSummary}
+            >
+              <AppWindow size={12} aria-hidden="true" />
+              <span>{applicationContextSummary}</span>
+            </div>
+          ) : null}
         </>
       ) : null}
 

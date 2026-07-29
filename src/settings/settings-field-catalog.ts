@@ -127,6 +127,7 @@ export const SETTINGS_FIELD_CATALOG = [
   { id: "captureImageEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.image", order: 40 },
   { id: "captureFileEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.file", order: 50 },
   { id: "captureSensitiveEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.sensitive", order: 60 },
+  { id: "captureApplicationContext", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.capture.applicationContext", order: 70 },
   { id: "textMaxSizeMb", section: "capture-content", tab: "limits", type: "number", labelKey: "settings.capture.textMaxSize", order: 10 },
   { id: "imageMaxSizeMb", section: "capture-content", tab: "limits", type: "number", labelKey: "settings.capture.imageMaxSize", order: 20 },
   { id: "maxStoredItems", section: "storage-logs", tab: "data", type: "number", labelKey: "settings.storage.maxItems", order: 10 },

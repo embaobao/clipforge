@@ -108,6 +108,7 @@ interface AppSettings {
   captureImageEnabled: boolean;
   captureFileEnabled: boolean;
   captureSensitiveEnabled: boolean;
+  captureApplicationContext: boolean;
   imageMaxSizeMb: number;
   textMaxSizeMb: number;
   agentProviders?: Array<Record<string, unknown>>;
@@ -296,6 +297,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   captureImageEnabled: true,
   captureFileEnabled: true,
   captureSensitiveEnabled: false,
+  captureApplicationContext: true,
   imageMaxSizeMb: 25,
   textMaxSizeMb: 5,
 };

@@ -24,9 +24,11 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 
+mod application_context;
 mod clipboard;
 mod settings_service;
 
+use application_context::{capture as capture_application_snapshot, SourceAppInfo};
 use settings_service::{
     merge_settings_patch, prepare_patch as prepare_settings_patch,
     prepare_replace as prepare_settings_replace, prepare_reset as prepare_settings_reset,
@@ -91,92 +93,6 @@ extern "C" {
     static kAXTrustedCheckOptionPrompt: CFStringRef;
     fn AXIsProcessTrusted() -> u8;
     fn AXIsProcessTrustedWithOptions(options: core_foundation::dictionary::CFDictionaryRef) -> u8;
-}
-
-#[derive(Clone)]
-struct SourceAppInfo {
-    name: String,
-    bundle_id: String,
-    executable_path: String,
-    icon_base64: Option<String>,
-}
-
-fn current_source_app() -> Option<SourceAppInfo> {
-    #[cfg(target_os = "macos")]
-    {
-        current_source_app_macos()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn current_source_app_macos() -> Option<SourceAppInfo> {
-    let script = r#"
-tell application "System Events"
-    set frontApp to first application process whose frontmost is true
-    set appName to name of frontApp
-    set bundleId to bundle identifier of frontApp
-    set execPath to POSIX path of (application file of frontApp as alias)
-    return appName & "|" & bundleId & "|" & execPath
-end tell
-"#;
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let parts: Vec<&str> = raw.split('|').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    let name = parts[0].to_string();
-    let bundle_id = parts[1].to_string();
-    let executable_path = parts[2].to_string();
-    let icon_base64 = bundle_icon_base64(&executable_path);
-    Some(SourceAppInfo {
-        name,
-        bundle_id,
-        executable_path,
-        icon_base64,
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn bundle_icon_base64(bundle_path: &str) -> Option<String> {
-    use base64::Engine as _;
-    use image::ImageEncoder as _;
-
-    let path = PathBuf::from(bundle_path);
-    if !path.exists() {
-        return None;
-    }
-    let icon = file_icon_provider::get_file_icon(&path, 64).ok()?;
-    let mut png_bytes = Vec::with_capacity((icon.width * icon.height * 4) as usize / 2);
-    let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-    encoder
-        .write_image(
-            &icon.pixels,
-            icon.width,
-            icon.height,
-            image::ExtendedColorType::Rgba8,
-        )
-        .ok()?;
-    Some(format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(png_bytes)
-    ))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn current_source_app_macos() -> Option<SourceAppInfo> {
-    None
 }
 
 const QUICK_PANEL_WIDTH: f64 = 420.0;
@@ -387,6 +303,9 @@ struct CaptureContextPayload {
     surface: String,
     source_label: String,
     source_app: Option<Value>,
+    /// 应用级上下文是 best-effort 采集，旧记录缺失时按 None 兼容读取。
+    #[serde(default)]
+    application_context: Option<Value>,
     observed_at: i64,
     primary_format: String,
     available_formats: Vec<String>,
@@ -1797,6 +1716,66 @@ fn compact_agent_text(value: &str, max: usize) -> String {
     }
 }
 
+fn agent_application_context_summary(reference: &Value) -> String {
+    let Some(context) = reference.get("applicationContext") else {
+        return String::new();
+    };
+    let mut fields = Vec::new();
+    if let Some(kind) = context.get("kind").and_then(Value::as_str) {
+        fields.push(format!("kind={kind}"));
+    }
+    if let Some(title) = context
+        .get("window")
+        .and_then(|window| window.get("title"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        fields.push(format!("window={}", compact_agent_text(title, 120)));
+    }
+    if let Some(browser) = context.get("browser") {
+        if let Some(url) = browser.get("url").and_then(Value::as_str) {
+            fields.push(format!("url={}", compact_agent_text(url, 180)));
+        }
+        if let Some(title) = browser.get("title").and_then(Value::as_str) {
+            fields.push(format!("page={}", compact_agent_text(title, 100)));
+        }
+    }
+    for (label, key) in [("workspace", "workspace"), ("document", "document")] {
+        if let Some(value) = context
+            .get(key)
+            .and_then(|item| item.get("path").or_else(|| item.get("name")))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+        {
+            fields.push(format!("{label}={}", compact_agent_text(value, 140)));
+        }
+    }
+    if let Some(selection) = context.get("selection") {
+        let count = selection.get("count").and_then(Value::as_u64).unwrap_or(0);
+        let first_path = selection
+            .get("paths")
+            .and_then(Value::as_array)
+            .and_then(|paths| paths.first())
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if count > 0 {
+            fields.push(format!(
+                "selectionCount={count}{}",
+                if first_path.is_empty() {
+                    String::new()
+                } else {
+                    format!(" first={}", compact_agent_text(first_path, 120))
+                }
+            ));
+        }
+    }
+    if fields.is_empty() {
+        String::new()
+    } else {
+        fields.join(" ")
+    }
+}
+
 fn agent_context_summary(context_set: &Value, allow_full_content: bool) -> String {
     let mode = context_set
         .get("mode")
@@ -1853,13 +1832,15 @@ fn agent_context_summary(context_set: &Value, allow_full_content: bool) -> Strin
                 .and_then(Value::as_str)
                 .or_else(|| reference.get("textPreview").and_then(Value::as_str))
                 .unwrap_or("");
+            let application_context = agent_application_context_summary(reference);
             format!(
-                "{}. [{} permission={}] {} url={} tags={} preview={}",
+                "{}. [{} permission={}] {} url={} context={} tags={} preview={}",
                 index + 1,
                 payload_kind,
                 permission,
                 compact_agent_text(title, 80),
                 compact_agent_text(url, 120),
+                compact_agent_text(&application_context, 420),
                 tags,
                 compact_agent_text(preview, if allow_full_content { 1200 } else { 240 })
             )
@@ -2455,6 +2436,7 @@ fn settings_json_schema() -> Value {
             "captureImageEnabled": { "type": "boolean" },
             "captureFileEnabled": { "type": "boolean" },
             "captureSensitiveEnabled": { "type": "boolean" },
+            "captureApplicationContext": { "type": "boolean" },
             "imageMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 4096 },
             "textMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 1024 },
             "agentProviders": { "$ref": "#/$defs/agentProvidersLegacy" },
@@ -3919,6 +3901,33 @@ fn capture_clip_payload(
         return Err(command_error("CLIPBOARD_CONTENT_EMPTY", "content is empty"));
     }
     let hash = draft.content_hash.clone();
+    let primary_format = draft.primary_format.clone();
+    let source_label_value = source_label.unwrap_or_else(|| "Clipboard".to_string());
+    let include_application_context = should_capture_application_context();
+    let application_snapshot = capture_application_snapshot(include_application_context);
+    let source_app = application_snapshot
+        .as_ref()
+        .map(|snapshot| &snapshot.source_app);
+    let application_context = if include_application_context {
+        application_snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.application_context.clone())
+    } else {
+        None
+    };
+    let capture_context = make_capture_context(
+        &source_label_value,
+        source_app,
+        application_context,
+        observed_at,
+        &primary_format,
+        &draft.available_formats,
+    );
+    let capture_context_json = json_string(&capture_context)?;
+    let source_app_name = source_app.map(|s| s.name.as_str()).unwrap_or("");
+    let source_app_bundle = source_app.map(|s| s.bundle_id.as_str()).unwrap_or("");
+    let source_app_executable = source_app.map(|s| s.executable_path.as_str()).unwrap_or("");
+    let source_app_icon = source_app.and_then(|s| s.icon_base64.as_deref());
     let existing_id: Option<String> = conn
         .query_row(
             "SELECT id FROM clips WHERE content_hash = ?1 AND deleted_at IS NULL LIMIT 1",
@@ -3930,8 +3939,18 @@ fn capture_clip_payload(
 
     if let Some(id) = existing_id {
         conn.execute(
-            "UPDATE clips SET last_seen_at = ?1, updated_at = ?1 WHERE id = ?2",
-            params![observed_at, id],
+            "UPDATE clips SET last_seen_at = ?1, updated_at = ?1,
+                capture_context_json = ?2, source_app_name = ?3, source_app_bundle = ?4,
+                source_app_executable = ?5, source_app_icon = ?6 WHERE id = ?7",
+            params![
+                observed_at,
+                capture_context_json,
+                source_app_name,
+                source_app_bundle,
+                source_app_executable,
+                source_app_icon,
+                id
+            ],
         )
         .map_err(|error| error.to_string())?;
         let item = load_clip(&conn, &id)?;
@@ -3942,10 +3961,8 @@ fn capture_clip_payload(
     }
 
     let id = format!("clip_{hash}_{observed_at}");
-    let primary_format = draft.primary_format.clone();
     let available_formats_json = json_string(&draft.available_formats)?;
     let representations_json = json_string(&draft.representations)?;
-    let source_label_value = source_label.unwrap_or_else(|| "Clipboard".to_string());
     let analysis_basis = if draft.plain_text.trim().is_empty() {
         &content
     } else {
@@ -3960,26 +3977,7 @@ fn capture_clip_payload(
         default_tag_values.push("AI".to_string());
     }
     let tags = normalize_tags(default_tag_values).join(",");
-    let source_app = current_source_app();
-    let capture_context = make_capture_context(
-        &source_label_value,
-        source_app.as_ref(),
-        observed_at,
-        &primary_format,
-        &draft.available_formats,
-    );
-    let capture_context_json = json_string(&capture_context)?;
     let metadata_json = json_string(&draft.metadata)?;
-    let source_app_name = source_app.as_ref().map(|s| s.name.as_str()).unwrap_or("");
-    let source_app_bundle = source_app
-        .as_ref()
-        .map(|s| s.bundle_id.as_str())
-        .unwrap_or("");
-    let source_app_executable = source_app
-        .as_ref()
-        .map(|s| s.executable_path.as_str())
-        .unwrap_or("");
-    let source_app_icon = source_app.as_ref().and_then(|s| s.icon_base64.as_deref());
     conn.execute(
         "INSERT INTO clips (
             id, content, content_hash, primary_format, available_formats, representations_json,
@@ -7213,15 +7211,29 @@ fn parse_representations(raw: String) -> Vec<ClipboardRepresentationPayload> {
     serde_json::from_str(&raw).unwrap_or_default()
 }
 
+/// 应用上下文包含 URL、窗口标题和工作区线索，默认开启但允许用户关闭敏感来源采集。
+fn should_capture_application_context() -> bool {
+    read_user_settings()
+        .ok()
+        .and_then(|payload| {
+            payload
+                .settings
+                .get("captureApplicationContext")
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(true)
+}
+
 fn make_capture_context(
     source_label: &str,
     source_app: Option<&SourceAppInfo>,
+    application_context: Option<Value>,
     observed_at: i64,
     primary_format: &str,
     available_formats: &[String],
 ) -> CaptureContextPayload {
     CaptureContextPayload {
-        schema_version: 1,
+        schema_version: 2,
         surface: "clipboard".to_string(),
         source_label: source_label.to_string(),
         source_app: source_app.map(|app| {
@@ -7232,6 +7244,7 @@ fn make_capture_context(
                 "hasIcon": app.icon_base64.is_some(),
             })
         }),
+        application_context,
         observed_at,
         primary_format: primary_format.to_string(),
         available_formats: available_formats.to_vec(),
@@ -7379,6 +7392,7 @@ fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
                     surface: "clipboard".to_string(),
                     source_label: source.clone(),
                     source_app: None,
+                    application_context: None,
                     observed_at: row.get::<_, i64>(27).unwrap_or_default(),
                     primary_format: primary_format.clone(),
                     available_formats: available_formats.clone(),
@@ -12260,6 +12274,15 @@ fn mcp_content_response(result: Value) -> Result<Value, (i64, String)> {
     }))
 }
 
+fn capture_context_url(context: &CaptureContextPayload) -> Option<&str> {
+    context
+        .application_context
+        .as_ref()
+        .and_then(|value| value.get("browser"))
+        .and_then(|browser| browser.get("url"))
+        .and_then(Value::as_str)
+}
+
 fn mcp_context_reference(item: &ClipItemPayload, include_content: bool) -> Value {
     json!({
         "id": format!("clip:{}", item.id),
@@ -12268,10 +12291,11 @@ fn mcp_context_reference(item: &ClipItemPayload, include_content: bool) -> Value
         "title": item.analysis.title,
         "summary": compact_agent_text(&item.analysis.summary, 320),
         "payloadKind": item.payload_kind,
-        "primaryUrl": item.analysis.url,
+        "primaryUrl": item.analysis.url.as_deref().or_else(|| capture_context_url(&item.capture_context)),
         "textPreview": compact_agent_text(&item.content, if include_content { 2000 } else { 240 }),
         "tags": item.tags,
         "sourceAppName": item.source_app.as_ref().map(|source| source.name.clone()),
+        "applicationContext": item.capture_context.application_context,
         "permissionScope": if include_content { "current-content" } else { "summary" },
         "contentLength": item.content.chars().count(),
         "captureContext": {
@@ -12281,6 +12305,7 @@ fn mcp_context_reference(item: &ClipItemPayload, include_content: bool) -> Value
             "observedAt": item.capture_context.observed_at,
             "primaryFormat": item.capture_context.primary_format,
             "availableFormats": item.capture_context.available_formats,
+            "applicationContext": item.capture_context.application_context,
         },
         "provenance": {
             "agentContext": item.agent_context,
@@ -12391,6 +12416,10 @@ mod context_snapshot_tests {
                 surface: "unit-test".to_string(),
                 source_label: "Unit Test".to_string(),
                 source_app: Some(json!({ "name": "Safari", "bundleId": "com.apple.Safari" })),
+                application_context: Some(json!({
+                    "kind": "browser",
+                    "browser": { "url": "https://example.com", "title": "Example" }
+                })),
                 observed_at: 1,
                 primary_format: "text/plain".to_string(),
                 available_formats: vec!["text/plain".to_string()],
@@ -12416,6 +12445,10 @@ mod context_snapshot_tests {
         assert_eq!(
             link_snapshot["clip"]["primaryUrl"],
             "https://example.com/a?b=1"
+        );
+        assert_eq!(
+            link_snapshot["clip"]["applicationContext"]["browser"]["url"],
+            "https://example.com"
         );
         assert_eq!(link_snapshot["clip"]["tags"][0], "AI");
         assert_eq!(

@@ -119,6 +119,7 @@ export type ClipCaptureContext = {
   surface: string;
   sourceLabel: string;
   sourceApp?: Record<string, unknown> | null;
+  applicationContext?: Record<string, unknown> | null;
   observedAt: number;
   primaryFormat: string;
   availableFormats: string[];
@@ -246,6 +247,7 @@ type AppSettings = {
   captureImageEnabled: boolean;
   captureFileEnabled: boolean;
   captureSensitiveEnabled: boolean;
+  captureApplicationContext: boolean;
   imageMaxSizeMb: number;
   textMaxSizeMb: number;
 };
@@ -367,6 +369,7 @@ const defaultSettings: AppSettings = {
   captureImageEnabled: true,
   captureFileEnabled: true,
   captureSensitiveEnabled: false,
+  captureApplicationContext: true,
   imageMaxSizeMb: 25,
   textMaxSizeMb: 5,
 };
@@ -709,6 +712,7 @@ function createTextRepresentation(content: string, payloadKind: ClipPayloadKind)
 }
 
 function getSearchHaystack(item: ClipItem) {
+  const applicationContext = item.captureContext?.applicationContext;
   return [
     item.content,
     item.source,
@@ -718,6 +722,8 @@ function getSearchHaystack(item: ClipItem) {
     item.analysis.summary,
     item.analysis.host,
     item.tags.join(" "),
+    item.sourceApp?.name,
+    applicationContext && typeof applicationContext === "object" ? JSON.stringify(applicationContext) : "",
   ]
     .join(" ")
     .toLowerCase();
@@ -826,6 +832,7 @@ function createClip(content: string, settings: AppSettings): ClipItem {
       surface: "frontend",
       sourceLabel: analysis.sourceName,
       sourceApp: null,
+      applicationContext: null,
       observedAt: now,
       primaryFormat,
       availableFormats: [primaryFormat],
@@ -900,6 +907,10 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
       typeof next.captureSensitiveEnabled === "boolean"
         ? next.captureSensitiveEnabled
         : defaultSettings.captureSensitiveEnabled,
+    captureApplicationContext:
+      typeof next.captureApplicationContext === "boolean"
+        ? next.captureApplicationContext
+        : defaultSettings.captureApplicationContext,
     imageMaxSizeMb: clampNumber(next.imageMaxSizeMb, 1, 1024, defaultSettings.imageMaxSizeMb),
     textMaxSizeMb: clampNumber(next.textMaxSizeMb, 1, 100, defaultSettings.textMaxSizeMb),
     globalShortcut: !globalShortcut || globalShortcut === LEGACY_DEFAULT_SHORTCUT ? DEFAULT_SHORTCUT : globalShortcut,
@@ -974,6 +985,7 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
       surface: "clipboard",
       sourceLabel: raw.source ?? analysis.sourceName,
       sourceApp: null,
+      applicationContext: null,
       observedAt: lastSeenAt,
       primaryFormat,
       availableFormats,

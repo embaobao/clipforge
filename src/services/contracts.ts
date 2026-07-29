@@ -33,6 +33,7 @@ export type ClipCaptureContextRecord = {
   surface: string;
   sourceLabel: string;
   sourceApp?: Record<string, unknown> | null;
+  applicationContext?: Record<string, unknown> | null;
   observedAt: number;
   primaryFormat: string;
   availableFormats: string[];
@@ -209,6 +210,7 @@ export type AgentContextReference = {
   textPreview: string;
   tags: string[];
   sourceAppName?: string;
+  applicationContext?: Record<string, unknown> | null;
   permissionScope: "summary" | "current-content" | "metadata-only";
   itemCount?: number;
   scopeLabel?: string;

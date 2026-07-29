@@ -328,6 +328,7 @@ mod tests {
                 surface: "unit-test".to_string(),
                 source_label: "Unit Test".to_string(),
                 source_app: None,
+                application_context: None,
                 observed_at: 1,
                 primary_format: primary_format.to_string(),
                 available_formats: vec![primary_format.to_string()],

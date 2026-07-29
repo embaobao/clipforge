@@ -159,6 +159,15 @@ function normalizeMentionFilter(value: string | null) {
   return (value ?? "").trim().toLowerCase().replace(/:$/, "");
 }
 
+function getApplicationContextUrl(clip: ClipItem) {
+  const context = clip.captureContext?.applicationContext;
+  if (!context || typeof context !== "object") return undefined;
+  const browser = context.browser;
+  if (!browser || typeof browser !== "object") return undefined;
+  const url = (browser as Record<string, unknown>).url;
+  return typeof url === "string" && url.trim() ? url : undefined;
+}
+
 function mentionPayloadFilter(value: string | null): "image" | "file" | null {
   const token = normalizeMentionFilter(value);
   if (!token) return null;
@@ -182,10 +191,11 @@ function makeClipReference(clip: ClipItem, source: AgentContextReferenceSource, 
     title: getClipTitle(clip),
     summary: clip.analysis.summary || compactText(clip.content, 120),
     payloadKind: clip.payloadKind,
-    primaryUrl: clip.analysis.url,
+    primaryUrl: clip.analysis.url || getApplicationContextUrl(clip),
     textPreview: metadataOnly ? "" : compactText(clip.content, allowFullContent ? 480 : 180),
     tags: clip.tags.slice(0, 8),
     sourceAppName: clip.sourceApp?.name || clip.captureContext?.sourceLabel,
+    applicationContext: clip.captureContext?.applicationContext ?? null,
     permissionScope,
     parsedTargets: parseSmartTargets(clip.content).slice(0, 5),
   };
@@ -876,7 +886,17 @@ export function ClipboardAgentPanel({
         if (activeReferencePayloadFilter === "file" && clip.payloadKind !== "file" && clip.payloadKind !== "image") return false;
         if (!queryText) return true;
         if (activeReferencePayloadFilter) return true;
-        const haystack = [clip.payloadKind, getClipTitle(clip), clip.content, clip.analysis.host, clip.tags.join(" ")].join(" ").toLowerCase();
+        const haystack = [
+          clip.payloadKind,
+          getClipTitle(clip),
+          clip.content,
+          clip.analysis.host,
+          clip.tags.join(" "),
+          clip.sourceApp?.name,
+          clip.captureContext?.applicationContext && typeof clip.captureContext.applicationContext === "object"
+            ? JSON.stringify(clip.captureContext.applicationContext)
+            : "",
+        ].join(" ").toLowerCase();
         return haystack.includes(queryText);
       })
       .slice(0, 6);
