@@ -165,7 +165,7 @@ include(controls, "TooltipTrigger asChild", "readonly field should keep tooltip 
 include(sidebar, "<SidebarMenuButton", "settings sidebar should stay button-based through SidebarMenuButton");
 include(sidebar, "isActive={active}", "settings sidebar should keep active page state");
 include(sidebar, "tooltip={item.label}", "settings sidebar should use component-library collapsed tooltip");
-include(sidebar, 'className="h-8 rounded-md border-0 bg-transparent px-2 text-[13px] font-medium text-muted-foreground shadow-none data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=true]:shadow-sm"', "settings sidebar items should use Tailwind classes");
+include(sidebar, 'className="h-8 rounded-md border-0 bg-transparent px-2 text-[13px] font-medium text-muted-foreground shadow-none data-[active=true]:bg-accent data-[active=true]:!text-primary-foreground data-[active=true]:shadow-sm"', "settings sidebar items should keep readable selected text");
 include(sidebar, "<SidebarMenuBadge", "settings sidebar badges should use component-library badge");
 include(animateSidebar, "<button", "Animate UI sidebar should render keyboard-native buttons");
 include(animateSidebar, "function SidebarTrigger", "Animate UI sidebar should expose SidebarTrigger");

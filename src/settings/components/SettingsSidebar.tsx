@@ -56,13 +56,13 @@ export function SettingsSidebar({
               return (
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
-                    className="h-8 rounded-md border-0 bg-transparent px-2 text-[13px] font-medium text-muted-foreground shadow-none data-[active=true]:bg-accent data-[active=true]:text-accent-foreground data-[active=true]:shadow-sm"
+                    className="h-8 rounded-md border-0 bg-transparent px-2 text-[13px] font-medium text-muted-foreground shadow-none data-[active=true]:bg-accent data-[active=true]:!text-primary-foreground data-[active=true]:shadow-sm"
                     data-dev-probe={`settings-nav:${item.id}`}
                     isActive={active}
                     onClick={() => onChange(item.id)}
                     tooltip={item.label}
                   >
-                    {Icon ? <Icon className="text-muted-foreground" size={16} /> : null}
+                    {Icon ? <Icon className="text-current" size={16} /> : null}
                     <span className="truncate">{item.label}</span>
                     {item.badge ? (
                       <SidebarMenuBadge>{item.badge}</SidebarMenuBadge>
