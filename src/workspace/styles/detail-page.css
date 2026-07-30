@@ -275,6 +275,46 @@
   min-width: 0;
 }
 
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 2px 6px;
+}
+
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-toolbar > span {
+  min-width: 0;
+  overflow: hidden;
+  color: oklch(0.2 0 0 / 0.68);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-toolbar button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 8px;
+  color: oklch(0.14 0 0 / 0.78);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 680;
+}
+
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-toolbar button:hover,
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-toolbar button:focus-visible {
+  color: oklch(0.1 0 0 / 0.94);
+  background: oklch(0 0 0 / 0.055);
+  outline: none;
+}
+
 [data-surface="workspace"].workspace-detail-page .html-preview,
 [data-surface="workspace"].workspace-detail-page .json-preview,
 [data-surface="workspace"].workspace-detail-page .markdown-preview,
@@ -355,6 +395,7 @@
 }
 
 [data-surface="workspace"].workspace-detail-page .detail-raw-content,
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-json,
 [data-surface="workspace"].workspace-detail-page .json-preview pre,
 [data-surface="workspace"].workspace-detail-page .html-preview-fallback pre {
   min-height: 0;
@@ -378,6 +419,15 @@
   color: oklch(0.13 0 0 / 0.9) !important;
   font-size: 12px !important;
   tab-size: 2;
+}
+
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-json {
+  max-height: min(48vh, 360px);
+  tab-size: 2;
+}
+
+[data-surface="workspace"].workspace-detail-page .detail-capture-context-json code {
+  color: inherit;
 }
 
 [data-surface="workspace"].workspace-detail-page .json-preview pre code {

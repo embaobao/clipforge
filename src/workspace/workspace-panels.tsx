@@ -1071,6 +1071,8 @@ export function ClipDetailWorkspace({
   const mode = getDetailModeLabel(clip, tr);
   const sourceAddress = getDetailSourceAddress(clip);
   const applicationContextSummary = getApplicationContextSummary(clip);
+  const captureContextJson = JSON.stringify(clip.captureContext, null, 2);
+  const captureContextFieldCount = Object.keys(clip.captureContext).length;
   const imageOpenPath = getImageOpenPath(clip);
   const aiSummaryStatus = getClipAiSummaryStatus(clip);
   const isAiSummaryPending = isGeneratingAiSummary || aiSummaryStatus === "pending";
@@ -1534,6 +1536,34 @@ export function ClipDetailWorkspace({
                 </AccordionContent>
               </AccordionItem>
             ) : null}
+
+            <AccordionItem value="capture-context">
+              <AccordionTrigger className="detail-accordion-trigger">
+                <FileJson size={14} />
+                <span>{tr("main.detail.captureContext")}</span>
+                <em>{tr("main.detail.captureContextFields", { count: captureContextFieldCount })}</em>
+              </AccordionTrigger>
+              <AccordionContent className="detail-accordion-panel">
+                <div className="detail-capture-context-toolbar">
+                  <span>{applicationContextSummary || tr("main.detail.captureContextUnavailable")}</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onCopyText(captureContextJson, `detail:capture-context:${clip.id}`, {
+                        businessChain: "workspace-router -> detail-route -> capture-context-json -> copy",
+                        clipId: clip.id,
+                        contextSchema: "ClipboardCaptureContext.v2",
+                        chars: captureContextJson.length,
+                      })
+                    }
+                  >
+                    <Copy size={11} />
+                    {tr("main.detail.copyCaptureContext")}
+                  </button>
+                </div>
+                <pre aria-label={tr("main.detail.captureContext")} className="detail-capture-context-json"><code>{captureContextJson}</code></pre>
+              </AccordionContent>
+            </AccordionItem>
 
 
           </Accordion>

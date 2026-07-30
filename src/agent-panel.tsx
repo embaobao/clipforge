@@ -196,6 +196,7 @@ function makeClipReference(clip: ClipItem, source: AgentContextReferenceSource, 
     tags: clip.tags.slice(0, 8),
     sourceAppName: clip.sourceApp?.name || clip.captureContext?.sourceLabel,
     applicationContext: clip.captureContext?.applicationContext ?? null,
+    captureContext: clip.captureContext,
     permissionScope,
     parsedTargets: parseSmartTargets(clip.content).slice(0, 5),
   };

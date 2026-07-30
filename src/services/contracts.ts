@@ -211,6 +211,7 @@ export type AgentContextReference = {
   tags: string[];
   sourceAppName?: string;
   applicationContext?: Record<string, unknown> | null;
+  captureContext?: ClipCaptureContextRecord | null;
   permissionScope: "summary" | "current-content" | "metadata-only";
   itemCount?: number;
   scopeLabel?: string;

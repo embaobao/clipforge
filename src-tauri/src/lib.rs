@@ -12356,10 +12356,12 @@ fn mcp_context_reference(item: &ClipItemPayload, include_content: bool) -> Value
             "schemaVersion": item.capture_context.schema_version,
             "surface": item.capture_context.surface,
             "sourceLabel": item.capture_context.source_label,
+            "sourceApp": item.capture_context.source_app,
             "observedAt": item.capture_context.observed_at,
             "primaryFormat": item.capture_context.primary_format,
             "availableFormats": item.capture_context.available_formats,
             "applicationContext": item.capture_context.application_context,
+            "environment": item.capture_context.environment,
         },
         "provenance": {
             "agentContext": item.agent_context,
@@ -12503,6 +12505,14 @@ mod context_snapshot_tests {
         assert_eq!(
             link_snapshot["clip"]["applicationContext"]["browser"]["url"],
             "https://example.com"
+        );
+        assert_eq!(
+            link_snapshot["clip"]["captureContext"]["sourceApp"]["name"],
+            "Safari"
+        );
+        assert_eq!(
+            link_snapshot["clip"]["captureContext"]["environment"]["platform"],
+            "test"
         );
         assert_eq!(link_snapshot["clip"]["tags"][0], "AI");
         assert_eq!(
