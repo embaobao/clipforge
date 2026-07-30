@@ -160,7 +160,7 @@ fn extract_uri_or_path(command_line: &str, flags: &[&str]) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn capture_macos(include_application_context: bool) -> Option<CapturedApplicationContext> {
-    let raw = run_osascript(
+    let raw = match run_osascript(
         r#"
 tell application "System Events"
     set separator to ASCII character 31
@@ -179,9 +179,24 @@ tell application "System Events"
     return appName & separator & bundleId & separator & execPath & separator & processId & separator & windowTitle
 end tell
 "#,
-    )?;
+    ) {
+        Some(raw) => raw,
+        None => {
+            crate::log_to_file(
+                "warn",
+                "application-context",
+                "frontmost application snapshot unavailable; fallback=clipboard-only",
+            );
+            return None;
+        }
+    };
     let fields = raw.trim().split('\u{1f}').collect::<Vec<_>>();
     if fields.len() < 5 {
+        crate::log_to_file(
+            "warn",
+            "application-context",
+            "frontmost application payload malformed; fallback=clipboard-only",
+        );
         return None;
     }
 
@@ -189,6 +204,11 @@ end tell
     let bundle_id = fields[1].trim().to_string();
     let executable_path = fields[2].trim().to_string();
     if name.is_empty() || bundle_id.is_empty() {
+        crate::log_to_file(
+            "warn",
+            "application-context",
+            "frontmost application identity empty; fallback=clipboard-only",
+        );
         return None;
     }
     let source_app = SourceAppInfo {
@@ -377,26 +397,27 @@ end tell
 
 #[cfg(target_os = "macos")]
 fn process_command_line(process_id: &str) -> Option<String> {
-    let output = Command::new("ps")
-        .args(["-p", process_id, "-o", "command="])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    let mut command = Command::new("ps");
+    command.args(["-p", process_id, "-o", "command="]);
+    let output = crate::run_system_command_with_timeout(
+        command,
+        "application-context/ps",
+        std::time::Duration::from_millis(500),
+    )
+    .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[cfg(target_os = "macos")]
 fn run_osascript(script: &str) -> Option<String> {
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    let mut command = Command::new("osascript");
+    command.arg("-e").arg(script);
+    let output = crate::run_system_command_with_timeout(
+        command,
+        "application-context/osascript",
+        std::time::Duration::from_millis(500),
+    )
+    .ok()?;
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 

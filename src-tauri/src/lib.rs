@@ -4142,6 +4142,60 @@ fn log_to_file(level: &str, module: &str, message: &str) {
     }
 }
 
+/// 为剪贴板热路径中的系统命令提供有界等待；超时只影响可选上下文，不阻断主记录流程。
+#[cfg(target_os = "macos")]
+fn run_system_command_with_timeout(
+    mut command: Command,
+    label: &str,
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            let message = format!("{label} spawn failed: {error}; fallback=clipboard-only");
+            log_to_file("warn", "application-context", &message);
+            message
+        })?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| format!("{label} output failed: {error}"))?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    log_to_file(
+                        "warn",
+                        "application-context",
+                        &format!(
+                            "{label} exited status={} stderr={}; fallback=clipboard-only",
+                            output.status,
+                            stderr.chars().take(240).collect::<String>()
+                        ),
+                    );
+                    return Err(format!("{label} exited with {}", output.status));
+                }
+                return Ok(output);
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let message = format!(
+                    "{label} timed out after {}ms; fallback=clipboard-only",
+                    timeout.as_millis()
+                );
+                log_to_file("warn", "application-context", &message);
+                return Err(message);
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
+            Err(error) => return Err(format!("{label} wait failed: {error}")),
+        }
+    }
+}
+
 fn log_environment_snapshot(module: &str) {
     let settings_path_text = settings_path()
         .map(|path| path.to_string_lossy().to_string())
