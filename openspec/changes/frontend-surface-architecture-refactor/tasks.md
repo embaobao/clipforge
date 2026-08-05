@@ -49,6 +49,8 @@
 - [x] 新建 `src/clipboard/components/ClipContextMenu.tsx`（单条/多选双模式右键菜单；detail 收为 `onOpenDetail` prop，零运行时依赖 App；tsc + build + 四项边界校验通过，右键菜单事件顺序待 tauri dev 实机验证）
 - [ ] 迁移对应样式到 `src/clipboard/styles/clipboard-row.css`（独立成步，需 tauri dev 视觉验证）
 - [ ] 保持现有选择、复制、搜索、虚拟滚动行为不变
+- [ ] 使用正式 `.app` 目视确认虚线选中态、滚动后跟随首个可见快捷分组，以及复制/粘贴先反馈后执行原生命令的完整交互
+- [ ] 采样 `quick.scroll`、`quick.select`、`quick.copy`、`quick.paste`，确认可见反馈 P95 <= 300ms，并记录受控粘贴目标与应用身份
 - [x] 复跑 `node scripts/verify-hot-path.mjs`（通过）
 
 ## Phase 5：主面板交互层拆分
@@ -112,9 +114,9 @@
 
 ## Phase 10：历史文档和遗留提案收口
 
-- [ ] 梳理被本提案吸收的历史提案：`main-panel-functional-layout-plan`、`quick-panel-visual-regression-recovery`、`settings-sidebar-component-library-recovery`、旧设置页/顶部导航归档说明
-- [ ] 在 `docs/PROPOSAL_ROADMAP.md` 标记 superseded / archived / active 三种状态，避免后续误把历史文档当当前方案
-- [ ] 使用 `rg` 检查待删除文档是否仍被 active proposal、spec、script 或源码引用
-- [ ] 对仍有 spec 价值的内容先并入 `openspec/specs/*` 或本提案 spec
-- [ ] 用户确认后删除或归档历史遗留文档和提案
-- [ ] 删除后执行 `pnpm openspec validate --specs --strict`
+- [x] 梳理被本提案吸收的历史提案：`main-panel-functional-layout-plan`、`quick-panel-visual-regression-recovery`、`settings-sidebar-component-library-recovery`、旧设置页/顶部导航归档说明
+- [x] 在 `docs/PROPOSAL_ROADMAP.md` 标记 superseded / archived / active 三种状态，避免后续误把历史文档当当前方案
+- [x] 使用 `rg` 检查待删除文档是否仍被 active proposal、spec、script 或源码引用
+- [x] 对仍有 spec 价值的内容先并入 `openspec/specs/*` 或本提案 spec
+- [x] 用户确认后删除或归档历史遗留文档和提案
+- [x] 删除后执行 `pnpm openspec validate --specs --strict`

@@ -4,6 +4,8 @@
 
 2026-08-05 归档 `settings-sidebar-component-library-recovery`：任务 14/14 已完成，delta 已合入 `openspec/specs/settings-interface/spec.md`，归档路径为 `openspec/changes/archive/2026-08-05-settings-sidebar-component-library-recovery/`。
 
+2026-08-05 归档 `main-panel-functional-layout-plan`（11/37）和 `quick-panel-visual-regression-recovery`（22/30）：两者的有效方向与剩余工作已由 `frontend-surface-architecture-refactor` 接管，使用 `--skip-specs` 归档，避免旧布局和视觉 delta 重新进入当前规范。归档路径分别为 `openspec/changes/archive/2026-08-05-main-panel-functional-layout-plan/` 和 `openspec/changes/archive/2026-08-05-quick-panel-visual-regression-recovery/`。
+
 2026-08-05 更新 [`onboarding-standalone-page`](../openspec/changes/onboarding-standalone-page/proposal.md)：首期 A 已进入实现收尾，新增独立 `onboarding` 窗口入口、设置页轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录和 `launchAtLogin` 设置能力；当前进度 24/51。Phase 4 sidebar 常驻、Phase 5 兜底、Phase 6 标准化日志和真实 Tauri 权限/快捷键验证仍未完成。
 
 2026-08-05 新增 [`mastra-agent-runtime-evaluation`](../openspec/changes/mastra-agent-runtime-evaluation/proposal.md)：评估 Mastra 作为 Agent runtime 是否合理。结论边界先固定为评估提案，不直接安装依赖；Mastra 只能作为可选 sidecar / workbench runtime 候选，不得进入 quick panel 打开、滚动、选中、复制、粘贴热路径。当前进度 11/25。
@@ -33,17 +35,17 @@
 - 成熟组件优先使用 shadcn/Radix/Animate UI/lucide/floating-ui，不再手写并行基础控件。
 - 项目默认组件参考知识库为 [`docs/COMPONENT_REFERENCE.md`](./COMPONENT_REFERENCE.md)，组件选型、shadcn CLI 使用、已安装组件和业务区映射默认以该文档为准。
 
-### Superseded（方向被吸收，文档待 Phase 10 清理）
+### 已吸收并归档
 
-以下 change 的布局、交互和样式方向已由 `frontend-surface-architecture-refactor` 统一吸收，标记为 **superseded**（不是 archived：尚未归档，文档待 Phase 10 检查无引用后再删除或归档）。在此之前其任务语境仍可查，但不得作为新实现的依据：
+以下 change 的布局、交互和样式方向已由 `frontend-surface-architecture-refactor` 统一吸收并归档。历史任务语境仍可在 archive 中查阅，但不得作为新实现依据：
 
 | Change | 状态 | 被吸收方 |
 | --- | --- | --- |
-| `main-panel-functional-layout-plan` | superseded | `frontend-surface-architecture-refactor`（主面板区域契约 → 组件/目录拆分；已补 `tasks.md` 对齐真实代码） |
-| `quick-panel-visual-regression-recovery` | superseded | `frontend-surface-architecture-refactor`（视觉回归修复 → 样式分层 + App.css 冻结） |
+| `main-panel-functional-layout-plan` | archived | `frontend-surface-architecture-refactor`（主面板区域契约 -> 组件/目录拆分；旧任务 11/37） |
+| `quick-panel-visual-regression-recovery` | archived | `frontend-surface-architecture-refactor`（视觉回归修复 -> 样式分层、交互验收与 App.css 冻结；旧任务 22/30） |
 | `settings-sidebar-component-library-recovery` | archived | 2026-08-05 已归档；设置页 Sidebar 组件库壳层 delta 已合入 `openspec/specs/settings-interface/spec.md` |
 
-后续新实现一律以 active change 为准；确认吸收完成后，按 `frontend-surface-architecture-refactor` Phase 10 检查 `rg` 引用并删除或归档历史遗留文档，避免多个文档给出冲突定义。
+后续新实现一律以 active change 为准；快速面板选中、滚动、复制/粘贴反馈和 P95 验收已转入 `frontend-surface-architecture-refactor`，不会因旧提案归档而丢失。
 
 ## 已归档
 
@@ -60,8 +62,53 @@
 | `remotion-animation-workbench` | `openspec/changes/archive/2026-07-15-remotion-animation-workbench/` | 已同步到 `openspec/specs/animation-workbench/spec.md`；独立 Remotion workspace、motion 转发脚本、双 composition、双语场景配置和 README 已完成 |
 | `onboarding-to-settings-proposal` | `openspec/changes/archive/2026-07-16-onboarding-to-settings-proposal/` | 引导迁入设置页已完成（五步切换、capture toggle 实时保存、菜单移除 Onboarding 入口）；后续由 `onboarding-standalone-page` 把引导拆为独立窗口 |
 | `settings-sidebar-component-library-recovery` | `openspec/changes/archive/2026-08-05-settings-sidebar-component-library-recovery/` | 设置页 Sidebar 组件库恢复任务 14/14 完成，delta 已合入 `openspec/specs/settings-interface/spec.md` |
+| `main-panel-functional-layout-plan` | `openspec/changes/archive/2026-08-05-main-panel-functional-layout-plan/` | 以 11/37 归档；布局契约和未完成拆分任务由 `frontend-surface-architecture-refactor` 接管，未合并旧 spec |
+| `quick-panel-visual-regression-recovery` | `openspec/changes/archive/2026-08-05-quick-panel-visual-regression-recovery/` | 以 22/30 归档；交互与性能验收转入统一前端架构提案，未合并旧 spec |
 
 ## 当前 active change
+
+以下 11 个 change 来自 2026-08-05 的 live `openspec list`；已归档 change 不再计入当前执行队列：
+
+| 优先级 | Change | 当前进度 | 下一验收点 |
+| --- | --- | --- | --- |
+| P0 | `onboarding-standalone-page` | 24/51 | 正式 `.app` 验证开机启动、首次缺少 Accessibility 权限时仅打开一次引导、完成/跳过、托盘与全局快捷键不阻塞 |
+| P0 | `frontend-surface-architecture-refactor` | 36/84 | 验证虚线选中态、滚动跟随首个可见快捷分组、复制/粘贴即时反馈；采样 `quick.scroll/select/copy/paste` P95 <= 300ms |
+| P1 | `file-image-clipboard-support` | 75/83 | 完成文本、HTML、图片、文件的复制、展示、粘贴与磁盘清理实机矩阵 |
+| P1 | `clipboard-multi-format-fidelity` | 22/26 | 完成系统剪贴板多 representation 写回与监听去重实机矩阵 |
+| P2 | `external-hook-plugin-runtime` | 0/67 | 只评审并推进 Block A 读取侧；Block B 写入侧继续冻结 |
+| P3 | `project-demo-gif-pipeline` | 0/30 | 核心交互和 onboarding 稳定后再录制真实功能素材 |
+| P4 | `ai-model-plugin-productization` | 65/76 | 先复审产品 scope，不进入 quick panel 热路径 |
+| P4.1 | `vercel-ai-sdk-integration` | 30/38 | 等 SDK 文档与真实 provider 边界确认后再决定是否接入 |
+| P4.x | `mastra-agent-runtime-evaluation` | 11/25 | 完成可旁路 sidecar/workbench POC 设计和基线测量，不安装到产品主路径 |
+| P4.x | `local-model-quick-integration` | 4/16 | 与 AI 产品化、Vercel AI SDK、Mastra 三案统一做取舍，不单独开工 |
+| P4.5 | `codebase-modularity-refactor` | 6/26 | 只在功能开发触碰对应文件时同步推进 |
+
+## 后续开发计划
+
+1. **迭代 A：桌面体验验收与小修**
+   - 联合推进 `onboarding-standalone-page` 和 `frontend-surface-architecture-refactor`。
+   - 使用正式 bundle 身份验证开机启动、权限引导只弹一次、托盘/快捷键可用，以及快速面板选中、滚动、复制、粘贴交互。
+   - 记录 `window.__clipforgePerf.summary()` 的 `quick.scroll/select/copy/paste` P95；不满足 300ms 再做定向优化。
+
+2. **迭代 B：剪贴板格式闭环**
+   - 串行收尾 `file-image-clipboard-support` 与 `clipboard-multi-format-fidelity`，共用一套文本、HTML、图片、文件验收矩阵。
+   - 优先解决丢 representation、重复采集和磁盘残留，不扩展 AI 能力。
+
+3. **迭代 C：前端架构继续拆分**
+   - 在迭代 A 的交互基线固定后迁移 `clipboard-row.css`、选择/键盘 hooks 和剩余 surface 样式。
+   - 每个拆分步骤都复跑热路径边界和正式应用交互，避免结构重构引入体感回归。
+
+4. **迭代 D：运行时扩展决策**
+   - `external-hook-plugin-runtime` 只推进 Block A。
+   - `ai-model-plugin-productization`、`vercel-ai-sdk-integration`、`local-model-quick-integration`、`mastra-agent-runtime-evaluation` 先合并评估口径，再形成一份 runtime 取舍结论；结论前不新增重型依赖。
+
+5. **迭代 E：演示资产与治理**
+   - 核心体验稳定后推进 `project-demo-gif-pipeline`。
+   - `codebase-modularity-refactor` 继续随功能改动渐进执行，不单独阻塞产品交付。
+
+## 2026-07-16 active 快照（已失效）
+
+以下内容保留为历史交接记录，其中多个 change 已归档；当前执行以本节之前的 11 个 active change 和后续开发计划为准。
 
 | 优先级 | Change | 当前进度 | 接手建议 |
 | --- | --- | --- | --- |
@@ -84,7 +131,7 @@
 | P4.5 | `codebase-modularity-refactor` | 6/26 | 后置治理项，不作为近期多 Agent 功能开发主线；`test:unit` / file-size guard 已复跑通过，Agent 入口和 overlay 已补 `data-agent-*` 稳定 marker，verifier 已优先验证这些 marker，但完整 data-marker / 导出符号迁移和模块拆分仍后置。 |
 `reference-projects-research` 和 `.archive` 当前没有任务，不计入实现队列。
 
-## 推荐推进顺序
+## 2026-07-16 推荐顺序（已失效）
 
 1. `settings-service-unified-protocol`
    - 建立 Rust `SettingsService` 作为单一设置服务。
@@ -135,7 +182,7 @@
    - `codebase-modularity-refactor`
    治理任务只在功能开发触碰对应文件时顺手推进；不单独占用近期多 Agent 功能开发资源。后续校验脚本和结构化 verifier 的规划放在功能主线稳定之后。
 
-## Agent 分工建议
+## 2026-07-16 Agent 分工（已失效）
 
 | Agent | 范围 | 验收 |
 | --- | --- | --- |
@@ -147,7 +194,7 @@
 
 多 Agent 执行规则：每个 Agent 完成后必须更新对应 `openspec/changes/<change>/tasks.md`，并同步 `docs/PROPOSAL_ROADMAP.md` / `openspec/project.md` 中的进度或阻塞状态；未完成的 GUI、Tauri dev、外部文档项不得勾选。
 
-## 多 Agent 功能开发计划
+## 2026-07-16 多 Agent 计划（已失效）
 
 本计划按功能交付优先，不把治理脚本作为近期独立开发 lane。所有 Agent 可以在独立 worktree 或子任务环境中开发，但最终必须由主协调者复核后合入 `main`，不得绕过当前主分支的脏树安全检查。
 

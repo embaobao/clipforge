@@ -33,13 +33,12 @@
 
 | 提案 | 状态 | 说明 |
 |------|------|------|
-| [frontend-surface-architecture-refactor](./changes/frontend-surface-architecture-refactor/proposal.md) | P1 Phase 1 护栏进行中 | 前端 Surface 架构、路由拆分、业务功能区、主要页面布局、交互契约、主题样式分层和历史提案收口基线。Phase 1 护栏已落地：4 个 surface 根 `data-surface` marker、`scripts/verify-surface-boundaries.mjs`、App.css legacy 冻结、`main-panel-functional-layout-plan/tasks.md`、3 个历史提案标记 superseded。后续主面板、设置页、详情页、Agent 面板整合开发先对齐该提案 |
-| [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | P3 收尾，72/79 | 格式支持基础层：图片、文件、HTML/RTF 富文本剪贴板历史；`parses_png_dimensions`、`clipboard::write` 和 OpenSpec 校验已复跑通过，剩余真实复制/展示/粘贴和清理验证 |
+| [frontend-surface-architecture-refactor](./changes/frontend-surface-architecture-refactor/proposal.md) | P1，36/84 | 前端 Surface 架构、路由拆分、业务功能区、主要页面布局、交互契约、主题样式分层和历史提案收口基线。3 个历史提案已归档；下一步先完成快速面板虚线选中态、滚动跟随、复制/粘贴反馈和 P95 实机验收，再继续样式迁移与组件拆分 |
+| [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | P3 收尾，75/83 | 格式支持基础层：图片、文件、HTML/RTF 富文本剪贴板历史；`parses_png_dimensions`、`clipboard::write` 和 OpenSpec 校验已复跑通过，剩余真实复制/展示/粘贴和清理验证 |
 | [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) | P3 收尾，22/26 | 格式支持保真层：补齐 HTML/RTF/图片/文件的多 representation、纯文本降级和回写验证矩阵；`clipboard::write` 和 OpenSpec 校验已复跑通过，剩余系统剪贴板写回与监听去重实机验证 |
 | [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) | P4 讨论中，65/76 | Phase 0 scope 已复审，Phase 2-8 文档级定义已完成：模型 provider/profile/policy、AIOutput、Tiptap 增强边界、Manifest V2、Agent capability、MCP 工具面、设置页映射和产品 capability gate 已收敛；Context7 恢复前不进入 SDK/Tiptap 实现，Phase 9 仅保留边界/运行验证记录，不代表真实 SDK/provider/Tiptap 已接入 |
 | [vercel-ai-sdk-integration](./changes/vercel-ai-sdk-integration/proposal.md) | P4.1 后置进行中，30/38 | 已收敛为 AI 产品化后的候选切片，未确认版本/API 假设已降级为待 Context7 确认；摘要/embedding/job/provenance、非全量自动摘要、推荐候选范围和无 embedding store 降级策略已定义。已新增详情页 AI 摘要区和 `ai-summary` 服务边界，支持 `VITE_CLIPFORGE_AI_MOCK=1` 本地 mock 摘要、pending/ready/failed 状态、重新生成和当前详情上下文内的本地相似推荐；摘要区现在还展示 key points、category、provider/model provenance 和 generatedAt。列表行已显示 `metadata.aiSummary` 状态图标，右键菜单已提供“生成 AI 摘要”入口并写回 metadata；AI 摘要日志已收敛为 metadata-only helper，不记录 prompt/output/正文/URL/API key。Context7 quota 恢复前仍不能确认真实 SDK API、版本或安装命令，真实 OpenAI-compatible provider 调用和 Tauri dev 验证尚未实现 |
 | [codebase-modularity-refactor](./changes/codebase-modularity-refactor/proposal.md) | P4.5 后置治理，6/26 | 约束单文件规模、中文注释和按域拆分；`test:unit` / file-size guard 已复跑通过，Agent 入口和 overlay 已补 `data-agent-*` 稳定 marker，verifier 已优先验证这些 marker，但完整 verifier 结构化迁移和模块拆分仍后置，近期多 Agent 资源优先投向功能开发 |
-
 | [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) | P1.x 首期 A 实现收尾，24/51 | 已新增独立 `onboarding` 窗口、设置页轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录和开机启动设置；仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界。sidebar 全量常驻、兜底四态和标准化日志仍为后续 phase |
 | [mastra-agent-runtime-evaluation](./changes/mastra-agent-runtime-evaluation/proposal.md) | P4.x 评估提案，11/25 | Mastra 只作为 Agent runtime 候选评估，不直接安装依赖，不进 quick panel 热路径；如果进入 POC，只允许可关闭、可旁路的 sidecar/workbench runtime，并先证明 quick panel P95、内存、打包签名、离线启动、tool allowlist 与 Settings Service redaction 边界 |
 | [external-hook-plugin-runtime](./changes/external-hook-plugin-runtime/proposal.md) | P3 后置方案评审，0/67 | 外部 Hook 插件运行时精简为 Block A/B：Block A 只收敛读取侧 collector 到 Hook manifest、4 态生命周期、洋葱 priority、沙盒、节流、熔断、延迟补写和单个 `clipboard.hook.run`；Block B 写入侧（Proposal/Apply/content.write）冻结，等真实用户故事再解冻 |
@@ -65,13 +64,15 @@
 - `2026-07-16-clipboard-agent-panel` — 归档时 169/170；面板内 Agent 工作页，spec 并入 `specs/agent-panel`；剩余 1 项（真实 OpenAI-compatible provider 标准消息流验证）移出 backlog
 - `2026-07-16-detail-rich-editor-agent-bridge` — 归档时 77/81；详情页紧凑编辑器，spec 并入 `specs/detail-editor`；剩余 4 项（文本编辑保存、Markdown 取消不丢预览、保存并复制写回、保存并粘贴复用链路实机验证）移出 backlog
 - `2026-08-05-settings-sidebar-component-library-recovery` — 归档时 14/14；设置页 Sidebar 组件库恢复，spec 并入 `specs/settings-interface`
+- `2026-08-05-main-panel-functional-layout-plan` — 归档时 11/37；被统一前端架构吸收，使用 `--skip-specs`，剩余拆分与验收任务转入 `frontend-surface-architecture-refactor`
+- `2026-08-05-quick-panel-visual-regression-recovery` — 归档时 22/30；被统一前端架构吸收，使用 `--skip-specs`，剩余选中/滚动/复制/粘贴交互与性能验收转入 `frontend-surface-architecture-refactor`
 
 ## 建议推进顺序
 
-> 2026-07-16 已归档 settings-service-unified-protocol、settings-interface-redesign、onboarding-to-settings-proposal、top-nav-optimization、clipboard-agent-panel、detail-rich-editor-agent-bridge、app-internationalization-en-support 七个提案（实现基本完成，剩余仅实机验证项，详见「已归档提案」每条的剩余说明）。原 P0 / P1 / P1.1 / P1.2 / P2 推进顺序随归档作废，backlog 收敛为下列 4 项。
+> 2026-08-05 当前有 11 个 active change。近期只推进剪贴板核心体验、首次引导和实机验收；AI/Agent 运行时先做统一评估，不直接进入产品热路径。
 
-1. P1：确认 [frontend-surface-architecture-refactor](./changes/frontend-surface-architecture-refactor/proposal.md)，把主面板、详情、设置、Agent、系统状态反馈的布局和交互定义固定下来，后续开发不再回到多个历史提案反复改。
-2. P3：完成已实现能力的手动验证收尾，优先处理 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) 与 [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md)（图片 / 文件 / HTML 多格式写回与监听去重实机验证）。
-3. P4：先复审 [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) 的 scope，再决定哪些 AI 能力进入主线。
-4. P4.1：Context7 额度恢复后再评审 [vercel-ai-sdk-integration](./changes/vercel-ai-sdk-integration/proposal.md)，确认 AI SDK 接入边界后再决定是否并入 `ai-model-plugin-productization`。
-5. P4.5：后置处理 [codebase-modularity-refactor](./changes/codebase-modularity-refactor/proposal.md) 的校验脚本与模块化规划；仅在功能开发触碰对应文件时同步推进。
+1. P0：联合收尾 [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) 与 [frontend-surface-architecture-refactor](./changes/frontend-surface-architecture-refactor/proposal.md)，验证正式应用的开机启动、权限引导、虚线选中态、滚动跟随和复制/粘贴 P95。
+2. P1：完成 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) 与 [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) 的文本、HTML、图片、文件实机矩阵。
+3. P2：交互基线固定后继续前端 surface 拆分；`external-hook-plugin-runtime` 只推进读取侧 Block A，写入侧继续冻结。
+4. P4：统一复审 `ai-model-plugin-productization`、`vercel-ai-sdk-integration`、`local-model-quick-integration` 和 `mastra-agent-runtime-evaluation`，先形成 runtime 取舍结论，再决定是否进入 POC 或实现。
+5. P3/P4.5：核心体验稳定后再推进演示 GIF；模块化治理随触碰文件渐进完成，不单独阻塞功能交付。

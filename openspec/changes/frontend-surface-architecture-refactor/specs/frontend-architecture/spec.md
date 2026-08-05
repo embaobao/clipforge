@@ -98,12 +98,51 @@ ClipForge SHALL implement the quick panel as stable functional regions.
 - **THEN** it exposes ClipForge app actions such as settings, trash, shortcuts, diagnostics or quit
 - **AND** it does not introduce account, billing or team navigation unless a future product proposal explicitly adds those domains
 
+#### Scenario: App action menu styling stays compact and scoped
+
+- **GIVEN** the quick-panel app action menu is open
+- **WHEN** its header, rows, shortcuts, hover state or shadow is styled
+- **THEN** the menu remains compact and readable
+- **AND** selectors stay scoped to the quick-panel menu without changing detail actions or unrelated dropdowns
+
 #### Scenario: Multi-select state
 
 - **GIVEN** multi-select mode is active
 - **WHEN** one or more rows are selected
 - **THEN** ModeBar or an equivalent stable action region shows selection count and batch actions
 - **AND** row height and scroll position do not jump because of the action region
+
+### Requirement: Quick-panel feedback is immediate and scroll-aware
+
+ClipForge SHALL keep selection, scrolling, copy and paste feedback responsive while native work continues asynchronously.
+
+#### Scenario: Selected row uses the established dashed treatment
+
+- **GIVEN** a quick-panel row is the active selection
+- **WHEN** the row renders or selection changes
+- **THEN** it uses a single stable dashed outline as the selected-state treatment
+- **AND** it does not add a second animated pseudo-frame that obscures content or changes row geometry
+
+#### Scenario: Pointer scrolling follows the visible shortcut group
+
+- **GIVEN** grouped quick-panel items extend beyond the viewport
+- **WHEN** the user scrolls with a wheel or touch gesture until a different selectable group is visible first
+- **THEN** shortcut selection moves to the first item of that visible group
+- **AND** pointer scrolling exits keyboard-navigation mode without changing row height or causing layout shift
+
+#### Scenario: Copy or paste starts native work after visible feedback
+
+- **GIVEN** a selected clipboard item can be copied or pasted
+- **WHEN** the user triggers copy or paste
+- **THEN** the selected/copied/pending feedback is rendered before awaiting the native command
+- **AND** native completion or failure updates the final status without blocking subsequent scrolling or selection
+
+#### Scenario: Quick interaction latency is measured
+
+- **GIVEN** a controlled desktop target and a known application bundle identity
+- **WHEN** `quick.scroll`, `quick.select`, `quick.copy` and `quick.paste` are sampled through `window.__clipforgePerf`
+- **THEN** visible feedback has P95 latency no greater than 300ms
+- **AND** settings, provider, model or Agent runtime checks are not added to those measured hot paths
 
 ### Requirement: Product function areas have fixed interaction contracts
 
