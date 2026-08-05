@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "browser.chrome.example",
+  "name": "Chrome active tab example",
+  "version": "0.1.0",
+  "enabled": true,
+  "command": "./collector.sh",
+  "args": [],
+  "match": {
+    "bundleIds": ["com.google.Chrome", "com.google.Chrome.canary", "com.google.Chrome.beta", "com.google.Chrome.dev"]
+  },
+  "permissions": ["automation"],
+  "timeoutMs": 500,
+  "maxOutputBytes": 65536
+}

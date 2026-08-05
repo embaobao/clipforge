@@ -194,6 +194,8 @@ pub fn prepare_reset(
                     "captureImageEnabled",
                     "captureFileEnabled",
                     "captureSensitiveEnabled",
+                    "captureExternalContextOnClipboard",
+                    "enableExternalContextCollectors",
                     "imageMaxSizeMb",
                     "textMaxSizeMb",
                 ] {

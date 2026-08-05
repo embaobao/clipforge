@@ -44,7 +44,7 @@
 - [x] 新建 `src/clipboard/components/ClipboardContentPreview.tsx`（历史行 quick-content：AI 摘要徽标/图片/文件/middle-ellipsis+tooltip；helper 已迁 clipboard-domain，对抗式 review 确认零回归）
 - [x] 新建 `src/clipboard/components/ClipboardRowActions.tsx`（历史行 open-target/favorite + stopPropagation）
 - [x] 新建 `src/clipboard/components/ClipboardEmptyState.tsx`（合并 history/trash 两处空态，`variant` 复用）
-- [x] 新建 `src/clipboard/clipboard-domain.ts`（迁纯 helper 消除循环依赖）+ `src/clipboard/components/AppTooltip.tsx`
+- [x] 新建 `src/clipboard/clipboard-domain.ts`（迁纯 helper 消除循环依赖）+ `src/clipboard/components/AppTooltip.tsx`；图片预览通过 portal 挂到页面顶层，避免虚拟列表裁切
 - [x] 新建 `src/clipboard/components/PanelStatusFeedback.tsx`
 - [x] 新建 `src/clipboard/components/ClipContextMenu.tsx`（单条/多选双模式右键菜单；detail 收为 `onOpenDetail` prop，零运行时依赖 App；tsc + build + 四项边界校验通过，右键菜单事件顺序待 tauri dev 实机验证）
 - [ ] 迁移对应样式到 `src/clipboard/styles/clipboard-row.css`（独立成步，需 tauri dev 视觉验证）
@@ -53,7 +53,7 @@
 
 ## Phase 5：主面板交互层拆分
 
-- [x] 新建 `src/clipboard/components/TopCommandBar.tsx`（由 TopToolbar 覆盖）
+- [x] 新建 `src/clipboard/components/TopCommandBar.tsx`（由 TopToolbar 覆盖；默认保留拖拽留白，搜索仅在输入或 `/` 后展开）
 - [x] 新建 `src/clipboard/components/PanelMoreMenu.tsx`（由 TopToolbar 覆盖）
 - [ ] 新建 `src/clipboard/components/SearchBox.tsx`
 - [x] 新建 `src/clipboard/components/ClipboardViewTabs.tsx`（由 TopToolbar 覆盖）

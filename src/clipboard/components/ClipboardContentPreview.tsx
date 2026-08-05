@@ -4,6 +4,7 @@
 import { FileJson, Image as ImageIcon, Sparkles } from "lucide-react";
 import type { ClipItem } from "../../App";
 import type { ClipAiSummary } from "../../services/ai-summary";
+import { getImagePath } from "../../services/clipboard";
 import {
   getAiSummaryStatusLabel,
   getClipboardLine,
@@ -25,6 +26,8 @@ export interface ClipboardContentPreviewProps {
 /** 历史行内容预览：AI 摘要徽标 + 图片/文件缩略 + middle-ellipsis 主文案（带 tooltip）。 */
 export function ClipboardContentPreview({ item, fileMissing, aiSummary, tr }: ClipboardContentPreviewProps) {
   const parts = splitLineForMiddleEllipsis(getClipboardLine(item));
+  const imageThumbSrc = item.payloadKind === "image" ? getImagePath(item.thumbnailPath ?? item.imageFile) : null;
+  const imageThumbAlt = item.analysis.title || getClipboardLine(item) || tr("main.searchSuggestion.image");
   return (
     <div className="quick-content">
       {aiSummary && aiSummary.status !== "failed" ? (
@@ -33,9 +36,20 @@ export function ClipboardContentPreview({ item, fileMissing, aiSummary, tr }: Cl
         </span>
       ) : null}
       {item.payloadKind === "image" ? (
-        <span className="quick-media-thumb" title={item.imageFile ?? tr("main.searchSuggestion.image")}>
-          <ImageIcon size={13} />
-        </span>
+        imageThumbSrc ? (
+          <AppTooltip
+            className="quick-media-tooltip"
+            content={getItemTooltip(item, tr)}
+            preview={<img alt={imageThumbAlt} className="app-tooltip-preview-image" src={imageThumbSrc} />}
+            portal
+          >
+            <img alt={imageThumbAlt} className="quick-media-thumb" src={imageThumbSrc} />
+          </AppTooltip>
+        ) : (
+          <span className="quick-media-thumb" title={item.imageFile ?? tr("main.searchSuggestion.image")}>
+            <ImageIcon size={13} />
+          </span>
+        )
       ) : item.payloadKind === "file" ? (
         <span className="quick-media-file" title={fileMissing ? tr("main.list.fileMissing") : (item.fileTypes ?? tr("main.searchSuggestion.file"))}>
           <FileJson size={13} />

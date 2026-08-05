@@ -13,6 +13,7 @@ import {
   SidebarRail,
 } from "@/components/animate-ui/components/radix/sidebar";
 
+/** 设置页一级导航项：只承载分类入口，不直接耦合具体设置表单。 */
 export type SettingsSidebarItem = {
   id: string;
   label: string;
@@ -20,6 +21,7 @@ export type SettingsSidebarItem = {
   badge?: ReactNode;
 };
 
+/** 设置页侧边栏参数：由父级持有当前分类状态，组件只负责展示与切换。 */
 export type SettingsSidebarProps = {
   items: SettingsSidebarItem[];
   activeId: string;
@@ -39,7 +41,7 @@ export function SettingsSidebar({
   collapsible = "icon",
 }: SettingsSidebarProps) {
   return (
-    <Sidebar aria-label={label} className={className} collapsible={collapsible}>
+    <Sidebar aria-label={label} className={className} collapsible={collapsible} data-dev-probe="settings-sidebar">
       <SidebarHeader className="p-2">
         <div className="flex h-9 items-center gap-2 px-1 text-[13px] font-semibold text-foreground">
           <span className="grid size-7 place-items-center rounded-md border border-border bg-background text-[11px] shadow-sm">CF</span>
@@ -57,7 +59,7 @@ export function SettingsSidebar({
                 <SidebarMenuItem key={item.id}>
                   <SidebarMenuButton
                     className="h-8 rounded-md border-0 bg-transparent px-2 text-[13px] font-medium text-muted-foreground shadow-none data-[active=true]:bg-accent data-[active=true]:!text-primary-foreground data-[active=true]:shadow-sm"
-                    data-dev-probe={`settings-nav:${item.id}`}
+                    data-dev-probe={`settings-sidebar-item:${item.id}`}
                     isActive={active}
                     onClick={() => onChange(item.id)}
                     tooltip={item.label}

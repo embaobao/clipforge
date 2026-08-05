@@ -123,6 +123,46 @@ body,
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
+
+.settings-fallback {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  width: min(100%, 820px);
+  min-height: 112px;
+  padding: var(--space-4);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.settings-fallback strong {
+  display: block;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.settings-fallback p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.settings-status-panel-error {
+  flex-basis: 100%;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius-sm);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 17px;
+}
 .settings-section-save-chip {
   display: inline-flex;
   align-items: center;

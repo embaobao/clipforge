@@ -19,6 +19,7 @@ export default defineConfig(async () => ({
       input: {
         devPasteTarget: fileURLToPath(new URL("./dev-paste-target.html", import.meta.url)),
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        onboarding: fileURLToPath(new URL("./onboarding.html", import.meta.url)),
         settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
       },
     },

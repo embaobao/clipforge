@@ -20,6 +20,85 @@
   min-height: var(--cf-toolbar-height);
   height: var(--cf-toolbar-height);
   align-items: center;
+  cursor: grab;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar:active {
+  cursor: grabbing;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar button,
+.app-shell[data-surface="clipboard"] .top-toolbar [role="tab"] {
+  cursor: pointer;
+}
+
+.app-shell[data-surface="clipboard"] .top-toolbar input {
+  cursor: text;
+}
+
+/* 图片缩略图经过 tooltip 容器包裹，容器本身也必须占用固定尺寸，才能与文字行垂直居中。 */
+.app-shell[data-surface="clipboard"] .quick-content > .quick-media-tooltip {
+  display: inline-flex !important;
+  flex: 0 0 24px !important;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.app-shell[data-surface="clipboard"] .quick-media-tooltip > .quick-media-thumb {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* 图片预览挂到页面顶层，避开虚拟列表滚动容器的 overflow 裁切。 */
+.quick-panel-tooltip-card {
+  position: fixed !important;
+  z-index: 200 !important;
+  bottom: auto !important;
+  display: grid !important;
+  grid-template-rows: auto auto minmax(0, 1fr) !important;
+  gap: 7px !important;
+  width: min(196px, calc(100vw - 16px)) !important;
+  min-width: 0 !important;
+  max-width: min(196px, calc(100vw - 16px)) !important;
+  max-height: 248px !important;
+  padding: 9px !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: none !important;
+  transition: none !important;
+}
+
+.quick-panel-tooltip-card .app-tooltip-main {
+  gap: 2px !important;
+  min-height: 0 !important;
+  padding: 0 0 7px !important;
+}
+
+.quick-panel-tooltip-card .app-tooltip-main strong,
+.quick-panel-tooltip-card .app-tooltip-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-panel-tooltip-card .app-tooltip-preview {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.quick-panel-tooltip-card .app-tooltip-preview-image {
+  display: block;
+  max-width: 128px;
+  max-height: 128px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 
 .app-shell[data-surface="clipboard"] .top-toolbar .toolbar {
@@ -103,7 +182,8 @@
 }
 
 .app-shell[data-surface="clipboard"] .top-agent-button,
-.app-shell[data-surface="clipboard"] .top-menu-trigger {
+.app-shell[data-surface="clipboard"] .top-menu-trigger,
+.app-shell[data-surface="clipboard"] .top-trash-close {
   width: 28px;
   min-width: 28px;
   height: 28px;

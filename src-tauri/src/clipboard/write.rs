@@ -329,6 +329,7 @@ mod tests {
                 source_label: "Unit Test".to_string(),
                 source_app: None,
                 application_context: None,
+                collectors: json!({ "status": "not-requested", "results": [], "diagnostics": [] }),
                 observed_at: 1,
                 primary_format: primary_format.to_string(),
                 available_formats: vec![primary_format.to_string()],

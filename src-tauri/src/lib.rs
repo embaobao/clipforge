@@ -15,17 +15,22 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{
     menu::{Menu, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
 };
+#[cfg(desktop)]
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 
 mod application_context;
 mod clipboard;
+mod context_collector_runtime;
+mod context_collectors;
+mod context_collector_system;
 mod settings_service;
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
@@ -306,6 +311,9 @@ struct CaptureContextPayload {
     /// 应用级上下文是 best-effort 采集，旧记录缺失时按 None 兼容读取。
     #[serde(default)]
     application_context: Option<Value>,
+    /// 外部采集器按 pending/complete/partial/skipped 记录异步补写状态与各层结果。
+    #[serde(default)]
+    collectors: Value,
     observed_at: i64,
     primary_format: String,
     available_formats: Vec<String>,
@@ -431,6 +439,15 @@ struct FocusedInputBoundsPayload {
     width: f64,
     height: f64,
     source: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchAtLoginPayload {
+    supported: bool,
+    enabled: bool,
+    desired: bool,
+    message: String,
 }
 
 #[derive(Clone)]
@@ -2350,6 +2367,32 @@ fn log_slow_settings_operation(operation: &str, duration_ms: i64) {
     }
 }
 
+fn log_panel_open_step(reason: &str, step: &str, started: Instant, last: &mut Instant) {
+    let now = Instant::now();
+    let step_ms = now.duration_since(*last).as_millis();
+    let total_ms = now.duration_since(started).as_millis();
+    if step_ms > 40 || total_ms > 120 {
+        log_to_file(
+            "warn",
+            "panel-open-perf",
+            &format!(
+                "reason={} step={} stepMs={} totalMs={}",
+                reason, step, step_ms, total_ms
+            ),
+        );
+    } else {
+        log_to_file(
+            "debug",
+            "panel-open-perf",
+            &format!(
+                "reason={} step={} stepMs={} totalMs={}",
+                reason, step, step_ms, total_ms
+            ),
+        );
+    }
+    *last = now;
+}
+
 fn redact_settings_value(value: &Value) -> Value {
     let mut redacted = value.clone();
     // 抹掉明文 apiKey（B7）：schema 同时接受新结构 agent.providers[] 和 legacy 顶层 agentProviders[]，
@@ -2382,6 +2425,114 @@ fn redact_provider_api_key(provider: &mut Value) {
             );
         }
     }
+}
+
+fn desired_launch_at_login(settings: &Value) -> bool {
+    settings
+        .get("launchAtLogin")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
+#[cfg(desktop)]
+fn read_launch_at_login_status<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    desired: bool,
+) -> LaunchAtLoginPayload {
+    match app.autolaunch().is_enabled() {
+        Ok(enabled) => LaunchAtLoginPayload {
+            supported: true,
+            enabled,
+            desired,
+            message: if enabled {
+                "Launch at login is enabled".to_string()
+            } else {
+                "Launch at login is disabled".to_string()
+            },
+        },
+        Err(error) => LaunchAtLoginPayload {
+            supported: false,
+            enabled: false,
+            desired,
+            message: format!("Launch at login status unavailable: {error}"),
+        },
+    }
+}
+
+#[cfg(not(desktop))]
+fn read_launch_at_login_status<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    desired: bool,
+) -> LaunchAtLoginPayload {
+    LaunchAtLoginPayload {
+        supported: false,
+        enabled: false,
+        desired,
+        message: "Launch at login is only available on desktop builds".to_string(),
+    }
+}
+
+#[cfg(desktop)]
+fn set_launch_at_login_native<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    enabled: bool,
+) -> Result<LaunchAtLoginPayload, String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|error| error.to_string())?;
+    } else {
+        manager.disable().map_err(|error| error.to_string())?;
+    }
+    Ok(read_launch_at_login_status(app, enabled))
+}
+
+#[cfg(not(desktop))]
+fn set_launch_at_login_native<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    enabled: bool,
+) -> Result<LaunchAtLoginPayload, String> {
+    Ok(read_launch_at_login_status(app, enabled))
+}
+
+fn sync_launch_at_login_from_settings<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    settings: &Value,
+    reason: &str,
+) {
+    let desired = desired_launch_at_login(settings);
+    match set_launch_at_login_native(app, desired) {
+        Ok(status) => log_to_file(
+            "info",
+            "autostart",
+            &format!(
+                "sync reason={} desired={} enabled={} supported={}",
+                reason, status.desired, status.enabled, status.supported
+            ),
+        ),
+        Err(error) => log_to_file(
+            "warn",
+            "autostart",
+            &format!("sync reason={} failed: {}", reason, error),
+        ),
+    }
+}
+
+#[tauri::command]
+fn get_launch_at_login<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<LaunchAtLoginPayload, String> {
+    let desired = read_user_settings()
+        .map(|payload| desired_launch_at_login(&payload.settings))
+        .unwrap_or(true);
+    Ok(read_launch_at_login_status(&app, desired))
+}
+
+#[tauri::command]
+fn set_launch_at_login<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    enabled: bool,
+) -> Result<LaunchAtLoginPayload, String> {
+    set_launch_at_login_native(&app, enabled)
 }
 
 fn settings_json_schema() -> Value {
@@ -2424,6 +2575,8 @@ fn settings_json_schema() -> Value {
             "panelWidth": { "type": "integer", "minimum": 300, "maximum": 1200 },
             "panelHeight": { "type": "integer", "minimum": 240, "maximum": 1200 },
             "onboardingCompleted": { "type": "boolean" },
+            "onboardingShownAt": { "type": ["integer", "null"], "minimum": 0 },
+            "launchAtLogin": { "type": "boolean" },
             "logMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 2048 },
             "logKeepRatio": { "type": "number", "minimum": 0.05, "maximum": 1 },
             "logMaxLines": { "type": "integer", "minimum": 100, "maximum": 2000000 },
@@ -2437,6 +2590,8 @@ fn settings_json_schema() -> Value {
             "captureFileEnabled": { "type": "boolean" },
             "captureSensitiveEnabled": { "type": "boolean" },
             "captureApplicationContext": { "type": "boolean" },
+            "captureExternalContextOnClipboard": { "type": "boolean" },
+            "enableExternalContextCollectors": { "type": "boolean" },
             "imageMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 4096 },
             "textMaxSizeMb": { "type": "integer", "minimum": 1, "maximum": 1024 },
             "agentProviders": { "$ref": "#/$defs/agentProvidersLegacy" },
@@ -2784,6 +2939,9 @@ fn settings_service_patch<R: tauri::Runtime>(
     let changed_paths = draft.changed_paths;
     let next = draft.next;
     write_user_settings(next.clone())?;
+    if changed_paths.iter().any(|path| path == "$.launchAtLogin") {
+        sync_launch_at_login_from_settings(&app, &next, "settings-service-patch");
+    }
     sync_global_shortcut_registration(&app);
     refresh_tray_menu_after_settings_write(&app, "settings-service-patch");
     let updated_at = now_millis()?;
@@ -2837,6 +2995,7 @@ fn settings_service_replace<R: tauri::Runtime>(
     let changed_paths = draft.changed_paths;
     let next = draft.next;
     write_user_settings(next.clone())?;
+    sync_launch_at_login_from_settings(&app, &next, "settings-service-replace");
     sync_global_shortcut_registration(&app);
     refresh_tray_menu_after_settings_write(&app, "settings-service-replace");
     let updated_at = now_millis()?;
@@ -2894,6 +3053,7 @@ fn settings_service_reset<R: tauri::Runtime>(
     let changed_paths = draft.changed_paths;
     let next = draft.next;
     write_user_settings(next.clone())?;
+    sync_launch_at_login_from_settings(&app, &next, "settings-service-reset");
     sync_global_shortcut_registration(&app);
     refresh_tray_menu_after_settings_write(&app, "settings-service-reset");
     let updated_at = now_millis()?;
@@ -3866,6 +4026,15 @@ fn capture_current_clipboard(
     capture_clip_payload(payload, source_label, observed_at)
 }
 
+/// 采集当前前台应用的实时上下文；该命令不写入剪贴板历史，外部脚本必须显式开启。
+#[tauri::command]
+fn capture_live_application_context(
+    collector_id: Option<String>,
+    include_external: Option<bool>,
+) -> Result<Value, String> {
+    context_collectors::capture_live_context(collector_id.as_deref(), include_external.unwrap_or(false))
+}
+
 #[tauri::command]
 fn dev_read_clipboard_text() -> Result<String, String> {
     if !cfg!(debug_assertions) {
@@ -3905,6 +4074,9 @@ fn capture_clip_payload(
     let source_label_value = source_label.unwrap_or_else(|| "Clipboard".to_string());
     let include_application_context = should_capture_application_context();
     let application_snapshot = capture_application_snapshot(include_application_context);
+    let delayed_external_context = include_application_context
+        && application_snapshot.is_some()
+        && context_collectors::delayed_collection_enabled();
     let source_app = application_snapshot
         .as_ref()
         .map(|snapshot| &snapshot.source_app);
@@ -3918,11 +4090,17 @@ fn capture_clip_payload(
     let capture_context = make_capture_context(
         &source_label_value,
         source_app,
-        application_context,
+        application_context.clone(),
         observed_at,
         &primary_format,
         &draft.available_formats,
+        delayed_external_context,
     );
+    let delayed_application_context = if delayed_external_context {
+        application_context.clone()
+    } else {
+        None
+    };
     let capture_context_json = json_string(&capture_context)?;
     let source_app_name = source_app.map(|s| s.name.as_str()).unwrap_or("");
     let source_app_bundle = source_app.map(|s| s.bundle_id.as_str()).unwrap_or("");
@@ -3954,6 +4132,9 @@ fn capture_clip_payload(
         )
         .map_err(|error| error.to_string())?;
         let item = load_clip(&conn, &id)?;
+        if let Some(application_context) = delayed_application_context {
+            context_collectors::schedule_delayed_collection(id.clone(), application_context);
+        }
         return Ok(CaptureClipPayload {
             status: "promoted".to_string(),
             item,
@@ -4023,6 +4204,9 @@ fn capture_clip_payload(
     )
     .map_err(|error| error.to_string())?;
     upsert_fts(&conn, &id)?;
+    if let Some(application_context) = delayed_application_context {
+        context_collectors::schedule_delayed_collection(id.clone(), application_context);
+    }
     let item = load_clip(&conn, &id)?;
     Ok(CaptureClipPayload {
         status: "created".to_string(),
@@ -5313,6 +5497,134 @@ fn open_settings_window_with_section<R: tauri::Runtime>(
     open_settings_window_internal(app, Some(section.as_str()))
 }
 
+fn open_onboarding_window_internal<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    source: &str,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("onboarding") {
+        set_regular_activation_policy(&app)?;
+        window
+            .show()
+            .map_err(|error| command_error("ONBOARDING_WINDOW_SHOW_FAILED", error.to_string()))?;
+        activate_settings_app();
+        focus_settings_window_native(&window);
+        window
+            .set_focus()
+            .map_err(|error| command_error("ONBOARDING_WINDOW_FOCUS_FAILED", error.to_string()))?;
+        log_to_file(
+            "info",
+            "onboarding-window",
+            &format!("reused onboarding window source={source}"),
+        );
+        return Ok(());
+    }
+
+    set_regular_activation_policy(&app)?;
+    let window = WebviewWindowBuilder::new(&app, "onboarding", WebviewUrl::App("onboarding.html".into()))
+        .title(native_tr("window.onboarding.title"))
+        .inner_size(640.0, 560.0)
+        .min_inner_size(640.0, 560.0)
+        .resizable(false)
+        .decorations(true)
+        .transparent(false)
+        .always_on_top(false)
+        .visible_on_all_workspaces(false)
+        .build()
+        .map_err(|error| command_error("ONBOARDING_WINDOW_BUILD_FAILED", error.to_string()))?;
+    if let Err(error) = window.center() {
+        log_to_file(
+            "warn",
+            "onboarding-window",
+            &format!("center failed: {}", error),
+        );
+    }
+    window
+        .show()
+        .map_err(|error| command_error("ONBOARDING_WINDOW_SHOW_FAILED", error.to_string()))?;
+    activate_settings_app();
+    focus_settings_window_native(&window);
+    window
+        .set_focus()
+        .map_err(|error| command_error("ONBOARDING_WINDOW_FOCUS_FAILED", error.to_string()))?;
+    log_to_file(
+        "info",
+        "onboarding-window",
+        &format!("created onboarding window source={source}"),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+fn open_onboarding_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    open_onboarding_window_internal(app, "manual")
+}
+
+fn maybe_open_onboarding_on_startup<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(700));
+        let _write_guard = match SETTINGS_WRITE_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(error) => {
+                log_to_file(
+                    "warn",
+                    "onboarding-window",
+                    &format!("startup check lock failed: {error}"),
+                );
+                return;
+            }
+        };
+        let mut settings = match read_user_settings() {
+            Ok(payload) => payload.settings,
+            Err(error) => {
+                log_to_file(
+                    "warn",
+                    "onboarding-window",
+                    &format!("startup read settings failed: {error}"),
+                );
+                return;
+            }
+        };
+        let onboarding_completed = settings
+            .get("onboardingCompleted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let already_shown = settings.get("onboardingShownAt").and_then(Value::as_i64).is_some();
+        let accessibility_missing = check_accessibility_permission_platform()
+            .map(|payload| payload.status != "granted")
+            .unwrap_or(false);
+        if onboarding_completed || already_shown || !accessibility_missing {
+            log_to_file(
+                "debug",
+                "onboarding-window",
+                &format!(
+                    "startup guide skipped completed={} shown={} accessibilityMissing={}",
+                    onboarding_completed, already_shown, accessibility_missing
+                ),
+            );
+            return;
+        }
+        let shown_at = now_millis().unwrap_or_default();
+        if let Some(object) = settings.as_object_mut() {
+            object.insert("onboardingShownAt".to_string(), json!(shown_at));
+        }
+        if let Err(error) = write_user_settings(settings) {
+            log_to_file(
+                "warn",
+                "onboarding-window",
+                &format!("startup write onboardingShownAt failed: {error}"),
+            );
+        }
+        drop(_write_guard);
+        if let Err(error) = open_onboarding_window_internal(app, "startup-permission-check") {
+            log_to_file(
+                "warn",
+                "onboarding-window",
+                &format!("startup open onboarding failed: {error}"),
+            );
+        }
+    });
+}
+
 #[tauri::command]
 fn cleanup_clip_records(
     retention_days: i64,
@@ -5428,6 +5740,9 @@ fn update_clipforge_settings<R: tauri::Runtime>(
     merge_json_object(&mut current, input);
     let changed_paths = settings_changed_paths(&previous, &current);
     write_user_settings(current.clone())?;
+    if changed_paths.iter().any(|path| path == "$.launchAtLogin") {
+        sync_launch_at_login_from_settings(&app, &current, "legacy-settings-patch");
+    }
     sync_global_shortcut_registration(&app);
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         match build_tray_menu(&app) {
@@ -5568,6 +5883,8 @@ fn native_tr(key: &str) -> &'static str {
     match (zh, key) {
         (true, "window.settings.title") => "ClipForge 设置",
         (false, "window.settings.title") => "ClipForge Settings",
+        (true, "window.onboarding.title") => "ClipForge 引导",
+        (false, "window.onboarding.title") => "ClipForge Onboarding",
         (true, "tray.openQuick") => "打开快捷面板",
         (false, "tray.openQuick") => "Open Quick Panel",
         (true, "tray.preferences") => "偏好设置…",
@@ -6511,7 +6828,7 @@ fn reset_accessibility_permission_platform() -> Result<AccessibilityPermissionPa
             APP_BUNDLE_IDENTIFIER
         ),
     );
-    request_accessibility_permission_platform()
+    check_accessibility_permission_platform()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -7285,6 +7602,7 @@ fn make_capture_context(
     observed_at: i64,
     primary_format: &str,
     available_formats: &[String],
+    delayed_external_context: bool,
 ) -> CaptureContextPayload {
     CaptureContextPayload {
         schema_version: 2,
@@ -7299,6 +7617,11 @@ fn make_capture_context(
             })
         }),
         application_context,
+        collectors: json!({
+            "status": if delayed_external_context { "pending" } else { "not-requested" },
+            "results": [],
+            "diagnostics": [],
+        }),
         observed_at,
         primary_format: primary_format.to_string(),
         available_formats: available_formats.to_vec(),
@@ -7447,6 +7770,11 @@ fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
                     source_label: source.clone(),
                     source_app: None,
                     application_context: None,
+                    collectors: json!({
+                        "status": "not-requested",
+                        "results": [],
+                        "diagnostics": ["capture context was not readable"],
+                    }),
                     observed_at: row.get::<_, i64>(27).unwrap_or_default(),
                     primary_format: primary_format.clone(),
                     available_formats: available_formats.clone(),
@@ -7714,7 +8042,7 @@ fn ensure_paste_accessibility_permission() -> Result<(), String> {
     // 注意：绝不在粘贴热路径上自动 `tccutil reset`。那会清掉 ClipForge 自己的辅助功能授权，
     // 之后 AXIsProcessTrusted() 持续为 false，导致每次粘贴都被这里 abort —— 自我放大成
     // 永久粘贴失败，直到用户重新授权并重启。stale cdhash 的只读检测 / 显式重置只在
-    // get_accessibility_diagnostics 与手动「重置权限」里进行。
+    // get_accessibility_diagnostics 与手动「重置权限」里进行；重置后只读状态并引导用户去系统设置。
     if ACCESSIBILITY_PROMPTED.swap(true, Ordering::SeqCst) {
         log_to_file(
             "warn",
@@ -8377,6 +8705,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 否则重启后前端读到 panelPinned=true（黑按钮）但 Rust PANEL_PINNED 仍为 false，
     // 任何走 Rust hide_panel 的路径（托盘/快捷键 toggle/命令）会误隐藏已固定面板。
     if let Ok(settings) = read_user_settings() {
+        sync_launch_at_login_from_settings(&app_handle, &settings.settings, "app-startup");
         if let Some(pinned) = settings
             .settings
             .get("panelPinned")
@@ -8390,6 +8719,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
+    maybe_open_onboarding_on_startup(app.handle().clone());
 
     // 启动后台剪贴板监听：脱离 WebView，隐藏时也能工作。
     // 监听、去重、设置过滤和入库统一收敛在 clipboard::watcher，避免保留第二条采集路径。
@@ -10223,6 +10553,10 @@ pub fn run() {
     }
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--background"]),
+        ))
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -10264,6 +10598,7 @@ pub fn run() {
             agent_restore_session,
             capture_clip_record,
             capture_current_clipboard,
+            capture_live_application_context,
             dev_read_clipboard_text,
             query_clip_records,
             search_clip_records,
@@ -10304,6 +10639,9 @@ pub fn run() {
             set_panel_mode,
             open_settings_window,
             open_settings_window_with_section,
+            open_onboarding_window,
+            get_launch_at_login,
+            set_launch_at_login,
             show_quick_panel_command,
             hide_quick_panel_command,
             toggle_quick_panel_command,
@@ -10338,10 +10676,14 @@ fn open_panel<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     reason: &str,
 ) -> Result<PanelTriggerPayload, String> {
+    let panel_started = Instant::now();
+    let mut panel_last_step = panel_started;
     if let Some(window) = app.get_webview_window("main") {
         maybe_prompt_accessibility_on_first_panel(app, reason);
+        log_panel_open_step(reason, "first-permission-dispatch", panel_started, &mut panel_last_step);
         let strategy = get_strategy_for_source(reason);
         let strategy_clone = strategy.clone();
+        log_panel_open_step(reason, "resolve-strategy", panel_started, &mut panel_last_step);
 
         // 入口诊断：来源 -> 策略，以及【逻辑点】光标与其所在屏。配合下游各 position_* 的结果日志，
         // 可完整复现一次唤起的定位决策链（用于排查「出现在错误的屏/位置」）。
@@ -10349,9 +10691,11 @@ fn open_panel<R: tauri::Runtime>(
         let cursor_monitor = monitor_for_logical_point(&window, cx, cy)
             .map(|m| get_monitor_id(&m))
             .unwrap_or_default();
+        log_panel_open_step(reason, "cursor-monitor", panel_started, &mut panel_last_step);
         let acc = check_accessibility_permission_platform()
             .map(|a| a.status)
             .unwrap_or_default();
+        log_panel_open_step(reason, "accessibility-status", panel_started, &mut panel_last_step);
         log_to_file(
             "debug",
             "panel-position",
@@ -10382,6 +10726,7 @@ fn open_panel<R: tauri::Runtime>(
             .map(|(_, _, h)| h)
             .unwrap_or(panel_h);
         let _ = window.set_size(LogicalSize::new(panel_width, panel_height));
+        log_panel_open_step(reason, "size-and-height", panel_started, &mut panel_last_step);
 
         // 2. 同步应用定位策略（单次定位，不重复）
         let position_source: String =
@@ -10398,22 +10743,27 @@ fn open_panel<R: tauri::Runtime>(
                     format!("fallback-{:?}", strategy_clone)
                 }
             };
+        log_panel_open_step(reason, "position", panel_started, &mut panel_last_step);
 
         // 3. 显示窗口
         show_panel_window(app, &window);
+        log_panel_open_step(reason, "show-window", panel_started, &mut panel_last_step);
         let _ = window.emit("clipforge://show-quick-panel", reason);
+        log_panel_open_step(reason, "emit-show", panel_started, &mut panel_last_step);
 
         // 不再在显示后用焦点输入框位置【覆盖】定位：那条 osascript 异步路径会在面板已可见时
         // 再次 set_panel_position，造成「先出现在光标处、再跳到输入框处」的可见跳动（用户反映像
         // bug 一样闪烁）。按需求：触发那一刻位置确定即可（上面的同步 apply_position_strategy），
         // 显示之后不再移动面板，消除闪烁。
 
-        Ok(panel_trigger_payload(
+        let payload = panel_trigger_payload(
             &window,
             reason,
             &position_source,
             &format!("{:?}", strategy_clone),
-        ))
+        );
+        log_panel_open_step(reason, "payload", panel_started, &mut panel_last_step);
+        Ok(payload)
     } else {
         Err("main window is not available".to_string())
     }
@@ -11714,6 +12064,39 @@ fn mcp_tool_specs() -> Vec<McpToolSpec> {
             }),
         },
         McpToolSpec {
+            name: "clipboard.context.live",
+            description: "Capture a live, metadata-only snapshot of the current frontmost application. External collectors require explicit includeExternal=true and the enableExternalContextCollectors setting.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "collectorId": { "type": "string", "description": "Optional external collector id to run." },
+                    "includeExternal": { "type": "boolean", "description": "Run matching user-installed read-only collectors." }
+                }
+            }),
+        },
+        McpToolSpec {
+            name: "clipboard.context.collectors.list",
+            description: "List built-in and user-installed application context collectors plus their diagnostics.",
+            input_schema: || json!({ "type": "object", "properties": {} }),
+        },
+        McpToolSpec {
+            name: "clipboard.context.collector.contract",
+            description: "Return the application context collector v1 contract, safety rules, and Chrome adapter example.",
+            input_schema: || json!({ "type": "object", "properties": {} }),
+        },
+        McpToolSpec {
+            name: "clipboard.context.collector.debug",
+            description: "Run one matching external collector against the current frontmost application and return its input, output, timing, and redaction diagnostics.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "collectorId": { "type": "string" },
+                    "fixture": { "type": "object", "description": "Optional synthetic collector input for development without opening the target app." }
+                },
+                "required": ["collectorId"]
+            }),
+        },
+        McpToolSpec {
             name: "clipboard.content.parse",
             description: "Parse URL, file path, JSON, command, code block, error log, and Markdown candidates without executing them.",
             input_schema: || json!({
@@ -12207,6 +12590,14 @@ fn mcp_next_actions(tool: &str) -> Vec<&'static str> {
             "clipboard.content.parse id=<item id>",
             "clipboard.search text=<keyword>",
         ],
+        "clipboard.context.live" => vec![
+            "clipboard.context.collectors.list",
+            "clipboard.context.collector.contract",
+            "clipboard.context.collector.debug collectorId=<id>",
+        ],
+        "clipboard.context.collectors.list" => vec!["clipboard.context.collector.contract"],
+        "clipboard.context.collector.contract" => vec!["clipboard.context.collectors.list"],
+        "clipboard.context.collector.debug" => vec!["clipboard.context.live includeExternal=true"],
         "clipboard.content.parse" => vec![
             "clipboard.capture content=<text>",
             "clipboard.search text=<keyword>",
@@ -12361,6 +12752,7 @@ fn mcp_context_reference(item: &ClipItemPayload, include_content: bool) -> Value
             "primaryFormat": item.capture_context.primary_format,
             "availableFormats": item.capture_context.available_formats,
             "applicationContext": item.capture_context.application_context,
+            "collectors": item.capture_context.collectors,
             "environment": item.capture_context.environment,
         },
         "provenance": {
@@ -12476,6 +12868,7 @@ mod context_snapshot_tests {
                     "kind": "browser",
                     "browser": { "url": "https://example.com", "title": "Example" }
                 })),
+                collectors: json!({ "status": "complete", "results": [], "diagnostics": [] }),
                 observed_at: 1,
                 primary_format: "text/plain".to_string(),
                 available_formats: vec!["text/plain".to_string()],
@@ -12895,6 +13288,26 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             } else {
                 serde_json::to_value(item).map_err(|error| (-32000, error.to_string()))?
             }
+        }
+        "clipboard.context.live" => context_collectors::capture_live_context(
+            args.get("collectorId").and_then(Value::as_str),
+            args.get("includeExternal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )
+        .map_err(|error| (-32000, error))?,
+        "clipboard.context.collectors.list" => context_collectors::list_collectors(),
+        "clipboard.context.collector.contract" => context_collectors::collector_catalog(),
+        "clipboard.context.collector.debug" => {
+            let collector_id = args
+                .get("collectorId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| (-32602, "clipboard.context.collector.debug requires collectorId".to_string()))?;
+            context_collectors::debug_collector(
+                collector_id,
+                args.get("fixture").cloned(),
+            )
+            .map_err(|error| (-32000, error))?
         }
         "clipboard.context.compose" => {
             let conn = open_clip_db().map_err(|error| (-32000, error))?;

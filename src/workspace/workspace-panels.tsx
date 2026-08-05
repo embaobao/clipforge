@@ -30,6 +30,7 @@ import { getImagePath, type FilePathStatus } from "../services/clipboard";
 import type { ClipAiSummary } from "../services/ai-summary";
 import type { EditorSuggestionResult } from "../services/contracts";
 import { analyzeSmartFormats } from "../smart-format";
+import { getFileNameFromPath } from "../clipboard/clipboard-domain";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -944,7 +945,8 @@ function ImageFilePreview({
   tr: WorkspaceTr;
 }) {
   const src = clipImageSrc(clip);
-  const name = clip.imageFile || clip.analysis.attachment?.name || clip.content;
+  const path = clip.imageFile || clip.analysis.attachment?.target || clip.thumbnailPath || "";
+  const name = getFileNameFromPath(path) || clip.analysis.attachment?.name || clip.analysis.title || clip.content;
   return (
     <div className="detail-binary-preview">
       <div className={actualSize ? "detail-image-stage actual-size" : "detail-image-stage"}>
@@ -960,6 +962,7 @@ function ImageFilePreview({
         <span>{clip.width && clip.height ? `${clip.width} x ${clip.height}` : tr("main.payloadKind.image")}</span>
         {clip.size ? <span>{Math.round(clip.size / 1024)} KB</span> : null}
         {name ? <span title={name}>{name}</span> : null}
+        {path ? <span className="detail-binary-path" title={path}>{path}</span> : null}
       </div>
       <AvailableFormatsRow clip={clip} tr={tr} />
       {previewOpen && src ? (

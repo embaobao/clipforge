@@ -17,6 +17,22 @@ export type AppTooltipContent = {
   body: string;
 };
 
+/** 从路径或 URL 中提取最后一段文件名，保留查询串之前的主体名。 */
+export function getFileNameFromPath(value: string | null | undefined) {
+  if (!value) return "";
+  const normalized = value.replace(/^file:\/\//, "");
+  try {
+    if (/^https?:\/\//i.test(normalized)) {
+      const url = new URL(normalized);
+      return decodeURIComponent(url.pathname.split("/").filter(Boolean).at(-1) || url.hostname);
+    }
+  } catch {
+    // ignore and fall through to filesystem-style basename parsing
+  }
+  const clean = normalized.split(/[?#]/)[0] ?? normalized;
+  return clean.split(/[\\/]/).filter(Boolean).at(-1) || clean;
+}
+
 /** 中段省略：长文案从中间截断（头部 + ... + 尾部）。 */
 export function middleEllipsis(value: string, head = 34, tail = 14) {
   const normalized = value.replace(/\s+/g, " ").trim();
@@ -57,11 +73,17 @@ export function getFilePathsFromClip(item: ClipItem) {
 /** 取列表行主文案：image/file 取文件名，其它取首行纯文本。 */
 export function getClipboardLine(item: ClipItem) {
   if (item.payloadKind === "image") {
-    return item.imageFile || item.analysis.attachment?.name || item.content || item.analysis.title || "Image";
+    return (
+      getFileNameFromPath(item.imageFile) ||
+      item.analysis.attachment?.name ||
+      getFileNameFromPath(item.thumbnailPath) ||
+      item.analysis.title ||
+      "Image"
+    );
   }
   if (item.payloadKind === "file") {
     const files = getFilePathsFromClip(item);
-    const first = files[0]?.split(/[\\/]/).filter(Boolean).at(-1);
+    const first = getFileNameFromPath(files[0]);
     return first ? `${first}${files.length > 1 ? ` +${files.length - 1}` : ""}` : item.analysis.title || item.content;
   }
   // 优先用纯文本渲染：HTML/RTF 等 clip 的 content 是源码，plainText 才是用户可见的文字。

@@ -1,8 +1,8 @@
 // 主面板顶部工具栏（frontend-surface-architecture-refactor Phase B）
 // 从 App.tsx 抽出：视图切换、搜索槽、Agent 按钮、更多菜单。
-import type { PointerEvent, ReactNode } from "react";
+import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Bot, Check, Heart, History, MoreHorizontal, Settings2, Trash2 } from "lucide-react";
+import { Bot, Check, Heart, History, MoreHorizontal, Settings2, Trash2, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,11 +24,15 @@ import type { PanelSurface, ViewKey } from "../../App";
 import { PanelStatusFeedback } from "./PanelStatusFeedback";
 
 const dockButtonTransition = { type: "spring", stiffness: 430, damping: 30, mass: 0.42 } as const;
+type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 
+/** 主面板顶部工具栏 props：承载剪贴板视图切换、搜索槽和面板级快捷键边界。 */
 export interface TopToolbarProps {
   activeSurface: PanelSurface;
   activeView: ViewKey;
   agentContextCount: number;
+  /** 面板级方向键导航；用于避免顶部栏按钮抢占列表下钻/返回快捷键。 */
+  onPanelArrowKey?: (key: PanelArrowKey) => void;
   onDrag: (event: PointerEvent<HTMLElement>) => void;
   onOpenAgent: () => void;
   onOpenSettings: () => void;
@@ -44,6 +48,7 @@ export function TopToolbar({
   activeSurface,
   activeView,
   agentContextCount,
+  onPanelArrowKey,
   onDrag,
   onOpenAgent,
   onOpenSettings,
@@ -60,9 +65,24 @@ export function TopToolbar({
       onViewChange(value);
     }
   };
+  const handleToolbarKeyDownCapture = (event: KeyboardEvent<HTMLElement>) => {
+    if (!onPanelArrowKey) return;
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onPanelArrowKey(event.key);
+  };
 
   return (
-    <header className="top-toolbar" data-dev-probe="top-toolbar" data-tauri-drag-region onPointerDown={onDrag}>
+    <header
+      className="top-toolbar"
+      data-dev-probe="top-toolbar"
+      data-tauri-drag-region
+      onKeyDownCapture={handleToolbarKeyDownCapture}
+      onPointerDown={onDrag}
+    >
       {showTabs ? (
         <Tabs className="top-view-tabs" data-dev-probe="top-view-tabs" value={toolbarValue} onValueChange={handleToolbarValueChange}>
           <TabsList className="top-view-actions" data-dev-probe="top-view-actions" onPointerDown={(event) => event.stopPropagation()}>
@@ -104,6 +124,29 @@ export function TopToolbar({
       </div>
       <div className="top-toolbar-action-slot" data-dev-probe="top-action-slot" onPointerDown={(event) => event.stopPropagation()}>
         <PanelStatusFeedback status={status} tr={tr} />
+        {activeSurface === "clipboard" && activeView === "trash" ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <motion.button
+                aria-label={tr("main.dock.closeTrash")}
+                className="top-trash-close icon-button subtle"
+                data-dev-probe="top-trash-close"
+                data-tooltip={tr("main.dock.closeTrash")}
+                onClick={() => onViewChange("history")}
+                title={tr("main.dock.closeTrash")}
+                transition={dockButtonTransition}
+                type="button"
+                whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
+                whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+              >
+                <X size={15} />
+              </motion.button>
+            </TooltipTrigger>
+            <TooltipContent className="top-view-tooltip" side="bottom" sideOffset={4}>
+              <span>{tr("main.dock.closeTrash")}</span>
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <motion.button

@@ -8817,6 +8817,13 @@ div.animate-tooltip > * {
   transition-delay: 0ms !important;
 }
 
+.quick-content .app-tooltip .app-tooltip-card.has-preview {
+  grid-template-rows: auto auto minmax(0, 1fr) !important;
+  width: min(196px, calc(100vw - 76px)) !important;
+  max-width: min(196px, calc(100vw - 76px)) !important;
+  max-height: 248px !important;
+}
+
 .quick-content .app-tooltip:hover .app-tooltip-card,
 .quick-content .app-tooltip:focus-within .app-tooltip-card {
   pointer-events: auto !important;
@@ -8833,6 +8840,24 @@ div.animate-tooltip > * {
 .quick-content .app-tooltip .app-tooltip-main strong,
 .quick-content .app-tooltip .app-tooltip-main span {
   white-space: nowrap !important;
+}
+
+.quick-content .app-tooltip-preview {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-tooltip-preview-image {
+  display: block;
+  max-width: 128px;
+  max-height: 128px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  background: oklch(1 0 0 / 0.05);
 }
 
 .app-tooltip-body {
@@ -9765,7 +9790,7 @@ div.animate-tooltip > * {
   background: oklch(0.965 0 0 / 0.86) !important;
   border: 1px solid oklch(0 0 0 / 0.1) !important;
   border-radius: 6px !important;
-  object-fit: initial !important;
+  object-fit: cover !important;
 }
 
 .app-shell .quick-line,
@@ -10465,13 +10490,16 @@ div.animate-tooltip > * {
 
 .app-shell .quick-menu .quick-row.active,
 .app-shell .quick-menu .quick-row.selected {
-  background: oklch(0.98 0 0 / 0.78) !important;
-  border: 1px solid oklch(0.2 0 0 / 0.12) !important;
-  box-shadow:
-    inset 3px 0 0 oklch(0.18 0 0 / 0.72),
-    0 1px 0 oklch(1 0 0 / 0.75) !important;
-  outline: none !important;
+  background: oklch(0.985 0 0 / 0.68) !important;
+  border: 1px solid oklch(0.2 0 0 / 0.1) !important;
+  box-shadow: 0 1px 0 oklch(1 0 0 / 0.7) !important;
+  outline: 1px dashed oklch(0.22 0 0 / 0.48) !important;
+  outline-offset: -3px;
   transform: none !important;
+}
+
+.app-shell .quick-menu .quick-row.in-active-group:not(.active):not(.selected) {
+  background: oklch(1 0 0 / 0.22);
 }
 
 /* top-nav-optimization: 顶部工具栏替代底部 Dock；保留列表热路径和搜索栏现有语义。

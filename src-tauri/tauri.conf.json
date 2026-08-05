@@ -44,6 +44,23 @@
         "alwaysOnTop": false,
         "visibleOnAllWorkspaces": false,
         "visible": false
+      },
+      {
+        "label": "onboarding",
+        "title": "ClipForge 引导",
+        "url": "onboarding.html",
+        "width": 640,
+        "height": 560,
+        "minWidth": 640,
+        "minHeight": 560,
+        "resizable": false,
+        "decorations": true,
+        "transparent": false,
+        "shadow": true,
+        "hiddenTitle": false,
+        "alwaysOnTop": false,
+        "visibleOnAllWorkspaces": false,
+        "visible": false
       }
     ],
     "security": {

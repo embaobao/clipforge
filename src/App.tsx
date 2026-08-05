@@ -100,6 +100,7 @@ type SourceAppInfo = {
 };
 export type ViewKey = "history" | "favorites" | "trash";
 export type PanelSurface = "clipboard" | "agent";
+type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
@@ -235,6 +236,8 @@ type AppSettings = {
   panelWidth: number;
   panelHeight: number;
   onboardingCompleted: boolean;
+  onboardingShownAt?: number | null;
+  launchAtLogin: boolean;
   logMaxSizeMb: number;
   logKeepRatio: number;
   logMaxLines: number;
@@ -357,6 +360,8 @@ const defaultSettings: AppSettings = {
   panelWidth: 420,
   panelHeight: DEFAULT_PANEL_HEIGHT,
   onboardingCompleted: false,
+  onboardingShownAt: null,
+  launchAtLogin: true,
   logMaxSizeMb: 10,
   logKeepRatio: 0.6,
   logMaxLines: 20000,
@@ -882,6 +887,14 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
       typeof next.onboardingCompleted === "boolean"
         ? next.onboardingCompleted
         : defaultSettings.onboardingCompleted,
+    onboardingShownAt:
+      typeof next.onboardingShownAt === "number" || next.onboardingShownAt === null
+        ? next.onboardingShownAt
+        : defaultSettings.onboardingShownAt,
+    launchAtLogin:
+      typeof next.launchAtLogin === "boolean"
+        ? next.launchAtLogin
+        : defaultSettings.launchAtLogin,
     panelWidth: clampNumber(next.panelWidth, 320, 600, defaultSettings.panelWidth),
     panelHeight: clampNumber(
       [430, 450, 488].includes(next.panelHeight) ? DEFAULT_PANEL_HEIGHT : next.panelHeight,
@@ -955,6 +968,7 @@ function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem 
     updatedAt,
     lastSeenAt,
     lastCopiedAt: typeof raw.lastCopiedAt === "number" ? raw.lastCopiedAt : undefined,
+    deletedAt: typeof raw.deletedAt === "number" ? raw.deletedAt : null,
     source: analysis.sourceName,
     kind,
     bucket:
@@ -1237,15 +1251,29 @@ function ClipForgeApp() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [keyboardNavigating, setKeyboardNavigating] = useState(false);
   const [activeGroupStart, setActiveGroupStart] = useState(0);
   const [groupScrollTarget, setGroupScrollTarget] = useState<number | null>(null);
+  const filteredClipsRef = useRef<ClipItem[]>([]);
+  const selectedIdRef = useRef<string | null>(null);
+  const multiSelectModeRef = useRef(false);
+  const keyboardNavigatingRef = useRef(false);
   const activeGroupStartRef = useRef(0);
   activeGroupStartRef.current = activeGroupStart;
+  selectedIdRef.current = selectedId;
+  multiSelectModeRef.current = multiSelectMode;
+  keyboardNavigatingRef.current = keyboardNavigating;
   // 程序化翻页（Cmd+↑/↓）窗口期内屏蔽视口中心驱动的分组检测，避免 smooth scroll 中间值导致 activeGroupStart 闪烁/回弹。
   const programmaticGroupUntilRef = useRef(0);
   const handleActiveGroupChange = useCallback((groupStart: number) => {
     if (Date.now() < programmaticGroupUntilRef.current) return;
-    setActiveGroupStart(groupStart);
+    activeGroupStartRef.current = groupStart;
+    setActiveGroupStart((current) => (current === groupStart ? current : groupStart));
+    if (keyboardNavigatingRef.current || multiSelectModeRef.current) return;
+    const firstVisibleGroupItem = filteredClipsRef.current[groupStart];
+    if (firstVisibleGroupItem && selectedIdRef.current !== firstVisibleGroupItem.id) {
+      setSelectedId(firstVisibleGroupItem.id);
+    }
   }, []);
   const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
   const [isSearchActive, setSearchActive] = useState(false);
@@ -1259,7 +1287,6 @@ function ClipForgeApp() {
     completionToastTimerRef.current = window.setTimeout(() => setCompletionToast(null), 1200);
   }, []);
   const [lastCopiedId, setLastCopiedId] = useState<string | null>(null);
-  const [keyboardNavigating, setKeyboardNavigating] = useState(false);
   const [, setIsReadingClipboard] = useState(false);
   const [isPanelEntering, setIsPanelEntering] = useState(false);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -1376,10 +1403,6 @@ function ClipForgeApp() {
   useEffect(() => {
     localStorage.setItem(ACTIVE_VIEW_KEY, activeView);
   }, [activeView]);
-
-  useEffect(() => {
-    searchRef.current?.focus();
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -1570,16 +1593,8 @@ function ClipForgeApp() {
           setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
           logAppError("info", "onboarding: startup settings loaded", {
             onboardingCompleted: merged.onboardingCompleted,
+            onboardingShownAt: merged.onboardingShownAt,
           });
-          if (!merged.onboardingCompleted) {
-            window.setTimeout(() => {
-              if (cancelled) return;
-              logAppError("info", "onboarding: opening settings window");
-              invoke("open_settings_window_with_section", { section: "onboarding" })
-                .then(() => logAppError("info", "onboarding: settings window requested"))
-                .catch((error) => logAppError("warn", "Open onboarding settings failed", String(error)));
-            }, 650);
-          }
         }
       })
       .catch(() => {
@@ -1675,10 +1690,6 @@ function ClipForgeApp() {
       panelShowStartedAtRef.current = Date.now();
       focusRetryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       focusRetryTimersRef.current = [];
-      // 先同步把焦点拉到搜索框（若已挂载），赶在下面 setState 引起的重渲染之前。重渲染一旦占用
-      // 主线程，60ms 的 focus 定时器就会晚到——这正是「面板出来后要等一下才能打字」的体感来源。
-      // 未挂载时为 no-op，后面的 [0,60] 兜底会接管。
-      searchRef.current?.focus();
       setActiveView("history");
       setActiveSurface("clipboard");
       setSelectedIds(new Set());
@@ -1689,20 +1700,20 @@ function ClipForgeApp() {
       setFilterFavorite(false);
       setSearchActive(true);
       setIsPanelEntering(true);
-      // 唤起面板时强制拉一次最新剪贴板，避免用户在别的 app 复制后到唤起之间漏掉记录
-      // 过去用 [0,30,90,180,320] 五个定时器轮询 focus，会和 Rust 侧 makeFirstResponder
-      // 抢焦点，反而拖慢、干扰首次输入。改成 0ms + 60ms 两次，且仅在尚未聚焦到搜索框时再 focus。
-      [0, 60].forEach((delay) => {
+      // 非激活面板不能依赖第一下普通字符来“唤醒”搜索；打开后立即渲染并聚焦输入框。
+      [0, 80, 180].forEach((delay) => {
         const timer = window.setTimeout(() => {
           if (document.activeElement !== searchRef.current) {
             searchRef.current?.focus();
           }
-          if (delay === 60) {
-            finishPanelOpenPerf({ searchFocused: document.activeElement === searchRef.current });
+          if (delay === 180) {
+            finishPanelOpenPerf({
+              searchActive: true,
+              searchFocused: document.activeElement === searchRef.current,
+            });
             logAppError("info", "panel-keyboard: search focus settle", {
               active: document.activeElement === searchRef.current,
               reason,
-              // 从「面板开始唤起」到「输入框可输入」的总耗时（含打开重渲染）。
               openReadyMs: Date.now() - panelShowStartedAtRef.current,
             });
           }
@@ -1944,6 +1955,7 @@ function ClipForgeApp() {
     effectiveTypeFilters,
     settings,
   ]);
+  filteredClipsRef.current = filteredClips;
 
   useEffect(() => {
     if (isSettingsWindow) return;
@@ -2064,6 +2076,84 @@ function ClipForgeApp() {
     if (!query.trim()) setSearchActive(false);
   }, [query]);
 
+  const clearClipboardFilters = useCallback(() => {
+    setQuery("");
+    setActiveTag(null);
+    setFilterFavorite(false);
+    setActiveTypeFilter("all");
+  }, []);
+
+  const switchClipboardView = useCallback((view: ViewKey) => {
+    setActiveSurface("clipboard");
+    setActiveView(view);
+    setSelectedIds(new Set());
+    setMultiSelectMode(false);
+    setMultiPreviewOpen(false);
+    if (view === "trash" || activeView === "trash") {
+      clearClipboardFilters();
+      setSearchActive(false);
+    }
+    void navigateWorkspaceList();
+  }, [activeView, clearClipboardFilters]);
+
+  const movePanelSelection = useCallback((key: "ArrowUp" | "ArrowDown", repeat = false) => {
+    if (!filteredClips.length) return;
+    setKeyboardNavigating(true);
+    const direction = key === "ArrowDown" ? 1 : -1;
+    if (workspaceRoute.name === "detail") {
+      const routeClipId = workspaceRoute.clipId ?? selectedId;
+      const currentIndex = Math.max(
+        0,
+        filteredClips.findIndex((item) => item.id === routeClipId),
+      );
+      const nextIndex = Math.min(Math.max(currentIndex + direction, 0), filteredClips.length - 1);
+      const nextItem = filteredClips[nextIndex];
+      if (nextItem && nextItem.id !== routeClipId) {
+        setSelectedId(nextItem.id);
+        void navigateWorkspaceDetail(nextItem.id);
+      }
+      return;
+    }
+    const currentIndex = Math.max(
+      0,
+      filteredClips.findIndex((item) => item.id === selectedId),
+    );
+    const offset = direction * (repeat ? 4 : 1);
+    const nextIndex = Math.min(Math.max(currentIndex + offset, 0), filteredClips.length - 1);
+    const nextItem = filteredClips[nextIndex];
+    if (nextItem) {
+      setSelectedId(nextItem.id);
+    }
+  }, [filteredClips, selectedId, workspaceRoute.clipId, workspaceRoute.name]);
+
+  const handlePanelArrowNavigation = useCallback((key: PanelArrowKey, repeat = false) => {
+    if (key === "ArrowDown" || key === "ArrowUp") {
+      movePanelSelection(key, repeat);
+      return;
+    }
+    if (key === "ArrowRight") {
+      if (!multiSelectMode && selectedClip) {
+        logAppError("info", "keyboard-detail", {
+          id: selectedClip.id,
+          hasUrl: Boolean(selectedClip.analysis.url),
+          hasAttachment: Boolean(selectedClip.analysis.attachment),
+        });
+        void navigateWorkspaceDetail(selectedClip.id);
+      }
+      return;
+    }
+    if (workspaceRoute.name !== "list") {
+      setMultiPreviewOpen(false);
+      void navigateWorkspaceList();
+    } else if (isMultiPreviewOpen) {
+      setMultiPreviewOpen(false);
+      void navigateWorkspaceList();
+    } else if (multiSelectMode) {
+      setSelectedIds(new Set());
+      setMultiSelectMode(false);
+    }
+  }, [isMultiPreviewOpen, movePanelSelection, multiSelectMode, selectedClip, workspaceRoute.name]);
+
   function replaceTrailingSearchToken(current: string, nextToken: string) {
     if (!current.trim()) return `${nextToken} `;
     if (!/(^|\s)[@#][^\s]*$/.test(current)) return `${nextToken} `;
@@ -2153,10 +2243,17 @@ function ClipForgeApp() {
   async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
     const finishCopyPerf = startPerfSpan("quick.copy", { source: "ui", pasteMode });
     let perfStatus = "ok";
+    const optimisticStatus =
+      pasteMode === "plain"
+        ? tr("main.status.copiedPlain")
+        : pasteMode === "filesAsPaths"
+          ? tr("main.status.copiedFilePaths")
+          : tr("main.status.copiedRich");
+    lastSeenClipboard.current = item.content.trim();
+    markClipCopied(item, optimisticStatus);
     try {
       const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode, source: "ui" });
       const normalized = normalizeClip(payload, settingsRef.current);
-      lastSeenClipboard.current = item.content.trim();
       if (normalized) {
         setClips((current) => {
           const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
@@ -2164,18 +2261,10 @@ function ClipForgeApp() {
           return next;
         });
       }
-      markClipCopied(
-        normalized ?? item,
-        pasteMode === "plain"
-          ? tr("main.status.copiedPlain")
-          : pasteMode === "filesAsPaths"
-            ? tr("main.status.copiedFilePaths")
-            : tr("main.status.copiedRich"),
-      );
     } catch {
       perfStatus = "fallback";
       await navigator.clipboard.writeText(item.content);
-      markClipCopied(item, tr("main.status.copiedBrowser"));
+      setNativeStatus(tr("main.status.copiedBrowser"));
     } finally {
       finishCopyPerf({ status: perfStatus });
     }
@@ -2324,6 +2413,9 @@ function ClipForgeApp() {
   async function pasteClip(item: ClipItem, source = "unknown") {
     const finishPastePerf = startPerfSpan("quick.paste", { source });
     let perfStatus = "ok";
+    setIsPanelEntering(false);
+    lastSeenClipboard.current = item.content.trim();
+    markClipCopied(item, tr("main.status.pastingToApp"));
     const releaseWaitMs = await waitForPasteTriggerRelease(source);
     if (releaseWaitMs > 0) {
       logAppError("info", "paste-ui: shortcut release settled", {
@@ -2345,7 +2437,6 @@ function ClipForgeApp() {
       // 粘贴后面板已被 Rust 隐藏（hide_panel_before_paste 不发 hide-quick-panel），
       // 这里显式复位 is-entering，否则下次唤起不会淡入。
       setIsPanelEntering(false);
-      lastSeenClipboard.current = item.content.trim();
       if (normalized) {
         setClips((current) => {
           const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
@@ -2353,12 +2444,28 @@ function ClipForgeApp() {
           return next;
         });
       }
-      markClipCopied(normalized ?? item, tr("main.status.pastedToApp"));
+      setNativeStatus(tr("main.status.pastedToApp"));
       logAppError("info", "paste-ui: invoke success", { id: item.id, source });
     } catch (error) {
       perfStatus = "fallback-copy";
       logAppError("warn", "Paste clip failed", String(error));
-      await copyClip(item);
+      try {
+        const payload = await writeClipboard<ClipItem>({
+          id: item.id,
+          pasteMode: "rich",
+          source: `${source}:fallback-copy`,
+        });
+        const normalized = normalizeClip(payload, settingsRef.current);
+        if (normalized) {
+          setClips((current) => {
+            const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+            clipsRef.current = next;
+            return next;
+          });
+        }
+      } catch {
+        await navigator.clipboard.writeText(item.content);
+      }
       setNativeStatus(formatNativeError(error));
     } finally {
       finishPastePerf({ status: perfStatus });
@@ -2507,11 +2614,7 @@ function ClipForgeApp() {
 
       if (!editable && !event.ctrlKey && !event.metaKey && !event.altKey && key === "t") {
         event.preventDefault();
-        setActiveView("trash");
-        setSelectedIds(new Set());
-        setMultiSelectMode(false);
-        setMultiPreviewOpen(false);
-        void navigateWorkspaceList();
+        switchClipboardView("trash");
         return;
       }
 
@@ -2522,11 +2625,7 @@ function ClipForgeApp() {
         const nextIndex = event.shiftKey
           ? (currentIndex - 1 + views.length) % views.length
           : (currentIndex + 1) % views.length;
-        setActiveView(views[nextIndex]);
-        setSelectedIds(new Set());
-        setMultiSelectMode(false);
-        setMultiPreviewOpen(false);
-        void navigateWorkspaceList();
+        switchClipboardView(views[nextIndex]);
         return;
       }
 
@@ -2681,25 +2780,7 @@ function ClipForgeApp() {
       if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
         if (editable && editable !== searchRef.current) return;
         event.preventDefault();
-        if (event.key === "ArrowRight") {
-          if (!multiSelectMode && selectedClip) {
-            logAppError("info", "keyboard-detail", {
-              id: selectedClip.id,
-              hasUrl: Boolean(selectedClip.analysis.url),
-              hasAttachment: Boolean(selectedClip.analysis.attachment),
-            });
-            void navigateWorkspaceDetail(selectedClip.id);
-          }
-        } else if (workspaceRoute.name !== "list") {
-          setMultiPreviewOpen(false);
-          void navigateWorkspaceList();
-        } else if (isMultiPreviewOpen) {
-          setMultiPreviewOpen(false);
-          void navigateWorkspaceList();
-        } else if (multiSelectMode) {
-          setSelectedIds(new Set());
-          setMultiSelectMode(false);
-        }
+        handlePanelArrowNavigation(event.key);
         return;
       }
 
@@ -2713,33 +2794,7 @@ function ClipForgeApp() {
         }
         if (editable && editable !== searchRef.current) return;
         event.preventDefault();
-        setKeyboardNavigating(true);
-        if (workspaceRoute.name === "detail") {
-          const routeClipId = workspaceRoute.clipId ?? selectedId;
-          const currentIndex = Math.max(
-            0,
-            quickItems.findIndex((item) => item.id === routeClipId),
-          );
-          const direction = event.key === "ArrowDown" ? 1 : -1;
-          const nextIndex = Math.min(Math.max(currentIndex + direction, 0), quickItems.length - 1);
-          const nextItem = quickItems[nextIndex];
-          if (nextItem && nextItem.id !== routeClipId) {
-            setSelectedId(nextItem.id);
-            void navigateWorkspaceDetail(nextItem.id);
-          }
-          return;
-        }
-        const currentIndex = Math.max(
-          0,
-          quickItems.findIndex((item) => item.id === selectedId),
-        );
-        const direction = event.key === "ArrowDown" ? 1 : -1;
-        const offset = direction * (event.repeat ? 4 : 1);
-        const nextIndex = Math.min(Math.max(currentIndex + offset, 0), quickItems.length - 1);
-        const nextItem = quickItems[nextIndex];
-        if (nextItem) {
-          setSelectedId(nextItem.id);
-        }
+        handlePanelArrowNavigation(event.key, event.repeat);
         return;
       }
 
@@ -2802,7 +2857,9 @@ function ClipForgeApp() {
     selectedInList,
     searchSuggestions,
     activeSuggestionIndex,
+    handlePanelArrowNavigation,
     showCompletionToast,
+    switchClipboardView,
     togglePanelPinned,
     workspaceRoute.clipId,
     workspaceRoute.name,
@@ -3199,11 +3256,12 @@ function ClipForgeApp() {
   }
 
   const showSearchBar = activeSurface === "clipboard" && workspaceRoute.name === "list";
+  const shouldRenderSearchBar = showSearchBar && (isSearchActive || Boolean(query));
 
   return (
     <main
       data-surface="clipboard"
-      className={`app-shell view-${activeView} route-${workspaceRoute.name} surface-${activeSurface} density-${settings.panelDensity}${showSearchBar && (isSearchActive || query) ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
+      className={`app-shell view-${activeView} route-${workspaceRoute.name} surface-${activeSurface} density-${settings.panelDensity}${shouldRenderSearchBar ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
       ref={shellRef}
       style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
     >
@@ -3224,14 +3282,9 @@ function ClipForgeApp() {
               logAppError("warn", "Open settings window failed", String(error)),
             );
           }}
-          onViewChange={(view) => {
-            setActiveSurface("clipboard");
-            setActiveView(view);
-            setSelectedIds(new Set());
-            setMultiSelectMode(false);
-            void navigateWorkspaceList();
-          }}
-          searchBar={showSearchBar ? (
+          onPanelArrowKey={handlePanelArrowNavigation}
+          onViewChange={switchClipboardView}
+          searchBar={shouldRenderSearchBar ? (
             <GlassSearchBar
               activeFilterLabels={parsedSearchCommand.ast.labels}
               inputRef={searchRef}
@@ -3936,6 +3989,7 @@ function TrashPanel({
           itemHeight={36}
           items={clips}
           onEndReached={onLoadMore}
+          onUserScroll={onPointerActive}
           groupSize={10}
           renderItem={(item, index) => (
             <article
@@ -4133,6 +4187,7 @@ function VirtualList<T extends { id: string }>({
   isLoadingMore = false,
   itemHeight = ROW_HEIGHT,
   onEndReached,
+  onUserScroll,
   renderItem,
   autoScroll = true,
   groupSize,
@@ -4146,6 +4201,7 @@ function VirtualList<T extends { id: string }>({
   isLoadingMore?: boolean;
   itemHeight?: number;
   onEndReached?: () => void;
+  onUserScroll?: () => void;
   renderItem: (item: T, index: number) => ReactNode;
   autoScroll?: boolean;
   groupSize?: number;
@@ -4155,16 +4211,24 @@ function VirtualList<T extends { id: string }>({
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(420);
   const [isScrollFeedback, setScrollFeedback] = useState(false);
+  const isScrollFeedbackRef = useRef(false);
   const scrollFeedbackTimerRef = useRef<number | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const pendingScrollTopRef = useRef(0);
+  const lastScrollPerfAtRef = useRef(0);
   const lastAutoScrollActiveIdRef = useRef<string | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
 
   const setFeedback = useCallback(
     (next: boolean) => {
-      setScrollFeedback(next);
+      if (isScrollFeedbackRef.current !== next) {
+        isScrollFeedbackRef.current = next;
+        setScrollFeedback(next);
+      }
       if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
       if (next) {
         scrollFeedbackTimerRef.current = window.setTimeout(() => {
+          isScrollFeedbackRef.current = false;
           setScrollFeedback(false);
         }, 420);
       }
@@ -4191,6 +4255,7 @@ function VirtualList<T extends { id: string }>({
   useEffect(() => {
     return () => {
       if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
+      if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
     };
   }, []);
 
@@ -4245,10 +4310,22 @@ function VirtualList<T extends { id: string }>({
   return (
     <div
       className={`${className} virtual-list${isScrollFeedback ? " is-scroll-feedback" : ""}`}
+      onTouchMove={onUserScroll}
+      onWheel={onUserScroll}
       onScroll={(event) => {
         const node = event.currentTarget;
-        recordNextFramePerf("quick.scroll", { className });
-        setScrollTop(node.scrollTop);
+        const now = performance.now();
+        if (now - lastScrollPerfAtRef.current > 160) {
+          lastScrollPerfAtRef.current = now;
+          recordNextFramePerf("quick.scroll", { className });
+        }
+        pendingScrollTopRef.current = node.scrollTop;
+        if (!scrollRafRef.current) {
+          scrollRafRef.current = window.requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            setScrollTop(pendingScrollTopRef.current);
+          });
+        }
         setFeedback(true);
         if (hasMore && !isLoadingMore && node.scrollHeight - node.scrollTop - node.clientHeight < itemHeight * 6) {
           onEndReached?.();

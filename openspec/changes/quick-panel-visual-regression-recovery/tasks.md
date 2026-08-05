@@ -18,6 +18,8 @@
 - [x] 移除最后追加的 `.quick-row` / `.target-focus-ring` 覆盖块
 - [x] 检查 `src/App.css` 中是否仍有本轮新增的 quick-row 强覆盖影响原交互
 - [x] 如仍有影响，只撤本轮新增覆盖，不重写列表交互
+- [x] 恢复 active/selected 行的虚线边框选中态，并隐藏旧 `target-focus-ring` 叠层
+- [x] 鼠标/触控滚动退出键盘导航锁，滚动后选中当前快捷分组第一项
 - [ ] 运行主面板后由用户目视确认列表选中/hover/active 恢复
 
 ## Phase 3：顶部菜单修复

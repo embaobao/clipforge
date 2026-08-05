@@ -43,11 +43,12 @@ import {
   CheckItem,
   ReadonlyField,
 } from "./settings/controls";
-import { OnboardingWizard } from "./settings/onboarding-wizard";
+import { OnboardingEntryCard } from "./settings/components/OnboardingEntryCard";
 import { SettingsSidebar } from "./settings/components/SettingsSidebar";
 import { SettingsSectionHeader } from "./settings/components/SettingsSectionHeader";
 import { SettingsStickyStatusBar } from "./settings/components/SettingsStickyStatusBar";
 import { SettingsCodeTabs, type SettingsCodeTab } from "./settings/components/SettingsCodeTabs";
+import { SettingsErrorBoundary } from "./settings/components/SettingsErrorBoundary";
 import { SettingsStatusPanel, type SettingsStatusPanelState } from "./settings/components/SettingsStatusPanel";
 import { SettingsFieldRow } from "./settings/components/SettingsFieldRow";
 import {
@@ -96,6 +97,8 @@ interface AppSettings {
   panelWidth: number;
   panelHeight: number;
   onboardingCompleted: boolean;
+  onboardingShownAt?: number | null;
+  launchAtLogin: boolean;
   logMaxSizeMb: number;
   logKeepRatio: number;
   logMaxLines: number;
@@ -172,6 +175,13 @@ interface McpStatusPayload {
   message: string;
 }
 
+interface LaunchAtLoginPayload {
+  supported: boolean;
+  enabled: boolean;
+  desired: boolean;
+  message: string;
+}
+
 interface UpdateCheckState {
   status: "idle" | "checking" | "available" | "latest" | "downloading" | "ready" | "failed";
   currentVersion: string;
@@ -219,6 +229,7 @@ interface SettingsAppState {
   databasePath: string;
   mcp: McpStatusPayload | null;
   panel: PanelTriggerPayload | null;
+  launchAtLogin: LaunchAtLoginPayload | null;
   settings: AppSettings;
   saveFeedback: SettingsSaveFeedback;
   status: string;
@@ -285,6 +296,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   panelWidth: 420,
   panelHeight: 400,
   onboardingCompleted: false,
+  onboardingShownAt: null,
+  launchAtLogin: true,
   logMaxSizeMb: 10,
   logKeepRatio: 0.6,
   logMaxLines: 20000,
@@ -419,6 +432,7 @@ export function SettingsApp() {
     databasePath: "",
     mcp: null,
     panel: null,
+    launchAtLogin: null,
     settings: DEFAULT_SETTINGS,
     saveFeedback: { state: "idle", message: "", requestId: 0 },
     status: "",
@@ -433,13 +447,14 @@ export function SettingsApp() {
   useEffect(() => {
     void (async () => {
       try {
-        const [settingsDocument, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, mcp, logStats, buildInfo] = await Promise.all([
+        const [settingsDocument, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, launchAtLogin, mcp, logStats, buildInfo] = await Promise.all([
           settingsService.get(true),
           invoke<string>("get_clipforge_config_path"),
           invoke<string>("get_clipforge_database_path"),
           invoke<AccessibilityPermissionPayload>("check_accessibility_permission"),
           invoke<AccessibilityDiagnosticsPayload>("get_accessibility_diagnostics"),
           invoke<PanelTriggerPayload>("get_panel_trigger_status"),
+          invoke<LaunchAtLoginPayload>("get_launch_at_login"),
           invoke<McpStatusPayload>("get_mcp_status"),
           invoke<LogStatsPayload>("get_log_stats"),
           invoke<BuildInfoPayload>("get_build_info"),
@@ -458,6 +473,7 @@ export function SettingsApp() {
           databasePath,
           mcp,
           panel,
+          launchAtLogin,
           settings: mergedSettings,
           saveFeedback: { state: "idle", message: "", requestId: 0 },
           logStats,
@@ -671,8 +687,11 @@ export function SettingsApp() {
   async function openAccessibilitySettings() {
     setDangerConfirmation(null);
     try {
-      const accessibility = await invoke<AccessibilityPermissionPayload>("request_accessibility_permission");
-      const accessibilityDiagnostics = await invoke<AccessibilityDiagnosticsPayload>("get_accessibility_diagnostics");
+      await invoke("open_accessibility_settings");
+      const [accessibility, accessibilityDiagnostics] = await Promise.all([
+        invoke<AccessibilityPermissionPayload>("check_accessibility_permission"),
+        invoke<AccessibilityDiagnosticsPayload>("get_accessibility_diagnostics"),
+      ]);
       setState((prev) => ({
         ...prev,
         accessibility,
@@ -695,6 +714,20 @@ export function SettingsApp() {
         accessibilityDiagnostics,
         status: tr("settings.accessibility.status.reset"),
       }));
+    } catch (error) {
+      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
+    }
+  }
+
+  async function setLaunchAtLoginEnabled(enabled: boolean) {
+    try {
+      const launchAtLogin = await invoke<LaunchAtLoginPayload>("set_launch_at_login", { enabled });
+      setState((prev) => ({
+        ...prev,
+        launchAtLogin,
+        status: launchAtLogin.message,
+      }));
+      updateSettings({ launchAtLogin: enabled });
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
@@ -742,12 +775,14 @@ export function SettingsApp() {
               timeoutSeconds: 120,
             },
             {
-              id: "local-codex",
-              name: "Codex CLI",
-              kind: "local-cli",
+              id: "local-openai-compatible",
+              name: "Local OpenAI-compatible gateway",
+              kind: "openai-compatible",
               enabled: false,
-              command: "codex",
-              args: [],
+              baseUrl: "http://127.0.0.1:1234/v1",
+              modelId: "local-model",
+              apiKeyEnv: "CLIPFORGE_AGENT_LOCAL_API_KEY",
+              timeoutSeconds: 120,
             },
           ],
         },
@@ -939,7 +974,7 @@ export function SettingsApp() {
         : tabs[0];
     if (!defaultValue) return null;
     return (
-      <Tabs className="grid w-full max-w-[820px] content-start gap-3" data-dev-probe={`settings-section-tabs:${section}`} defaultValue={defaultValue} key={section}>
+      <Tabs className="settings-section-tabs grid w-full max-w-[820px] content-start gap-3" data-dev-probe={`settings-section-tabs:${section}`} defaultValue={defaultValue} key={section}>
         <TabsList className="relative z-10 inline-flex w-max max-w-full gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-slate-100 p-1 text-slate-500 shadow-none" data-dev-probe="settings-section-tabs-list">
           {tabs.map((tab) => (
             <TabsTrigger
@@ -955,7 +990,15 @@ export function SettingsApp() {
         <TabsContents>
           {tabs.map((tab) => (
             <TabsContent className="outline-none" key={tab} value={tab}>
-              {panels[tab]}
+              <SettingsErrorBoundary
+                message={tr("settings.error.tabMessage")}
+                resetKey={`${section}:${tab}:${locale}`}
+                retryLabel={tr("settings.error.retry")}
+                scope={`settings-tab:${section}:${tab}`}
+                title={tr("settings.error.tabTitle")}
+              >
+                {panels[tab]}
+              </SettingsErrorBoundary>
             </TabsContent>
           ))}
         </TabsContents>
@@ -997,7 +1040,7 @@ export function SettingsApp() {
           }}
         />
 
-        <SidebarInset className="min-w-0 flex-1 overflow-auto bg-white px-6 py-5">
+        <SidebarInset className="settings-window-content min-w-0 flex-1 overflow-auto bg-white px-6 py-5">
           <SettingsSectionHeader
             icon={activeSection.icon}
             leading={
@@ -1020,13 +1063,11 @@ export function SettingsApp() {
           {section === "shortcut-language" &&
             renderSectionTabs({
               onboarding: (
-                <OnboardingWizard
+                <OnboardingEntryCard
                   accessibility={state.accessibility}
-                  openAccessibilitySettings={openAccessibilitySettings}
-                  refreshAccessibilityStatus={refreshAccessibilityStatus}
-                  settings={state.settings}
+                  completed={state.settings.onboardingCompleted}
+                  onOpen={() => invoke("open_onboarding_window")}
                   tr={tr}
-                  updateSettings={updateSettings}
                 />
               ),
               shortcut: (
@@ -1174,6 +1215,29 @@ export function SettingsApp() {
                       </div>
                     ) : null}
                   </SettingsStatusPanel>
+                  <SettingsStatusPanel
+                    actions={[
+                      {
+                        label: state.launchAtLogin?.enabled
+                          ? tr("settings.system.launchAtLogin.disable")
+                          : tr("settings.system.launchAtLogin.enable"),
+                        onClick: () => void setLaunchAtLoginEnabled(!state.launchAtLogin?.enabled),
+                        icon: Settings,
+                        variant: state.launchAtLogin?.enabled ? "secondary" : "primary",
+                        tooltip: state.launchAtLogin?.enabled
+                          ? tr("settings.system.launchAtLogin.disable")
+                          : tr("settings.system.launchAtLogin.enable"),
+                      },
+                    ]}
+                    description={state.launchAtLogin?.message ?? tr("settings.system.launchAtLogin.description")}
+                    state={state.launchAtLogin?.enabled ? "good" : "warning"}
+                    status={
+                      state.launchAtLogin?.enabled
+                        ? tr("settings.system.launchAtLogin.enabled")
+                        : tr("settings.system.launchAtLogin.disabled")
+                    }
+                    title={tr("settings.system.launchAtLogin.title")}
+                  />
                 </SettingGroup>
               ),
             })}

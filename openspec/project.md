@@ -40,6 +40,12 @@
 | [vercel-ai-sdk-integration](./changes/vercel-ai-sdk-integration/proposal.md) | P4.1 后置进行中，30/38 | 已收敛为 AI 产品化后的候选切片，未确认版本/API 假设已降级为待 Context7 确认；摘要/embedding/job/provenance、非全量自动摘要、推荐候选范围和无 embedding store 降级策略已定义。已新增详情页 AI 摘要区和 `ai-summary` 服务边界，支持 `VITE_CLIPFORGE_AI_MOCK=1` 本地 mock 摘要、pending/ready/failed 状态、重新生成和当前详情上下文内的本地相似推荐；摘要区现在还展示 key points、category、provider/model provenance 和 generatedAt。列表行已显示 `metadata.aiSummary` 状态图标，右键菜单已提供“生成 AI 摘要”入口并写回 metadata；AI 摘要日志已收敛为 metadata-only helper，不记录 prompt/output/正文/URL/API key。Context7 quota 恢复前仍不能确认真实 SDK API、版本或安装命令，真实 OpenAI-compatible provider 调用和 Tauri dev 验证尚未实现 |
 | [codebase-modularity-refactor](./changes/codebase-modularity-refactor/proposal.md) | P4.5 后置治理，6/26 | 约束单文件规模、中文注释和按域拆分；`test:unit` / file-size guard 已复跑通过，Agent 入口和 overlay 已补 `data-agent-*` 稳定 marker，verifier 已优先验证这些 marker，但完整 verifier 结构化迁移和模块拆分仍后置，近期多 Agent 资源优先投向功能开发 |
 
+| [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) | P1.x 首期 A 实现收尾，24/51 | 已新增独立 `onboarding` 窗口、设置页轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录和开机启动设置；仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界。sidebar 全量常驻、兜底四态和标准化日志仍为后续 phase |
+| [mastra-agent-runtime-evaluation](./changes/mastra-agent-runtime-evaluation/proposal.md) | P4.x 评估提案，11/25 | Mastra 只作为 Agent runtime 候选评估，不直接安装依赖，不进 quick panel 热路径；如果进入 POC，只允许可关闭、可旁路的 sidecar/workbench runtime，并先证明 quick panel P95、内存、打包签名、离线启动、tool allowlist 与 Settings Service redaction 边界 |
+| [external-hook-plugin-runtime](./changes/external-hook-plugin-runtime/proposal.md) | P3 后置方案评审，0/67 | 外部 Hook 插件运行时精简为 Block A/B：Block A 只收敛读取侧 collector 到 Hook manifest、4 态生命周期、洋葱 priority、沙盒、节流、熔断、延迟补写和单个 `clipboard.hook.run`；Block B 写入侧（Proposal/Apply/content.write）冻结，等真实用户故事再解冻 |
+| [project-demo-gif-pipeline](./changes/project-demo-gif-pipeline/proposal.md) | P3 文档/资产方案，0/30 | 建立真实录屏转 gif 为主、Remotion 为辅的演示素材流水线，资产放 `docs/demos/`，不改变产品功能，不阻塞 onboarding 或剪贴板核心交付；已补 specs delta |
+| [local-model-quick-integration](./changes/local-model-quick-integration/proposal.md) | P4.x AI/Agent 后置候选，4/16 | 本地模型、第三方 API Key 导入和 AI 对话面板重构候选；已补 tasks/spec delta，方向约束为 OpenAI-compatible provider、显式导入、Settings Service redaction 和不阻塞 quick panel。需先评估与 `ai-model-plugin-productization` / `vercel-ai-sdk-integration` / `mastra-agent-runtime-evaluation` 的关系 |
+
 ## 已归档提案
 
 以下 change 已归档，后续只看归档 spec 或 archive 记录，不再当作 active backlog：
@@ -58,6 +64,7 @@
 - `2026-07-16-top-nav-optimization` — 归档时 28/30；顶部工具栏，spec 并入 `specs/panel-navigation`；剩余 2 项（窗口拖拽、搜索/按钮点击不触发拖拽系统级证据）移出 backlog
 - `2026-07-16-clipboard-agent-panel` — 归档时 169/170；面板内 Agent 工作页，spec 并入 `specs/agent-panel`；剩余 1 项（真实 OpenAI-compatible provider 标准消息流验证）移出 backlog
 - `2026-07-16-detail-rich-editor-agent-bridge` — 归档时 77/81；详情页紧凑编辑器，spec 并入 `specs/detail-editor`；剩余 4 项（文本编辑保存、Markdown 取消不丢预览、保存并复制写回、保存并粘贴复用链路实机验证）移出 backlog
+- `2026-08-05-settings-sidebar-component-library-recovery` — 归档时 14/14；设置页 Sidebar 组件库恢复，spec 并入 `specs/settings-interface`
 
 ## 建议推进顺序
 

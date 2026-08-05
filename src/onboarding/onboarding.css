@@ -1,0 +1,36 @@
+.onboarding-standalone-shell {
+  min-height: 100vh;
+  background: #f8fafc;
+  color: #0f172a;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 18px;
+}
+
+.onboarding-standalone-shell .onboarding-wizard {
+  width: min(100%, 596px);
+  margin: 0 auto;
+}
+
+.onboarding-loading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  min-height: 220px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.onboarding-loading svg {
+  animation: spin 1s linear infinite;
+}
+
+.onboarding-standalone-status {
+  width: min(100%, 596px);
+  margin: 10px auto 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
+}

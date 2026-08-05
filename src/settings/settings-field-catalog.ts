@@ -110,6 +110,7 @@ export const SETTINGS_FIELD_CATALOG = [
   { id: "globalShortcut", section: "shortcut-language", tab: "shortcut", type: "readonly", labelKey: "settings.shortcut.quickOpen", order: 10 },
   { id: "language", section: "shortcut-language", tab: "language", type: "segment", labelKey: "settings.language.current", order: 20 },
   { id: "accessibility", section: "shortcut-language", tab: "permissions", type: "action", labelKey: "settings.accessibility.title", order: 30 },
+  { id: "launchAtLogin", section: "shortcut-language", tab: "permissions", type: "switch", labelKey: "settings.system.launchAtLogin.title", order: 40 },
   { id: "panelDensity", section: "display-panel", tab: "density", type: "segment", labelKey: "settings.display.density", order: 10 },
   { id: "contentDisplayMode", section: "display-panel", tab: "density", type: "segment", labelKey: "settings.display.contentMode", order: 20 },
   { id: "quickItemLimit", section: "display-panel", tab: "density", type: "number", labelKey: "settings.display.quickItemLimit", order: 30 },
