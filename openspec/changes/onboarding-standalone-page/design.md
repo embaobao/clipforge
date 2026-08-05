@@ -38,6 +38,7 @@ flowchart LR
 - `onboarding.html`（新增，仿 `settings.html`）。
 - `src/onboarding-main.tsx`（新增，仿 `settings-main.tsx`）：挂载 `OnboardingApp`。
 - `OnboardingWizard` 从 `src/settings/onboarding-wizard.tsx` 迁到 `src/onboarding/OnboardingApp.tsx`，去掉对设置页 sidebar/header/scroll 容器的依赖，改为沉浸式分步布局。
+- 固定窗口中的 `.onboarding-standalone-shell` 高度约束为视口高度并自行承担纵向滚动；不得依赖被设置页全局样式锁定的 `body/#root` 滚动。
 
 ### 2.3 Eco 风格视觉
 

@@ -9,7 +9,7 @@
     "build:web": "tsc && vite build",
     "check:i18n": "node scripts/check-i18n-keys.mjs && node scripts/scan-hardcoded-copy.mjs",
     "check:i18n-runtime": "node scripts/verify-i18n-runtime.mjs",
-    "test:unit": "node scripts/run-unit-checks.mjs && node scripts/verify-agent-panel.mjs && node scripts/verify-editor-agent-bridge.mjs && node scripts/verify-ai-summary.mjs && node scripts/verify-settings-surface.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-hot-path.mjs && node scripts/verify-mcp-dispatch.mjs && node scripts/verify-file-size.mjs && node scripts/verify-surface-boundaries.mjs",
+    "test:unit": "node scripts/run-unit-checks.mjs && node scripts/verify-agent-panel.mjs && node scripts/verify-editor-agent-bridge.mjs && node scripts/verify-ai-summary.mjs && node scripts/verify-settings-surface.mjs && node scripts/verify-onboarding-surface.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-hot-path.mjs && node scripts/verify-mcp-dispatch.mjs && node scripts/verify-file-size.mjs && node scripts/verify-surface-boundaries.mjs",
     "test:agent": "node scripts/verify-agent-panel.mjs",
     "test:boundaries": "node scripts/verify-hot-path.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-file-size.mjs && node scripts/verify-surface-boundaries.mjs",
     "test:perf": "node scripts/perf-smoke.mjs",

@@ -6,7 +6,7 @@
 
 2026-08-05 归档 `main-panel-functional-layout-plan`（11/37）和 `quick-panel-visual-regression-recovery`（22/30）：两者的有效方向与剩余工作已由 `frontend-surface-architecture-refactor` 接管，使用 `--skip-specs` 归档，避免旧布局和视觉 delta 重新进入当前规范。归档路径分别为 `openspec/changes/archive/2026-08-05-main-panel-functional-layout-plan/` 和 `openspec/changes/archive/2026-08-05-quick-panel-visual-regression-recovery/`。
 
-2026-08-05 更新 [`onboarding-standalone-page`](../openspec/changes/onboarding-standalone-page/proposal.md)：首期 A 已进入实现收尾，新增独立 `onboarding` 窗口入口、设置页轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录和 `launchAtLogin` 设置能力；当前进度 24/51。Phase 4 sidebar 常驻、Phase 5 兜底、Phase 6 标准化日志和真实 Tauri 权限/快捷键验证仍未完成。
+2026-08-05 更新 [`onboarding-standalone-page`](../openspec/changes/onboarding-standalone-page/proposal.md)：首期 A 已进入实现收尾，新增独立 `onboarding` 窗口入口、设置页轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录和 `launchAtLogin` 设置能力；已修复固定 `640x560` 窗口内内容截断且无法滚动的问题并新增回归门禁，当前进度 25/52。Phase 4 sidebar 常驻、Phase 5 兜底、Phase 6 标准化日志和真实 Tauri 权限/快捷键验证仍未完成。
 
 2026-08-05 新增 [`mastra-agent-runtime-evaluation`](../openspec/changes/mastra-agent-runtime-evaluation/proposal.md)：评估 Mastra 作为 Agent runtime 是否合理。结论边界先固定为评估提案，不直接安装依赖；Mastra 只能作为可选 sidecar / workbench runtime 候选，不得进入 quick panel 打开、滚动、选中、复制、粘贴热路径。当前进度 11/25。
 
@@ -71,7 +71,7 @@
 
 | 优先级 | Change | 当前进度 | 下一验收点 |
 | --- | --- | --- | --- |
-| P0 | `onboarding-standalone-page` | 24/51 | 正式 `.app` 验证开机启动、首次缺少 Accessibility 权限时仅打开一次引导、完成/跳过、托盘与全局快捷键不阻塞 |
+| P0 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、首次缺少 Accessibility 权限时仅打开一次引导、完成/跳过、托盘与全局快捷键不阻塞 |
 | P0 | `frontend-surface-architecture-refactor` | 36/84 | 验证虚线选中态、滚动跟随首个可见快捷分组、复制/粘贴即时反馈；采样 `quick.scroll/select/copy/paste` P95 <= 300ms |
 | P1 | `file-image-clipboard-support` | 75/83 | 完成文本、HTML、图片、文件的复制、展示、粘贴与磁盘清理实机矩阵 |
 | P1 | `clipboard-multi-format-fidelity` | 22/26 | 完成系统剪贴板多 representation 写回与监听去重实机矩阵 |
@@ -121,7 +121,7 @@
 | P3 | `clipboard-multi-format-fidelity` | 22/26 | `cargo test clipboard::write` 和 OpenSpec 校验已复跑通过；剩系统剪贴板 HTML/file/image 写回与监听去重实机验证。 |
 | P3 | `clipboard-agent-panel` | 169/170 | Agent verifier 已同步 top-nav 后的新入口，并补强主面板 open/hide/toggle 原生路径不含 `agent_detect` / provider check 的静态断言；`CLIPFORGE_DEV_OPEN=panel CLIPFORGE_DEV_PERF_REPEAT=3 pnpm tauri dev` 已验证真实面板打开 `panel.open p95=64ms`，detect timeout 不影响面板定位/隐藏/再次唤起。剩 OpenAI-compatible provider 标准消息流真实 provider 验证。 |
 | P3 | `external-hook-plugin-runtime` | 0/67，方案评审（已精简） | **只保留 Block A 读取侧**：collector 收敛到 Hook manifest V2、4 态生命周期（enabled/disabled/error/circuit-broken）、洋葱 priority、沙盒、节流、熔断、延迟补写、单个 `clipboard.hook.run`；**Block B 写入侧冻结**（Proposal/Apply/content.write），等真实用户故事再解冻。现状 collector 实验代码是只读，不算本提案完成。 |
-| P1.x | `onboarding-standalone-page` | 24/51，首期 A 实现收尾 | 已新增独立 `onboarding` 窗口、设置页 `OnboardingEntryCard` 轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录和开机启动设置；仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界。sidebar 常驻、兜底四态、标准化日志仍属后续 phase。 |
+| P1.x | `onboarding-standalone-page` | 25/52，首期 A 实现收尾 | 已新增独立 `onboarding` 窗口、设置页 `OnboardingEntryCard` 轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录、开机启动设置和固定窗口滚动回归门禁；仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界。sidebar 常驻、兜底四态、标准化日志仍属后续 phase。 |
 | P4.x | `mastra-agent-runtime-evaluation` | 11/25，评估提案 | Mastra 仅作为 Agent runtime 候选；不直接安装依赖，不进 WebView/主进程热路径。若进入 POC，只允许可关闭、可旁路的 sidecar/workbench runtime，并先证明 quick panel P95、内存、打包签名、离线启动、tool allowlist 和 Settings Service redaction 边界。 |
 | P3 | `project-demo-gif-pipeline` | 0/30，方案评审 | 双轨功能演示动图流水线：真实录屏转 gif（ffmpeg palettegen/paletteuse + gifsicle，封装 `scripts/render-demo-gif.mjs`）为主，Remotion（`motion:render:intro` / `:onboarding`）为辅；含场景清单、`docs/demos/` 资产目录、命名规范与 README 引用。工程/文档资产，不阻塞 onboarding 或剪贴板功能。 |
 | P4.x | `local-model-quick-integration` | 4/16，后置候选 | 本地模型、第三方 API Key 导入和 AI 对话面板重构候选。已补 tasks/spec delta，方向约束为 OpenAI-compatible provider、显式导入、Settings Service redaction 和不阻塞 quick panel；需要单独评审是否合并/替代 `ai-model-plugin-productization` / `vercel-ai-sdk-integration` / `mastra-agent-runtime-evaluation`。 |

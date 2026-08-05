@@ -17,6 +17,7 @@
 - [x] 新增 `src/onboarding/OnboardingApp.tsx`，复用引导步骤逻辑并去掉设置页框架依赖
 - [ ] 新增 `src/onboarding/OnboardingStepper.tsx`（分步指示器与切换）
 - [x] 新增 `src/onboarding/onboarding.css`（Eco 风格，surface scoped）
+- [x] 固定 `640x560` 窗口下由引导 shell 承担纵向滚动，并新增 `verify-onboarding-surface.mjs` 回归门禁
 - [x] `tauri.conf.json` 新增 `onboarding` 窗口配置（`640x560`，`resizable:false`，`center`）
 - [x] `lib.rs` 新增 `open_onboarding_window_internal` / `open_onboarding_window` 命令并注册
 
