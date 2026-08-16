@@ -105,6 +105,7 @@ interface AppSettings {
   logRetentionDays: number;
   logAutoCleanup: boolean;
   logCleanupIntervalMin: number;
+  debugLogsEnabled: boolean;
   captureTextEnabled: boolean;
   captureHtmlEnabled: boolean;
   captureRtfEnabled: boolean;
@@ -303,7 +304,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   logMaxLines: 20000,
   logRetentionDays: 0,
   logAutoCleanup: true,
-  logCleanupIntervalMin: 10,
+  logCleanupIntervalMin: 1440,
+  debugLogsEnabled: false,
   captureTextEnabled: true,
   captureHtmlEnabled: true,
   captureRtfEnabled: true,
@@ -1628,11 +1630,16 @@ export function SettingsApp() {
                     <NumberSetting
                       label={tr("settings.logs.cleanupInterval")}
                       value={state.settings.logCleanupIntervalMin}
-                      min={1}
+                      min={60}
                       max={1440}
                       onChange={(logCleanupIntervalMin) =>
                         updateSettings({ logCleanupIntervalMin })
                       }
+                    />
+                    <ToggleSetting
+                      checked={state.settings.debugLogsEnabled}
+                      label={tr("settings.logs.debugLogs")}
+                      onChange={(debugLogsEnabled) => updateSettings({ debugLogsEnabled })}
                     />
                 </SettingGroup>
               ),

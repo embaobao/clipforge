@@ -1,3 +1,4 @@
+/// 文本内容的语义识别结果；只描述文本子类型，不改变原始剪贴板格式。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextDetection {
     pub payload_kind: String,
@@ -5,6 +6,7 @@ pub struct TextDetection {
     pub is_sensitive: bool,
 }
 
+/// 识别纯文本中的 URL、路径、颜色等语义，并标记可能的敏感内容。
 pub fn detect_text(content: &str) -> TextDetection {
     let trimmed = content.trim();
     let lower = trimmed.to_lowercase();
@@ -14,9 +16,9 @@ pub fn detect_text(content: &str) -> TextDetection {
     {
         ("html".to_string(), Some("html".to_string()))
     } else if looks_like_path(trimmed, &lower) {
-        ("file".to_string(), Some("path".to_string()))
+        ("text".to_string(), Some("path".to_string()))
     } else if looks_like_image_path(&lower) {
-        ("image".to_string(), Some("path-image".to_string()))
+        ("text".to_string(), Some("path-image".to_string()))
     } else if looks_like_url(trimmed, &lower) {
         ("link".to_string(), Some("url".to_string()))
     } else if looks_like_email(trimmed) {
@@ -45,6 +47,7 @@ pub fn detect_text(content: &str) -> TextDetection {
     }
 }
 
+/// 判断文本是否包含常见凭据特征，供采集过滤与条目标记复用。
 pub fn looks_sensitive(content: &str, lower: &str) -> bool {
     if lower.contains("authorization: bearer ")
         || lower.contains("api_key=")
@@ -184,10 +187,9 @@ mod tests {
             Some("email")
         );
         assert_eq!(detect_text("#ff00aa").sub_kind.as_deref(), Some("color"));
-        assert_eq!(
-            detect_text("/Users/me/file.txt").sub_kind.as_deref(),
-            Some("path")
-        );
+        let detection = detect_text("/Users/me/file.txt");
+        assert_eq!(detection.payload_kind, "text");
+        assert_eq!(detection.sub_kind.as_deref(), Some("path"));
     }
 
     #[test]

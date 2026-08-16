@@ -718,6 +718,7 @@
   "settings.logs.retentionDays": "Log retention days",
   "settings.logs.autoCleanup": "Automatic log cleanup",
   "settings.logs.cleanupInterval": "Log cleanup interval",
+  "settings.logs.debugLogs": "Debug logs",
   "settings.diagnostics.exportBundle": "Export diagnostic bundle",
   "settings.mcp.status": "MCP status",
   "settings.mcp.agentInstallPrompt": "Agent install prompt",

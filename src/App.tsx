@@ -244,6 +244,7 @@ type AppSettings = {
   logRetentionDays: number;
   logAutoCleanup: boolean;
   logCleanupIntervalMin: number;
+  debugLogsEnabled: boolean;
   captureTextEnabled: boolean;
   captureHtmlEnabled: boolean;
   captureRtfEnabled: boolean;
@@ -289,6 +290,13 @@ type QueryClipPayload = {
   limit: number;
 };
 
+type CleanupClipPayload = {
+  hardDeleted: number;
+  retentionHardDeleted: number;
+  overflowHardDeleted: number;
+  ranAt: number;
+};
+
 type ExportTextFilesPayload = {
   directory: string;
   count: number;
@@ -319,9 +327,11 @@ function isCaptureClipPayload(payload: unknown): payload is CaptureClipPayload {
 const ACTIVE_VIEW_KEY = "clipforge.active-view.v1";
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 const DEFAULT_SHORTCUT = "Control+V";
-const ROW_HEIGHT = 36;
+const ROW_HEIGHT = 40;
 const OVERSCAN = 5;
 const DEFAULT_PANEL_HEIGHT = 400;
+const MAX_BROWSER_TIMER_DELAY_MS = 2_147_000_000;
+const CLEANUP_STARTUP_DELAY_MS = 60_000;
 function getStarterSampleContent(tr: (key: TranslationKey, params?: Record<string, string | number>) => string) {
   return [
     tr("main.sample.title"),
@@ -367,7 +377,8 @@ const defaultSettings: AppSettings = {
   logMaxLines: 20000,
   logRetentionDays: 0,
   logAutoCleanup: true,
-  logCleanupIntervalMin: 10,
+  logCleanupIntervalMin: 1440,
+  debugLogsEnabled: false,
   captureTextEnabled: true,
   captureHtmlEnabled: true,
   captureRtfEnabled: true,
@@ -1791,17 +1802,44 @@ function ClipForgeApp() {
   useEffect(() => {
     if (isSettingsWindow) return;
     if (!settings.cleanupEnabled) return;
+    let timer = 0;
+    let disposed = false;
+    let cleanupRunning = false;
+    const intervalMs = Math.max(1, settings.cleanupIntervalHours) * 60 * 60 * 1000;
+    const scheduleNext = (delayMs: number) => {
+      if (disposed) return;
+      const safeDelayMs = Math.min(Math.max(0, delayMs), MAX_BROWSER_TIMER_DELAY_MS);
+      timer = window.setTimeout(() => {
+        if (delayMs > MAX_BROWSER_TIMER_DELAY_MS) {
+          scheduleNext(delayMs - MAX_BROWSER_TIMER_DELAY_MS);
+          return;
+        }
+        runCleanup();
+      }, safeDelayMs);
+    };
     const runCleanup = () => {
-      invoke("cleanup_clip_records", {
+      if (disposed || cleanupRunning) return;
+      cleanupRunning = true;
+      invoke<CleanupClipPayload>("cleanup_clip_records", {
         retentionDays: settings.softDeletedRetentionDays,
         maxActiveItems: settings.maxStoredItems,
       })
-        .then((payload) => logAppError("info", "Cleanup completed", payload))
-        .catch((error) => logAppError("warn", "Cleanup failed", String(error)));
+        .then((payload) => {
+          if (payload.hardDeleted > 0) {
+            logAppError("info", "Cleanup completed", payload);
+          }
+        })
+        .catch((error) => logAppError("warn", "Cleanup failed", String(error)))
+        .finally(() => {
+          cleanupRunning = false;
+          scheduleNext(intervalMs);
+        });
     };
-    const timer = window.setInterval(runCleanup, settings.cleanupIntervalHours * 60 * 60 * 1000);
-    runCleanup();
-    return () => window.clearInterval(timer);
+    scheduleNext(CLEANUP_STARTUP_DELAY_MS);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
   }, [
     isSettingsWindow,
     settings.cleanupEnabled,
@@ -3986,7 +4024,7 @@ function TrashPanel({
           className="quick-menu"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={36}
+          itemHeight={ROW_HEIGHT}
           items={clips}
           onEndReached={onLoadMore}
           onUserScroll={onPointerActive}
@@ -4473,7 +4511,7 @@ function QuickPastePanel({
           className="quick-menu"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={36}
+          itemHeight={ROW_HEIGHT}
           items={clips}
           onEndReached={onLoadMore}
           groupSize={10}

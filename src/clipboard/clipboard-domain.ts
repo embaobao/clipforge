@@ -88,9 +88,12 @@ export function getClipboardLine(item: ClipItem) {
   }
   // 优先用纯文本渲染：HTML/RTF 等 clip 的 content 是源码，plainText 才是用户可见的文字。
   // 修复前：复制 HTML 后列表把它当 HTML 源码显示；修复后：默认渲染为文字内容。
-  const source = item.plainText || item.content;
-  const firstLine = (source || "").split(/\r?\n/, 1)[0] ?? "";
-  const line = firstLine.replace(/\s+/g, " ").trim();
+  // 只取首个换行前的内容，避免对大文本（如长日志）做 O(n) 全串扫描：
+  // 列表每行、每次滚动帧都会调用本函数，全串扫描会显著拖慢大内容场景的滚动与复制。
+  const source = item.plainText || item.content || "";
+  const newlineAt = source.search(/\r?\n/);
+  const firstLineRaw = newlineAt >= 0 ? source.slice(0, newlineAt) : source;
+  const line = firstLineRaw.replace(/\s+/g, " ").trim();
   return line || item.analysis.title || "";
 }
 

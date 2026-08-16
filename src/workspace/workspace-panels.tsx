@@ -524,6 +524,26 @@ function LinkPreview({ clip, links, onOpen, tr }: { clip: ClipItem; links: strin
   );
 }
 
+/** 大文本安全预览：超过阈值只渲染前 N 字符，避免选中即同步渲染 1MB+ 内容导致界面卡死。
+ *  超长时给出「展开全部」按钮，按需再渲染完整内容（用户主动触发，不阻塞列表/复制）。 */
+function TruncatedPre({ clip, className }: { clip: ClipItem; className?: string }) {
+  const MAX_PREVIEW_CHARS = 200_000;
+  const [expanded, setExpanded] = useState(false);
+  const total = clip.content.length;
+  const truncated = total > MAX_PREVIEW_CHARS && !expanded;
+  const shown = truncated ? clip.content.slice(0, MAX_PREVIEW_CHARS) : clip.content;
+  return (
+    <div className="truncated-pre-wrap">
+      <pre className={className}>{shown}</pre>
+      {truncated ? (
+        <button type="button" className="truncated-pre-expand" onClick={() => setExpanded(true)}>
+          内容过大（{total.toLocaleString()} 字符），仅显示前 {MAX_PREVIEW_CHARS.toLocaleString()} 字符，点击展开全部
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function JsonPreview({
   clip,
   content,
@@ -1507,14 +1527,14 @@ export function ClipDetailWorkspace({
                         <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
                       </TabsContent>
                       <TabsContent value="raw">
-                        <pre className="detail-raw-content">{clip.content}</pre>
+                        <TruncatedPre clip={clip} className="detail-raw-content" />
                       </TabsContent>
                     </TabsContents>
                   </Tabs>
                 ) : (
                   <>
                     <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
-                    <pre className="detail-raw-content">{clip.content}</pre>
+                    <TruncatedPre clip={clip} className="detail-raw-content" />
                   </>
                 )}
               </AccordionContent>

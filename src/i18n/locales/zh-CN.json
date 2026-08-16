@@ -718,6 +718,7 @@
   "settings.logs.retentionDays": "日志保留天数",
   "settings.logs.autoCleanup": "自动清理日志",
   "settings.logs.cleanupInterval": "日志清理间隔",
+  "settings.logs.debugLogs": "调试日志",
   "settings.diagnostics.exportBundle": "导出排查包",
   "settings.mcp.status": "MCP 状态",
   "settings.mcp.agentInstallPrompt": "Agent 安装提示",

@@ -141,6 +141,7 @@ export const SETTINGS_FIELD_CATALOG = [
   { id: "logRetentionDays", section: "storage-logs", tab: "logs", type: "number", labelKey: "settings.logs.retentionDays", order: 40 },
   { id: "logAutoCleanup", section: "storage-logs", tab: "logs", type: "switch", labelKey: "settings.logs.autoCleanup", order: 50 },
   { id: "logCleanupIntervalMin", section: "storage-logs", tab: "logs", type: "number", labelKey: "settings.logs.cleanupInterval", order: 60 },
+  { id: "debugLogsEnabled", section: "storage-logs", tab: "logs", type: "switch", labelKey: "settings.logs.debugLogs", order: 70 },
   { id: "diagnosticsBundle", section: "storage-logs", tab: "diagnostics", type: "action", labelKey: "settings.diagnostics.exportBundle", order: 10 },
   { id: "mcpStatus", section: "mcp-agent", tab: "status", type: "action", labelKey: "settings.mcp.status", order: 10 },
   { id: "agentInstallPrompt", section: "mcp-agent", tab: "install", type: "code", labelKey: "settings.mcp.agentInstallPrompt", order: 10 },

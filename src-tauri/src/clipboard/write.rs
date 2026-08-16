@@ -3,6 +3,7 @@ use clipboard_rs::{Clipboard, ClipboardContent, ClipboardContext, RustImageData}
 
 use crate::ClipItemPayload;
 
+/// 执行系统剪贴板写入后返回的格式与回写抑制信息。
 #[derive(Debug, Clone)]
 pub struct ClipboardWriteResult {
     pub written_formats: Vec<String>,
@@ -10,6 +11,7 @@ pub struct ClipboardWriteResult {
     pub text_fallback: String,
 }
 
+/// 可测试的剪贴板写入计划；执行前完整描述格式、数据与降级文本。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipboardWritePlan {
     pub mode: ClipboardWriteMode,
@@ -18,6 +20,7 @@ pub struct ClipboardWritePlan {
     pub text_fallback: String,
 }
 
+/// 系统剪贴板的实际写入模式。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClipboardWriteMode {
     PlainText,
@@ -26,12 +29,14 @@ pub enum ClipboardWriteMode {
     Files,
 }
 
+/// 写入计划中的单个标准格式表示。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClipboardWriteEntry {
     pub format: String,
     pub data: ClipboardWriteData,
 }
 
+/// 写入计划支持的数据载体。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClipboardWriteData {
     Text(String),
@@ -39,6 +44,7 @@ pub enum ClipboardWriteData {
     FileList(Vec<String>),
 }
 
+/// 根据条目的真实 representation 写入系统剪贴板，并返回写入结果。
 pub fn write_clipboard_item(
     item: &ClipItemPayload,
     paste_mode: Option<&str>,
@@ -53,6 +59,7 @@ pub fn write_clipboard_item(
     })
 }
 
+/// 构建写入计划；仅有真实 file-list representation 的条目才能按文件写回。
 pub fn build_clipboard_write_plan(
     item: &ClipItemPayload,
     paste_mode: Option<&str>,
@@ -72,7 +79,10 @@ pub fn build_clipboard_write_plan(
         "text/html" => build_rich_text_plan(item, "html"),
         "text/rtf" => build_rich_text_plan(item, "rtf"),
         "image/png" => build_image_plan(item),
-        "application/file-list" => build_files_plan(item),
+        "application/file-list" if has_representation(item, "application/file-list") => {
+            build_files_plan(item)
+        }
+        "application/file-list" => Ok(build_plain_representation_plan(item)),
         _ => {
             let text = item.content.clone();
             Ok(ClipboardWritePlan::new(
@@ -212,6 +222,28 @@ fn build_files_plan(item: &ClipItemPayload) -> Result<ClipboardWritePlan, String
     ))
 }
 
+fn build_plain_representation_plan(item: &ClipItemPayload) -> ClipboardWritePlan {
+    let text = item
+        .representations
+        .iter()
+        .find(|representation| representation.format == "text/plain")
+        .and_then(|representation| representation.content.clone())
+        .filter(|content| !content.trim().is_empty())
+        .unwrap_or_else(|| plain_text_for_item(item));
+    ClipboardWritePlan::new(
+        ClipboardWriteMode::PlainText,
+        vec![text_entry("text/plain", text.clone())],
+        crate::content_hash("text/plain", text.as_bytes()),
+        text,
+    )
+}
+
+fn has_representation(item: &ClipItemPayload, format: &str) -> bool {
+    item.representations
+        .iter()
+        .any(|representation| representation.format == format)
+}
+
 impl ClipboardWritePlan {
     fn new(
         mode: ClipboardWriteMode,
@@ -227,6 +259,7 @@ impl ClipboardWritePlan {
         }
     }
 
+    /// 返回写入计划最终会发布到系统剪贴板的标准格式列表。
     pub fn written_formats(&self) -> Vec<String> {
         self.entries
             .iter()
@@ -442,5 +475,24 @@ mod tests {
             entry_text(&paths, "text/plain"),
             Some("a.txt\nb.md".to_string())
         );
+    }
+
+    #[test]
+    fn text_only_path_representation_stays_plain_text() {
+        let path = "/Users/me/project/proposal.md";
+        let mut item = test_item("text/plain", path);
+        item.primary_format = "application/file-list".to_string();
+        item.payload_kind = "file".to_string();
+        item.available_formats = vec![
+            "application/file-list".to_string(),
+            "text/plain".to_string(),
+        ];
+        item.representations[0].preferred = false;
+        item.plain_text = path.to_string();
+        item.search_text = Some(path.to_string());
+        let plan = build_clipboard_write_plan(&item, None).expect("legacy text path write plan");
+        assert_eq!(plan.mode, ClipboardWriteMode::PlainText);
+        assert_eq!(plan.written_formats(), vec!["text/plain"]);
+        assert_eq!(entry_text(&plan, "text/plain"), Some(path.to_string()));
     }
 }

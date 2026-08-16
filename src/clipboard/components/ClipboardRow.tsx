@@ -10,6 +10,7 @@ import type { FilePathStatus } from "../../services/clipboard";
 import { isFileClipMissing, type TrFunction } from "../clipboard-domain";
 import { ClipboardContentPreview } from "./ClipboardContentPreview";
 import { ClipboardRowActions } from "./ClipboardRowActions";
+import styles from "./ClipboardRow.module.css";
 
 export interface ClipboardRowProps {
   /** 当前行数据。 */
@@ -73,6 +74,7 @@ export function ClipboardRow({
     <article
       className={[
         "quick-row",
+        styles.selectionFrame,
         activeId === item.id ? "active" : "",
         copiedId === item.id ? "copied" : "",
         selectedIds.has(item.id) ? "selected" : "",

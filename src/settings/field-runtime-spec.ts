@@ -22,5 +22,5 @@ export const FIELD_RUNTIME_SPEC: Record<string, FieldRuntimeSpec> = {
   // storage-logs / logs（已核对 settings.tsx 调用处）
   logMaxSizeMb: { min: 1, max: 1024 },
   logMaxLines: { min: 1000, max: 1000000 },
-  logCleanupIntervalMin: { min: 1, max: 1440 },
+  logCleanupIntervalMin: { min: 60, max: 1440 },
 };

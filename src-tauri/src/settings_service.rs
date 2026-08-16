@@ -226,6 +226,7 @@ pub fn prepare_reset(
                     "logRetentionDays",
                     "logAutoCleanup",
                     "logCleanupIntervalMin",
+                    "debugLogsEnabled",
                 ] {
                     object.remove(key);
                 }

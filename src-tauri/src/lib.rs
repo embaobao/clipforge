@@ -2582,7 +2582,8 @@ fn settings_json_schema() -> Value {
             "logMaxLines": { "type": "integer", "minimum": 100, "maximum": 2000000 },
             "logRetentionDays": { "type": "integer", "minimum": 0, "maximum": 3650 },
             "logAutoCleanup": { "type": "boolean" },
-            "logCleanupIntervalMin": { "type": "integer", "minimum": 1, "maximum": 1440 },
+            "logCleanupIntervalMin": { "type": "integer", "minimum": 60, "maximum": 1440 },
+            "debugLogsEnabled": { "type": "boolean" },
             "captureTextEnabled": { "type": "boolean" },
             "captureHtmlEnabled": { "type": "boolean" },
             "captureRtfEnabled": { "type": "boolean" },
@@ -4321,6 +4322,9 @@ fn log_to_file(level: &str, module: &str, message: &str) {
     // 非阻塞：只把格式化好的日志行投递给后台写线程，绝不在调用线程（往往是 IPC / 粘贴 /
     // 唤起热路径）上做 fs::OpenOptions + write_all。show/hide/copy/paste 每次都产生若干条
     // 日志，同步落盘是整体「停顿感」的主要来源之一。
+    if !should_write_app_log(level, module, message) {
+        return;
+    }
     if let Ok(line) = build_log_line(level, &format!("[{}] {}", module, message), "") {
         log_writer_send(line);
     }
@@ -4456,6 +4460,56 @@ fn build_log_line(level: &str, message: &str, context: &str) -> Result<String, S
 /// 首次发送时 spawn 一个专用线程，批量异步落盘，把所有文件 I/O 移出热路径。
 static LOG_WRITER_TX: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<String>>> =
     std::sync::OnceLock::new();
+static DEBUG_LOGS_ENABLED_CACHE: std::sync::OnceLock<std::sync::Mutex<Option<(Instant, bool)>>> =
+    std::sync::OnceLock::new();
+
+fn debug_logs_enabled_cached() -> bool {
+    let cache = DEBUG_LOGS_ENABLED_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    let Ok(mut cached) = cache.lock() else {
+        return false;
+    };
+    let now = Instant::now();
+    if let Some((checked_at, enabled)) = *cached {
+        if now.duration_since(checked_at) < Duration::from_secs(5) {
+            return enabled;
+        }
+    }
+    let enabled = read_user_settings()
+        .ok()
+        .and_then(|settings| settings.settings.get("debugLogsEnabled").and_then(Value::as_bool))
+        .unwrap_or(false);
+    *cached = Some((now, enabled));
+    enabled
+}
+
+fn is_verbose_info_log(module: &str, message: &str) -> bool {
+    matches!(
+        module,
+        "clipboard-monitor"
+            | "panel-focus"
+            | "panel-open-perf"
+            | "panel-pin"
+            | "panel-position"
+            | "panel-toggle"
+            | "paste-focus"
+            | "shortcut"
+    ) || message == "clipboard-promote: refreshed full list"
+        || message == "keyboard-detail"
+        || message.starts_with("panel-keyboard:")
+        || message.starts_with("panel-pin:")
+        || message.starts_with("paste-ui:")
+}
+
+fn should_write_app_log(level: &str, module: &str, message: &str) -> bool {
+    let normalized_level = normalize_log_level(level);
+    if normalized_level == "debug" {
+        return debug_logs_enabled_cached();
+    }
+    if normalized_level == "info" && is_verbose_info_log(module, message) {
+        return debug_logs_enabled_cached();
+    }
+    true
+}
 
 fn log_writer_send(line: String) {
     let mutex = LOG_WRITER_TX.get_or_init(|| {
@@ -4534,7 +4588,7 @@ fn read_log_cleanup_settings() -> LogCleanupSettings {
         error_retention_days: 7,
         detail_retention_days: 3,
         auto_cleanup: true,
-        interval_min: 10,
+        interval_min: 1440,
     };
     if let Ok(settings) = read_user_settings() {
         let v = &settings.settings;
@@ -4560,7 +4614,7 @@ fn read_log_cleanup_settings() -> LogCleanupSettings {
             s.auto_cleanup = b;
         }
         if let Some(n) = v.get("logCleanupIntervalMin").and_then(Value::as_u64) {
-            s.interval_min = n.max(1);
+            s.interval_min = n.clamp(60, 1440);
         }
     }
     s
@@ -5907,6 +5961,9 @@ fn append_app_log(
 ) -> Result<String, String> {
     // 这是前端可调用的命令（设置页日志查看/清理用到），保持同步语义并返回路径。
     // 内部高频日志走 log_to_file（非阻塞后台线程，见 log_writer_send）。
+    if !should_write_app_log(&level, "", &message) {
+        return Ok(log_path()?.to_string_lossy().to_string());
+    }
     let line = build_log_line(&level, &message, &context.unwrap_or_default())?;
     let path = log_path()?;
     if let Some(parent) = path.parent() {

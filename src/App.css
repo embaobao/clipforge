@@ -10809,3 +10809,19 @@ div.animate-tooltip > * {
     gap: 3px;
   }
 }
+
+/* 虚拟列表行高钳制：固定高度虚拟化要求每行精确等于 ROW_HEIGHT（40px）。
+ * 此前 .quick-row 多处 min-height: 50/54/48/40/38px 与虚拟列表假设的 36px 不一致，
+ * 导致 spacer/偏移计算错误、滚动错位卡顿。仅作用于虚拟列表内部行，不动其它 surface。 */
+.virtual-list .virtual-item > .quick-row {
+  height: 40px !important;
+  max-height: 40px !important;
+  min-height: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.virtual-list .virtual-item > .quick-row .quick-content {
+  height: 40px !important;
+  overflow: hidden !important;
+}
