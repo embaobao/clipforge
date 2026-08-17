@@ -7,6 +7,7 @@
 - 变更标识：`local-model-quick-integration`。
 - 依赖：`settings-service-unified-protocol`（已归档，Settings Service 可用）。
 - 替代/合并：本提案吸收并替代原 `vercel-ai-sdk-integration`（P4.1）的 scope，同时精简 `ai-model-plugin-productization`（P4）中 Agent 运行时部分。
+- **状态（2026-08-17）：superseded**。`deepseek-harness-embedding` 已落地，DSH 内置模型适配 + OpenAI 兼容 + tool calling，作为统一 AI 运行时取代本提案的快速接入路线；标品化/隐私/能力门禁诉求并入 `ai-model-plugin-productization`。
 
 ## 变更摘要（2026-07-30 v4 架构定型）
 

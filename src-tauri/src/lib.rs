@@ -32,6 +32,11 @@ mod context_collector_runtime;
 mod context_collectors;
 mod context_collector_system;
 mod settings_service;
+mod dsh;
+use dsh::{
+    analyze_clipboard, get_dsh_status, kill_dsh_daemon, spawn_dsh_daemon, start_dsh_daemon,
+    stop_dsh_daemon, DshDaemonState,
+};
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
 use settings_service::{
@@ -107,6 +112,8 @@ const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 400.0;
 const QUICK_PANEL_MIN_HEIGHT: f64 = 320.0;
 const QUICK_PANEL_MAX_HEIGHT: f64 = 760.0;
 const QUICK_PANEL_MARGIN: f64 = 12.0;
+const DSH_PANEL_WIDTH: f64 = 900.0;
+const DSH_PANEL_HEIGHT: f64 = 640.0;
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_BUNDLE_IDENTIFIER: &str = "app.clipforge.desktop";
 
@@ -6207,6 +6214,34 @@ fn toggle_quick_panel_command<R: tauri::Runtime>(
     }
 }
 
+// ── DSH 独立悬浮窗命令：复用剪贴板窗体的悬浮逻辑（label="dsh"），与剪贴板完全一致的
+// 唤起 / 定位 / 失焦隐藏 / 固定能力，使 DSH 能悬浮于其他应用之上快速使用 Agent。 ──
+
+#[tauri::command]
+fn open_dsh_window<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<PanelTriggerPayload, String> {
+    open_floating_window(&app, "dsh", "command", false)
+}
+
+#[tauri::command]
+fn hide_dsh_window<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<PanelTriggerPayload, String> {
+    hide_floating_window(&app, "dsh", "command", false)
+}
+
+#[tauri::command]
+fn toggle_dsh_window<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<PanelTriggerPayload, String> {
+    toggle_floating_window(&app, "dsh", "toggle", false);
+    let window = app
+        .get_webview_window("dsh")
+        .ok_or_else(|| "dsh window is not available".to_string())?;
+    Ok(panel_trigger_payload(&window, "toggle", "toggle", ""))
+}
+
 #[tauri::command]
 fn focus_quick_panel_command<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -8782,6 +8817,18 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 监听、去重、设置过滤和入库统一收敛在 clipboard::watcher，避免保留第二条采集路径。
     clipboard::watcher::init(app.handle().clone());
 
+    // DSH 常驻守护进程：常驻拉起 web carrier，供悬浮 dsh surface 嵌入官方 Web UI。
+    // 失败仅记日志降级，不阻断剪贴板主流程。
+    let dsh_daemon_state = DshDaemonState::default();
+    if let Err(error) = spawn_dsh_daemon(&dsh_daemon_state, None) {
+        log_to_file(
+            "warn",
+            "dsh-daemon",
+            &format!("auto start DSH daemon failed: {}", error),
+        );
+    }
+    app.manage(dsh_daemon_state);
+
     #[cfg(debug_assertions)]
     schedule_dev_window_trigger(app.handle().clone());
 
@@ -10653,6 +10700,10 @@ pub fn run() {
             agent_get_run,
             agent_get_transcript,
             agent_restore_session,
+            analyze_clipboard,
+            start_dsh_daemon,
+            stop_dsh_daemon,
+            get_dsh_status,
             capture_clip_record,
             capture_current_clipboard,
             capture_live_application_context,
@@ -10715,16 +10766,20 @@ pub fn run() {
             reset_accessibility_permission,
             start_mcp_server,
             stop_mcp_server,
-            get_mcp_status
+            get_mcp_status,
+            open_dsh_window,
+            hide_dsh_window,
+            toggle_dsh_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClipForge")
-        .run(|_app_handle, event| {
+        .run(|app_handle, event| {
             if matches!(
                 event,
                 tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
             ) {
                 cleanup_agent_children();
+                kill_dsh_daemon(&app_handle.state::<DshDaemonState>());
             }
         });
 }
@@ -10826,6 +10881,89 @@ fn open_panel<R: tauri::Runtime>(
     }
 }
 
+/// 通用浮窗打开：按 window label 复用剪贴板窗体的完整悬浮逻辑（定位策略 + NSPanel 浮动显示）。
+/// `is_clipboard=true` 时附加剪贴板专属逻辑（辅助功能授权提示、粘贴目标快照、emit show-quick-panel 事件）；
+/// DSH 传 `false` 跳过这些、使用更大的固定尺寸（DSH_PANEL_WIDTH × DSH_PANEL_HEIGHT）。
+fn open_floating_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+    reason: &str,
+    is_clipboard: bool,
+) -> Result<PanelTriggerPayload, String> {
+    let panel_started = Instant::now();
+    let mut panel_last_step = panel_started;
+    if let Some(window) = app.get_webview_window(label) {
+        if is_clipboard {
+            maybe_prompt_accessibility_on_first_panel(app, reason);
+        }
+        log_panel_open_step(reason, "first-permission-dispatch", panel_started, &mut panel_last_step);
+        let strategy = get_strategy_for_source(reason);
+        let strategy_clone = strategy.clone();
+        log_panel_open_step(reason, "resolve-strategy", panel_started, &mut panel_last_step);
+
+        let (cx, cy) = cursor_logical_point(&window).unwrap_or((-1.0, -1.0));
+        let _cursor_monitor = monitor_for_logical_point(&window, cx, cy)
+            .map(|m| get_monitor_id(&m))
+            .unwrap_or_default();
+        log_panel_open_step(reason, "cursor-monitor", panel_started, &mut panel_last_step);
+        if is_clipboard {
+            let reason_owned = reason.to_string();
+            let fallback = if cx >= 0.0 && cy >= 0.0 {
+                Some((cx, cy))
+            } else {
+                None
+            };
+            thread::spawn(move || {
+                snapshot_paste_target_bounds(&reason_owned, fallback);
+            });
+        }
+
+        let (panel_width, panel_h) = if is_clipboard {
+            resolve_panel_dims()
+        } else {
+            (DSH_PANEL_WIDTH, DSH_PANEL_HEIGHT)
+        };
+        let panel_height = panel_position(&window, panel_width, panel_h)
+            .map(|(_, _, h)| h)
+            .unwrap_or(panel_h);
+        let _ = window.set_size(LogicalSize::new(panel_width, panel_height));
+        log_panel_open_step(reason, "size-and-height", panel_started, &mut panel_last_step);
+
+        let position_source: String =
+            match apply_position_strategy(&window, strategy, panel_width, panel_height) {
+                Some((x, y)) => {
+                    set_panel_position(&window, x, y);
+                    format!("sync-{:?}", strategy_clone)
+                }
+                None => {
+                    if let Some((fx, fy, _)) = panel_position(&window, panel_width, panel_height) {
+                        set_panel_position(&window, fx, fy);
+                    }
+                    format!("fallback-{:?}", strategy_clone)
+                }
+            };
+        log_panel_open_step(reason, "position", panel_started, &mut panel_last_step);
+
+        show_floating_window_by_label(app, label, &window);
+        log_panel_open_step(reason, "show-window", panel_started, &mut panel_last_step);
+        if is_clipboard {
+            let _ = window.emit("clipforge://show-quick-panel", reason);
+        }
+        log_panel_open_step(reason, "emit-show", panel_started, &mut panel_last_step);
+
+        let payload = panel_trigger_payload(
+            &window,
+            reason,
+            &position_source,
+            &format!("{:?}", strategy_clone),
+        );
+        log_panel_open_step(reason, "payload", panel_started, &mut panel_last_step);
+        Ok(payload)
+    } else {
+        Err(format!("{} window is not available", label))
+    }
+}
+
 fn async_position_debounced<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     window_label: String,
@@ -10892,6 +11030,46 @@ fn hide_panel<R: tauri::Runtime>(
     Ok(panel_trigger_payload(&window, reason, "hidden", ""))
 }
 
+/// 通用浮窗隐藏：按 label 复用剪贴板窗体的失焦隐藏 + 固定(pinned)逻辑。
+/// `is_clipboard=true` 时附加保存位置与 emit hide-quick-panel 事件；DSH 传 `false` 跳过。
+fn hide_floating_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+    reason: &str,
+    is_clipboard: bool,
+) -> Result<PanelTriggerPayload, String> {
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("{} window is not available", label))?;
+
+    if is_panel_pinned() {
+        log_to_file("debug", "panel-pin", &format!("hide skipped: {} is pinned", label));
+        return Ok(panel_trigger_payload(&window, reason, "pinned", ""));
+    }
+
+    if is_clipboard {
+        save_panel_position(&window);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(panel) = app.get_webview_panel(label) {
+            panel.resign_key_window();
+            panel.hide();
+        } else {
+            let _ = window.hide();
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.hide();
+    }
+    if is_clipboard {
+        let _ = window.emit("clipforge://hide-quick-panel", reason);
+    }
+    Ok(panel_trigger_payload(&window, reason, "hidden", ""))
+}
+
 fn show_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
     if let Err(error) = open_panel(app, reason) {
         let _ = append_app_log(
@@ -10935,6 +11113,43 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
         let _ = hide_panel(app, reason);
     } else {
         show_quick_panel(app, reason);
+    }
+}
+
+/// 通用浮窗显隐切换：DSH（及可扩展的其他浮窗）使用，按 label 走对应通用开/关逻辑。
+fn toggle_floating_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+    reason: &str,
+    is_clipboard: bool,
+) {
+    let window = match app.get_webview_window(label) {
+        Some(window) => window,
+        None => return,
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    let focused = window.is_focused().unwrap_or(false);
+    let panel_visible = app
+        .get_webview_panel(label)
+        .ok()
+        .map(|panel| panel.is_visible())
+        .unwrap_or(false);
+    log_to_file(
+        "info",
+        "panel-toggle",
+        &format!(
+            "toggle label={} decision={} windowVisible={} windowFocused={} panelVisible={}",
+            label,
+            if visible { "hide" } else { "show" },
+            visible,
+            focused,
+            panel_visible
+        ),
+    );
+    if visible {
+        let _ = hide_floating_window(app, label, reason, is_clipboard);
+    } else {
+        let _ = open_floating_window(app, label, reason, is_clipboard);
     }
 }
 
@@ -11178,7 +11393,18 @@ fn show_panel_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     window: &tauri::WebviewWindow<R>,
 ) {
-    if let Ok(panel) = app.get_webview_panel("main") {
+    show_floating_window_by_label(app, "main", window);
+}
+
+/// 通用浮窗显示：把指定 label 的窗口设为 NSPanel status-level 浮动面板并置于最前。
+/// DSH 复用与剪贴板完全相同的「悬浮于其他应用之上」能力（label="dsh"）。
+#[cfg(target_os = "macos")]
+fn show_floating_window_by_label<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+    window: &tauri::WebviewWindow<R>,
+) {
+    if let Ok(panel) = app.get_webview_panel(label) {
         panel.set_level(quick_panel_level());
         panel.order_front_regardless();
         panel.show_and_make_key();
@@ -11190,7 +11416,8 @@ fn show_panel_window<R: tauri::Runtime>(
             "info",
             "panel-focus",
             &format!(
-                "show panel: panelVisible={} windowVisible={} focused={} canBecomeKey={} hidesOnDeactivate={}",
+                "show floating window {}: panelVisible={} windowVisible={} focused={} canBecomeKey={} hidesOnDeactivate={}",
+                label,
                 panel.is_visible(),
                 window.is_visible().unwrap_or(false),
                 window.is_focused().unwrap_or(false),
@@ -11205,7 +11432,8 @@ fn show_panel_window<R: tauri::Runtime>(
             "warn",
             "panel-focus",
             &format!(
-                "show panel fallback window path: visible={} focused={}",
+                "show floating window {} fallback window path: visible={} focused={}",
+                label,
                 window.is_visible().unwrap_or(false),
                 window.is_focused().unwrap_or(false)
             ),
@@ -11240,7 +11468,16 @@ fn quick_panel_level() -> i64 {
 
 #[cfg(not(target_os = "macos"))]
 fn show_panel_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    window: &tauri::WebviewWindow<R>,
+) {
+    show_floating_window_by_label(app, "main", window);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_floating_window_by_label<R: tauri::Runtime>(
     _app: &tauri::AppHandle<R>,
+    _label: &str,
     window: &tauri::WebviewWindow<R>,
 ) {
     let _ = window.show();

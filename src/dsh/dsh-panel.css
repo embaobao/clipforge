@@ -1,0 +1,111 @@
+/* DSH 面板样式（独立悬浮窗模式）
+   作为独立 alwaysOnTop 浮窗（label="dsh"）的前端入口，DshPanel 直接挂载于
+   dsh.html 的 #root，复用剪贴板窗体的悬浮能力（NSPanel 浮动 + 失焦隐藏）。
+   独立入口不加载主窗 index.css，故本文件自带必要的基础样式。 */
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
+
+/* 主窗内 DSH overlay 占位（兼容保留，当前不再显示） */
+.dsh-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: stretch;
+  padding: 7px;
+  pointer-events: none;
+  opacity: 0;
+}
+.dsh-overlay.open {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+/* ── 独立浮窗面板本体 ── */
+.dsh-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: oklch(0.99 0 0 / 0.94);
+  border: 1px solid oklch(0 0 0 / 0.1);
+  border-radius: 12px;
+  box-shadow:
+    0 28px 80px oklch(0 0 0 / 0.22),
+    0 10px 24px oklch(0 0 0 / 0.12),
+    inset 0 1px 0 oklch(1 0 0 / 0.8);
+}
+
+.dsh-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid oklch(0 0 0 / 0.08);
+  flex: 0 0 auto;
+}
+
+.dsh-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  color: oklch(0.25 0 0);
+}
+
+.dsh-panel-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: oklch(0.99 0 0 / 0.6);
+}
+
+/* 兼容模式：嵌入 DSH 官方 Web UI */
+.dsh-web-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: oklch(0.99 0 0 / 0.6);
+}
+
+.dsh-panel-hint {
+  margin: auto;
+  padding: 16px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: oklch(0 0 0 / 0.5);
+}
+
+/* 关闭按钮（独立入口不依赖主窗 .icon-button 全局样式，自带基础样式） */
+.dsh-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  color: oklch(0.4 0 0);
+  transition: background 140ms ease, color 140ms ease;
+}
+.dsh-panel-close:hover {
+  color: oklch(0.2 0 0);
+  background: oklch(0 0 0 / 0.06);
+}

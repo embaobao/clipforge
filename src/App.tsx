@@ -1,6 +1,5 @@
 import {
   Check,
-  Bot,
   Clipboard,
   Copy,
   ExternalLink,
@@ -72,14 +71,19 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
-import { ClipboardAgentPanel } from "./agent-panel";
-import {
-  generateClipAiSummary,
-  getClipAiSummaryErrorLogMetadata,
-  getClipAiSummaryLogMetadata,
-  type ClipAiSummary,
-} from "./services/ai-summary";
-import type { AgentContextReference } from "./services/contracts";
+import { analyzeClipboard, openDshWindow, type DshAnalyzeResult } from "./agent/dsh-analysis";
+export type PanelSurface = "clipboard" | "dsh";
+
+// 模块级：DSH 只读快速分析入口（详情页与右键菜单共用，不在任何组件作用域内）
+async function analyzeClipboardWithDsh(item: ClipItem): Promise<DshAnalyzeResult | void> {
+  try {
+    const result = await analyzeClipboard(item.content ?? "", {});
+    return result;
+  } catch (error) {
+    console.warn("dsh-analysis: invoke failed", error);
+    return undefined;
+  }
+}
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
 import "./App.css";
@@ -99,7 +103,7 @@ type SourceAppInfo = {
   iconBase64?: string;
 };
 export type ViewKey = "history" | "favorites" | "trash";
-export type PanelSurface = "clipboard" | "agent";
+
 type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
@@ -1132,9 +1136,6 @@ type ErrorBoundaryCopy = {
   recoverLabel: string;
   panelTitle: string;
   panelMessage: string;
-  agentTitle: string;
-  agentMessage: string;
-  backToClipboard: string;
 };
 
 class AppErrorBoundary extends Component<{ children: ReactNode; copy: Pick<ErrorBoundaryCopy, "toastMessage" | "recoverLabel"> }, { errorMessage: string | null; resetKey: number }> {
@@ -1197,43 +1198,6 @@ class PanelContentBoundary extends Component<
           <Clipboard size={22} />
           <strong>{this.props.copy.panelTitle}</strong>
           <span>{this.props.copy.panelMessage}</span>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-class AgentPanelBoundary extends Component<
-  { children: ReactNode; copy: Pick<ErrorBoundaryCopy, "agentTitle" | "agentMessage" | "backToClipboard">; resetKey: string; onClose: () => void },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidUpdate(previous: { resetKey: string }) {
-    if (previous.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false });
-    }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    logAppError("error", `Agent panel failed: ${error.message}`, info.componentStack);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="panel-fallback agent-panel-fallback">
-          <Bot size={22} />
-          <strong>{this.props.copy.agentTitle}</strong>
-          <span>{this.props.copy.agentMessage}</span>
-          <button className="text-button" onClick={this.props.onClose} type="button">
-            {this.props.copy.backToClipboard}
-          </button>
         </div>
       );
     }
@@ -1329,9 +1293,6 @@ function ClipForgeApp() {
       recoverLabel: tr("main.errorBoundary.recover"),
       panelTitle: tr("main.errorBoundary.panelTitle"),
       panelMessage: tr("main.errorBoundary.panelMessage"),
-      agentTitle: tr("main.errorBoundary.agentTitle"),
-      agentMessage: tr("main.errorBoundary.agentMessage"),
-      backToClipboard: tr("main.errorBoundary.backToClipboard"),
     }),
     [tr],
   );
@@ -2627,26 +2588,11 @@ function ClipForgeApp() {
       const key = event.key.toLowerCase();
       const currentItem = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
 
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && key === "i") {
-        event.preventDefault();
-        setActiveSurface("agent");
-        return;
-      }
-
       if ((event.metaKey || event.ctrlKey) && !event.altKey && key === ",") {
         event.preventDefault();
         invoke("open_settings_window").catch((error) =>
           logAppError("warn", "Open settings window failed", String(error)),
         );
-        return;
-      }
-
-      if (activeSurface === "agent") {
-        if (event.key === "Escape" && !editable) {
-          event.preventDefault();
-          setActiveSurface("clipboard");
-          window.setTimeout(() => searchRef.current?.focus(), 0);
-        }
         return;
       }
 
@@ -2995,147 +2941,6 @@ function ClipForgeApp() {
     });
   }
 
-  async function writeClipAiSummary(item: ClipItem, summary: ClipAiSummary) {
-    const metadata = {
-      ...item.metadata,
-      aiSummary: summary,
-    };
-    const payload = await invoke<Partial<ClipItem>>("update_clip_record", {
-      input: { id: item.id, metadata },
-    });
-    const normalized = normalizeClip(payload, settingsRef.current) ?? {
-      ...item,
-      metadata,
-      updatedAt: Date.now(),
-    };
-    setClips((current) => {
-      const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-      clipsRef.current = next;
-      return next;
-    });
-    return normalized;
-  }
-
-  async function generateAiSummaryForClip(item: ClipItem): Promise<ClipAiSummary> {
-    const jobId = `clip_ai_${item.id}_${Date.now().toString(36)}`;
-    const pending: ClipAiSummary = {
-      status: "pending",
-      jobId,
-      generatedAt: Date.now(),
-    };
-    setNativeStatus(tr("main.status.aiSummaryPending"));
-    let currentItem = item;
-    try {
-      currentItem = await writeClipAiSummary(currentItem, pending);
-      const result = await generateClipAiSummary(currentItem, jobId);
-      await writeClipAiSummary(currentItem, result);
-      if (result.status === "ready") {
-        setNativeStatus(tr("main.status.aiSummaryReady"));
-        showCompletionToast(tr("main.toast.aiSummaryReady"));
-      } else {
-        setNativeStatus(tr("main.status.aiSummaryFailed"));
-      }
-      logAppError("info", "ai-summary: job finished", getClipAiSummaryLogMetadata(item.id, result, jobId));
-      return result;
-    } catch (error) {
-      const failed: ClipAiSummary = {
-        status: "failed",
-        jobId,
-        generatedAt: Date.now(),
-        errorCode: "AI_SUMMARY_UPDATE_FAILED",
-        message: String(error),
-      };
-      try {
-        await writeClipAiSummary(currentItem, failed);
-      } catch (writeError) {
-        logAppError(
-          "warn",
-          "ai-summary: failed-state write failed",
-          getClipAiSummaryErrorLogMetadata(
-            item.id,
-            jobId,
-            "AI_SUMMARY_FAILED_STATE_WRITE_FAILED",
-            writeError,
-            "failed-state-write-failed",
-          ),
-        );
-      }
-      setNativeStatus(tr("main.status.aiSummaryFailed"));
-      logAppError(
-        "warn",
-        "ai-summary: job failed",
-        getClipAiSummaryErrorLogMetadata(item.id, jobId, "AI_SUMMARY_UPDATE_FAILED", error),
-      );
-      return failed;
-    }
-  }
-
-  async function saveAgentResultAsClip(
-    content: string,
-    context: { sourceClipId?: string; conversationId: string },
-  ) {
-    if (!content.trim()) {
-      setNativeStatus(tr("main.status.agentEmptyResult"));
-      return;
-    }
-    try {
-      const payload = await invoke<CaptureClipPayload>("capture_clip_record", {
-        content,
-        sourceLabel: "ClipForge Agent",
-        observedAt: Date.now(),
-      });
-      if (!isCaptureClipPayload(payload)) throw new Error("Invalid capture_clip_record payload");
-      let normalized = normalizeClip(payload.item, settingsRef.current);
-      if (normalized) {
-        const tags = normalizeTagList([...normalized.tags, "AI"]);
-        const metadata = {
-          ...normalized.metadata,
-          provenance: {
-            generatedBy: "agent",
-            sourceClipId: context.sourceClipId ?? null,
-            conversationId: context.conversationId,
-            createdAt: Date.now(),
-          },
-        };
-        try {
-          const updatedPayload = await invoke<Partial<ClipItem>>("update_clip_record", {
-            input: {
-              id: normalized.id,
-              tags,
-              metadata,
-              agentContext: {
-                generatedBy: "agent",
-                sourceClipId: context.sourceClipId ?? null,
-                conversationId: context.conversationId,
-              },
-            },
-          });
-          normalized = normalizeClip(updatedPayload, settingsRef.current) ?? { ...normalized, tags, metadata };
-        } catch (error) {
-          logAppError("warn", "agent-result: metadata update failed", String(error));
-          normalized = { ...normalized, tags, metadata };
-        }
-        const savedItem = normalized;
-        setClips((current) => {
-          const next = [savedItem, ...current.filter((clip) => clip.id !== savedItem.id)].slice(
-            0,
-            settingsRef.current.maxStoredItems,
-          );
-          clipsRef.current = next;
-          return next;
-        });
-        setSelectedId(savedItem.id);
-      }
-      setActiveSurface("clipboard");
-      setActiveView("history");
-      setNativeStatus(tr("main.status.agentResultSaved"));
-      showCompletionToast(tr("main.toast.agentResultSaved"));
-    } catch (error) {
-      logAppError("warn", "agent-result: save failed", String(error));
-      setNativeStatus(formatNativeError(error));
-    }
-  }
-
   async function updateClipContent(
     item: ClipItem,
     content: string,
@@ -3244,43 +3049,6 @@ function ClipForgeApp() {
     if (shouldReselect) setSelectedId(nextSelectedId);
   }
 
-  async function archiveAgentSourceClip(item: ClipItem) {
-    updateClip(item.id, { bucket: "archive" });
-    setNativeStatus(tr("main.status.agentArchiveSource"));
-    showCompletionToast(tr("main.toast.agentArchiveSource"));
-  }
-
-  async function favoriteAgentSourceClip(item: ClipItem) {
-    if (!item.favorite) {
-      updateClip(item.id, { favorite: true });
-    }
-    setNativeStatus(tr("main.status.agentFavoriteSource"));
-    showCompletionToast(tr("main.toast.agentFavoriteSource"));
-  }
-
-  async function appendAgentTagToSourceClip(item: ClipItem, tag: string) {
-    const tags = normalizeTagList([...item.tags, tag]);
-    updateClip(item.id, { tags });
-    setNativeStatus(tr("main.status.agentTagSource", { tag }));
-    showCompletionToast(tr("main.toast.agentTagSource"));
-  }
-
-  function openAgentReference(reference: AgentContextReference) {
-    if (!reference.clipId) return;
-    const item = clipsRef.current.find((clip) => clip.id === reference.clipId && !clip.deletedAt);
-    if (!item) {
-      setNativeStatus(tr("main.status.clipMissing"));
-      return;
-    }
-    setSelectedId(item.id);
-    setSelectedIds(new Set());
-    setMultiSelectMode(false);
-    setMultiPreviewOpen(false);
-    setActiveSurface("clipboard");
-    setActiveView(item.bucket === "archive" ? "history" : activeView === "trash" ? "history" : activeView);
-    void navigateWorkspaceDetail(item.id);
-  }
-
   async function emptyTrash() {
     const trashIds = clips.filter((item) => item.deletedAt).map((item) => item.id);
     if (!trashIds.length) {
@@ -3307,13 +3075,9 @@ function ClipForgeApp() {
         <TopToolbar
           activeSurface={activeSurface}
           activeView={activeView}
-          agentContextCount={selectedClip ? 1 : 0}
           onDrag={handleWindowDrag}
-          onOpenAgent={() => {
-            setActiveSurface("agent");
-            setSelectedIds(new Set());
-            setMultiSelectMode(false);
-            setMultiPreviewOpen(false);
+          onOpenDsh={() => {
+            void openDshWindow();
           }}
           onOpenSettings={() => {
             invoke("open_settings_window").catch((error) =>
@@ -3468,9 +3232,6 @@ function ClipForgeApp() {
                   onCopyMode={(item, mode) => {
                     void copyClip(item, mode);
                   }}
-                  onGenerateAiSummary={(item) => {
-                    void generateAiSummaryForClip(item);
-                  }}
                   onDelete={(item) => {
                     void deleteClips([item.id]);
                   }}
@@ -3532,11 +3293,11 @@ function ClipForgeApp() {
                   onOpen={openClipTarget}
                   onOpenPath={openSystemPath}
                   onPasteText={pasteText}
-                  onGenerateAiSummary={generateAiSummaryForClip}
                   onPrevious={previousClip ? () => navigateDetailClip(previousClip) : undefined}
                   onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
                   onSearchTag={searchByTag}
                   onUpdateContent={updateClipContent}
+                  onAnalyzeClipboard={analyzeClipboardWithDsh}
                   quickActions={[
                     ...(clip && canOpenClipTarget(clip)
                       ? [
@@ -3552,15 +3313,6 @@ function ClipForgeApp() {
                       : []),
                     ...(clip
                       ? [
-                          {
-                            id: "ask-agent",
-                            label: tr("main.detailAction.askAgent"),
-                            icon: <Bot size={13} />,
-                            onSelect: () => {
-                              setSelectedId(clip.id);
-                              setActiveSurface("agent");
-                            },
-                          },
                           {
                             id: "copy",
                             label: tr("main.detailAction.copyContent"),
@@ -3614,42 +3366,10 @@ function ClipForgeApp() {
       </section>
 
       <div
-        aria-hidden={activeSurface !== "agent"}
-        className={activeSurface === "agent" ? "agent-overlay open" : "agent-overlay"}
-        data-agent-overlay={activeSurface === "agent" ? "open" : "closed"}
+        aria-hidden={activeSurface !== "dsh"}
+        className={activeSurface === "dsh" ? "dsh-overlay open" : "dsh-overlay"}
+        data-dsh-overlay={activeSurface === "dsh" ? "open" : "closed"}
       >
-        <div className="agent-overlay-scrim" />
-        <div className="agent-overlay-panel" data-agent-overlay-panel data-surface="agent" role="dialog" aria-label={tr("agent.aria.panel")} aria-modal={activeSurface === "agent"}>
-          {activeSurface === "agent" ? (
-            <AgentPanelBoundary
-              copy={errorBoundaryCopy}
-              resetKey={`agent:${selectedClip?.id ?? "none"}:${clips.length}:${settings.language}`}
-              onClose={() => {
-                setActiveSurface("clipboard");
-                window.setTimeout(() => searchRef.current?.focus(), 0);
-              }}
-            >
-              <ClipboardAgentPanel
-                activeClip={selectedClip}
-                allClips={clips}
-                filteredClips={filteredClips}
-                selectedClips={selectedInList}
-                onArchiveClip={archiveAgentSourceClip}
-                onAppendTagToSource={appendAgentTagToSourceClip}
-                onBackToClipboard={() => {
-                  setActiveSurface("clipboard");
-                  window.setTimeout(() => searchRef.current?.focus(), 0);
-                }}
-                onCopyResult={(text) => copyText(text, "agent-result", { sourceClipId: selectedClip?.id })}
-                onPasteResult={(text) => pasteText(text, "agent-result", { sourceClipId: selectedClip?.id })}
-                onFavoriteClip={favoriteAgentSourceClip}
-                language={settings.language}
-                onOpenReference={openAgentReference}
-                onSaveResult={saveAgentResultAsClip}
-              />
-            </AgentPanelBoundary>
-          ) : null}
-        </div>
       </div>
 
       <button
@@ -4414,7 +4134,6 @@ function QuickPastePanel({
   onPaste,
   onCopySelected,
   onCopyMode,
-  onGenerateAiSummary,
   onDelete,
   onDeleteSelected,
   onSelect,
@@ -4447,7 +4166,6 @@ function QuickPastePanel({
   onPaste: (item: ClipItem, source?: string) => void;
   onCopySelected: () => void;
   onCopyMode: (item: ClipItem, mode: PasteMode) => void;
-  onGenerateAiSummary: (item: ClipItem) => void;
   onDelete: (item: ClipItem) => void;
   onDeleteSelected: () => void;
   onSelect: (item: ClipItem) => void;
@@ -4551,7 +4269,7 @@ function QuickPastePanel({
             onOpenAggregate={onOpenAggregate}
             onPaste={onPaste}
             onCopyMode={(mode) => onCopyMode(contextMenu.item, mode)}
-            onGenerateAiSummary={onGenerateAiSummary}
+            onAnalyzeClipboard={analyzeClipboardWithDsh}
             onCopySelected={onCopySelected}
             onStartMultiSelect={onStartMultiSelect}
             onClearSelection={onClearSelection}

@@ -1,0 +1,4 @@
+# dsh profile root — 空 entry 列表。树由各 bundle 的 cordis.patch.yml 叠加组成：
+# @deepseek-ai/dsh-base（基础核心）+ @clipforge/dsh-plugin（剪贴板分析工具与 runner）。
+# 用户层覆盖写在 cordis.patch.yml，而非本文件。
+[]

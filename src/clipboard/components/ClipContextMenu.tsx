@@ -7,7 +7,7 @@ import {
   ExternalLink,
   FileJson,
   Heart,
-  Sparkles,
+  ScanSearch,
   Square,
   Trash2,
   X,
@@ -44,8 +44,8 @@ export interface ClipContextMenuProps {
   onPaste: (item: ClipItem, source?: string) => void;
   /** 以指定模式复制当前项。 */
   onCopyMode: (mode: PasteMode) => void;
-  /** 生成 AI 摘要。 */
-  onGenerateAiSummary: (item: ClipItem) => void;
+  /** DSH 只读快速分析。 */
+  onAnalyzeClipboard?: (item: ClipItem) => void;
   /** 复制已选项。 */
   onCopySelected: () => void;
   /** 进入多选模式。 */
@@ -73,7 +73,7 @@ export function ClipContextMenu({
   onOpenAggregate,
   onPaste,
   onCopyMode,
-  onGenerateAiSummary,
+  onAnalyzeClipboard,
   onCopySelected,
   onStartMultiSelect,
   onClearSelection,
@@ -173,14 +173,15 @@ export function ClipContextMenu({
           </button>
           <button
             className="clip-context-item"
-            onClick={() => run(() => onGenerateAiSummary(item))}
+            disabled={!onAnalyzeClipboard}
+            onClick={() => run(() => onAnalyzeClipboard?.(item))}
             role="menuitem"
             type="button"
           >
             <span className="clip-context-label">
-              <Sparkles size={13} />{tr("main.context.generateAiSummary")}
+              <ScanSearch size={13} />AI 分析
             </span>
-            <kbd>AI</kbd>
+            <kbd>DSH</kbd>
           </button>
           <button
             className="clip-context-item"

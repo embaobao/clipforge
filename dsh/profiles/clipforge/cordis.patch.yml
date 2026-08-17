@@ -1,0 +1,5 @@
+# 用户 patch 层：在 bundle 层（dsh-base + @clipforge/dsh-plugin）之后应用。
+# 一次性剪贴板分析是短生命周期进程，不需要 HMR 热重载；
+# 禁用 hmr 既可避免其要求 `node --expose-internals` 启动，也防止 watcher 干扰退出。
+- id: hmr
+  disabled: true

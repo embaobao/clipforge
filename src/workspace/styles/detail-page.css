@@ -33,7 +33,6 @@
   gap: 2px;
 }
 [data-surface="workspace"].workspace-detail-page .detail-nav-button,
-[data-surface="workspace"].workspace-detail-page .detail-ai-summary-button,
 [data-surface="workspace"].workspace-detail-page .detail-edit-button,
 [data-surface="workspace"].workspace-detail-page .detail-more-button {
   color: oklch(0.18 0 0 / 0.72) !important;
@@ -45,8 +44,6 @@
 
 [data-surface="workspace"].workspace-detail-page .detail-nav-button:hover,
 [data-surface="workspace"].workspace-detail-page .detail-nav-button:focus-visible,
-[data-surface="workspace"].workspace-detail-page .detail-ai-summary-button:hover,
-[data-surface="workspace"].workspace-detail-page .detail-ai-summary-button:focus-visible,
 [data-surface="workspace"].workspace-detail-page .detail-edit-button:hover,
 [data-surface="workspace"].workspace-detail-page .detail-edit-button:focus-visible,
 [data-surface="workspace"].workspace-detail-page .detail-more-button:hover,
@@ -54,9 +51,6 @@
   color: oklch(0.1 0 0 / 0.94) !important;
   background: oklch(0 0 0 / 0.055) !important;
   outline: none;
-}
-[data-surface="workspace"].workspace-detail-page .detail-ai-summary-button[aria-busy="true"] {
-  color: oklch(0.24 0 0 / 0.44) !important;
 }
 [data-surface="workspace"].workspace-detail-page .detail-summary-bar {
   min-height: 22px;

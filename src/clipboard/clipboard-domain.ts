@@ -3,7 +3,6 @@
 // 纯函数无副作用、不依赖 React/DOM，供主面板行组件（ClipboardContentPreview / ClipboardRowActions / ClipboardRow）和 App.tsx 共用。
 // TODO: ClipItem 当前 type-only 从 ../App 引入；后续 App.tsx 拆分时迁到共享 types 模块。
 import type { TranslationKey } from "../i18n";
-import type { ClipAiSummary } from "../services/ai-summary";
 import type { FilePathStatus } from "../services/clipboard";
 import type { ClipItem } from "../App";
 
@@ -102,13 +101,6 @@ export function isFileClipMissing(item: ClipItem, statuses: Record<string, FileP
   const paths = getFilePathsFromClip(item);
   if (!paths.length) return false;
   return paths.some((path) => statuses[path]?.exists === false);
-}
-
-/** AI 摘要状态的可读文案。 */
-export function getAiSummaryStatusLabel(summary: ClipAiSummary, tr: TrFunction) {
-  if (summary.status === "ready") return tr("main.list.aiSummaryReady");
-  if (summary.status === "pending") return tr("main.list.aiSummaryPending");
-  return tr("main.list.aiSummaryFailed");
 }
 
 /** 构造行 tooltip 内容：标题取自 analysis.title / 来源；正文优先纯文本并截断到 600 字（避免大文本阻塞渲染）。 */

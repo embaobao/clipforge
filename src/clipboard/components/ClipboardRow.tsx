@@ -5,7 +5,6 @@ import type { MouseEvent } from "react";
 import { Check, Square } from "lucide-react";
 import type { ClipItem } from "../../App";
 import { recordNextFramePerf } from "../../performance-smoke";
-import { getStoredClipAiSummary } from "../../services/ai-summary";
 import type { FilePathStatus } from "../../services/clipboard";
 import { isFileClipMissing, type TrFunction } from "../clipboard-domain";
 import { ClipboardContentPreview } from "./ClipboardContentPreview";
@@ -67,7 +66,6 @@ export function ClipboardRow({
   tr,
 }: ClipboardRowProps) {
   const fileMissing = isFileClipMissing(item, filePathStatuses);
-  const aiSummary = getStoredClipAiSummary(item);
   const groupIndex = index - activeGroupStart;
 
   return (
@@ -125,7 +123,7 @@ export function ClipboardRow({
           <Square size={12} />
         )}
       </button>
-      <ClipboardContentPreview aiSummary={aiSummary} fileMissing={fileMissing} item={item} tr={tr} />
+      <ClipboardContentPreview fileMissing={fileMissing} item={item} tr={tr} />
       <ClipboardRowActions item={item} onFavorite={onFavorite} onOpen={onOpen} tr={tr} />
     </article>
   );

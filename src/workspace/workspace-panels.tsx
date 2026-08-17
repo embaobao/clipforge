@@ -15,6 +15,7 @@ import {
   Pencil,
   Save,
   Sparkles,
+  ScanSearch,
   Tag,
   Table2,
   X,
@@ -27,7 +28,7 @@ import { detectSensitiveEditorFields } from "../editor/sensitive";
 import { applyEditorSuggestion, buildLocalEditorSuggestion } from "../editor/suggestions";
 import { formatCommandError, type TranslationKey } from "../i18n";
 import { getImagePath, type FilePathStatus } from "../services/clipboard";
-import type { ClipAiSummary } from "../services/ai-summary";
+import { type DshAnalyzeResult, type DshHistoryEntry, recordDshHistory, getDshHistory } from "../agent/dsh-analysis";
 import type { EditorSuggestionResult } from "../services/contracts";
 import { analyzeSmartFormats } from "../smart-format";
 import { getFileNameFromPath } from "../clipboard/clipboard-domain";
@@ -115,13 +116,6 @@ function getPayloadKindIcon(kind: ClipPayloadKind) {
   }
 }
 
-function getClipAiSummaryStatus(clip: ClipItem): ClipAiSummary["status"] | null {
-  const value = clip.metadata.aiSummary;
-  if (!value || typeof value !== "object") return null;
-  const status = (value as Partial<ClipAiSummary>).status;
-  return status === "pending" || status === "ready" || status === "failed" ? status : null;
-}
-
 type ClipDetailWorkspaceProps = {
   clip: ClipItem | null;
   filePathStatuses?: Record<string, FilePathStatus>;
@@ -134,7 +128,7 @@ type ClipDetailWorkspaceProps = {
   onOpen: (clip: ClipItem) => void;
   onOpenPath?: (path: string) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
-  onGenerateAiSummary?: (clip: ClipItem) => Promise<ClipAiSummary | void> | ClipAiSummary | void;
+  onAnalyzeClipboard?: (clip: ClipItem) => Promise<DshAnalyzeResult | void> | DshAnalyzeResult | void;
   onPrevious?: () => void;
   onNext?: () => void;
   onSearchTag: (tag: string) => void;
@@ -1051,7 +1045,7 @@ export function ClipDetailWorkspace({
   onOpen,
   onOpenPath,
   onPasteText,
-  onGenerateAiSummary,
+  onAnalyzeClipboard,
   onPrevious,
   onNext,
   onSearchTag,
@@ -1063,11 +1057,59 @@ export function ClipDetailWorkspace({
   const [draftTags, setDraftTags] = useState<string[]>([]);
   const [editError, setEditError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  const [isGeneratingAiSummary, setIsGeneratingAiSummary] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imageActualSize, setImageActualSize] = useState(false);
   const [editorSessionId, setEditorSessionId] = useState("");
   const [draftVersion, setDraftVersion] = useState(1);
+  // DSH 只读快速分析：结果状态 + 调用入口
+  const [dshResult, setDshResult] = useState<DshAnalyzeResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [dshError, setDshError] = useState<string | null>(null);
+  const [dshHistory, setDshHistory] = useState<DshHistoryEntry[]>(() => getDshHistory());
+  const runDshAnalysis = async () => {
+    if (!onAnalyzeClipboard || isAnalyzing || !clip) return;
+    setIsAnalyzing(true);
+    setDshError(null);
+    setDshResult(null);
+    try {
+    const result = await onAnalyzeClipboard(clip);
+    if (result) {
+      setDshResult(result);
+      recordDshHistory({
+        clipId: clip.id,
+        summary: result.summary,
+        category: result.category,
+        tags: result.tags,
+        suggestedFolder: result.suggestedFolder,
+        degraded: result.degraded,
+        errorCode: result.errorCode,
+      });
+      setDshHistory(getDshHistory());
+    }
+    } catch (error) {
+      setDshError(String(error));
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+  const applyDshTags = async () => {
+    if (!clip || !dshResult || dshResult.tags.length === 0) return;
+    const currentTags = normalizeDetailTags(clip.tags);
+    const merged = Array.from(new Set([...currentTags, ...dshResult.tags]));
+    await onUpdateContent(clip, clip.content, merged, {
+      sessionId: editorSessionId || `editor_${clip.id}`,
+      draftVersion,
+    });
+  };
+  const applyDshFolder = async () => {
+    if (!clip || !dshResult?.suggestedFolder) return;
+    const currentTags = normalizeDetailTags(clip.tags);
+    const merged = Array.from(new Set([...currentTags, dshResult.suggestedFolder]));
+    await onUpdateContent(clip, clip.content, merged, {
+      sessionId: editorSessionId || `editor_${clip.id}`,
+      draftVersion,
+    });
+  };
 
   useEffect(() => {
     setDraftContent(clip?.content ?? "");
@@ -1077,7 +1119,6 @@ export function ClipDetailWorkspace({
     setIsEditing(false);
     setEditError("");
     setIsSaving(false);
-    setIsGeneratingAiSummary(false);
     setImagePreviewOpen(false);
     setImageActualSize(false);
   }, [clip?.id, clip?.content, clip?.tags]);
@@ -1097,8 +1138,6 @@ export function ClipDetailWorkspace({
   const captureContextJson = JSON.stringify(clip.captureContext, null, 2);
   const captureContextFieldCount = Object.keys(clip.captureContext).length;
   const imageOpenPath = getImageOpenPath(clip);
-  const aiSummaryStatus = getClipAiSummaryStatus(clip);
-  const isAiSummaryPending = isGeneratingAiSummary || aiSummaryStatus === "pending";
   const imageUrl = clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url"
     ? clip.analysis.attachment.target
     : null;
@@ -1142,15 +1181,6 @@ export function ClipDetailWorkspace({
   const droppedLinkCount = links.length - safeLinks.length;
   const droppedLinkLogKey = `${clip.id}:${links.length}:${safeLinks.length}`;
   const confirmDiscardDraft = () => !hasDraftChanges || window.confirm(tr("main.detail.confirmDiscard"));
-  const runAiSummaryAction = async () => {
-    if (!onGenerateAiSummary || isAiSummaryPending) return;
-    setIsGeneratingAiSummary(true);
-    try {
-      await onGenerateAiSummary(clip);
-    } finally {
-      setIsGeneratingAiSummary(false);
-    }
-  };
   const handleBack = () => {
     if (isEditing && !confirmDiscardDraft()) return;
     onBack();
@@ -1258,16 +1288,16 @@ export function ClipDetailWorkspace({
                 <ChevronDown size={12} />
               </button>
               <button
-                aria-busy={isAiSummaryPending}
-                aria-label={tr("main.context.generateAiSummary")}
-                className="icon-button detail-ai-summary-button"
-                data-ai-summary-action="detail"
-                disabled={!onGenerateAiSummary || isAiSummaryPending}
-                onClick={() => void runAiSummaryAction()}
-                title={isAiSummaryPending ? tr("main.detail.aiSummary.pending") : tr("main.context.generateAiSummary")}
+                aria-busy={isAnalyzing}
+                aria-label="AI 分析"
+                className="icon-button detail-dsh-button"
+                data-dsh-action="detail"
+                disabled={!onAnalyzeClipboard || isAnalyzing}
+                onClick={() => void runDshAnalysis()}
+                title={isAnalyzing ? "分析中…" : "AI 分析（DeepSeek Harness）"}
                 type="button"
               >
-                <Sparkles size={12} />
+                <ScanSearch size={12} />
               </button>
               <button
                 aria-label={tr("main.detail.editContent")}
@@ -1284,6 +1314,71 @@ export function ClipDetailWorkspace({
                 <Pencil size={12} />
               </button>
             </ButtonGroup>
+            {(isAnalyzing || dshResult || dshError) && (
+              <div className="detail-dsh-panel" data-surface="workspace">
+                <div className="detail-dsh-header">
+                  <ScanSearch size={13} />
+                  <span>AI 分析</span>
+                  {isAnalyzing ? <span className="detail-dsh-status">分析中…</span> : null}
+                </div>
+                {dshError ? <div className="detail-dsh-error">{dshError}</div> : null}
+                {dshResult ? (
+                  <div className="detail-dsh-body">
+                    {dshResult.summary ? <p className="detail-dsh-summary">{dshResult.summary}</p> : null}
+                    {dshResult.category ? (
+                      <div className="detail-dsh-row">
+                        <span className="detail-dsh-label">类别</span>
+                        <span>{dshResult.category}</span>
+                      </div>
+                    ) : null}
+                    {dshResult.tags.length ? (
+                      <div className="detail-dsh-tags">
+                        {dshResult.tags.map((tag) => (
+                          <button
+                            className="detail-dsh-tag"
+                            key={tag}
+                            onClick={() => onSearchTag(tag)}
+                            type="button"
+                          >
+                            {tag}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {dshResult.suggestedFolder ? (
+                      <div className="detail-dsh-row">
+                        <span className="detail-dsh-label">建议分组</span>
+                        <span>{dshResult.suggestedFolder}</span>
+                      </div>
+                    ) : null}
+                    {dshResult.degraded ? (
+                      <div className="detail-dsh-warn">降级：{dshResult.errorCode ?? "未拿到结构化结果"}</div>
+                    ) : null}
+                    <div className="detail-dsh-actions">
+                      <button disabled={dshResult.tags.length === 0} onClick={() => void applyDshTags()} type="button">
+                        应用标签
+                      </button>
+                      {dshResult.suggestedFolder ? (
+                        <button onClick={() => void applyDshFolder()} type="button">
+                          应用分组
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              {dshHistory.length ? (
+                <div className="detail-dsh-history">
+                  <div className="detail-dsh-history-title">最近分析</div>
+                  {dshHistory.slice(0, 3).map((h, i) => (
+                    <div className="detail-dsh-history-item" key={`${h.at}-${i}`}>
+                      <span className="detail-dsh-history-time">{new Date(h.at).toLocaleTimeString()}</span>
+                      <span className="detail-dsh-history-summary">{h.summary ?? h.errorCode ?? "（降级）"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              </div>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="icon-button detail-more-button" type="button" aria-label={tr("main.detail.moreActions")} title={tr("main.detail.moreActions")}>

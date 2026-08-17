@@ -1,12 +1,10 @@
 // 主面板历史行内容预览（frontend-surface-architecture-refactor Phase B）
 // 渲染行主文案 + AI 摘要/图片/文件徽标。纯展示：从 item 派生文案，事件冒泡不在此处理（行级 onClick 在 article）。
 // 类名保持 .quick-content / .quick-line / .quick-media-* 不变以兼容 App.css，视觉零变化。
-import { FileJson, Image as ImageIcon, Sparkles } from "lucide-react";
+import { FileJson, Image as ImageIcon } from "lucide-react";
 import type { ClipItem } from "../../App";
-import type { ClipAiSummary } from "../../services/ai-summary";
 import { getImagePath } from "../../services/clipboard";
 import {
-  getAiSummaryStatusLabel,
   getClipboardLine,
   getItemTooltip,
   splitLineForMiddleEllipsis,
@@ -18,23 +16,16 @@ export interface ClipboardContentPreviewProps {
   item: ClipItem;
   /** 文件类条目是否缺失（行级 isFileClipMissing 计算后传入）。 */
   fileMissing: boolean;
-  /** 已存储的 AI 摘要，无则 null。 */
-  aiSummary: ClipAiSummary | null;
   tr: TrFunction;
 }
 
-/** 历史行内容预览：AI 摘要徽标 + 图片/文件缩略 + middle-ellipsis 主文案（带 tooltip）。 */
-export function ClipboardContentPreview({ item, fileMissing, aiSummary, tr }: ClipboardContentPreviewProps) {
+/** 历史行内容预览：图片/文件缩略 + middle-ellipsis 主文案（带 tooltip）。 */
+export function ClipboardContentPreview({ item, fileMissing, tr }: ClipboardContentPreviewProps) {
   const parts = splitLineForMiddleEllipsis(getClipboardLine(item));
   const imageThumbSrc = item.payloadKind === "image" ? getImagePath(item.thumbnailPath ?? item.imageFile) : null;
   const imageThumbAlt = item.analysis.title || getClipboardLine(item) || tr("main.searchSuggestion.image");
   return (
     <div className="quick-content">
-      {aiSummary && aiSummary.status !== "failed" ? (
-        <span className={`quick-ai-summary-badge ${aiSummary.status}`} title={getAiSummaryStatusLabel(aiSummary, tr)}>
-          <Sparkles size={11} />
-        </span>
-      ) : null}
       {item.payloadKind === "image" ? (
         imageThumbSrc ? (
           <AppTooltip

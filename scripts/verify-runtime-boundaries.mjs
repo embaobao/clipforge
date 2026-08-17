@@ -34,15 +34,6 @@ const zhLocale = read(zhLocalePath);
 
 assert(app.includes("class PanelContentBoundary"), "Panel content boundary is missing");
 assert(app.includes("<PanelContentBoundary") && app.includes("resetKey={`workspace:"), "Workspace router is not wrapped in the panel boundary");
-assert(app.includes("class AgentPanelBoundary"), "Agent panel boundary is missing");
-assert(app.includes("<AgentPanelBoundary"), "Agent overlay is not wrapped in the Agent boundary");
-assert(app.includes('agentTitle: tr("main.errorBoundary.agentTitle")'), "Agent boundary fallback title is not wired to i18n");
-assert(app.includes('agentMessage: tr("main.errorBoundary.agentMessage")'), "Agent boundary isolated failure copy is not wired to i18n");
-assert(zhLocale.includes('"main.errorBoundary.agentTitle": "Agent 面板暂时不可用"'), "Agent boundary fallback copy is missing from zh-CN locale");
-assert(zhLocale.includes('"main.errorBoundary.agentMessage": "错误已写入日志，剪贴板列表和详情页不会受影响。"'), "Agent boundary isolated failure copy is missing from zh-CN locale");
-const agentOverlay = sliceBetween(app, '<div className="agent-overlay-scrim" />', "</div>\n      </div>");
-assert(agentOverlay.includes("<AgentPanelBoundary"), "Agent boundary is not scoped to the overlay");
-assert(!agentOverlay.includes("<PanelContentBoundary"), "Agent failure boundary is mixed with the workspace boundary");
 
 const primaryAction = sliceBetween(app, "async function runPrimaryOpenAction", "function updateClip");
 assert(primaryAction.includes("try {"), "Primary plugin action has no failure boundary");

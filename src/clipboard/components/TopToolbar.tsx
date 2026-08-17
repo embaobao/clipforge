@@ -2,7 +2,8 @@
 // 从 App.tsx 抽出：视图切换、搜索槽、Agent 按钮、更多菜单。
 import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Bot, Check, Heart, History, MoreHorizontal, Settings2, Trash2, X } from "lucide-react";
+import { Check, Heart, History, MoreHorizontal, ScanSearch, Settings2, Trash2, X } from "lucide-react";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,11 +31,10 @@ type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 export interface TopToolbarProps {
   activeSurface: PanelSurface;
   activeView: ViewKey;
-  agentContextCount: number;
   /** 面板级方向键导航；用于避免顶部栏按钮抢占列表下钻/返回快捷键。 */
   onPanelArrowKey?: (key: PanelArrowKey) => void;
   onDrag: (event: PointerEvent<HTMLElement>) => void;
-  onOpenAgent: () => void;
+  onOpenDsh: () => void;
   onOpenSettings: () => void;
   onViewChange: (view: ViewKey) => void;
   searchBar: ReactNode;
@@ -47,10 +47,9 @@ export interface TopToolbarProps {
 export function TopToolbar({
   activeSurface,
   activeView,
-  agentContextCount,
   onPanelArrowKey,
   onDrag,
-  onOpenAgent,
+  onOpenDsh,
   onOpenSettings,
   onViewChange,
   searchBar,
@@ -59,7 +58,7 @@ export function TopToolbar({
   tr,
 }: TopToolbarProps) {
   const reduceMotion = useReducedMotion();
-  const toolbarValue = activeSurface === "agent" ? "agent" : activeView;
+  const toolbarValue = activeView;
   const handleToolbarValueChange = (value: string) => {
     if (value === "history" || value === "favorites") {
       onViewChange(value);
@@ -124,6 +123,27 @@ export function TopToolbar({
       </div>
       <div className="top-toolbar-action-slot" data-dev-probe="top-action-slot" onPointerDown={(event) => event.stopPropagation()}>
         <PanelStatusFeedback status={status} tr={tr} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <motion.button
+              aria-label="AI 分析（DeepSeek Harness）"
+              className={activeSurface === "dsh" ? "icon-button active" : "icon-button subtle"}
+              data-dev-probe="top-toolbar-dsh"
+              data-tooltip="AI 分析"
+              title="AI 分析（DeepSeek Harness）"
+              transition={dockButtonTransition}
+              type="button"
+              whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
+              whileTap={reduceMotion ? undefined : { scale: 0.94 }}
+              onClick={onOpenDsh}
+            >
+              <ScanSearch size={15} />
+            </motion.button>
+          </TooltipTrigger>
+          <TooltipContent className="top-view-tooltip" side="bottom" sideOffset={4}>
+            <span>AI 分析（DeepSeek Harness）</span>
+          </TooltipContent>
+        </Tooltip>
         {activeSurface === "clipboard" && activeView === "trash" ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -172,17 +192,15 @@ export function TopToolbar({
             <DropdownMenuGroup className="top-toolbar-menu-group">
               <DropdownMenuItem
                 className="top-toolbar-menu-item"
-                data-agent-trigger="top-toolbar"
-                data-dev-probe="top-menu-agent"
-                onSelect={onOpenAgent}
+                data-dev-probe="top-menu-dsh"
+                onSelect={onOpenDsh}
               >
                 <span className="top-toolbar-menu-label">
-                  <Bot aria-hidden="true" className="top-toolbar-menu-item-icon" />
-                  <span className="top-toolbar-menu-item-title">{tr("main.dock.openAgent")}</span>
-                  {agentContextCount ? <em>{agentContextCount}</em> : null}
+                  <ScanSearch aria-hidden="true" className="top-toolbar-menu-item-icon" />
+                  <span className="top-toolbar-menu-item-title">AI 分析</span>
                 </span>
                 <DropdownMenuShortcut className="top-toolbar-menu-shortcut">
-                  {activeSurface === "agent" ? <Check aria-hidden="true" size={14} /> : null}
+                  {activeSurface === "dsh" ? <Check aria-hidden="true" size={14} /> : null}
                 </DropdownMenuShortcut>
               </DropdownMenuItem>
               <DropdownMenuItem

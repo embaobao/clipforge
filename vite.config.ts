@@ -21,6 +21,7 @@ export default defineConfig(async () => ({
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         onboarding: fileURLToPath(new URL("./onboarding.html", import.meta.url)),
         settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
+        dsh: fileURLToPath(new URL("./dsh.html", import.meta.url)),
       },
     },
   },

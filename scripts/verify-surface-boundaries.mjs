@@ -43,10 +43,6 @@ function checkMarkers() {
     "主面板 src/App.tsx 的 clipboard surface 根缺少 data-surface=\"clipboard\" marker",
   );
   assert(
-    app.includes('data-surface="agent"'),
-    "Agent 覆层 src/App.tsx 缺少 data-surface=\"agent\" marker",
-  );
-  assert(
     settings.includes('data-surface="settings"'),
     "设置页 src/settings.tsx 根缺少 data-surface=\"settings\" marker",
   );

@@ -41,3 +41,9 @@ src-tauri/icons/candidates/
 *.njsproj
 *.sln
 *.sw?
+
+# WorkBuddy 项目记忆/数据（不入库）
+.workbuddy/
+
+# 临时文件（命令残留）
+_tmp_*
