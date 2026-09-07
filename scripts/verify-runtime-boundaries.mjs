@@ -3,7 +3,8 @@ import path from "node:path";
 
 const root = process.cwd();
 const appPath = path.join(root, "src/App.tsx");
-const workspacePath = path.join(root, "src/workspace/workspace-panels.tsx");
+// 详情页溢出菜单已拆分至独立文件（插件动作失败边界在其中）。
+const overflowMenuPath = path.join(root, "src/workspace/components/DetailOverflowMenu.tsx");
 const settingsPath = path.join(root, "src/settings.tsx");
 const settingsCatalogPath = path.join(root, "src/settings/settings-field-catalog.ts");
 const zhLocalePath = path.join(root, "src/i18n/locales/zh-CN.json");
@@ -27,7 +28,7 @@ function sliceBetween(source, start, end) {
 }
 
 const app = read(appPath);
-const workspace = read(workspacePath);
+const overflowMenu = read(overflowMenuPath);
 const settings = read(settingsPath);
 const settingsCatalog = read(settingsCatalogPath);
 const zhLocale = read(zhLocalePath);
@@ -42,7 +43,7 @@ assert(primaryAction.includes('logAppError("warn", "quick-action: plugin action 
 assert(primaryAction.includes('setNativeStatus(tr("main.status.pluginActionUnavailable"))'), "Primary plugin action failure does not degrade to status");
 assert(zhLocale.includes('"main.status.pluginActionUnavailable": "插件动作暂时不可用，剪贴板列表仍可继续使用"'), "Primary plugin action failure copy is missing from zh-CN locale");
 
-const detailActions = sliceBetween(workspace, '<DropdownMenuContent className="detail-action-menu"', "</DropdownMenuContent>");
+const detailActions = sliceBetween(overflowMenu, "<DropdownMenuContent", "</DropdownMenuContent>");
 assert(detailActions.includes("try {"), "Workspace action strip has no per-action failure boundary");
 assert(detailActions.includes("workspace-plugin-action-failed"), "Workspace action failures are not logged");
 assert(!detailActions.includes("throw error"), "Workspace action strip rethrows plugin failures");

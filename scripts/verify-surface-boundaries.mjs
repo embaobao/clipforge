@@ -14,6 +14,7 @@ const files = {
   settings: "src/settings.tsx",
   settingsShell: "src/settings/components/SettingsShell.tsx",
   workspace: "src/workspace/workspace-panels.tsx",
+  workspaceDetail: "src/workspace/components/ClipDetailWorkspace.tsx",
 };
 
 function read(rel) {
@@ -39,6 +40,7 @@ function checkMarkers() {
   const settings = read(files.settings);
   const settingsShell = read(files.settingsShell);
   const workspace = read(files.workspace);
+  const workspaceDetail = read(files.workspaceDetail);
 
   assert(
     app.includes('data-surface="clipboard"'),
@@ -50,7 +52,11 @@ function checkMarkers() {
   );
   assert(
     workspace.includes('data-surface="workspace"'),
-    "详情/聚合 src/workspace/workspace-panels.tsx 缺少 data-surface=\"workspace\" marker",
+    "聚合页 src/workspace/workspace-panels.tsx 缺少 data-surface=\"workspace\" marker",
+  );
+  assert(
+    workspaceDetail.includes('data-surface="workspace"'),
+    "详情页 src/workspace/components/ClipDetailWorkspace.tsx 缺少 data-surface=\"workspace\" marker",
   );
 }
 
