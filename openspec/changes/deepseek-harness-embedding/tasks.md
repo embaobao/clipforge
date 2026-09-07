@@ -36,7 +36,7 @@
 
 - [x] `dsh-analysis.ts`：消费 DSH 原生结构化输出
 - [x] 验证：`pnpm build:web` ✅、`cargo check` ✅（仅预存 dead_code 警告）
-- [ ] 详情页 / 右键入口 / 历史复用 UI 展示（前端消费层已就位，待盟哥验收）
+- [x] 详情页 / 右键入口 / 历史复用 UI 展示（详情页 `DetailDshPanel` AI 分析按钮+结果面板+最近历史、右键菜单「AI 分析」均已落地；实机视觉验收随 HANDOFF 全量回归待办）
 - [ ] （后置）Tauri sidecar 打包 Node + dsh；DSH → ClipForge 回调写回经 tool handler / MCP
 
 ---
@@ -78,6 +78,10 @@
 2. DSH 面板仅保留 iframe 实验形态；自研对话 UI、`POST /chat` 会话 API、快速唤起、i18n 等全部后置，「后面看看需不需要自研」。
 3. 运行时基座存在切换候选（pi 等），基座取舍结论前不向 DSH runtime 深投；`clipboard_analyze` 一次性链路（Phase 0–5）保持可用。
 4. 剪贴板打通场景由 `dsh-file-context-conversation` 承接，排期同步后置。
+
+## 2026-09-07 对账核验（夜间批次 4）
+
+逐项 grep 核验代码：Phase 6 守护进程（`DshDaemonState`/`spawn_dsh_daemon`/健康探活/四命令注册/`ExitRequested` 清理/localhost-only/env 注入）与 Phase 7 iframe 形态（`DSH_WEB_URL`/`getDshStatus`/`startDshDaemon`/`dsh-panel` iframe+轮询）均与上述清单一致；Phase 5 三个 UI 入口已确认落地并勾选。未勾项全部为（后置），与 2026-09-02 方向决策一致，本提案无可立即推进项（后续动 DSH 须先过基座取舍决策）。
 
 ## 关键技术坑（落地中实测，后续维护必读）
 
