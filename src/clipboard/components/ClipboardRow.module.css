@@ -1,7 +1,0 @@
-/* 保留一像素透明占位，避免选中态切换改变固定行尺寸。 */
-:global(.app-shell[data-surface="clipboard"])
-  :global(.quick-menu)
-  :global(.quick-row).selectionFrame:is(:global(.active), :global(.selected)) {
-  border-color: transparent !important;
-  box-shadow: none !important;
-}

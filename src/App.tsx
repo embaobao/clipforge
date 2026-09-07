@@ -1,30 +1,25 @@
 import {
-  Check,
   Clipboard,
   Copy,
   ExternalLink,
   FileJson,
-  FileText,
-  Heart,
-  Pin,
-  RotateCcw,
   Search,
-  Square,
-  Trash2,
   X,
 } from "lucide-react";
 import { ClipboardEmptyState } from "./clipboard/components/ClipboardEmptyState";
 import { ClipboardRow } from "./clipboard/components/ClipboardRow";
 import { ClipContextMenu } from "./clipboard/components/ClipContextMenu";
+import { PanelStatusFeedback } from "./clipboard/components/PanelStatusFeedback";
 import { TopToolbar } from "./clipboard/components/TopToolbar";
-import { AppTooltip } from "./clipboard/components/AppTooltip";
+import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
+import { QuickPreviewCard } from "./clipboard/components/QuickPreviewCard";
+import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
+import { TrashRow } from "./clipboard/components/TrashRow";
+import { TrashContextMenu } from "./clipboard/components/TrashContextMenu";
 import {
-  getDisplayText,
   getFilePathsFromClip,
-  getItemTooltip,
   getShortcutModLabel,
   middleEllipsis,
-  splitLineForMiddleEllipsis,
 } from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -33,6 +28,7 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
+import { toast } from "sonner";
 import {
   autoUpdate,
   flip,
@@ -41,7 +37,7 @@ import {
   shift,
   useFloating,
 } from "@floating-ui/react";
-import type { CSSProperties, ErrorInfo, MouseEvent, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
+import type { ErrorInfo, MouseEvent, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
 import {
   formatCommandError,
   normalizeLanguagePreference,
@@ -86,9 +82,6 @@ async function analyzeClipboardWithDsh(item: ClipItem): Promise<DshAnalyzeResult
 }
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
-import "./App.css";
-import "./clipboard/styles/clipboard-panel.css";
-import "./workspace/styles/detail-page.css";
 
 type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
 export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "rtf" | "file" | "image" | "json" | "chart" | "table";
@@ -950,6 +943,11 @@ function clampNumber(value: number, min: number, max: number, fallback: number) 
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
 function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem | null {
   if (typeof raw.content !== "string" || !raw.content.trim()) return null;
   const createdAt = typeof raw.createdAt === "number" ? raw.createdAt : Date.now();
@@ -1194,10 +1192,10 @@ class PanelContentBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="panel-fallback">
+        <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
           <Clipboard size={22} />
-          <strong>{this.props.copy.panelTitle}</strong>
-          <span>{this.props.copy.panelMessage}</span>
+          <strong className="text-[13px] font-medium">{this.props.copy.panelTitle}</strong>
+          <span className="text-[12px] text-muted-foreground">{this.props.copy.panelMessage}</span>
         </div>
       );
     }
@@ -1251,21 +1249,15 @@ function ClipForgeApp() {
     }
   }, []);
   const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
+  const [quickPreviewOpen, setQuickPreviewOpen] = useState(false);
   const [isSearchActive, setSearchActive] = useState(false);
   const [nativeStatus, setNativeStatus] = useState(() => t(initialLocale, "main.status.clipboardReady"));
-  const [completionToast, setCompletionToast] = useState<string | null>(null);
   const [filePathStatuses, setFilePathStatuses] = useState<Record<string, FilePathStatus>>({});
-  const completionToastTimerRef = useRef<number | null>(null);
-  const showCompletionToast = useCallback((message: string) => {
-    setCompletionToast(message);
-    if (completionToastTimerRef.current) window.clearTimeout(completionToastTimerRef.current);
-    completionToastTimerRef.current = window.setTimeout(() => setCompletionToast(null), 1200);
-  }, []);
   const [lastCopiedId, setLastCopiedId] = useState<string | null>(null);
   const [, setIsReadingClipboard] = useState(false);
-  const [isPanelEntering, setIsPanelEntering] = useState(false);
-  const [scrollOffset, setScrollOffset] = useState(0);
-  const [isSearchCompact, setSearchCompact] = useState(false);
+  const [, setIsPanelEntering] = useState(false);
+  const [, setScrollOffset] = useState(0);
+  const [, setSearchCompact] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 120);
@@ -2228,7 +2220,7 @@ function ClipForgeApp() {
       clipsRef.current = next;
       return next;
     });
-    window.setTimeout(() => setLastCopiedId(null), 1000);
+    window.setTimeout(() => setLastCopiedId(null), 1400);
   }
 
   const togglePanelPinned = useCallback(() => {
@@ -2265,6 +2257,7 @@ function ClipForgeApp() {
       await navigator.clipboard.writeText(item.content);
       setNativeStatus(tr("main.status.copiedBrowser"));
     } finally {
+      toast.success("已复制到剪贴板", { description: truncateText(item.plainText || item.content, 42) });
       finishCopyPerf({ status: perfStatus });
     }
   }
@@ -2345,7 +2338,7 @@ function ClipForgeApp() {
       }
       lastSeenClipboard.current = text.trim();
       setNativeStatus(tr("main.status.copiedCodeSystem"));
-      showCompletionToast(tr("main.toast.copiedCode"));
+      toast.success("已复制到剪贴板", { description: truncateText(text, 42) });
       logAppError("info", "copy-text: invoke success", {
         source,
         chars: text.length,
@@ -2356,7 +2349,7 @@ function ClipForgeApp() {
       logAppError("warn", "Copy text failed", { source, error: String(error), ...context });
       await navigator.clipboard.writeText(text);
       setNativeStatus(tr("main.status.copiedCodeBrowser"));
-      showCompletionToast(tr("main.toast.copiedCode"));
+      toast.success("已复制到剪贴板", { description: truncateText(text, 42) });
     } finally {
       finishCopyPerf({ status: perfStatus });
     }
@@ -2393,7 +2386,7 @@ function ClipForgeApp() {
       setIsPanelEntering(false);
       lastSeenClipboard.current = text.trim();
       setNativeStatus(tr("main.status.pastedCode"));
-      showCompletionToast(tr("main.toast.pastedCode"));
+      toast.success(tr("main.toast.pastedCode"));
       logAppError("info", "paste-text: invoke success", {
         source,
         chars: text.length,
@@ -2483,7 +2476,7 @@ function ClipForgeApp() {
     setClips((current) =>
       current.map((clip) => (ids.has(clip.id) ? { ...clip, favorite: targetFavorite } : clip)),
     );
-    showCompletionToast(
+    toast.success(
       targetFavorite
         ? tr("main.toast.favoritedCount", { count: items.length })
         : tr("main.toast.unfavoritedCount", { count: items.length }),
@@ -2522,7 +2515,9 @@ function ClipForgeApp() {
       await navigator.clipboard.writeText(text);
       setNativeStatus(tr("main.status.aggregateCopiedBrowser", { count: items.length }));
     }
-    showCompletionToast(tr("main.toast.aggregateCopied", { count: items.length }));
+    toast.success(tr("main.toast.aggregateCopied", { count: items.length }), {
+      description: truncateText(text, 42),
+    });
     const now = Date.now();
     setLastCopiedId(items[0]?.id ?? null);
     items.forEach((item) => {
@@ -2542,7 +2537,7 @@ function ClipForgeApp() {
           : clip,
       ),
     );
-    window.setTimeout(() => setLastCopiedId(null), 1000);
+    window.setTimeout(() => setLastCopiedId(null), 1400);
     setSelectedIds(new Set());
     setMultiSelectMode(false);
     setMultiPreviewOpen(false);
@@ -2566,7 +2561,7 @@ function ClipForgeApp() {
           directory: result.directory,
         }),
       );
-      showCompletionToast(tr("main.toast.exportedTextFiles", { count: result.count }));
+      toast.success(tr("main.toast.exportedTextFiles", { count: result.count }));
     } catch (error) {
       logAppError("warn", "Export selected text files failed", String(error));
       setNativeStatus(formatNativeError(error));
@@ -2625,7 +2620,7 @@ function ClipForgeApp() {
           void favoriteSelectedClips(selectedInList);
         } else if (currentItem && activeView !== "trash") {
           updateClip(currentItem.id, { favorite: !currentItem.favorite });
-          showCompletionToast(currentItem.favorite ? tr("main.toast.unfavorited") : tr("main.toast.favorited"));
+          toast.success(currentItem.favorite ? tr("main.toast.unfavorited") : tr("main.toast.favorited"));
         }
         return;
       }
@@ -2711,6 +2706,10 @@ function ClipForgeApp() {
         if (isMultiPreviewOpen) {
           setMultiPreviewOpen(false);
           void navigateWorkspaceList();
+          return;
+        }
+        if (quickPreviewOpen) {
+          setQuickPreviewOpen(false);
           return;
         }
         if (multiSelectMode) {
@@ -2805,16 +2804,19 @@ function ClipForgeApp() {
         const item = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
         if (!item || editable) return;
         event.preventDefault();
-        setKeyboardNavigating(true);
-        setSelectedIds((current) => {
-          const next = new Set(current);
-          if (next.has(item.id)) next.delete(item.id);
-          else next.add(item.id);
-          return next;
-        });
-        if (!multiSelectMode) {
-          setMultiSelectMode(true);
+        if (multiSelectMode) {
+          // 多选模式下空格继续切换当前项选中状态
+          setKeyboardNavigating(true);
+          setSelectedIds((current) => {
+            const next = new Set(current);
+            if (next.has(item.id)) next.delete(item.id);
+            else next.add(item.id);
+            return next;
+          });
+          return;
         }
+        // 非多选模式下空格开关快速预览
+        setQuickPreviewOpen((open) => !open);
         return;
       }
 
@@ -2842,7 +2844,7 @@ function ClipForgeApp() {
     searchSuggestions,
     activeSuggestionIndex,
     handlePanelArrowNavigation,
-    showCompletionToast,
+    toast,
     switchClipboardView,
     togglePanelPinned,
     workspaceRoute.clipId,
@@ -2994,7 +2996,7 @@ function ClipForgeApp() {
     try {
       await invoke("soft_delete_clip_records", { ids });
       setNativeStatus(tr("main.status.movedToTrash", { count: ids.length }));
-      showCompletionToast(tr("main.toast.deletedCount", { count: ids.length }));
+      toast.success(tr("main.toast.deletedCount", { count: ids.length }));
     } catch (error) {
       logAppError("warn", "Soft delete failed", String(error));
       setNativeStatus(formatNativeError(error));
@@ -3064,16 +3066,16 @@ function ClipForgeApp() {
   const showSearchBar = activeSurface === "clipboard" && workspaceRoute.name === "list";
   const shouldRenderSearchBar = showSearchBar && (isSearchActive || Boolean(query));
 
+  const modLabel = getShortcutModLabel();
+
   return (
     <main
       data-surface="clipboard"
-      className={`app-shell view-${activeView} route-${workspaceRoute.name} surface-${activeSurface} density-${settings.panelDensity}${shouldRenderSearchBar ? " search-active" : ""}${multiSelectMode ? " multi-selecting" : ""}${isPanelEntering ? " is-entering" : ""}${isPanelClosing ? " is-closing" : ""}${isSearchCompact ? " search-compact" : ""}${scrollOffset > 0 ? " scrolled" : ""}`}
+      className={`relative mx-auto grid h-fit max-h-[640px] w-[480px] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow panel-in${isPanelClosing ? " pointer-events-none" : ""}`}
       ref={shellRef}
-      style={{ "--cf-panel-bg-opacity": settings.panelBackgroundOpacity } as CSSProperties}
     >
       {workspaceRoute.name !== "detail" && (
         <TopToolbar
-          activeSurface={activeSurface}
           activeView={activeView}
           onDrag={handleWindowDrag}
           onOpenDsh={() => {
@@ -3110,42 +3112,11 @@ function ClipForgeApp() {
               tr={tr}
             />
           ) : null}
-          showTabs={showSearchBar}
-          status={nativeStatus}
           tr={tr}
         />
       )}
 
-      <section className="content-column" onScroll={handleScroll}>
-        {multiSelectMode ? (
-          <MultiSelectToolbar
-            allSelected={selectedInList.length > 0 && selectedInList.length === filteredClips.length}
-            count={selectedInList.length}
-            onClose={() => {
-              setSelectedIds(new Set());
-              setMultiPreviewOpen(false);
-              setMultiSelectMode(false);
-              void navigateWorkspaceList();
-            }}
-            onCopy={() => copySelectedClips(selectedInList)}
-            onOpenAggregate={() => {
-              if (!selectedInList.length) return;
-              setMultiPreviewOpen(true);
-              setMultiSelectMode(false);
-              void navigateWorkspaceAggregate();
-            }}
-            onDelete={() => deleteClips(selectedInList.map((item) => item.id))}
-            onEmptyTrash={activeView === "trash" ? emptyTrash : undefined}
-            onFavorite={() => favoriteSelectedClips(selectedInList)}
-          onRestore={activeView === "trash" ? () => restoreClips(selectedInList.map((item) => item.id)) : undefined}
-          onToggleAll={(checked) => {
-            setSelectedIds(checked ? new Set(filteredClips.map((item) => item.id)) : new Set());
-          }}
-          tr={tr}
-          variant={activeView === "trash" ? "trash" : "default"}
-        />
-        ) : null}
-
+      <section className="min-w-0 overflow-hidden" onScroll={handleScroll}>
         <PanelContentBoundary
           copy={errorBoundaryCopy}
           resetKey={`workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}
@@ -3211,6 +3182,8 @@ function ClipForgeApp() {
                   limit={settings.quickItemLimit}
                   multiSelectMode={multiSelectMode}
                   selectedIds={selectedIds}
+                  density={settings.panelDensity}
+                  onCreateSnippet={() => toast.info("新建片段功能开发中")}
                   onPaste={pasteClip}
                   onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
                   onFavoriteSelected={() => {
@@ -3263,6 +3236,8 @@ function ClipForgeApp() {
                   activeGroupStart={activeGroupStart}
                   onActiveGroupChange={handleActiveGroupChange}
                   groupScrollTarget={groupScrollTarget}
+                  quickPreviewOpen={quickPreviewOpen}
+                  onToggleQuickPreview={() => setQuickPreviewOpen((open) => !open)}
                   tr={tr}
                 />
               )
@@ -3365,25 +3340,43 @@ function ClipForgeApp() {
         </PanelContentBoundary>
       </section>
 
-      <div
-        aria-hidden={activeSurface !== "dsh"}
-        className={activeSurface === "dsh" ? "dsh-overlay open" : "dsh-overlay"}
-        data-dsh-overlay={activeSurface === "dsh" ? "open" : "closed"}
-      >
-      </div>
-
-      <button
-        aria-label={settings.panelPinned ? tr("main.aria.unpinPanel") : tr("main.aria.pinPanel")}
-        className={`panel-pin-fab${settings.panelPinned ? " active" : ""}`}
-        data-tooltip={settings.panelPinned ? tr("main.aria.unpinPanel") : tr("main.aria.pinPanel")}
-        onClick={togglePanelPinned}
-        title={tr("main.pin.title", { shortcut: `${getShortcutModLabel()}+P` })}
-        type="button"
-      >
-        <Pin size={12} />
-      </button>
-      {completionToast ? (
-        <div className="completion-toast" role="status">{completionToast}</div>
+      {workspaceRoute.name === "list" ? (
+        multiSelectMode ? (
+          <MultiSelectBottomBar
+            count={selectedInList.length}
+            tr={tr}
+            variant={activeView === "trash" ? "trash" : "default"}
+          />
+        ) : (
+          <PanelStatusFeedback
+            commandMenu={
+              <QuickCommandMenu
+                mod={modLabel}
+                onCopyMode={(item, mode) => {
+                  void copyClip(item, mode);
+                }}
+                onDelete={(item) => {
+                  void deleteClips([item.id]);
+                }}
+                onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
+                onCreateSnippet={() => toast.info("新建片段功能开发中")}
+                onTogglePanelPinned={togglePanelPinned}
+                selectedItem={selectedClip}
+              >
+                <button
+                  className="mono flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+                  type="button"
+                >
+                  <span>{filteredClips.length} 条</span>
+                  <span>·</span>
+                  <span>⌘K 全部操作</span>
+                </button>
+              </QuickCommandMenu>
+            }
+            status={nativeStatus}
+            tr={tr}
+          />
+        )
       ) : null}
     </main>
   );
@@ -3421,59 +3414,61 @@ function GlassSearchBar({
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
   return (
-    <header className="toolbar">
-      <div className="floating-search-surface">
-        <div className="search-wrap input-group">
-          <span className="input-addon input-addon-start">
-            <Search size={14} />
-          </span>
-          <input
-            aria-label={tr("main.search.aria")}
-            autoComplete="off"
-            onBlur={onBlur}
-            onFocus={onFocus}
-            onChange={(event) => onChange(event.currentTarget.value)}
-            placeholder={tr("main.search.placeholder")}
-            ref={inputRef}
-            spellCheck={false}
-            value={query}
-          />
-          {query ? (
-            <button aria-label={tr("main.search.clear")} className="icon-button subtle" data-tooltip={tr("main.search.clear")} onClick={onClear} type="button">
-              <X size={14} />
-            </button>
-          ) : null}
-        </div>
-        {activeFilterLabels.length ? (
-          <div className="active-filter-chips" aria-label={tr("main.search.activeFilters")}>
-            {activeFilterLabels.map((label) => (
-              <button
-                aria-label={tr("main.search.removeFilter", { label })}
-                className="active-filter-chip"
-                key={label}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onRemoveFilter(label)}
-                type="button"
-              >
-                <span>{label}</span>
-                <X size={11} />
-              </button>
-            ))}
-          </div>
-        ) : null}
-        {suggestions.length ? (
-          <SearchAutocomplete
-            activeIndex={activeSuggestionIndex}
-            inputRef={inputRef}
-            onApplySuggestion={onApplySuggestion}
-            onSelectIndex={onSelectSuggestionIndex}
-            parsedSearchCommand={parsedSearchCommand}
-            suggestions={suggestions}
-            tr={tr}
-          />
+    <div className="flex w-full flex-col">
+      <div className="flex h-[52px] items-center gap-3 px-4">
+        <Search size={15} className="flex-shrink-0 text-muted-foreground" />
+        <input
+          aria-label={tr("main.search.aria")}
+          autoComplete="off"
+          className="h-full w-full bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+          onBlur={onBlur}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          onFocus={onFocus}
+          placeholder={tr("main.search.placeholder")}
+          ref={inputRef}
+          spellCheck={false}
+          value={query}
+        />
+        {query ? (
+          <button
+            aria-label={tr("main.search.clear")}
+            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-black/5 active:scale-90 dark:hover:bg-white/[0.07]"
+            onClick={onClear}
+            type="button"
+          >
+            <X size={14} />
+          </button>
         ) : null}
       </div>
-    </header>
+      {activeFilterLabels.length ? (
+        <div className="flex flex-wrap gap-1.5 px-4 pb-2" aria-label={tr("main.search.activeFilters")}>
+          {activeFilterLabels.map((label) => (
+            <button
+              aria-label={tr("main.search.removeFilter", { label })}
+              className="inline-flex items-center gap-1 rounded-md border border-black/10 bg-black/[0.03] px-1.5 py-0.5 text-[11px] text-foreground transition-colors hover:bg-black/5 dark:border-white/[0.12] dark:bg-white/[0.05]"
+              key={label}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onRemoveFilter(label)}
+              type="button"
+            >
+              <span>{label}</span>
+              <X size={11} />
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {suggestions.length ? (
+        <SearchAutocomplete
+          activeIndex={activeSuggestionIndex}
+          inputRef={inputRef}
+          onApplySuggestion={onApplySuggestion}
+          onSelectIndex={onSelectSuggestionIndex}
+          parsedSearchCommand={parsedSearchCommand}
+          suggestions={suggestions}
+          tr={tr}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -3523,19 +3518,18 @@ function SearchAutocomplete({
     <FloatingPortal>
       <div
         ref={refs.setFloating}
-        className="search-autocomplete"
+        className="z-[60] w-56 rounded-xl border border-black/5 bg-popover p-1 shadow-lg dark:border-white/[0.07]"
         role="listbox"
         aria-label={tr("main.search.suggestions")}
         style={{
           position: strategy,
           top: 0,
           left: 0,
-          zIndex: 60,
           visibility: ready ? "visible" : "hidden",
           transform: `translate3d(${x ?? 0}px, ${y ?? 0}px, 0)`,
         }}
       >
-        <div className="search-autocomplete-list" ref={listRef}>
+        <div className="max-h-60 overflow-auto py-0.5" ref={listRef}>
           {suggestions.map((suggestion, index) => {
             const token = getSearchSuggestionToken(suggestion);
             const isActive =
@@ -3544,7 +3538,7 @@ function SearchAutocomplete({
               (suggestion.kind === "saved" && parsedSearchCommand.tag === suggestion.tag);
             return (
               <button
-                className={`search-autocomplete-item${index === activeIndex ? " highlighted" : ""}${isActive ? " active" : ""}`}
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] outline-none transition-colors${index === activeIndex ? " bg-black/[0.045] dark:bg-white/[0.07]" : ""}${isActive ? " text-foreground" : " text-muted-foreground"}`}
                 data-idx={index}
                 key={suggestion.id}
                 onMouseDown={(event) => event.preventDefault()}
@@ -3554,101 +3548,17 @@ function SearchAutocomplete({
                 aria-selected={index === activeIndex}
                 type="button"
               >
-                <span className="search-autocomplete-token">{token}</span>
-                <span className="search-autocomplete-label">{suggestion.label}</span>
-                <em className="search-autocomplete-hint">{suggestion.hint}</em>
+                <span className="mono flex-shrink-0 rounded bg-black/[0.04] px-1 py-0.5 text-[11px] dark:bg-white/[0.07]">
+                  {token}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-foreground">{suggestion.label}</span>
+                <span className="flex-shrink-0 text-[11px] opacity-60">{suggestion.hint}</span>
               </button>
             );
           })}
         </div>
       </div>
     </FloatingPortal>
-  );
-}
-
-function MultiSelectToolbar({
-  allSelected,
-  count,
-  onClose,
-  onCopy,
-  onDelete,
-  onEmptyTrash,
-  onFavorite,
-  onOpenAggregate,
-  onRestore,
-  onToggleAll,
-  tr,
-  variant = "default",
-}: {
-  allSelected: boolean;
-  count: number;
-  onClose: () => void;
-  onCopy: () => void;
-  onDelete: () => void;
-  onEmptyTrash?: () => void;
-  onFavorite: () => void;
-  onOpenAggregate: () => void;
-  onRestore?: () => void;
-  onToggleAll: (checked: boolean) => void;
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-  variant?: "default" | "trash";
-}) {
-  return (
-    <section className="multi-select-toolbar" aria-label={tr("main.multiSelect.aria")}>
-      <div className="multi-drawer-handle" aria-hidden="true">
-        <span />
-      </div>
-      <div className="multi-toolbar-head">
-        <div className="multi-toolbar-title-group">
-          <span className="multi-toolbar-title">{tr("main.multiSelect.title")}</span>
-          <span className="multi-toolbar-count">{count > 0 ? tr("main.multiSelect.count", { count }) : tr("main.multiSelect.empty")}</span>
-        </div>
-        <div className="multi-toolbar-actions">
-          <label className="multi-select-all" data-tooltip={tr("main.multiSelect.toggleAll")} title={tr("main.multiSelect.toggleAll")}>
-            <input checked={allSelected} onChange={(event) => onToggleAll(event.currentTarget.checked)} type="checkbox" />
-            <span>{tr("main.multiSelect.selectAll")}</span>
-          </label>
-          {variant === "trash" ? (
-            <>
-              <button aria-label={tr("main.multiSelect.restoreSelected")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.restoreSelected")} disabled={count === 0} onClick={onRestore} title={tr("main.multiSelect.restoreSelected")} type="button">
-                <RotateCcw size={14} />
-              </button>
-              <button aria-label={tr("main.multiSelect.hardDeleteSelected")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.hardDeleteSelected")} disabled={count === 0} onClick={onDelete} title={tr("main.multiSelect.hardDeleteSelected")} type="button">
-                <Trash2 size={14} />
-              </button>
-              <button aria-label={tr("main.multiSelect.emptyTrash")} className="icon-button subtle danger-icon" data-tooltip={tr("main.multiSelect.emptyTrash")} onClick={onEmptyTrash} title={tr("main.multiSelect.emptyTrash")} type="button">
-                <Trash2 size={14} />
-              </button>
-            </>
-          ) : (
-            <>
-              <button aria-label={tr("main.multiSelect.openDetail")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.openDetail")} disabled={count === 0} onClick={onOpenAggregate} title={tr("main.multiSelect.openDetail")} type="button">
-                <FileText size={14} />
-              </button>
-              <button aria-label={tr("main.multiSelect.aggregateCopy")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.aggregateCopy")} disabled={count === 0} onClick={onCopy} title={tr("main.multiSelect.aggregateCopy")} type="button">
-                <Copy size={14} />
-              </button>
-              <button aria-label={tr("main.multiSelect.batchFavorite")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.batchFavorite")} disabled={count === 0} onClick={onFavorite} title={tr("main.multiSelect.batchFavorite")} type="button">
-                <Heart size={14} />
-              </button>
-              <button aria-label={tr("main.multiSelect.delete")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.delete")} disabled={count === 0} onClick={onDelete} title={tr("main.multiSelect.delete")} type="button">
-                <Trash2 size={14} />
-              </button>
-            </>
-          )}
-          <button aria-label={tr("main.multiSelect.close")} className="icon-button subtle" data-tooltip={tr("main.multiSelect.close")} onClick={onClose} title={tr("main.multiSelect.close")} type="button">
-            <X size={14} />
-          </button>
-        </div>
-      </div>
-      <div className="multi-toolbar-hint">
-        {variant === "trash" ? (
-          <><kbd>Space</kbd> {tr("main.multiSelect.hint.select")} · <kbd>Ctrl/Cmd</kbd>+<kbd>A</kbd> {tr("main.multiSelect.hint.selectAll")} · <kbd>Enter</kbd> {tr("main.multiSelect.hint.restore")} · <kbd>Delete</kbd> {tr("main.multiSelect.hint.hardDelete")} · <kbd>Esc</kbd> {tr("main.multiSelect.hint.exit")}</>
-        ) : (
-          <><kbd>Space</kbd> {tr("main.multiSelect.hint.select")} · <kbd>Ctrl/Cmd</kbd>+<kbd>A</kbd> {tr("main.multiSelect.hint.selectAll")} · <kbd>Ctrl/Cmd</kbd>+<kbd>F</kbd> {tr("main.multiSelect.hint.favorite")} · <kbd>Ctrl/Cmd</kbd>+<kbd>C</kbd> {tr("main.multiSelect.hint.copy")} · <kbd>Esc</kbd> {tr("main.multiSelect.hint.exit")}</>
-        )}
-      </div>
-    </section>
   );
 }
 
@@ -3712,128 +3622,42 @@ function TrashPanel({
     });
   }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
 
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".clip-context-menu")) return;
-      closeContextMenu();
-    };
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeContextMenu();
-    };
-    window.addEventListener("pointerdown", close, true);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("keydown", closeOnEscape, true);
-    return () => {
-      window.removeEventListener("pointerdown", close, true);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("keydown", closeOnEscape, true);
-    };
-  }, [closeContextMenu, contextMenu]);
-
   if (!clips.length) {
     return <ClipboardEmptyState variant="trash" emptySummary={emptySummary} tr={tr} />;
   }
   return (
-    <section className="quick-panel">
-      <div className="quick-workspace" onPointerDown={onPointerActive}>
+    <section className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col" onPointerDown={onPointerActive}>
         <VirtualList
           activeId={activeId}
           autoScroll={autoScroll}
-          className="quick-menu"
+          className="flex-1"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={ROW_HEIGHT}
+          itemHeight={settings.panelDensity === "comfortable" ? 44 : settings.panelDensity === "dense" ? 34 : 40}
           items={clips}
           onEndReached={onLoadMore}
           onUserScroll={onPointerActive}
           groupSize={10}
           renderItem={(item, index) => (
-            <article
-              className={[
-                "quick-row",
-                activeId === item.id ? "active" : "",
-                selectedIds.has(item.id) ? "selected" : "",
-                multiSelectMode ? "selecting" : "",
-                index < 10 ? "in-active-group" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
+            <TrashRow
               key={item.id}
-              onClick={() => {
-                if (multiSelectMode) {
-                onToggleSelected(item.id);
-                return;
-              }
-              onSelect(item);
-              onRestore(item);
-            }}
-            onContextMenu={(event) => openContextMenu(event, item)}
-            onFocus={() => onSelect(item)}
-            tabIndex={0}
-            >
-              <button
-                aria-label={selectedIds.has(item.id) ? tr("main.list.unselectItem") : tr("main.list.selectItem")}
-                className={selectedIds.has(item.id) ? "quick-index selected" : "quick-index"}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelect(item);
-                  if (multiSelectMode) onToggleSelected(item.id);
-                  else onStartMultiSelect(item.id);
-                }}
-                title={tr("main.list.selectItem")}
-                type="button"
-              >
-              {selectedIds.has(item.id) ? (
-                <Check size={12} />
-              ) : index >= 0 && index <= 9 ? (
-                <span className="quick-index-num">{index}</span>
-              ) : (
-                <Square size={12} />
-              )}
-              </button>
-              <div className="quick-content">
-                {(() => {
-                  const parts = splitLineForMiddleEllipsis(getDisplayText(item, settings));
-                  if (!parts.split) {
-                    return (
-                      <AppTooltip content={getItemTooltip(item, tr)}>
-                        <p className="quick-line" aria-label={parts.text}>{parts.text}</p>
-                      </AppTooltip>
-                    );
-                  }
-                  return (
-                    <AppTooltip content={getItemTooltip(item, tr)}>
-                      <p className="quick-line quick-line-mid" aria-label={parts.full}>
-                        <span className="ql-head">{parts.head}</span>
-                        <span className="ql-tail">{parts.tail}</span>
-                      </p>
-                    </AppTooltip>
-                  );
-                })()}
-              </div>
-              <div className="row-actions" onClick={(event) => event.stopPropagation()}>
-                <button
-                  className="icon-button"
-                  data-tooltip={tr("main.list.restore")}
-                  onClick={() => onRestore(item)}
-                  title={tr("main.list.restore")}
-                  type="button"
-                >
-                  <RotateCcw size={14} />
-                </button>
-                <button
-                  className="icon-button danger-icon"
-                  data-tooltip={tr("main.list.hardDelete")}
-                  onClick={() => onHardDelete(item)}
-                  title={tr("main.list.hardDelete")}
-                  type="button"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            </article>
+              item={item}
+              index={index}
+              activeId={activeId}
+              selectedIds={selectedIds}
+              multiSelectMode={multiSelectMode}
+              activeGroupStart={0}
+              density={settings.panelDensity}
+              settings={settings}
+              onSelect={onSelect}
+              onRestore={onRestore}
+              onHardDelete={onHardDelete}
+              onToggleSelected={onToggleSelected}
+              onStartMultiSelect={onStartMultiSelect}
+              onOpenContextMenu={openContextMenu}
+              tr={tr}
+            />
           )}
         />
         {contextMenu ? (
@@ -3855,85 +3679,6 @@ function TrashPanel({
         ) : null}
       </div>
     </section>
-  );
-}
-
-function TrashContextMenu({
-  item,
-  multiSelectMode,
-  onClose,
-  onDeleteSelected,
-  onEmptyTrash,
-  onHardDelete,
-  onRestore,
-  onRestoreSelected,
-  onStartMultiSelect,
-  selectedCount,
-  tr,
-  x,
-  y,
-}: {
-  item: ClipItem;
-  multiSelectMode: boolean;
-  onClose: () => void;
-  onDeleteSelected: () => void;
-  onEmptyTrash: () => void;
-  onHardDelete: (item: ClipItem) => void;
-  onRestore: (item: ClipItem) => void;
-  onRestoreSelected: () => void;
-  onStartMultiSelect: (id: string) => void;
-  selectedCount: number;
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-  x: number;
-  y: number;
-}) {
-  const run = (action: () => void) => {
-    action();
-    onClose();
-  };
-  return (
-    <div
-      aria-label={tr("main.context.trashMenu")}
-      className="clip-context-menu"
-      onClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.preventDefault()}
-      role="menu"
-      style={{ left: x, top: y }}
-    >
-      {multiSelectMode ? (
-        <>
-          <button className="clip-context-item" disabled={selectedCount === 0} onClick={() => run(onRestoreSelected)} role="menuitem" type="button">
-            <span className="clip-context-label"><RotateCcw size={13} />{tr("main.context.restoreSelected")}</span>
-            <kbd>{selectedCount}</kbd>
-          </button>
-          <button className="clip-context-item" disabled={selectedCount === 0} onClick={() => run(onDeleteSelected)} role="menuitem" type="button">
-            <span className="clip-context-label"><Trash2 size={13} />{tr("main.context.hardDeleteSelected")}</span>
-            <kbd>Del</kbd>
-          </button>
-          <div className="clip-context-separator" role="separator" />
-          <button className="clip-context-item danger" onClick={() => run(onEmptyTrash)} role="menuitem" type="button">
-            <span className="clip-context-label"><Trash2 size={13} />{tr("main.context.emptyTrash")}</span>
-            <kbd>{tr("main.context.all")}</kbd>
-          </button>
-        </>
-      ) : (
-        <>
-          <button className="clip-context-item" onClick={() => run(() => onRestore(item))} role="menuitem" type="button">
-            <span className="clip-context-label"><RotateCcw size={13} />{tr("main.context.restore")}</span>
-            <kbd>Enter</kbd>
-          </button>
-          <button className="clip-context-item" onClick={() => run(() => onStartMultiSelect(item.id))} role="menuitem" type="button">
-            <span className="clip-context-label"><Square size={13} />{tr("main.context.selectItem")}</span>
-            <kbd>Space</kbd>
-          </button>
-          <div className="clip-context-separator" role="separator" />
-          <button className="clip-context-item danger" onClick={() => run(() => onHardDelete(item))} role="menuitem" type="button">
-            <span className="clip-context-label"><Trash2 size={13} />{tr("main.context.hardDelete")}</span>
-            <kbd>Del</kbd>
-          </button>
-        </>
-      )}
-    </div>
   );
 }
 
@@ -3968,7 +3713,7 @@ function VirtualList<T extends { id: string }>({
 }) {
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(420);
-  const [isScrollFeedback, setScrollFeedback] = useState(false);
+  const [, setScrollFeedback] = useState(false);
   const isScrollFeedbackRef = useRef(false);
   const scrollFeedbackTimerRef = useRef<number | null>(null);
   const scrollRafRef = useRef<number | null>(null);
@@ -4017,6 +3762,9 @@ function VirtualList<T extends { id: string }>({
     };
   }, []);
 
+  // 选中项变化时把它滚到视口垂直居中（macOS 切换器手感）。
+  // 不做「已可见就跳过」的守卫：贴边跟随会显得选中行不居中；首尾由 max(0,…) 自然截停。
+  // 用 behavior:"auto" 即时定位而非 smooth：连续按方向键时 smooth 动画会追着按键跑，拖沓不跟手。
   useEffect(() => {
     if (!activeId || !autoScroll) {
       lastAutoScrollActiveIdRef.current = null;
@@ -4029,15 +3777,9 @@ function VirtualList<T extends { id: string }>({
     const index = items.findIndex((item) => item.id === activeId);
     if (index < 0) return;
     const itemTop = index * itemHeight;
-    const itemBottom = itemTop + itemHeight;
-    const visibleTop = node.scrollTop;
-    const visibleBottom = visibleTop + node.clientHeight;
-    if (itemTop >= visibleTop && itemBottom <= visibleBottom) {
-      return;
-    }
     const targetTop = Math.max(0, itemTop - node.clientHeight / 2 + itemHeight / 2);
     setFeedback(true);
-    node.scrollTo({ top: targetTop, behavior: "smooth" });
+    node.scrollTo({ top: targetTop, behavior: "auto" });
   }, [activeId, autoScroll, itemHeight, setFeedback]);
 
   // 分组：按视口中心算"激活分组"起始下标（groupSize 整数倍），上报父级（给 Cmd+0-9 用）。
@@ -4063,11 +3805,9 @@ function VirtualList<T extends { id: string }>({
   const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
   const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
   const visible = items.slice(start, start + visibleCount);
-  const activeIndex = activeId ? items.findIndex((item) => item.id === activeId) : -1;
-
   return (
     <div
-      className={`${className} virtual-list${isScrollFeedback ? " is-scroll-feedback" : ""}`}
+      className={`${className} thin-scroll relative overflow-auto px-2`}
       onTouchMove={onUserScroll}
       onWheel={onUserScroll}
       onScroll={(event) => {
@@ -4091,24 +3831,21 @@ function VirtualList<T extends { id: string }>({
       }}
       ref={ref}
     >
-      <div className="virtual-spacer" style={{ height: items.length * itemHeight }}>
-        {activeIndex >= 0 ? (
-          <div
-            aria-hidden="true"
-            className="target-focus-ring"
-            style={{
-              "--target-row-height": `${itemHeight}px`,
-              transform: `translate3d(0, ${activeIndex * itemHeight}px, 0)`,
-            } as CSSProperties}
-          />
-        ) : null}
-        <div className="virtual-window" style={{ transform: `translateY(${start * itemHeight}px)` }}>
+      <div className="relative" style={{ height: items.length * itemHeight }}>
+        <div
+          className="absolute left-0 right-0 top-0 will-change-transform"
+          style={{ transform: `translateY(${start * itemHeight}px)` }}
+        >
           {visible.map((item, index) => (
-            <div className="virtual-item" key={item.id}>
+            <div key={item.id}>
               {renderItem(item, start + index)}
             </div>
           ))}
-          {isLoadingMore ? <div className="loading-more">加载更多...</div> : null}
+          {isLoadingMore ? (
+            <div className="flex h-10 items-center justify-center text-[11px] text-muted-foreground">
+              加载更多...
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -4144,6 +3881,10 @@ function QuickPastePanel({
   activeGroupStart,
   onActiveGroupChange,
   groupScrollTarget,
+  density,
+  onCreateSnippet,
+  quickPreviewOpen,
+  onToggleQuickPreview,
   tr,
 }: {
   activeId: string | null;
@@ -4175,17 +3916,18 @@ function QuickPastePanel({
   activeGroupStart: number;
   onActiveGroupChange: (groupStart: number) => void;
   groupScrollTarget: number | null;
+  density?: PanelDensity;
+  onCreateSnippet?: () => void;
+  quickPreviewOpen: boolean;
+  onToggleQuickPreview: () => void;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
   const [contextMenu, setContextMenu] = useState<{ item: ClipItem; x: number; y: number } | null>(null);
-  const [suppressTooltips, setSuppressTooltips] = useState(false);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const openContextMenu = useCallback((event: MouseEvent<HTMLElement>, item: ClipItem) => {
     event.preventDefault();
     event.stopPropagation();
     onSelect(item);
-    setSuppressTooltips(true);
-    window.setTimeout(() => setSuppressTooltips(false), 900);
     if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
     const menuWidth = 204;
     const menuHeight = multiSelectMode ? 190 : 332;
@@ -4196,40 +3938,38 @@ function QuickPastePanel({
     });
   }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
 
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".clip-context-menu")) return;
-      closeContextMenu();
-    };
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeContextMenu();
-    };
-    window.addEventListener("pointerdown", close, true);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("keydown", closeOnEscape, true);
-    return () => {
-      window.removeEventListener("pointerdown", close, true);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("keydown", closeOnEscape, true);
-    };
-  }, [closeContextMenu, contextMenu]);
-
   if (!clips.length) {
-    return <ClipboardEmptyState variant="history" emptySummary={emptySummary} tr={tr} />;
+    return (
+      <ClipboardEmptyState
+        emptySummary={emptySummary}
+        onCreateSnippet={onCreateSnippet}
+        tr={tr}
+        variant="history"
+      />
+    );
   }
 
+  const selectedItem = clips.find((clip) => clip.id === activeId) ?? clips[0];
+
   return (
-    <section className={suppressTooltips ? "quick-panel suppress-tooltips" : "quick-panel"}>
-      <div className="quick-workspace" onPointerDown={onPointerActive}>
+    <section className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col" onPointerDown={onPointerActive}>
+        {quickPreviewOpen && selectedItem ? (
+          <QuickPreviewCard
+            item={selectedItem}
+            onClose={onToggleQuickPreview}
+            onCopyPlain={(item) => onCopyMode(item, "plain")}
+            onFavorite={onFavorite}
+            onPaste={onPaste}
+          />
+        ) : null}
         <VirtualList
           activeId={activeId}
           autoScroll={autoScroll}
-          className="quick-menu"
+          className="flex-1"
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
-          itemHeight={ROW_HEIGHT}
+          itemHeight={density === "comfortable" ? 44 : density === "dense" ? 34 : 40}
           items={clips}
           onEndReached={onLoadMore}
           groupSize={10}
@@ -4237,22 +3977,24 @@ function QuickPastePanel({
           scrollToGroupStart={groupScrollTarget}
           renderItem={(item, index) => (
             <ClipboardRow
-              key={item.id}
-              item={item}
-              index={index}
+              activeGroupStart={activeGroupStart}
               activeId={activeId}
               copiedId={copiedId}
-              selectedIds={selectedIds}
-              multiSelectMode={multiSelectMode}
-              activeGroupStart={activeGroupStart}
+              density={density}
               filePathStatuses={filePathStatuses}
+              index={index}
+              item={item}
+              key={item.id}
+              multiSelectMode={multiSelectMode}
               onFavorite={onFavorite}
               onOpen={onOpen}
               onOpenContextMenu={openContextMenu}
               onPaste={onPaste}
+              onPin={() => toast.info("固定到顶部功能开发中")}
               onSelect={onSelect}
               onStartMultiSelect={onStartMultiSelect}
               onToggleSelected={onToggleSelected}
+              selectedIds={selectedIds}
               tr={tr}
             />
           )}

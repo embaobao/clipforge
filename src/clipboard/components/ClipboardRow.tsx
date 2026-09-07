@@ -1,52 +1,58 @@
-// 主面板历史行组件（frontend-surface-architecture-refactor Phase B）
-// 把 VirtualList 的 renderItem 中 article 行抽出来，保持事件顺序与原有行为一致。
-// 当前仍从 App.tsx 传入全部回调，不引入新状态；拆分后便于单独做视觉验证和样式迁移。
+// 主面板历史行组件（design-spec 视觉层重构）
+// 左侧类型图标 + 内容预览 + 右侧动态动作；保持事件顺序与原有行为一致。
 import type { MouseEvent } from "react";
-import { Check, Square } from "lucide-react";
+import { FileText, Image as ImageIcon, Link2, Table2, Type } from "lucide-react";
+
+import { cn } from "@/lib/utils";
 import type { ClipItem } from "../../App";
-import { recordNextFramePerf } from "../../performance-smoke";
 import type { FilePathStatus } from "../../services/clipboard";
 import { isFileClipMissing, type TrFunction } from "../clipboard-domain";
+import { recordNextFramePerf } from "../../performance-smoke";
 import { ClipboardContentPreview } from "./ClipboardContentPreview";
 import { ClipboardRowActions } from "./ClipboardRowActions";
-import styles from "./ClipboardRow.module.css";
 
 export interface ClipboardRowProps {
-  /** 当前行数据。 */
   item: ClipItem;
-  /** 在列表中的绝对下标（用于分组数字）。 */
   index: number;
-  /** 当前激活项 id。 */
   activeId: string | null;
-  /** 最近被复制项 id（显示勾选）。 */
   copiedId: string | null;
-  /** 多选已选集合。 */
   selectedIds: Set<string>;
-  /** 是否处于多选模式。 */
   multiSelectMode: boolean;
-  /** 当前激活分组起点（用于计算 0-9 快捷数字）。 */
   activeGroupStart: number;
-  /** 文件路径存在性缓存。 */
   filePathStatuses: Record<string, FilePathStatus>;
-  /** 选中某项。 */
+  density?: "dense" | "normal" | "comfortable";
   onSelect: (item: ClipItem) => void;
-  /** 粘贴某项。 */
   onPaste: (item: ClipItem, source?: string) => void;
-  /** 切换选中状态。 */
   onToggleSelected: (id: string) => void;
-  /** 进入多选模式。 */
   onStartMultiSelect: (id: string) => void;
-  /** 打开右键菜单。 */
   onOpenContextMenu: (event: MouseEvent<HTMLElement>, item: ClipItem) => void;
-  /** 收藏/取消收藏。 */
   onFavorite: (item: ClipItem) => void;
-  /** 打开目标。 */
-  onOpen: (item: ClipItem) => void;
-  /** 翻译函数。 */
+  /** 占位：固定到顶部。 */
+  onPin?: (item: ClipItem) => void;
+  /** 保留兼容性，视觉层不再使用。 */
+  onOpen?: (item: ClipItem) => void;
   tr: TrFunction;
 }
 
-/** 主面板单条剪贴历史行：索引按钮 + 内容预览 + 操作按钮。 */
+function KindIcon({ kind, className }: { kind: ClipItem["payloadKind"]; className?: string }) {
+  switch (kind) {
+    case "image":
+      return <ImageIcon className={className} size={14} />;
+    case "link":
+      return <Link2 className={className} size={14} />;
+    case "file":
+      return <FileText className={className} size={14} />;
+    case "table":
+    case "chart":
+      return <Table2 className={className} size={14} />;
+    case "text":
+      return <Type className={className} size={14} />;
+    default:
+      return <FileText className={className} size={14} />;
+  }
+}
+
+/** 主面板单条剪贴历史行。 */
 export function ClipboardRow({
   item,
   index,
@@ -56,33 +62,35 @@ export function ClipboardRow({
   multiSelectMode,
   activeGroupStart,
   filePathStatuses,
+  density = "normal",
   onSelect,
   onPaste,
   onToggleSelected,
   onStartMultiSelect,
   onOpenContextMenu,
   onFavorite,
-  onOpen,
+  onPin,
+  onOpen: _onOpen,
   tr,
 }: ClipboardRowProps) {
   const fileMissing = isFileClipMissing(item, filePathStatuses);
   const groupIndex = index - activeGroupStart;
+  const isSelected = activeId === item.id;
+  const isCopied = copiedId === item.id;
+
+  const heightClass =
+    density === "comfortable" ? "h-11" : density === "dense" ? "h-[34px]" : "h-10";
 
   return (
     <article
-      className={[
-        "quick-row",
-        styles.selectionFrame,
-        activeId === item.id ? "active" : "",
-        copiedId === item.id ? "copied" : "",
-        selectedIds.has(item.id) ? "selected" : "",
-        multiSelectMode ? "selecting" : "",
-        fileMissing ? "file-missing" : "",
-        groupIndex >= 0 && groupIndex < 10 ? "in-active-group" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
+      className={cn(
+        "group row-in relative grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_80px] items-center gap-3 rounded-lg px-2 transition-colors duration-100 active:scale-[0.99]",
+        heightClass,
+        isSelected && "bg-black/[0.045] dark:bg-white/[0.07]",
+        selectedIds.has(item.id) && "bg-black/[0.03] dark:bg-white/[0.05]",
+      )}
       key={item.id}
+      style={{ animationDelay: `${Math.max(index - activeGroupStart, 0) * 20}ms` }}
       onClick={() => {
         recordNextFramePerf("quick.select", { source: "click" });
         if (multiSelectMode) {
@@ -102,8 +110,13 @@ export function ClipboardRow({
       tabIndex={0}
     >
       <button
-        aria-label={selectedIds.has(item.id) ? tr("main.list.unselectItem") : tr("main.list.multiSelectItem")}
-        className={selectedIds.has(item.id) ? "quick-index selected" : "quick-index"}
+        aria-label={
+          multiSelectMode ? tr("main.list.toggleSelection") : tr("main.list.enterMultiSelect")
+        }
+        className={cn(
+          "flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[7px] bg-black/[0.04] text-muted-foreground transition-colors hover:bg-black/5 dark:bg-white/[0.07] dark:hover:bg-white/[0.1]",
+          selectedIds.has(item.id) && "text-foreground",
+        )}
         onClick={(event) => {
           event.stopPropagation();
           onSelect(item);
@@ -114,17 +127,24 @@ export function ClipboardRow({
         type="button"
       >
         {selectedIds.has(item.id) ? (
-          <Check size={12} />
-        ) : copiedId === item.id ? (
-          <Check size={12} />
-        ) : groupIndex >= 0 && groupIndex <= 9 ? (
-          <span className="quick-index-num">{groupIndex}</span>
+          <KindIcon kind={item.payloadKind} className="opacity-60" />
         ) : (
-          <Square size={12} />
+          <KindIcon kind={item.payloadKind} />
         )}
       </button>
-      <ClipboardContentPreview fileMissing={fileMissing} item={item} tr={tr} />
-      <ClipboardRowActions item={item} onFavorite={onFavorite} onOpen={onOpen} tr={tr} />
+
+      <ClipboardContentPreview density={density} fileMissing={fileMissing} item={item} tr={tr} />
+
+      <ClipboardRowActions
+        groupIndex={groupIndex}
+        isCopied={isCopied}
+        isSelected={isSelected}
+        item={item}
+        onFavorite={onFavorite}
+        onOpenContextMenu={onOpenContextMenu}
+        onPin={onPin}
+        tr={tr}
+      />
     </article>
   );
 }

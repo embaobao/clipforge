@@ -1,35 +1,30 @@
-// 主面板顶部工具栏（frontend-surface-architecture-refactor Phase B）
-// 从 App.tsx 抽出：视图切换、搜索槽、Agent 按钮、更多菜单。
+// 主面板顶部工具栏（design-spec 视觉层重构）
+// 搜索槽 + 视图范围按钮（History/Favorites/片段/更多），保持业务 handler 不变。
 import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
-import { motion, useReducedMotion } from "motion/react";
-import { Check, Heart, History, MoreHorizontal, ScanSearch, Settings2, Trash2, X } from "lucide-react";
+import { Clock, MoreHorizontal, ScanSearch, Scissors, Settings2, Star, Trash2 } from "lucide-react";
 
+import { cn } from "@/lib/utils";
+import { getShortcutModLabel } from "../clipboard-domain";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from "@/components/animate-ui/components/radix/dropdown-menu";
-import { Tabs, TabsList, TabsTrigger } from "@/components/animate-ui/components/radix/tabs";
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/animate-ui/components/radix/tooltip";
+} from "@/components/ui/tooltip";
 import type { TranslationKey } from "@/i18n";
-import type { PanelSurface, ViewKey } from "../../App";
-import { PanelStatusFeedback } from "./PanelStatusFeedback";
+import type { ViewKey } from "../../App";
 
-const dockButtonTransition = { type: "spring", stiffness: 430, damping: 30, mass: 0.42 } as const;
 type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
 
-/** 主面板顶部工具栏 props：承载剪贴板视图切换、搜索槽和面板级快捷键边界。 */
+/** 顶部工具栏 props：搜索槽、视图切换、更多菜单入口。 */
 export interface TopToolbarProps {
-  activeSurface: PanelSurface;
   activeView: ViewKey;
   /** 面板级方向键导航；用于避免顶部栏按钮抢占列表下钻/返回快捷键。 */
   onPanelArrowKey?: (key: PanelArrowKey) => void;
@@ -38,14 +33,17 @@ export interface TopToolbarProps {
   onOpenSettings: () => void;
   onViewChange: (view: ViewKey) => void;
   searchBar: ReactNode;
-  showTabs?: boolean;
-  status: string;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
-/** 主面板顶部工具栏：History/Favorites 切换、搜索槽、Agent 入口、系统菜单。 */
+const scopeBase =
+  "flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors active:scale-90";
+const scopeInactive = "hover:bg-black/5 dark:hover:bg-white/[0.07]";
+const scopeActive = "bg-foreground text-background hover:bg-foreground/90";
+const scopeDisabled = "opacity-40 cursor-not-allowed";
+
+/** 主面板顶部工具栏：搜索槽、范围按钮、更多菜单。 */
 export function TopToolbar({
-  activeSurface,
   activeView,
   onPanelArrowKey,
   onDrag,
@@ -53,22 +51,23 @@ export function TopToolbar({
   onOpenSettings,
   onViewChange,
   searchBar,
-  showTabs = true,
-  status,
   tr,
 }: TopToolbarProps) {
-  const reduceMotion = useReducedMotion();
-  const toolbarValue = activeView;
-  const handleToolbarValueChange = (value: string) => {
-    if (value === "history" || value === "favorites") {
-      onViewChange(value);
-    }
-  };
   const handleToolbarKeyDownCapture = (event: KeyboardEvent<HTMLElement>) => {
     if (!onPanelArrowKey) return;
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
+    if (
+      event.key !== "ArrowLeft" &&
+      event.key !== "ArrowRight" &&
+      event.key !== "ArrowUp" &&
+      event.key !== "ArrowDown"
+    )
+      return;
+    if (
+      event.target instanceof Element &&
+      event.target.closest("input, textarea, select, [contenteditable='true']")
+    )
+      return;
     event.preventDefault();
     event.stopPropagation();
     onPanelArrowKey(event.key);
@@ -76,159 +75,124 @@ export function TopToolbar({
 
   return (
     <header
-      className="top-toolbar"
+      className="grid h-[52px] grid-cols-[1fr_auto] items-center gap-2 px-3"
       data-dev-probe="top-toolbar"
       data-tauri-drag-region
       onKeyDownCapture={handleToolbarKeyDownCapture}
       onPointerDown={onDrag}
     >
-      {showTabs ? (
-        <Tabs className="top-view-tabs" data-dev-probe="top-view-tabs" value={toolbarValue} onValueChange={handleToolbarValueChange}>
-          <TabsList className="top-view-actions" data-dev-probe="top-view-actions" onPointerDown={(event) => event.stopPropagation()}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <TabsTrigger
-                  aria-label={tr("main.dock.history")}
-                  className={activeSurface === "clipboard" && activeView === "history" ? "icon-button active" : "icon-button subtle"}
-                  data-dev-probe="top-view-history"
-                  value="history"
-                >
-                  <History size={15} />
-                </TabsTrigger>
-              </TooltipTrigger>
-              <TooltipContent className="top-view-tooltip" side="bottom" sideOffset={4}>
-                <span>{tr("main.dock.history")}</span>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <TabsTrigger
-                  aria-label={tr("main.dock.favorites")}
-                  className={activeSurface === "clipboard" && activeView === "favorites" ? "icon-button active" : "icon-button subtle"}
-                  data-dev-probe="top-view-favorites"
-                  value="favorites"
-                >
-                  <Heart size={15} />
-                </TabsTrigger>
-              </TooltipTrigger>
-              <TooltipContent className="top-view-tooltip" side="bottom" sideOffset={4}>
-                <span>{tr("main.dock.favorites")}</span>
-              </TooltipContent>
-            </Tooltip>
-          </TabsList>
-        </Tabs>
-      ) : null}
-      <div className="top-toolbar-search-slot" data-dev-probe="top-search-slot" onPointerDown={(event) => event.stopPropagation()}>
+      <div
+        className="flex min-w-0 items-center gap-2"
+        data-dev-probe="top-search-slot"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         {searchBar}
       </div>
-      <div className="top-toolbar-action-slot" data-dev-probe="top-action-slot" onPointerDown={(event) => event.stopPropagation()}>
-        <PanelStatusFeedback status={status} tr={tr} />
+
+      <div
+        className="flex items-center gap-1"
+        data-dev-probe="top-action-slot"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
         <Tooltip>
           <TooltipTrigger asChild>
-            <motion.button
-              aria-label="AI 分析（DeepSeek Harness）"
-              className={activeSurface === "dsh" ? "icon-button active" : "icon-button subtle"}
-              data-dev-probe="top-toolbar-dsh"
-              data-tooltip="AI 分析"
-              title="AI 分析（DeepSeek Harness）"
-              transition={dockButtonTransition}
+            <button
+              aria-label={tr("main.dock.history")}
+              className={cn(scopeBase, activeView === "history" ? scopeActive : scopeInactive)}
+              data-dev-probe="top-scope-history"
+              onClick={() => onViewChange("history")}
               type="button"
-              whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
-              whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-              onClick={onOpenDsh}
             >
-              <ScanSearch size={15} />
-            </motion.button>
+              <Clock size={15} />
+            </button>
           </TooltipTrigger>
-          <TooltipContent className="top-view-tooltip" side="bottom" sideOffset={4}>
-            <span>AI 分析（DeepSeek Harness）</span>
+          <TooltipContent side="bottom" sideOffset={4}>
+            <span>{tr("main.dock.history")}</span>
           </TooltipContent>
         </Tooltip>
-        {activeSurface === "clipboard" && activeView === "trash" ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <motion.button
-                aria-label={tr("main.dock.closeTrash")}
-                className="top-trash-close icon-button subtle"
-                data-dev-probe="top-trash-close"
-                data-tooltip={tr("main.dock.closeTrash")}
-                onClick={() => onViewChange("history")}
-                title={tr("main.dock.closeTrash")}
-                transition={dockButtonTransition}
-                type="button"
-                whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
-                whileTap={reduceMotion ? undefined : { scale: 0.94 }}
-              >
-                <X size={15} />
-              </motion.button>
-            </TooltipTrigger>
-            <TooltipContent className="top-view-tooltip" side="bottom" sideOffset={4}>
-              <span>{tr("main.dock.closeTrash")}</span>
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              aria-label={tr("main.dock.favorites")}
+              className={cn(scopeBase, activeView === "favorites" ? scopeActive : scopeInactive)}
+              data-dev-probe="top-scope-favorites"
+              onClick={() => onViewChange("favorites")}
+              type="button"
+            >
+              <Star size={15} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={4}>
+            <span>{tr("main.dock.favorites")}</span>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              aria-label="片段"
+              className={cn(scopeBase, scopeDisabled)}
+              data-dev-probe="top-scope-snippets"
+              disabled
+              type="button"
+            >
+              <Scissors size={15} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={4}>
+            <span>片段</span>
+          </TooltipContent>
+        </Tooltip>
+
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <motion.button
+            <button
               aria-label={tr("main.dock.menu")}
-              className="top-menu-trigger"
+              className={cn(scopeBase, scopeInactive)}
               data-dev-probe="top-menu-trigger"
-              data-tooltip={tr("main.dock.menu")}
-              title={tr("main.dock.menu")}
-              transition={dockButtonTransition}
               type="button"
-              whileHover={reduceMotion ? undefined : { y: -1, scale: 1.04 }}
-              whileTap={reduceMotion ? undefined : { scale: 0.94 }}
             >
               <MoreHorizontal size={16} />
-            </motion.button>
+            </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="top-toolbar-menu" data-surface="clipboard" side="bottom" align="end" sideOffset={8}>
-            <DropdownMenuLabel className="top-toolbar-menu-header">
-              <span className="top-toolbar-menu-brand">ClipForge</span>
-              <small className="top-toolbar-menu-hint">{tr("main.dock.shortcutHint")}</small>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator className="top-toolbar-menu-separator" />
-            <DropdownMenuGroup className="top-toolbar-menu-group">
-              <DropdownMenuItem
-                className="top-toolbar-menu-item"
-                data-dev-probe="top-menu-dsh"
-                onSelect={onOpenDsh}
-              >
-                <span className="top-toolbar-menu-label">
-                  <ScanSearch aria-hidden="true" className="top-toolbar-menu-item-icon" />
-                  <span className="top-toolbar-menu-item-title">AI 分析</span>
-                </span>
-                <DropdownMenuShortcut className="top-toolbar-menu-shortcut">
-                  {activeSurface === "dsh" ? <Check aria-hidden="true" size={14} /> : null}
-                </DropdownMenuShortcut>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="top-toolbar-menu-item"
-                data-dev-probe="top-menu-trash"
-                onSelect={() => onViewChange("trash")}
-              >
-                <span className="top-toolbar-menu-label">
-                  <Trash2 aria-hidden="true" className="top-toolbar-menu-item-icon" />
-                  <span className="top-toolbar-menu-item-title">{tr("main.dock.trash")}</span>
-                </span>
-                <DropdownMenuShortcut className="top-toolbar-menu-shortcut">
-                  {activeSurface === "clipboard" && activeView === "trash" ? <Check aria-hidden="true" size={14} /> : null}
-                  <kbd>T</kbd>
-                </DropdownMenuShortcut>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="top-toolbar-menu-item" data-dev-probe="top-menu-settings" onSelect={onOpenSettings}>
-                <span className="top-toolbar-menu-label">
-                  <Settings2 aria-hidden="true" className="top-toolbar-menu-item-icon" />
-                  <span className="top-toolbar-menu-item-title">{tr("main.dock.settings")}</span>
-                </span>
-                <DropdownMenuShortcut className="top-toolbar-menu-shortcut">
-                  <kbd>Ctrl/Cmd</kbd>
-                  <span aria-hidden="true">+</span>
-                  <kbd>,</kbd>
-                </DropdownMenuShortcut>
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
+          <DropdownMenuContent
+            className="w-52 rounded-xl border-black/5 p-1 dark:border-white/[0.07]"
+            data-surface="clipboard"
+            side="bottom"
+            align="end"
+            sideOffset={8}
+          >
+            <DropdownMenuItem
+              className="rounded-lg px-2 py-1.5 text-[12.5px]"
+              data-dev-probe="top-menu-dsh"
+              onSelect={onOpenDsh}
+            >
+              <ScanSearch size={14} />
+              <span>AI 分析</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="rounded-lg px-2 py-1.5 text-[12.5px]"
+              data-dev-probe="top-menu-trash"
+              onSelect={() => onViewChange("trash")}
+            >
+              <Trash2 size={14} />
+              <span>{tr("main.dock.trash")}</span>
+              <DropdownMenuShortcut className="mono">T</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-black/5 dark:bg-white/[0.07]" />
+            <DropdownMenuItem
+              className="rounded-lg px-2 py-1.5 text-[12.5px]"
+              data-dev-probe="top-menu-settings"
+              onSelect={onOpenSettings}
+            >
+              <Settings2 size={14} />
+              <span>{tr("main.dock.settings")}</span>
+              <DropdownMenuShortcut className="mono">
+                {getShortcutModLabel()}+
+                <span aria-hidden="true">,</span>
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

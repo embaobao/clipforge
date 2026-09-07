@@ -1,27 +1,22 @@
-// 主面板列表空态组件（frontend-surface-architecture-refactor Phase B）
-// 合并历史/收藏/搜索无结果 与 回收站 两处重复的空态 JSX，按 variant 切换图标与文案。
-// 纯展示：不持有状态、不调用 handler；类名保持 `.empty-list` 不变以兼容 App.css，视觉零变化。
-import { Inbox, Trash2 } from "lucide-react";
+// 主面板列表空态组件（design-spec 视觉层重构）
+// 搜索无结果 / 回收站空态，提供新建片段入口。
+import { SearchX } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
 import type { TranslationKey } from "../../i18n";
 
-/** 空态类型：history 覆盖历史/收藏/搜索无结果，trash 覆盖回收站。 */
 export type ClipboardEmptyStateVariant = "history" | "trash";
 
 export interface ClipboardEmptyStateProps {
-  /** 空态类型。 */
   variant: ClipboardEmptyStateVariant;
-  /** 搜索摘要文案；非空时历史态展示「无结果」标题，回收站态展示该摘要为正文。 */
   emptySummary: string | null;
-  /** i18n 翻译函数。 */
+  /** 点击「新建片段」回调；未提供时按钮不可用。 */
+  onCreateSnippet?: () => void;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
-/**
- * 剪贴板列表空态。
- * - history：有搜索摘要 → noMatchesTitle；否则 noClipboardTitle。正文优先用 emptySummary，否则 noClipboardBody。
- * - trash：固定 trashTitle，正文优先用 emptySummary，否则 trashBody。
- */
-export function ClipboardEmptyState({ variant, emptySummary, tr }: ClipboardEmptyStateProps) {
+/** 剪贴板列表空态。 */
+export function ClipboardEmptyState({ variant, emptySummary, onCreateSnippet, tr }: ClipboardEmptyStateProps) {
   const isTrash = variant === "trash";
   const title = isTrash
     ? tr("main.empty.trashTitle")
@@ -29,11 +24,27 @@ export function ClipboardEmptyState({ variant, emptySummary, tr }: ClipboardEmpt
       ? tr("main.empty.noMatchesTitle")
       : tr("main.empty.noClipboardTitle");
   const body = emptySummary ?? tr(isTrash ? "main.empty.trashBody" : "main.empty.noClipboardBody");
+
   return (
-    <div className="empty-list">
-      {isTrash ? <Trash2 size={30} /> : <Inbox size={30} />}
-      <h2>{title}</h2>
-      <p>{body}</p>
+    <div className="flex flex-col items-center justify-center gap-2.5 py-12 text-center">
+      <div className="grid h-10 w-10 place-items-center rounded-full bg-black/[0.04] text-muted-foreground dark:bg-white/[0.07]">
+        <SearchX className="h-4 w-4" strokeWidth={1.8} />
+      </div>
+      <div className="space-y-1">
+        <h2 className="text-[13px] font-medium text-foreground">{title}</h2>
+        <p className="max-w-[280px] text-[12px] text-muted-foreground">{body}</p>
+      </div>
+      {!isTrash ? (
+        <Button
+          className="mt-1 h-7 rounded-lg text-[12px]"
+          disabled={!onCreateSnippet}
+          onClick={onCreateSnippet}
+          size="sm"
+          variant="outline"
+        >
+          新建片段 <span className="mono ml-1 text-muted-foreground">⌘N</span>
+        </Button>
+      ) : null}
     </div>
   );
 }

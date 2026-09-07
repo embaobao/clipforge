@@ -1,40 +1,100 @@
-// 主面板历史行内动作（frontend-surface-architecture-refactor Phase B）
-// 打开目标（仅 url/attachment 条目）+ 收藏。容器 stopPropagation 阻止冒泡到行级 onClick；收藏按钮再 stopPropagation 一次。
-// 类名保持 .row-actions / .quick-fav / .has-favorite 不变以兼容 App.css，视觉零变化。
-import { ExternalLink, Heart } from "lucide-react";
+// 主面板历史行右侧动作（design-spec 视觉层重构）
+// 默认显示序号 / 选中态显示 ⏎ / 复制反馈显示 ✓ 已复制 / 悬停显示收藏/固定/更多。
+import type { MouseEvent } from "react";
+import { Check, Heart, MoreHorizontal, Pin } from "lucide-react";
+
+import { cn } from "@/lib/utils";
 import type { ClipItem } from "../../App";
 import type { TrFunction } from "../clipboard-domain";
 
 export interface ClipboardRowActionsProps {
   item: ClipItem;
-  /** 打开目标（URL/附件）。 */
-  onOpen: (item: ClipItem) => void;
+  /** 当前在激活分组内的序号，用于显示 1-9。 */
+  groupIndex: number;
+  /** 是否为当前键盘选中行。 */
+  isSelected: boolean;
+  /** 是否刚被复制（显示复制反馈）。 */
+  isCopied: boolean;
   /** 切换收藏。 */
   onFavorite: (item: ClipItem) => void;
+  /** 固定到顶部（占位，待业务层实现）。 */
+  onPin?: (item: ClipItem) => void;
+  /** 打开右键菜单。 */
+  onOpenContextMenu: (event: MouseEvent<HTMLElement>, item: ClipItem) => void;
   tr: TrFunction;
 }
 
-/** 历史行内动作：open-target（仅 url/attachment 条目出现）+ favorite。 */
-export function ClipboardRowActions({ item, onOpen, onFavorite, tr }: ClipboardRowActionsProps) {
+const actionButton =
+  "grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-all duration-100 hover:bg-black/[0.06] hover:text-foreground active:scale-90 dark:hover:bg-white/[0.1]";
+
+/** 历史行右侧动作区。 */
+export function ClipboardRowActions({
+  item,
+  groupIndex,
+  isSelected,
+  isCopied,
+  onFavorite,
+  onPin,
+  onOpenContextMenu,
+  tr,
+}: ClipboardRowActionsProps) {
+  const showIndex = !isCopied && !isSelected && groupIndex >= 0 && groupIndex <= 8;
+  const indexLabel = groupIndex + 1;
+
   return (
-    <div className={item.favorite ? "row-actions has-favorite" : "row-actions"} onClick={(event) => event.stopPropagation()}>
-      {item.analysis.url || item.analysis.attachment ? (
-        <button className="icon-button" data-tooltip={tr("main.list.openTarget")} onClick={() => onOpen(item)} title={tr("main.list.openTarget")} type="button">
-          <ExternalLink size={14} />
-        </button>
-      ) : null}
-      <button
-        className={item.favorite ? "quick-fav faved" : "quick-fav"}
-        data-tooltip={item.favorite ? tr("main.list.unfavorite") : tr("main.list.favorite")}
-        onClick={(event) => {
-          event.stopPropagation();
-          onFavorite(item);
-        }}
-        title={item.favorite ? tr("main.list.unfavorite") : tr("main.list.favorite")}
-        type="button"
-      >
-        <Heart size={13} />
-      </button>
+    <div
+      className="relative flex w-20 flex-shrink-0 items-center justify-end"
+      onClick={(event) => event.stopPropagation()}
+    >
+      {isCopied ? (
+        <span className="row-in flex items-center gap-1 text-[11px] text-muted-foreground">
+          <Check className="h-3.5 w-3.5" strokeWidth={2.2} /> 已复制
+        </span>
+      ) : (
+        <>
+          <span className="mono text-[11px] text-muted-foreground/50 group-hover:hidden">
+            {isSelected ? "⏎" : showIndex ? indexLabel : null}
+          </span>
+          <span className="hidden items-center gap-0.5 group-hover:flex">
+            <button
+              aria-label={item.favorite ? tr("main.list.unfavorite") : tr("main.list.favorite")}
+              className={cn(actionButton, item.favorite && "fill-current text-foreground")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onFavorite(item);
+              }}
+              title={item.favorite ? tr("main.list.unfavorite") : tr("main.list.favorite")}
+              type="button"
+            >
+              <Heart size={13} className={cn(item.favorite && "fill-current")} />
+            </button>
+            <button
+              aria-label="固定到顶部"
+              className={actionButton}
+              onClick={(event) => {
+                event.stopPropagation();
+                onPin?.(item);
+              }}
+              title="固定到顶部"
+              type="button"
+            >
+              <Pin size={13} />
+            </button>
+            <button
+              aria-label={tr("main.context.clipMenu")}
+              className={actionButton}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenContextMenu(event, item);
+              }}
+              title={tr("main.context.clipMenu")}
+              type="button"
+            >
+              <MoreHorizontal size={13} />
+            </button>
+          </span>
+        </>
+      )}
     </div>
   );
 }

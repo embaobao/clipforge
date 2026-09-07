@@ -1,9 +1,6 @@
-// 主面板历史行内容预览（frontend-surface-architecture-refactor Phase B）
-// 渲染行主文案 + AI 摘要/图片/文件徽标。纯展示：从 item 派生文案，事件冒泡不在此处理（行级 onClick 在 article）。
-// 类名保持 .quick-content / .quick-line / .quick-media-* 不变以兼容 App.css，视觉零变化。
-import { FileJson, Image as ImageIcon } from "lucide-react";
+// 主面板历史行内容预览（design-spec 视觉层重构）
+// 仅渲染主文案与来源/时间元信息；事件冒泡保留在行级 article。
 import type { ClipItem } from "../../App";
-import { getImagePath } from "../../services/clipboard";
 import {
   getClipboardLine,
   getItemTooltip,
@@ -14,51 +11,59 @@ import { AppTooltip } from "./AppTooltip";
 
 export interface ClipboardContentPreviewProps {
   item: ClipItem;
-  /** 文件类条目是否缺失（行级 isFileClipMissing 计算后传入）。 */
+  /** 文件类条目是否缺失。 */
   fileMissing: boolean;
+  /** 当前密度；compact 时隐藏元信息以节省高度。 */
+  density?: "dense" | "normal" | "comfortable";
   tr: TrFunction;
 }
 
-/** 历史行内容预览：图片/文件缩略 + middle-ellipsis 主文案（带 tooltip）。 */
-export function ClipboardContentPreview({ item, fileMissing, tr }: ClipboardContentPreviewProps) {
+function formatRelativeTime(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(document.documentElement.lang || "zh-CN", {
+    numeric: "auto",
+  });
+  if (seconds < 60) return rtf.format(-Math.max(1, seconds), "second");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return rtf.format(-minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return rtf.format(-hours, "hour");
+  const days = Math.floor(hours / 24);
+  if (days < 7) return rtf.format(-days, "day");
+  const date = new Date(timestamp);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+/** 历史行内容预览：主文案 + 来源/时间元信息（带 tooltip）。 */
+export function ClipboardContentPreview({ item, fileMissing, density, tr }: ClipboardContentPreviewProps) {
   const parts = splitLineForMiddleEllipsis(getClipboardLine(item));
-  const imageThumbSrc = item.payloadKind === "image" ? getImagePath(item.thumbnailPath ?? item.imageFile) : null;
-  const imageThumbAlt = item.analysis.title || getClipboardLine(item) || tr("main.searchSuggestion.image");
+  const showMeta = density !== "dense";
+  const meta = [
+    fileMissing ? "文件缺失" : item.source || item.analysis.sourceName,
+    formatRelativeTime(item.createdAt),
+  ].join(" · ");
+
   return (
-    <div className="quick-content">
-      {item.payloadKind === "image" ? (
-        imageThumbSrc ? (
-          <AppTooltip
-            className="quick-media-tooltip"
-            content={getItemTooltip(item, tr)}
-            preview={<img alt={imageThumbAlt} className="app-tooltip-preview-image" src={imageThumbSrc} />}
-            portal
-          >
-            <img alt={imageThumbAlt} className="quick-media-thumb" src={imageThumbSrc} />
-          </AppTooltip>
-        ) : (
-          <span className="quick-media-thumb" title={item.imageFile ?? tr("main.searchSuggestion.image")}>
-            <ImageIcon size={13} />
-          </span>
-        )
-      ) : item.payloadKind === "file" ? (
-        <span className="quick-media-file" title={fileMissing ? tr("main.list.fileMissing") : (item.fileTypes ?? tr("main.searchSuggestion.file"))}>
-          <FileJson size={13} />
-          <em>{Math.max(1, item.content.split(/\r?\n/).filter(Boolean).length)}</em>
-        </span>
-      ) : null}
+    <div className="flex min-w-0 flex-col justify-center leading-tight">
       {parts.split ? (
         <AppTooltip content={getItemTooltip(item, tr)}>
-          <p className="quick-line quick-line-mid" aria-label={parts.full}>
-            <span className="ql-head">{parts.head}</span>
-            <span className="ql-tail">{parts.tail}</span>
+          <p className="truncate text-[13px] leading-tight tracking-[-0.005em] text-foreground" aria-label={parts.full}>
+            <span>{parts.head}</span>
+            <span className="text-muted-foreground">{parts.tail}</span>
           </p>
         </AppTooltip>
       ) : (
         <AppTooltip content={getItemTooltip(item, tr)}>
-          <p className="quick-line" aria-label={parts.text}>{parts.text}</p>
+          <p className="truncate text-[13px] leading-tight tracking-[-0.005em] text-foreground" aria-label={parts.text}>
+            {parts.text}
+          </p>
         </AppTooltip>
       )}
+      {showMeta ? (
+        <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70" aria-label={meta}>
+          {meta}
+        </p>
+      ) : null}
     </div>
   );
 }

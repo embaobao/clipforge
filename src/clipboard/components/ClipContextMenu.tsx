@@ -1,5 +1,5 @@
-// 主面板右键上下文菜单（frontend-surface-architecture-refactor Phase B）
-// 从 App.tsx 抽出：单条/多选两种模式、复制模式、AI 摘要、收藏、删除等入口。
+// 主面板右键上下文菜单（design-spec 视觉层重构）
+// 使用 shadcn DropdownMenu + 虚拟触发点定位；单条/多选两种模式。
 import {
   CheckSquare,
   Clipboard,
@@ -12,51 +12,45 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { ClipItem } from "../../App";
 import type { PasteMode } from "../../services/clipboard";
 import { getShortcutModLabel } from "../clipboard-domain";
 import type { TranslationKey } from "../../i18n";
 
 export interface ClipContextMenuProps {
-  /** 右键目标条目。 */
   item: ClipItem;
-  /** 是否处于多选模式。 */
   multiSelectMode: boolean;
-  /** 已选项数量（多选模式显示）。 */
   selectedCount: number;
-  /** 菜单位置。 */
   x: number;
-  /** 菜单位置。 */
   y: number;
-  /** 关闭菜单。 */
   onClose: () => void;
-  /** 删除当前项。 */
   onDelete: () => void;
-  /** 删除已选项。 */
   onDeleteSelected: () => void;
-  /** 收藏/取消收藏当前项。 */
   onFavorite: (item: ClipItem) => void;
-  /** 批量收藏已选项。 */
   onFavoriteSelected: () => void;
-  /** 打开聚合视图。 */
   onOpenAggregate: () => void;
-  /** 粘贴当前项。 */
   onPaste: (item: ClipItem, source?: string) => void;
-  /** 以指定模式复制当前项。 */
   onCopyMode: (mode: PasteMode) => void;
-  /** DSH 只读快速分析。 */
   onAnalyzeClipboard?: (item: ClipItem) => void;
-  /** 复制已选项。 */
   onCopySelected: () => void;
-  /** 进入多选模式。 */
   onStartMultiSelect: (id: string) => void;
-  /** 清空多选。 */
   onClearSelection: () => void;
-  /** 打开当前项的工作区详情视图。 */
   onOpenDetail: () => void;
-  /** 翻译函数。 */
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
+
+const menuItem =
+  "flex cursor-default select-none items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
+const menuShortcut = "mono ml-auto text-[11px] opacity-60";
 
 /** 主面板右键菜单：单条模式与多选模式。 */
 export function ClipContextMenu({
@@ -87,143 +81,129 @@ export function ClipContextMenu({
   };
 
   return (
-    <div
-      aria-label={tr("main.context.clipMenu")}
-      className="clip-context-menu"
-      onClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.preventDefault()}
-      role="menu"
-      style={{ left: x, top: y }}
-    >
-      {multiSelectMode ? (
-        <>
-          <button className="clip-context-item" onClick={() => run(onOpenAggregate)} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <CheckSquare size={13} />{tr("main.context.aggregate")}
-            </span>
-            <kbd>{selectedCount}</kbd>
-          </button>
-          <button className="clip-context-item" onClick={() => run(onCopySelected)} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Copy size={13} />{tr("main.context.copySelected")}
-            </span>
-            <kbd>{mod}+C</kbd>
-          </button>
-          <button className="clip-context-item" onClick={() => run(onFavoriteSelected)} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Heart size={13} />{tr("main.context.favoriteSelected")}
-            </span>
-            <kbd>{mod}+F</kbd>
-          </button>
-          <button className="clip-context-item danger" onClick={() => run(onDeleteSelected)} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Trash2 size={13} />{tr("main.context.deleteSelected")}
-            </span>
-            <kbd>Del</kbd>
-          </button>
-          <div className="clip-context-separator" role="separator" />
-          <button className="clip-context-item" onClick={() => run(onClearSelection)} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <X size={13} />{tr("main.context.exitMultiSelect")}
-            </span>
-            <kbd>Esc</kbd>
-          </button>
-        </>
-      ) : (
-        <>
-          <button className="clip-context-item" onClick={() => run(() => onPaste(item, "context-menu"))} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Clipboard size={13} />{tr("main.context.paste")}
-            </span>
-            <kbd>Enter</kbd>
-          </button>
-          <button className="clip-context-item" onClick={() => run(() => onCopyMode("rich"))} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Copy size={13} />{tr("main.context.copyRich")}
-            </span>
-            <kbd>Rich</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            data-tooltip={item.payloadKind === "image" ? tr("main.context.copyPlainImageUnavailable") : tr("main.context.copyPlainTooltip")}
-            disabled={item.payloadKind === "image"}
-            onClick={() => run(() => onCopyMode("plain"))}
-            role="menuitem"
-            title={item.payloadKind === "image" ? tr("main.context.copyPlainImageUnavailable") : tr("main.context.copyPlainTitle")}
-            type="button"
-          >
-            <span className="clip-context-label">
-              <Copy size={13} />{tr("main.context.copyPlain")}
-            </span>
-            <kbd>Plain</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            data-tooltip={item.payloadKind !== "file" ? tr("main.context.copyPathFileOnly") : tr("main.context.copyPathTooltip")}
-            disabled={item.payloadKind !== "file"}
-            onClick={() => run(() => onCopyMode("filesAsPaths"))}
-            role="menuitem"
-            title={item.payloadKind !== "file" ? tr("main.context.copyPathFileOnly") : tr("main.context.copyPathTitle")}
-            type="button"
-          >
-            <span className="clip-context-label">
-              <Copy size={13} />{tr("main.context.copyPath")}
-            </span>
-            <kbd>Path</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            disabled={!onAnalyzeClipboard}
-            onClick={() => run(() => onAnalyzeClipboard?.(item))}
-            role="menuitem"
-            type="button"
-          >
-            <span className="clip-context-label">
-              <ScanSearch size={13} />AI 分析
-            </span>
-            <kbd>DSH</kbd>
-          </button>
-          <button
-            className="clip-context-item"
-            onClick={() => run(onOpenDetail)}
-            role="menuitem"
-            type="button"
-          >
-            <span className="clip-context-label">
-              <FileJson size={13} />{tr("main.context.detail")}
-            </span>
-            <kbd>→</kbd>
-          </button>
-          {item.analysis.url || item.analysis.attachment ? (
-            <div className="clip-context-item is-hint" role="presentation">
-              <span className="clip-context-label">
-                <ExternalLink size={13} />{tr("main.context.openTarget")}
-              </span>
-              <kbd>{mod}+J</kbd>
-            </div>
-          ) : null}
-          <button className="clip-context-item" onClick={() => run(() => onFavorite(item))} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Heart size={13} />{item.favorite ? tr("main.context.unfavorite") : tr("main.context.favorite")}
-            </span>
-            <kbd>{mod}+F</kbd>
-          </button>
-          <button className="clip-context-item danger" onClick={() => run(onDelete)} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Trash2 size={13} />{tr("main.context.delete")}
-            </span>
-            <kbd>Del</kbd>
-          </button>
-          <div className="clip-context-separator" role="separator" />
-          <button className="clip-context-item" onClick={() => run(() => onStartMultiSelect(item.id))} role="menuitem" type="button">
-            <span className="clip-context-label">
-              <Square size={13} />{tr("main.context.selectItem")}
-            </span>
-            <kbd>Space</kbd>
-          </button>
-        </>
-      )}
-    </div>
+    <DropdownMenu onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="fixed h-px w-px opacity-0"
+          style={{ left: x, top: y }}
+          tabIndex={-1}
+          type="button"
+        />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="w-52 rounded-xl border-black/5 p-1 dark:border-white/[0.07]"
+        side="bottom"
+        sideOffset={4}
+      >
+        {multiSelectMode ? (
+          <>
+            <DropdownMenuItem className={menuItem} onSelect={() => run(onOpenAggregate)}>
+              <CheckSquare size={14} />
+              <span>{tr("main.context.aggregate")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>{selectedCount}</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={menuItem} onSelect={() => run(onCopySelected)}>
+              <Copy size={14} />
+              <span>{tr("main.context.copySelected")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>{mod}+C</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={menuItem} onSelect={() => run(onFavoriteSelected)}>
+              <Heart size={14} />
+              <span>{tr("main.context.favoriteSelected")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>{mod}+F</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={`${menuItem} text-destructive focus:text-destructive focus:bg-destructive/10`}
+              onSelect={() => run(onDeleteSelected)}
+            >
+              <Trash2 size={14} />
+              <span>{tr("main.context.deleteSelected")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Del</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-black/5 dark:bg-white/[0.07]" />
+            <DropdownMenuItem className={menuItem} onSelect={() => run(onClearSelection)}>
+              <X size={14} />
+              <span>{tr("main.context.exitMultiSelect")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Esc</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </>
+        ) : (
+          <>
+            <DropdownMenuItem className={menuItem} onSelect={() => run(() => onPaste(item, "context-menu"))}>
+              <Clipboard size={14} />
+              <span>{tr("main.context.paste")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Enter</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={menuItem} onSelect={() => run(() => onCopyMode("rich"))}>
+              <Copy size={14} />
+              <span>{tr("main.context.copyRich")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Rich</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={menuItem}
+              disabled={item.payloadKind === "image"}
+              onSelect={() => run(() => onCopyMode("plain"))}
+              title={item.payloadKind === "image" ? tr("main.context.copyPlainImageUnavailable") : tr("main.context.copyPlainTitle")}
+            >
+              <Copy size={14} />
+              <span>{tr("main.context.copyPlain")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Plain</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={menuItem}
+              disabled={item.payloadKind !== "file"}
+              onSelect={() => run(() => onCopyMode("filesAsPaths"))}
+              title={item.payloadKind !== "file" ? tr("main.context.copyPathFileOnly") : tr("main.context.copyPathTitle")}
+            >
+              <Copy size={14} />
+              <span>{tr("main.context.copyPath")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Path</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={menuItem}
+              disabled={!onAnalyzeClipboard}
+              onSelect={() => run(() => onAnalyzeClipboard?.(item))}
+            >
+              <ScanSearch size={14} />
+              <span>AI 分析</span>
+              <DropdownMenuShortcut className={menuShortcut}>DSH</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={menuItem} onSelect={() => run(onOpenDetail)}>
+              <FileJson size={14} />
+              <span>{tr("main.context.detail")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>→</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            {item.analysis.url || item.analysis.attachment ? (
+              <DropdownMenuItem className={`${menuItem} opacity-60`} disabled>
+                <ExternalLink size={14} />
+                <span>{tr("main.context.openTarget")}</span>
+                <DropdownMenuShortcut className={menuShortcut}>{mod}+J</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            ) : null}
+            <DropdownMenuItem className={menuItem} onSelect={() => run(() => onFavorite(item))}>
+              <Heart size={14} />
+              <span>{item.favorite ? tr("main.context.unfavorite") : tr("main.context.favorite")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>{mod}+F</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className={`${menuItem} text-destructive focus:text-destructive focus:bg-destructive/10`}
+              onSelect={() => run(onDelete)}
+            >
+              <Trash2 size={14} />
+              <span>{tr("main.context.delete")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Del</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-black/5 dark:bg-white/[0.07]" />
+            <DropdownMenuItem className={menuItem} onSelect={() => run(() => onStartMultiSelect(item.id))}>
+              <Square size={14} />
+              <span>{tr("main.context.selectItem")}</span>
+              <DropdownMenuShortcut className={menuShortcut}>Space</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
