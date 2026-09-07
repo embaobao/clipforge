@@ -61,32 +61,33 @@
 - 3 个 verify 脚本（editor-agent-bridge / runtime-boundaries / surface-boundaries）读取路径随拆分同步更新，断言语义不变。
 - 验证：build:web ✓ / test:unit ✓ / test:boundaries ✓；cargo check 未重跑（未触碰 src-tauri）；tauri dev 视觉走查跳过（无人值守）。
 
-## 待办事项（按优先级，批次 2 后更新）
+## 批次 3：聚合页拆分 + Onboarding 向导拆分（2026-09-07 夜间，待办#2/#3 完成）
 
-1. **Workspace 聚合页拆分**（原#2）
-   - 从 `workspace-panels.tsx` 拆出 `MultiAggregateWorkspace.tsx`、`AggregateItem.tsx`（Tailwind 类已就位，纯移动即可）
+- `d7fb9a5` 聚合页拆分：`MultiAggregateWorkspace.tsx`（118 行）+ `AggregateItem.tsx`（63 行）；`workspace-panels.tsx` 缩为纯 re-export（5 行）；verify-surface-boundaries 聚合页 marker 检查随迁。
+- `5890d76` onboarding 向导拆分：`settings/onboarding-wizard.tsx`（422 行旧类）迁移至 `src/onboarding/components/`（shared 153 行 + OnboardingWizard 268 行 + Step/FeatureCard 小组件），全部换 Tailwind 语义类；键盘导航、快捷键录制、探针、写入路径行为不变；verify-settings-surface 断言路径随迁。
+- 验证：build:web ✓ / test:unit ✓ / test:boundaries ✓（两项拆分各验证一轮）；cargo check 未重跑（未触碰 src-tauri）；tauri dev 视觉走查跳过。
 
-2. **Onboarding 向导拆分**（原#3）
-   - 拆出 `src/onboarding/components/OnboardingWizard.tsx`、`OnboardingStep.tsx`、`OnboardingFeatureCard.tsx`
-   - 清理 `src/settings/onboarding-wizard.tsx` 内部 `onboarding-*` 旧类
+## 待办事项（按优先级，批次 3 后更新）
 
-3. **DSH 面板细节对齐**（原#4）
+1. **DSH 面板细节对齐**（原#4）
+   - iframe 与提示文本对齐设计稿；涉及视觉判断，建议盟哥白天人工确认后批量执行
 
-4. **全量回归**（原#5）
-   - `pnpm build:web` + `pnpm test:unit` + `pnpm test:boundaries`
-   - `pnpm tauri dev` 视觉走查（**重点**：详情页拆分后 Tailwind 重写区域的实际视觉效果未经人工确认）
+2. **全量回归**（原#5）
+   - `pnpm tauri dev` 视觉走查（**重点**：详情页/聚合页/onboarding 拆分重写区域的实际视觉效果未经人工确认）
 
-5. **对账 openspec/changes/deepseek-harness-embedding/tasks.md**（Phase 6 半成品 / Phase 7 iframe 方案）
+3. **对账 openspec/changes/deepseek-harness-embedding/tasks.md**（Phase 6 半成品 / Phase 7 iframe 方案）
 
-6. **AGENTS.md「样式按功能拆分」章节更新**：仍描述旧 CSS 架构，与 Tailwind 现实脱节
+4. **AGENTS.md「样式按功能拆分」章节更新**：仍描述旧 CSS 架构，与 Tailwind 现实脱节
+
+5. **按 docs/PROPOSAL_ROADMAP.md 推进其他提案**（无需用户决策的条目）
 
 ## 当前状态
 
 - **主面板**：视觉重构完成，功能保留
 - **设置窗口**：Shell + 控件完成，内容区功能保留
 - **Workspace（详情页）**：已拆分完成，全部 Tailwind 语义类（批次 2）
-- **Workspace（聚合页）**：仍在 `workspace-panels.tsx`（173 行，已 Tailwind 化），待拆出 MultiAggregateWorkspace/AggregateItem
-- **Onboarding**：`src/settings/onboarding-wizard.tsx` 422 行，内部仍用旧类（`.onboarding-*`）。`src/onboarding/OnboardingApp.tsx` 根容器已改 Tailwind，但向导内部未拆。
+- **Workspace（聚合页）**：已拆分完成（批次 3），`workspace-panels.tsx` 仅剩 re-export
+- **Onboarding**：向导已拆分至 `src/onboarding/components/` 并清理旧类（批次 3）；`OnboardingApp.tsx` 根容器已 Tailwind
 - **DSH 面板**：已用 Tailwind 根容器，但内部 iframe 和提示文本细节可再对齐。
 
 ## 待办事项（按优先级）
@@ -120,10 +121,11 @@
 | `src/settings/components/SettingsStatusPanel.tsx` | 完成 | 已重写 |
 | `src/settings/components/SettingsErrorBoundary.tsx` | 完成 | 已重写 |
 | `src/settings/components/SettingsCodeTabs.tsx` | 完成 | 已重写 |
-| `src/workspace/workspace-panels.tsx` | 部分完成 | 173 行（聚合页已 Tailwind 化），待拆 MultiAggregate/AggregateItem |
+| `src/workspace/workspace-panels.tsx` | 完成 | 5 行纯 re-export（详情页/聚合页均已拆出） |
 | `src/workspace/components/WorkspaceCrumb.tsx` | 完成 | 新建 |
 | `src/workspace/components/ClipDetailWorkspace.tsx` | 完成 | 498 行外壳 + 6 个子组件（批次 2） |
-| `src/workspace/components/workspace-detail-shared.ts` | 完成 | 311 行共享类型/纯函数 |
+| `src/workspace/components/MultiAggregateWorkspace.tsx` | 完成 | 118 行 + AggregateItem（批次 3） |
+| `src/onboarding/components/OnboardingWizard.tsx` | 完成 | 268 行 + shared/Step/FeatureCard（批次 3） |
 | `src/settings/onboarding-wizard.tsx` | 待拆 | 422 行，内部旧类残留 |
 | `src/onboarding/OnboardingApp.tsx` | 部分 | 根容器已改，向导内部待拆 |
 | `src/dsh/dsh-panel.tsx` | 部分 | 根容器已改，细节待对齐 |
