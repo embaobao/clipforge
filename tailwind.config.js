@@ -63,17 +63,17 @@ module.exports = {
   			sans: [
   				'-apple-system',
   				'BlinkMacSystemFont',
-  				'SF Pro Text"',
-  				'PingFang SC"',
-  				'Segoe UI"',
-  				'Microsoft YaHei"',
-  				'Noto Sans SC"',
+  				'SF Pro Text',
+  				'PingFang SC',
+  				'Segoe UI',
+  				'Microsoft YaHei',
+  				'Noto Sans SC',
   				'sans-serif'
   			],
   			mono: [
   				'ui-monospace',
-  				'SF Mono"',
-  				'Cascadia Mono"',
+  				'SF Mono',
+  				'Cascadia Mono',
   				'Menlo',
   				'Consolas',
   				'monospace'
