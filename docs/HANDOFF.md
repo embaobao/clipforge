@@ -39,11 +39,18 @@
 ### 旧样式清理（完成）
 已删除：`src/App.css`、`src/settings.css`、`src/theme/tokens.css`、`src/clipboard/styles/clipboard-panel.css`、`src/workspace/styles/detail-page.css`、`src/dsh/dsh-panel.css`、`src/onboarding/onboarding.css`、`src/clipboard/components/ClipboardRow.module.css`
 
-### 验证（部分通过）
+### 验证（2026-09-07 夜间全套复验通过）
 - `pnpm build:web`：通过
 - `pnpm test:boundaries`：通过（已更新 `verify-surface-boundaries.mjs`、`verify-settings-surface.mjs`、`verify-onboarding-surface.mjs`）
-- `pnpm test:unit`：通过
-- `cargo check`：通过
+- `pnpm test:unit`：通过（`verify-settings-surface.mjs` 的 CodeTabs 过期断言已按 shadcn 新实现修复：改锁本地封装/复制回调/dev probe 标记）
+- `cargo check`：本轮未触碰 src-tauri，未重跑
+
+## 基线提交（2026-09-07 夜间批次 1）
+
+全部未提交改动已按逻辑单元分 6 批提交，工作区干净：
+`e82cf95` 基础设施 → `d4e1b1b` 主面板 → `20b7773` 设置窗口 → `6812db6` workspace/onboarding/dsh 过渡态 → `b9625a0` 删除旧 CSS → `8f76cc1` 文档与提案。
+
+后续会话直接从「待办事项 #1」开始，无需再处理未提交存量。
 
 ## 当前状态
 
