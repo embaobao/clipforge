@@ -1,0 +1,212 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.625rem;
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 240 5.9% 10%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 240 4.8% 95.9%;
+    --sidebar-accent-foreground: 240 5.9% 10%;
+    --sidebar-border: 220 13% 91%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent !important;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+      "Segoe UI", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: rgb(0 0 0 / 0.12);
+  }
+  .dark ::selection {
+    background: rgb(255 255 255 / 0.18);
+  }
+}
+
+/* ---------- ClipForge 设计语言 ---------- */
+
+/* 等宽数字/快捷键：Linear 式 mono + tabular-nums */
+.mono {
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.01em;
+}
+
+/* macOS 材质：blur + saturate + 半透明底（禁止多层叠加） */
+.material {
+  background: rgb(255 255 255 / 0.78);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+}
+.dark .material {
+  background: rgb(28 28 30 / 0.8);
+}
+
+/* 面板投影：0.5px 描边光 + 双层软阴影，无可见边框 */
+.panel-shadow {
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.05),
+    0 8px 24px -8px rgb(0 0 0 / 0.1),
+    0 24px 64px -16px rgb(0 0 0 / 0.14);
+}
+.dark .panel-shadow {
+  box-shadow:
+    0 0 0 0.5px rgb(255 255 255 / 0.1),
+    0 8px 24px -8px rgb(0 0 0 / 0.5),
+    0 24px 64px -16px rgb(0 0 0 / 0.5);
+}
+
+/* 窗口投影（设置页） */
+.window-shadow {
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.06),
+    0 16px 48px -12px rgb(0 0 0 / 0.16),
+    0 40px 96px -24px rgb(0 0 0 / 0.12);
+}
+.dark .window-shadow {
+  box-shadow:
+    0 0 0 0.5px rgb(255 255 255 / 0.1),
+    0 16px 48px -12px rgb(0 0 0 / 0.55),
+    0 40px 96px -24px rgb(0 0 0 / 0.5);
+}
+
+/* 弹簧：damping 1.0 / response 0.4 → cubic-bezier(0.32, 0.72, 0, 1) */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.965);
+  }
+}
+.panel-in {
+  animation: panel-in 0.45s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes float-y {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+.float-y {
+  animation: float-y 7s ease-in-out infinite;
+}
+
+/* 行进入：仅 opacity，120ms，stagger 由行内 delay 控制 */
+@keyframes row-in {
+  from {
+    opacity: 0;
+  }
+}
+.row-in {
+  animation: row-in 0.18s ease-out both;
+}
+
+/* 细滚动条 */
+.thin-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 0.14);
+  border-radius: 3px;
+}
+.dark .thin-scroll::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.16);
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-in,
+  .float-y,
+  .row-in {
+    animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .material {
+    background: rgb(250 250 250);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .dark .material {
+    background: rgb(24 24 26);
+  }
+}
+
