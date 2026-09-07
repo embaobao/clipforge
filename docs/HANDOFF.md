@@ -101,24 +101,6 @@
 - **Onboarding**：向导已拆分至 `src/onboarding/components/` 并清理旧类（批次 3）；`OnboardingApp.tsx` 根容器已 Tailwind
 - **DSH 面板**：已用 Tailwind 根容器，但内部 iframe 和提示文本细节可再对齐。
 
-## 待办事项（按优先级）
-
-1. **Workspace 详情页拆分**（最高优先级）
-   - 拆出 `src/workspace/components/ClipDetailWorkspace.tsx`、`DetailQuickEditor.tsx`、`DetailPreview.tsx`、`DetailDshPanel.tsx`、`DetailMeta.tsx`
-   - 目标：每个文件 ≤500 行，全部用 Tailwind + shadcn
-
-2. **Workspace 聚合页拆分**
-   - 拆出 `src/workspace/components/MultiAggregateWorkspace.tsx`、`AggregateItem.tsx`
-
-3. **Onboarding 向导拆分**
-   - 拆出 `src/onboarding/components/OnboardingWizard.tsx`、`OnboardingStep.tsx`、`OnboardingFeatureCard.tsx`
-
-4. **DSH 面板细节对齐**
-
-5. **全量回归**
-   - `pnpm build:web` + `pnpm test:unit` + `pnpm test:boundaries`
-   - `pnpm tauri dev` 视觉走查
-
 ## 关键文件清单
 
 | 文件 | 状态 | 备注 |
@@ -137,9 +119,8 @@
 | `src/workspace/components/ClipDetailWorkspace.tsx` | 完成 | 498 行外壳 + 6 个子组件（批次 2） |
 | `src/workspace/components/MultiAggregateWorkspace.tsx` | 完成 | 118 行 + AggregateItem（批次 3） |
 | `src/onboarding/components/OnboardingWizard.tsx` | 完成 | 268 行 + shared/Step/FeatureCard（批次 3） |
-| `src/settings/onboarding-wizard.tsx` | 待拆 | 422 行，内部旧类残留 |
-| `src/onboarding/OnboardingApp.tsx` | 部分 | 根容器已改，向导内部待拆 |
-| `src/dsh/dsh-panel.tsx` | 部分 | 根容器已改，细节待对齐 |
+| `src/onboarding/OnboardingApp.tsx` | 完成 | 独立引导窗口，复用 components/OnboardingWizard |
+| `src/dsh/dsh-panel.tsx` | 部分 | 根容器已改，细节待对齐（待人工视觉走查） |
 
 ## 建议技能
 
