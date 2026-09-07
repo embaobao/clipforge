@@ -1,6 +1,13 @@
 # OpenSpec 提案路线图与交接计划
 
-更新时间：2026-09-02
+更新时间：2026-09-07
+
+2026-09-07 进展（夜间批次 1–4，Tailwind v3 视觉重构收尾）：
+
+1. 视觉重构全部入库：基线分批提交 → 详情页/聚合页/onboarding 拆分完成（`workspace-panels.tsx` 1831 行 → 纯 re-export，全部子组件 ≤500 行 Tailwind 语义类）；file-size 豁免清单剩 4 项（App.tsx / settings.tsx / contracts.ts / lib.rs）。
+2. 全量回归可自动化部分已覆盖：`build:web` / `test:unit` / `test:boundaries` / `cargo check` 全绿；`pnpm tauri dev` 后台冒烟通过（编译+启动+运行 70 秒无 error/panic，dev 实例已清理）。
+3. 已知待人工项：三个 surface（详情/聚合/onboarding）重写样式的**视觉走查**、`file-image-clipboard-support` × `clipboard-multi-format-fidelity` 的 **7 场景实机验收矩阵**（需真实系统剪贴板证据，无法自动化勾选）。
+4. 已知无害告警：`message-scroller.tsx` / `animate-ui/radix/sidebar.tsx` 中 4 个 `ease-[cubic-bezier(...)]` 类触发 Tailwind v3 歧义警告（vendored 第三方组件，CSS 正常生成），暂不修改。
 
 2026-09-02 清账与方向调整：**产品主线回归「打造好一个剪贴板」**。决策记录：
 
