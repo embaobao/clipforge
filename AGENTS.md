@@ -21,7 +21,7 @@ ClipForge 是一个跨平台剪贴板工具，第一目标是完整替代 Clipy 
 - 桌面壳：Tauri v2
 - 原生能力：Rust command
 - 前端：React + TypeScript + Vite
-- UI：优先 shadcn/ui 风格组件和语义 token；当前过渡期允许自定义 CSS + lucide-react 图标
+- UI：Tailwind CSS v3 + shadcn/ui 语义 token + lucide-react 图标；全局 token 与工具类集中在 `src/index.css`
 - 当前持久化：localStorage
 - 规划持久化：SQLite + 小型向量索引
 
@@ -75,8 +75,9 @@ pnpm tauri dev
 - 组件职责单一，props 类型显式导出，状态提升到最近共同父级或 Zustand（仅跨组件 UI 状态）。
 - 业务数据仍由 Tauri command 驱动，不把业务状态塞进全局 store。
 
-### 样式按功能拆分
+### 样式按功能拆分（Tailwind v3，2026-09 全面迁移后）
 
-- 不再向 `src/App.css` 单文件追加；新组件样式随组件拆（优先 `*.module.css`，或按域 `src/<surface>/<surface>.css`）。
-- 全局语义 token / CSS 变量保持在 `:root`，组件只消费不重定义。
-- 现有 App.css 在对应 surface 抽组件时随组件迁移，不一次性重写。
+- 全局样式只有 `src/index.css`（语义 token + 少量工具类）；旧 `App.css`/`settings.css`/`theme/tokens.css`/`*.module.css` 等已删除，禁止恢复。
+- 新组件样式一律用 Tailwind 语义类（`bg-background`/`text-muted-foreground` 等，映射 hsl(var(--token))），不再新建组件级 CSS 文件。
+- 全局 token 在 `index.css` 的 `:root` 定义，组件只消费不重定义；视觉契约见 `docs/DESIGN_SYSTEM.md`。
+- 界面按域拆组件文件（如 `src/workspace/components/`、`src/onboarding/components/`），样式随组件用 Tailwind 类表达。
