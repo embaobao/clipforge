@@ -13,7 +13,7 @@ const files = {
   app: "src/App.tsx",
   settings: "src/settings.tsx",
   settingsShell: "src/settings/components/SettingsShell.tsx",
-  workspace: "src/workspace/workspace-panels.tsx",
+  workspace: "src/workspace/components/MultiAggregateWorkspace.tsx",
   workspaceDetail: "src/workspace/components/ClipDetailWorkspace.tsx",
 };
 
@@ -52,7 +52,7 @@ function checkMarkers() {
   );
   assert(
     workspace.includes('data-surface="workspace"'),
-    "聚合页 src/workspace/workspace-panels.tsx 缺少 data-surface=\"workspace\" marker",
+    "聚合页 src/workspace/components/MultiAggregateWorkspace.tsx 缺少 data-surface=\"workspace\" marker",
   );
   assert(
     workspaceDetail.includes('data-surface="workspace"'),
