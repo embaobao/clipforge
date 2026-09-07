@@ -40,21 +40,21 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "../components/animate-ui/components/radix/dropdown-menu";
-import { ButtonGroup } from "../components/ui/button-group";
+} from "@/components/ui/dropdown-menu";
+import { ButtonGroup } from "@/components/ui/button-group";
 import {
   Accordion,
   AccordionItem,
   AccordionTrigger,
   AccordionContent,
-} from '../components/animate-ui/components/radix/accordion';
+} from "@/components/ui/accordion";
 import {
   Tabs,
   TabsContent,
-  TabsContents,
   TabsList,
   TabsTrigger,
-} from "../components/animate-ui/components/radix/tabs";
+} from "@/components/ui/tabs";
+import { WorkspaceCrumb } from "./components/WorkspaceCrumb";
 
 type WorkspaceTr = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
@@ -1125,9 +1125,9 @@ export function ClipDetailWorkspace({
 
   if (!clip) {
     return (
-      <section className="workspace-page workspace-detail-page" data-surface="workspace">
+      <section className="h-full overflow-auto bg-background" data-surface="workspace">
         <WorkspaceCrumb title={tr("main.detail.title")} onBack={onBack} tr={tr} />
-        <div className="workspace-empty">{tr("main.detail.missing")}</div>
+        <div className="flex h-full items-center justify-center p-8 text-center text-[13px] text-muted-foreground">{tr("main.detail.missing")}</div>
       </section>
     );
   }
@@ -1262,7 +1262,7 @@ export function ClipDetailWorkspace({
   const hasImageActions = clip.payloadKind === "image";
 
   return (
-    <section className="workspace-page workspace-detail-page" data-surface="workspace">
+    <section className="h-full overflow-auto bg-background" data-surface="workspace">
       {!isEditing ? (
         <>
           <WorkspaceCrumb title={tr("main.detail.title")} subtitle={mode} onBack={handleBack} tr={tr}>
@@ -1612,19 +1612,17 @@ export function ClipDetailWorkspace({
                 ) : isLikelyJson(clip) ? (
                   <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
                 ) : isLikelyMarkdown(clip) ? (
-                  <Tabs defaultValue="rendered" className="detail-tabs">
-                    <TabsList className="detail-tabs-list">
-                      <TabsTrigger value="rendered">渲染后</TabsTrigger>
-                      <TabsTrigger value="raw">原内容</TabsTrigger>
+                  <Tabs defaultValue="rendered">
+                    <TabsList className="inline-flex gap-1 rounded-lg bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
+                      <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="rendered">渲染后</TabsTrigger>
+                      <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="raw">原内容</TabsTrigger>
                     </TabsList>
-                    <TabsContents className="detail-tabs-content">
-                      <TabsContent value="rendered">
-                        <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
-                      </TabsContent>
-                      <TabsContent value="raw">
-                        <TruncatedPre clip={clip} className="detail-raw-content" />
-                      </TabsContent>
-                    </TabsContents>
+                    <TabsContent value="rendered">
+                      <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
+                    </TabsContent>
+                    <TabsContent value="raw">
+                      <TruncatedPre clip={clip} className="detail-raw-content" />
+                    </TabsContent>
                   </Tabs>
                 ) : (
                   <>
@@ -1717,7 +1715,7 @@ export function MultiAggregateWorkspace({
   };
 
   return (
-    <section className="workspace-page workspace-aggregate-page" data-surface="workspace">
+    <section className="h-full overflow-auto bg-background" data-surface="workspace">
       <WorkspaceCrumb title={tr("main.aggregate.title")} subtitle={tr("main.aggregate.subtitle", { count: items.length, chars: totalChars })} onBack={onBack} tr={tr}>
         <button className="icon-button" onClick={() => void handleExportTextFiles()} type="button" aria-label={tr("main.aggregate.exportTexts")} disabled={!items.length || isExporting} title={tr("main.aggregate.exportTexts")}>
           <FileDown size={14} />
@@ -1829,35 +1827,5 @@ export function MultiAggregateWorkspace({
         <div className="workspace-empty">{tr("main.aggregate.empty")}</div>
       )}
     </section>
-  );
-}
-
-function WorkspaceCrumb({
-  children,
-  onBack,
-  subtitle,
-  title,
-  tr,
-}: {
-  children?: React.ReactNode;
-  onBack: () => void;
-  subtitle?: string;
-  title: string;
-  tr: WorkspaceTr;
-}) {
-  return (
-    <header className="workspace-crumb">
-      <div className="workspace-crumb-title">
-        <strong>{title}</strong>
-        {subtitle ? <em>{subtitle}</em> : null}
-      </div>
-      <div aria-hidden="true" className="workspace-crumb-drag-region" data-tauri-drag-region />
-      <ButtonGroup className="workspace-crumb-actions">
-        {children}
-        <button className="icon-button crumb-close" onClick={onBack} type="button" aria-label={tr("main.detail.close")}>
-          <X size={14} />
-        </button>
-      </ButtonGroup>
-    </header>
   );
 }

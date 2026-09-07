@@ -10,6 +10,7 @@ import { DshPanel } from "./dsh/dsh-panel";
 import { resolveAppLocale, t } from "./i18n";
 import type { TranslationKey } from "./i18n";
 import { hideDshWindow } from "./agent/dsh-analysis";
+import "./index.css";
 
 const root = document.getElementById("root");
 if (root) {

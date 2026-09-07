@@ -139,8 +139,8 @@ export function OnboardingApp() {
 
   if (loading) {
     return (
-      <main className="onboarding-standalone-shell" data-surface="onboarding">
-        <div className="onboarding-loading" role="status">
+      <main className="flex h-dvh min-h-0 flex-col items-center justify-start overflow-x-hidden overflow-y-auto bg-background" data-surface="onboarding">
+        <div className="flex flex-col items-center gap-2 py-12" role="status">
           <Loader2 size={18} />
           <span>{tr("settings.status.loading")}</span>
         </div>
@@ -149,7 +149,7 @@ export function OnboardingApp() {
   }
 
   return (
-    <main className="onboarding-standalone-shell" data-surface="onboarding">
+    <main className="flex h-dvh min-h-0 flex-col items-center justify-start overflow-x-hidden overflow-y-auto bg-background" data-surface="onboarding">
       <OnboardingWizard
         accessibility={accessibility}
         openAccessibilitySettings={openAccessibilitySettings}
@@ -160,7 +160,7 @@ export function OnboardingApp() {
           void updateSettings(next);
         }}
       />
-      {status ? <p className="onboarding-standalone-status">{status}</p> : null}
+      {status ? <p className="mono mt-4 text-[11px] text-muted-foreground">{status}</p> : null}
     </main>
   );
 }

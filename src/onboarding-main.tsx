@@ -3,8 +3,7 @@ import { createRoot } from "react-dom/client";
 import { resolveAppLocale, t } from "./i18n";
 import { OnboardingApp } from "./onboarding/OnboardingApp";
 import { SettingsErrorBoundary } from "./settings/components/SettingsErrorBoundary";
-import "./settings.css";
-import "./onboarding/onboarding.css";
+import "./index.css";
 
 const root = document.getElementById("root");
 if (root) {
