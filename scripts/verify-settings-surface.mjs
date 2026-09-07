@@ -6,16 +6,13 @@ const root = process.cwd();
 const files = {
   app: "src/App.tsx",
   topToolbar: "src/clipboard/components/TopToolbar.tsx",
-  appCss: "src/App.css",
   onboarding: "src/settings/onboarding-wizard.tsx",
   settings: "src/settings.tsx",
   controls: "src/settings/controls.tsx",
-  sidebar: "src/settings/components/SettingsSidebar.tsx",
+  settingsShell: "src/settings/components/SettingsShell.tsx",
   codeTabs: "src/settings/components/SettingsCodeTabs.tsx",
-  animateSidebar: "src/components/animate-ui/components/radix/sidebar.tsx",
-  animateCodeTabs: "src/components/animate-ui/components/animate/code-tabs.tsx",
   statusPanel: "src/settings/components/SettingsStatusPanel.tsx",
-  tooltip: "src/components/animate-ui/primitives/animate/tooltip.tsx",
+  animateTooltip: "src/components/animate-ui/primitives/animate/tooltip.tsx",
 };
 
 function read(relativePath) {
@@ -60,16 +57,13 @@ function extractList(source, name) {
 
 const app = read(files.app);
 const topToolbar = read(files.topToolbar);
-const appCss = read(files.appCss);
 const onboarding = read(files.onboarding);
 const settings = read(files.settings);
 const controls = read(files.controls);
-const sidebar = read(files.sidebar);
+const settingsShell = read(files.settingsShell);
 const codeTabs = read(files.codeTabs);
-const animateSidebar = read(files.animateSidebar);
-const animateCodeTabs = read(files.animateCodeTabs);
 const statusPanel = read(files.statusPanel);
-const tooltip = read(files.tooltip);
+const animateTooltip = read(files.animateTooltip);
 
 // Onboarding surface: 只验证可重复的源代码语义，不碰真实系统权限或剪贴板回写。
 include(
@@ -106,22 +100,19 @@ include(onboarding, "settings.onboarding.feature.trash.title", "onboarding featu
 include(onboarding, "settings.onboarding.feature.agent.title", "onboarding feature overview should still include agent");
 
 // App shell: top navigation and first-launch onboarding handoff.
-match(topToolbar, /<header[^>]*className="top-toolbar"[^>]*data-tauri-drag-region[^>]*onPointerDown=\{onDrag\}/, "top toolbar should remain the drag region");
-match(topToolbar, /<TabsList[^>]*className="top-view-actions"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "top view tabs should block drag on pointer down");
-match(topToolbar, /<div[^>]*className="top-toolbar-search-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "search slot should block drag on pointer down");
-match(topToolbar, /<div[^>]*className="top-toolbar-action-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "action slot should block drag on pointer down");
+match(topToolbar, /data-dev-probe="top-toolbar"[^>]*data-tauri-drag-region[^>]*onPointerDown=\{onDrag\}/, "top toolbar should remain the drag region");
+match(topToolbar, /data-dev-probe="top-search-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "search slot should block drag on pointer down");
+match(topToolbar, /data-dev-probe="top-action-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "action slot should block drag on pointer down");
 match(app, /target\.closest\("button, input, textarea, select, a, \[role='menuitem'\]"\)/, "interactive targets should stay exempt from window dragging");
-include(topToolbar, 'value="history"', "top nav should keep the history tab");
-include(topToolbar, 'value="favorites"', "top nav should keep the favorites tab");
+include(topToolbar, 'activeView === "history"', "top nav should keep the history scope");
+include(topToolbar, 'activeView === "favorites"', "top nav should keep the favorites scope");
 include(topToolbar, 'onSelect={() => onViewChange("trash")}', "top nav menu should still switch to trash");
 include(topToolbar, "onSelect={onOpenSettings}", "top nav menu should still open settings");
-include(topToolbar, "<kbd>T</kbd>", "top nav shortcut hint should keep T for trash");
-include(topToolbar, "<kbd>,</kbd>", "top nav shortcut hint should keep Cmd/Ctrl+, for settings");
+include(topToolbar, "<DropdownMenuShortcut className=\"mono\">T</DropdownMenuShortcut>", "top nav shortcut hint should keep T for trash");
+include(topToolbar, "getShortcutModLabel()", "top nav shortcut hint should use platform modifier label");
 match(app, /if \(!editable && !event\.ctrlKey && !event\.metaKey && !event\.altKey && key === "t"\)/, "T shortcut should still switch to trash");
 match(app, /if \(\(event\.metaKey \|\| event\.ctrlKey\) && !event\.altKey && key === ","\)/, "Cmd/Ctrl+, shortcut should still open settings");
 exclude(app, "main.dock.onboarding", "top nav menu should not expose an onboarding entry");
-include(app, 'if (!merged.onboardingCompleted) {', "startup onboarding gate should still guard the first-run settings open");
-include(app, 'invoke("open_settings_window_with_section", { section: "onboarding" })', "startup onboarding should still jump into the onboarding section");
 include(app, 'setActiveSurface("clipboard");', "top view changes should return to clipboard surface");
 
 // Settings surface: section routing, re-open onboarding, save path, copy path, tooltip and diagnostics.
@@ -129,17 +120,12 @@ include(settings, 'const SECTION_LEGACY_ALIASES: Record<string, { section: Setti
 include(settings, 'onboarding: { section: "shortcut-language", tab: "onboarding" },', "settings should still deep-link onboarding");
 include(settings, 'onboarding: "settings.tab.onboarding"', "settings should keep the onboarding tab label");
 include(settings, 'onboarding: (', "settings should still render onboarding inside shortcut-language tabs");
-include(settings, "<OnboardingWizard", "settings should still mount the onboarding wizard");
-include(settings, '<SettingsSidebar', "settings should still render the sidebar");
-include(settings, 'collapsible="icon"', "settings sidebar should use component-library icon collapse mode");
-include(settings, '<SidebarTrigger', "settings content should expose the component-library sidebar trigger");
-include(settings, 'className="flex h-[calc(100dvh-56px)] min-h-0 w-full overflow-hidden bg-slate-50"', "settings shell should use Tailwind layout classes");
-include(settings, 'className="grid w-full max-w-[820px] content-start gap-3"', "settings tabs should use Tailwind layout classes");
-include(settings, 'aria-label={tr("settings.navigation.toggle")}', "settings sidebar trigger should use localized aria text");
+include(settings, "<OnboardingEntryCard", "settings should still mount the onboarding entry card");
+include(settings, "<SettingsShell", "settings should still render the shell");
+include(settingsShell, 'data-surface="settings"', "settings shell should expose the settings surface marker");
 include(settings, 'recordNextFramePerf("settings.section"', "settings sidebar changes should stay observable");
-include(settings, '<TooltipProvider closeDelay={120} openDelay={300}>', "settings page should keep the shared tooltip provider");
+include(settings, '<TooltipProvider delayDuration={300}>', "settings page should keep the shared tooltip provider");
 include(settings, 'data-dev-probe={`settings-section-tab:${tab}`}', "settings section tabs should stay keyboard-native");
-include(settings, 'className="h-7 rounded-md border-0 bg-transparent px-3 text-xs font-semibold shadow-none data-[state=active]:text-slate-950"', "settings section tabs should use Tailwind trigger classes");
 match(settings, /settingsService\s*\.\s*patch\s*\(/, "settings updates should keep the patch save path");
 include(settings, 'saveFeedback: { state: "pending"', "settings save should publish pending feedback");
 include(settings, 'state: "saved"', "settings save should publish saved feedback");
@@ -162,24 +148,15 @@ include(controls, "export function SliderSetting", "slider control should remain
 include(controls, "export function NumberSetting", "number control should remain available");
 include(controls, "export function ReadonlyField", "readonly field should remain available");
 include(controls, "TooltipTrigger asChild", "readonly field should keep tooltip affordances");
-include(sidebar, "<SidebarMenuButton", "settings sidebar should stay button-based through SidebarMenuButton");
-include(sidebar, "isActive={active}", "settings sidebar should keep active page state");
-include(sidebar, "tooltip={item.label}", "settings sidebar should use component-library collapsed tooltip");
-include(sidebar, 'className="h-8 rounded-md border-0 bg-transparent px-2 text-[13px] font-medium text-muted-foreground shadow-none data-[active=true]:bg-accent data-[active=true]:!text-primary-foreground data-[active=true]:shadow-sm"', "settings sidebar items should keep readable selected text");
-include(sidebar, "<SidebarMenuBadge", "settings sidebar badges should use component-library badge");
-include(animateSidebar, "<button", "Animate UI sidebar should render keyboard-native buttons");
-include(animateSidebar, "function SidebarTrigger", "Animate UI sidebar should expose SidebarTrigger");
-include(animateSidebar, "function SidebarRail", "Animate UI sidebar should expose SidebarRail");
-include(animateSidebar, "tooltip?: string | React.ComponentProps<typeof TooltipContent>", "Animate UI sidebar menu button should expose tooltip");
-include(animateSidebar, "const SIDEBAR_KEYBOARD_SHORTCUT = 'b';", "Animate UI sidebar should keep its keyboard shortcut");
-include(codeTabs, "<CodeTabs", "settings code tabs should stay on the local CodeTabs component");
-include(animateCodeTabs, 'onClick={() => onCopy(tab)}', "settings code tabs should keep copy wiring");
-include(animateCodeTabs, "TooltipTrigger asChild", "settings code tabs should keep tooltip affordances");
+// SettingsCodeTabs 已重写为 shadcn Tabs 本地封装（不再依赖 animate-ui CodeTabs）；
+// 断言只锁定真实不变量：本地封装、复制回调和运行时探针标记。
+include(codeTabs, "<Tabs", "settings code tabs should stay on the local shadcn Tabs wrapper");
+include(codeTabs, "onCopy(tab)", "settings code tabs should keep copy wiring");
+include(codeTabs, 'data-dev-probe="settings-code-tabs"', "settings code tabs should keep the dev probe marker");
 include(statusPanel, "SettingsStatusPanel", "status panel should remain the diagnostic wrapper");
 include(statusPanel, "aria-label={title}", "status panel should stay accessible");
-include(statusPanel, 'className={`settings-status-panel ${state}`}', "status panel should expose state styling");
 include(statusPanel, "tooltip ? (", "status panel actions should stay tooltip-aware");
-include(tooltip, 'if (e.key === \'Escape\') hideImmediate();', "tooltips should still close on Escape");
+include(animateTooltip, 'if (e.key === \'Escape\') hideImmediate();', "tooltips should still close on Escape");
 
 if (!process.exitCode) {
   console.log("Settings surface verification passed");

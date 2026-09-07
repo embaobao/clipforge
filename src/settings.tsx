@@ -3,20 +3,17 @@ import { settingsService } from "./services/settings";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  AlertTriangle,
-  CheckCircle2,
   Database,
   ExternalLink,
   Eye,
   FileDown,
   FileCode,
   FileImage,
-  Loader2,
   Plus,
   RefreshCw,
   RotateCcw,
-  ShieldCheck,
   Settings,
+  ShieldCheck,
   Tag,
   Terminal,
   Trash2,
@@ -44,12 +41,11 @@ import {
   ReadonlyField,
 } from "./settings/controls";
 import { OnboardingEntryCard } from "./settings/components/OnboardingEntryCard";
-import { SettingsSidebar } from "./settings/components/SettingsSidebar";
-import { SettingsSectionHeader } from "./settings/components/SettingsSectionHeader";
-import { SettingsStickyStatusBar } from "./settings/components/SettingsStickyStatusBar";
 import { SettingsCodeTabs, type SettingsCodeTab } from "./settings/components/SettingsCodeTabs";
 import { SettingsErrorBoundary } from "./settings/components/SettingsErrorBoundary";
+import { SettingsShell } from "./settings/components/SettingsShell";
 import { SettingsStatusPanel, type SettingsStatusPanelState } from "./settings/components/SettingsStatusPanel";
+import { SettingsStickyStatusBar } from "./settings/components/SettingsStickyStatusBar";
 import { SettingsFieldRow } from "./settings/components/SettingsFieldRow";
 import {
   SETTINGS_INFORMATION_ARCHITECTURE,
@@ -61,19 +57,14 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/animate-ui/primitives/animate/tooltip";
+} from "@/components/ui/tooltip";
 import {
   Tabs,
   TabsContent,
-  TabsContents,
   TabsList,
   TabsTrigger,
-} from "@/components/animate-ui/components/radix/tabs";
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/animate-ui/components/radix/sidebar";
+} from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 
 interface AppSettings {
   language: AppLanguagePreference;
@@ -952,14 +943,6 @@ export function SettingsApp() {
     }
     void copySettingsSnippet(tab.label, tab.content);
   }
-  const saveFeedbackIcon =
-    state.saveFeedback.state === "pending" ? (
-      <Loader2 className="settings-save-feedback-icon spinning" size={14} />
-    ) : state.saveFeedback.state === "saved" ? (
-      <CheckCircle2 className="settings-save-feedback-icon" size={14} />
-    ) : state.saveFeedback.state === "error" ? (
-      <AlertTriangle className="settings-save-feedback-icon" size={14} />
-    ) : null;
   const activeSection = SECTIONS.find((item) => item.key === section) ?? SECTIONS[0];
   const stickyStatusPrimary =
     state.status || state.saveFeedback.message || state.configStatus || tr(activeSection.labelKey);
@@ -976,11 +959,11 @@ export function SettingsApp() {
         : tabs[0];
     if (!defaultValue) return null;
     return (
-      <Tabs className="settings-section-tabs grid w-full max-w-[820px] content-start gap-3" data-dev-probe={`settings-section-tabs:${section}`} defaultValue={defaultValue} key={section}>
-        <TabsList className="relative z-10 inline-flex w-max max-w-full gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-slate-100 p-1 text-slate-500 shadow-none" data-dev-probe="settings-section-tabs-list">
+      <Tabs className="grid w-full max-w-[820px] content-start gap-3" data-dev-probe={`settings-section-tabs:${section}`} defaultValue={defaultValue} key={section}>
+        <TabsList className="inline-flex w-max max-w-full gap-1 overflow-x-auto rounded-lg bg-black/[0.04] p-0.5 text-muted-foreground dark:bg-white/[0.07]" data-dev-probe="settings-section-tabs-list">
           {tabs.map((tab) => (
             <TabsTrigger
-              className="h-7 rounded-md border-0 bg-transparent px-3 text-xs font-semibold shadow-none data-[state=active]:text-slate-950"
+              className="h-7 rounded-[7px] border-0 bg-transparent px-2.5 text-[12px] font-medium text-muted-foreground shadow-none transition-colors data-[state=active]:bg-white data-[state=active]:text-foreground data-[state=active]:shadow-sm dark:data-[state=active]:bg-white/[0.14]"
               data-dev-probe={`settings-section-tab:${tab}`}
               key={tab}
               value={tab}
@@ -989,78 +972,41 @@ export function SettingsApp() {
             </TabsTrigger>
           ))}
         </TabsList>
-        <TabsContents>
-          {tabs.map((tab) => (
-            <TabsContent className="outline-none" key={tab} value={tab}>
-              <SettingsErrorBoundary
-                message={tr("settings.error.tabMessage")}
-                resetKey={`${section}:${tab}:${locale}`}
-                retryLabel={tr("settings.error.retry")}
-                scope={`settings-tab:${section}:${tab}`}
-                title={tr("settings.error.tabTitle")}
-              >
-                {panels[tab]}
-              </SettingsErrorBoundary>
-            </TabsContent>
-          ))}
-        </TabsContents>
+        {tabs.map((tab) => (
+          <TabsContent className="outline-none" key={tab} value={tab}>
+            <SettingsErrorBoundary
+              message={tr("settings.error.tabMessage")}
+              resetKey={`${section}:${tab}:${locale}`}
+              retryLabel={tr("settings.error.retry")}
+              scope={`settings-tab:${section}:${tab}`}
+              title={tr("settings.error.tabTitle")}
+            >
+              {panels[tab]}
+            </SettingsErrorBoundary>
+          </TabsContent>
+        ))}
       </Tabs>
     );
   }
 
   return (
-    <TooltipProvider closeDelay={120} openDelay={300}>
-      <div className="settings-surface min-h-dvh bg-white text-slate-900" data-surface="settings">
-        <header className="flex h-14 items-center justify-between gap-4 border-b border-slate-200 bg-white px-6">
-        <div className="flex min-w-0 items-center gap-2">
-          <Settings size={20} />
-          <h1 className="truncate text-lg font-bold">{tr("window.settings.title")}</h1>
-        </div>
-        <div className="flex min-w-0 items-center justify-end">
-          <p className="max-w-[420px] truncate text-xs text-slate-500">{state.configStatus}</p>
-        </div>
-      </header>
-
-      <SidebarProvider
-        className="flex h-[calc(100dvh-56px)] min-h-0 w-full overflow-hidden bg-slate-50"
+    <TooltipProvider delayDuration={300}>
+      <SettingsShell
+        activeId={section}
+        items={SECTIONS.map((item) => ({
+          id: item.key,
+          label: tr(item.labelKey),
+          icon: item.icon,
+        }))}
+        onSelect={(nextSection) => {
+          const typedSection = nextSection as SectionKey;
+          recordNextFramePerf("settings.section", { section: typedSection });
+          setDangerConfirmation(null);
+          setSection(typedSection);
+        }}
+        title={tr("window.settings.title")}
+        version={`ClipForge v${state.update?.currentVersion ?? "0.1.0"}`}
       >
-        <SettingsSidebar
-          activeId={section}
-          className="!absolute !inset-y-0 !h-full border-r border-slate-200 bg-white"
-          collapsible="icon"
-          items={SECTIONS.map((item) => ({
-            id: item.key,
-            label: tr(item.labelKey),
-            icon: item.icon,
-          }))}
-          label={tr("settings.navigation.label")}
-          onChange={(nextSection) => {
-            const typedSection = nextSection as SectionKey;
-            recordNextFramePerf("settings.section", { section: typedSection });
-            setDangerConfirmation(null);
-            setSection(typedSection);
-          }}
-        />
-
-        <SidebarInset className="settings-window-content min-w-0 flex-1 overflow-auto bg-white px-6 py-5">
-          <SettingsSectionHeader
-            icon={activeSection.icon}
-            leading={
-              <SidebarTrigger
-                aria-label={tr("settings.navigation.toggle")}
-                className="size-8 rounded-md border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50 hover:text-slate-950"
-                title={tr("settings.navigation.toggle")}
-              />
-            }
-            title={tr(activeSection.labelKey)}
-          >
-            {state.saveFeedback.state !== "idle" ? (
-              <span className={`settings-section-save-chip ${state.saveFeedback.state}`} data-dev-probe="settings-section-save-chip">
-                {saveFeedbackIcon}
-                {state.saveFeedback.message}
-              </span>
-            ) : null}
-          </SettingsSectionHeader>
 
           {section === "shortcut-language" &&
             renderSectionTabs({
@@ -1074,32 +1020,36 @@ export function SettingsApp() {
               ),
               shortcut: (
                 <SettingGroup title={tr("settings.section.shortcut")}>
-                  <div className="setting-row">
-                    <span>{tr("settings.shortcut.quickOpen")}</span>
-                    <div className="kbd-row">
-                      {state.settings.globalShortcut.split("+").map((part) => (
-                        <kbd key={part}>{part}</kbd>
-                      ))}
+                  <div className="flex items-center justify-between gap-8 py-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px]">{tr("settings.shortcut.quickOpen")}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="mono rounded-md bg-black/[0.05] px-2 py-1 text-[11.5px] dark:bg-white/[0.08]">
+                        {state.settings.globalShortcut.replace("Control", "⌃").replace("Meta", "⌘").replace("Shift", "⇧").replace("Alt", "⌥")}
+                      </span>
+                      <button
+                        className="flex h-7 items-center gap-1 rounded-md px-2 text-[12px] text-muted-foreground transition-colors hover:bg-black/[0.05] hover:text-foreground dark:hover:bg-white/[0.08]"
+                        onClick={() => setRecording((v) => !v)}
+                        onKeyDown={(event) => {
+                          if (!recording) return;
+                          event.preventDefault();
+                        }}
+                        type="button"
+                      >
+                        {recording ? tr("settings.shortcut.recording") : tr("settings.shortcut.startRecording")}
+                      </button>
                     </div>
                   </div>
-                  <div className="setting-row">
-                    <span>{tr("settings.shortcut.record")}</span>
-                    <button
-                      className={recording ? "primary-button" : "secondary-button"}
-                      onClick={() => setRecording((v) => !v)}
-                      onKeyDown={(event) => {
-                        if (!recording) return;
-                        event.preventDefault();
-                      }}
-                      type="button"
-                    >
-                      {recording ? tr("settings.shortcut.recording") : tr("settings.shortcut.startRecording")}
-                    </button>
-                  </div>
-                  <div className="setting-row">
-                    <label htmlFor={manualShortcutId}>{tr("settings.shortcut.manual")}</label>
-                    <input
+                  <div className="flex items-center justify-between gap-8 py-3">
+                    <div className="min-w-0">
+                      <label className="text-[13px]" htmlFor={manualShortcutId}>
+                        {tr("settings.shortcut.manual")}
+                      </label>
+                    </div>
+                    <Input
                       id={manualShortcutId}
+                      className="h-7 w-32 rounded-md text-[13px]"
                       onChange={(event) =>
                         updateSettings({ globalShortcut: event.currentTarget.value })
                       }
@@ -1110,7 +1060,7 @@ export function SettingsApp() {
               ),
               language: (
                 <SettingGroup title={tr("settings.language.title")}>
-                  <div className="setting-row">
+                  <div className="flex items-center justify-between gap-8 py-3">
                     <span>{tr("settings.language.current")}</span>
                     <SegmentSetting
                       label={tr("settings.language.current")}
@@ -1178,30 +1128,30 @@ export function SettingsApp() {
                     title={tr("settings.accessibility.title")}
                   >
                     {state.accessibilityDiagnostics ? (
-                      <div className="permission-diagnostics">
-                        <div>
-                          <span>{tr("settings.accessibility.currentProcess")}</span>
-                          <strong>{state.accessibilityDiagnostics.trusted ? "trusted" : "missing"}</strong>
+                      <div className="space-y-2 text-[12px]">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{tr("settings.accessibility.currentProcess")}</span>
+                          <strong className="font-medium">{state.accessibilityDiagnostics.trusted ? "trusted" : "missing"}</strong>
                         </div>
-                        <div>
-                          <span>Bundle ID</span>
-                          <code>{state.accessibilityDiagnostics.expectedBundleIdentifier}</code>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Bundle ID</span>
+                          <code className="mono text-[11px]">{state.accessibilityDiagnostics.expectedBundleIdentifier}</code>
                         </div>
-                        <div>
-                          <span>{tr("settings.accessibility.signatureId")}</span>
-                          <code>{state.accessibilityDiagnostics.codeSignatureIdentifier || "unknown"}</code>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{tr("settings.accessibility.signatureId")}</span>
+                          <code className="mono text-[11px]">{state.accessibilityDiagnostics.codeSignatureIdentifier || "unknown"}</code>
                         </div>
-                        <div>
-                          <span>{tr("settings.accessibility.signatureKind")}</span>
-                          <code>{state.accessibilityDiagnostics.signatureKind || "unknown"}</code>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">{tr("settings.accessibility.signatureKind")}</span>
+                          <code className="mono text-[11px]">{state.accessibilityDiagnostics.signatureKind || "unknown"}</code>
                         </div>
-                        <p className="path">{state.accessibilityDiagnostics.appBundlePath || state.accessibilityDiagnostics.executablePath}</p>
+                        <p className="mono truncate text-[11px] text-muted-foreground">{state.accessibilityDiagnostics.appBundlePath || state.accessibilityDiagnostics.executablePath}</p>
                         {state.accessibilityDiagnostics.tccRecords.length > 0 ? (
-                          <div className="tcc-records">
+                          <div className="space-y-1 border-t border-black/[0.04] pt-2 dark:border-white/[0.06]">
                             {state.accessibilityDiagnostics.tccRecords.map((record) => (
-                              <p key={`${record.client}:${record.lastModified}`}>
+                              <p className="flex gap-2 text-[11px] text-muted-foreground" key={`${record.client}:${record.lastModified}`}>
                                 <span>{record.database}</span>
-                                <code>{record.client}</code>
+                                <code className="mono">{record.client}</code>
                                 <span>{record.authLabel}</span>
                                 <span>{record.csreqSummary}</span>
                                 <span>{record.lastModified}</span>
@@ -1248,7 +1198,7 @@ export function SettingsApp() {
             renderSectionTabs({
               density: (
                 <SettingGroup title={tr("settings.tab.density")}>
-                  <div className="setting-row">
+                  <div className="flex items-center justify-between gap-8 py-3">
                     <span>{tr("settings.display.density")}</span>
                     <SegmentSetting
                       label={tr("settings.display.density")}
@@ -1261,7 +1211,7 @@ export function SettingsApp() {
                       onChange={(panelDensity) => updateSettings({ panelDensity })}
                     />
                   </div>
-                  <div className="setting-row">
+                  <div className="flex items-center justify-between gap-8 py-3">
                     <span>{tr("settings.display.contentMode")}</span>
                     <SegmentSetting
                       label={tr("settings.display.contentMode")}
@@ -1313,7 +1263,7 @@ export function SettingsApp() {
               ),
               position: (
                 <SettingGroup title={tr("settings.tab.position")}>
-                  <div className="setting-row">
+                  <div className="flex items-center justify-between gap-8 py-3">
                     <span>{tr("settings.display.positionStrategy")}</span>
                     <SegmentSetting
                       label={tr("settings.display.positionStrategy")}
@@ -1335,7 +1285,7 @@ export function SettingsApp() {
                     probeId="settings-control:enableScrollCollapse"
                     onChange={(enableScrollCollapse) => updateSettings({ enableScrollCollapse })}
                   />
-                  <div className="setting-card permission-card">
+                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
                     <span>{tr("settings.integration.floating.title")}</span>
                     <strong>
                       {state.panel?.visible ? tr("settings.integration.floating.visible") : tr("settings.integration.floating.hidden")} · {state.panel?.focused ? tr("settings.integration.floating.focused") : tr("settings.integration.floating.unfocused")}
@@ -1352,11 +1302,11 @@ export function SettingsApp() {
                         ? `x=${Math.round(state.panel.x)} y=${Math.round(state.panel.y)} ${Math.round(state.panel.width)}x${Math.round(state.panel.height)}`
                         : tr("settings.integration.floating.notChecked")}
                     </p>
-                    <div className="button-row">
-                      <button className="settings-action-button diagnostic" onClick={testFloatingPanel} type="button">
+                    <div className="flex gap-2">
+                      <button className="flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={testFloatingPanel} type="button">
                         {tr("settings.integration.floating.test")}
                       </button>
-                      <button className="settings-action-button secondary" onClick={refreshPanelStatus} type="button">
+                      <button className="flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={refreshPanelStatus} type="button">
                         {tr("settings.integration.floating.refresh")}
                       </button>
                     </div>
@@ -1369,24 +1319,24 @@ export function SettingsApp() {
             renderSectionTabs({
               status: (
                 <SettingGroup title={tr("settings.tab.status")}>
-                  <div className="setting-card permission-card">
+                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
                     <span>{tr("settings.integration.mcp.title")}</span>
                     <strong>{state.mcp?.running ? tr("settings.integration.mcp.running") : tr("settings.integration.mcp.unknown")} · {state.mcp?.transport ?? "stdio"}</strong>
                     <p>{tr("settings.integration.mcp.description")}</p>
-                    <p className="mcp-tool-list">{state.mcp?.tools.join(" / ") || tr("settings.integration.mcp.emptyTools")}</p>
-                    <div className="button-row">
-                      <button className="settings-action-button secondary" onClick={() => void refreshMcpStatus()} type="button">
+                    <p className="mono mt-2 text-[11px] text-muted-foreground">{state.mcp?.tools.join(" / ") || tr("settings.integration.mcp.emptyTools")}</p>
+                    <div className="flex gap-2">
+                      <button className="flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={() => void refreshMcpStatus()} type="button">
                         <RefreshCw size={13} />
                         {tr("settings.diagnostics.refresh")}
                       </button>
                     </div>
                   </div>
-                  <div className="setting-card permission-card">
+                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
                     <span>{tr("settings.integration.provider.title")}</span>
                     <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
                     <p>{tr("settings.integration.provider.description")}</p>
                   </div>
-                  <div className="setting-card permission-card mcp-doc-card">
+                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
                     <span>{tr("settings.manual.currentTools")}</span>
                     <p>{state.mcp?.tools.join(" / ") || tr("settings.status.loading")}</p>
                   </div>
@@ -1394,7 +1344,7 @@ export function SettingsApp() {
               ),
               install: (
                 <SettingGroup title={tr("settings.tab.install")}>
-                  <div className="setting-card permission-card mcp-doc-card">
+                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
                     <span>{tr("settings.manual.agentQuickStart")}</span>
                     <strong>{tr("settings.manual.agentSummary")}</strong>
                     <p>{tr("settings.manual.agentDescription")}</p>
@@ -1410,7 +1360,7 @@ export function SettingsApp() {
               ),
               "json-rpc": (
                 <SettingGroup title={tr("settings.tab.jsonRpc")}>
-                  <div className="setting-card permission-card mcp-doc-card">
+                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
                     <span>{tr("settings.integration.examples.title")}</span>
                     <strong>{tr("settings.integration.examples.summary")}</strong>
                     <SettingsCodeTabs
@@ -1423,7 +1373,7 @@ export function SettingsApp() {
               ),
               provider: (
                 <SettingGroup title={tr("settings.tab.provider")}>
-                  <div className="setting-card permission-card mcp-doc-card">
+                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
                     <span>{tr("settings.integration.provider.title")}</span>
                     <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
                     <p>{tr("settings.integration.provider.description")}</p>
@@ -1451,7 +1401,7 @@ export function SettingsApp() {
                     label={tr("settings.content.pinyinSearch")}
                     onChange={(pinyinSearchEnabled) => updateSettings({ pinyinSearchEnabled })}
                   />
-                  <div className="check-grid">
+                  <div className="grid gap-2">
                     <CheckItem
                       icon={<ExternalLink size={15} />}
                       title={tr("settings.content.link.title")}
@@ -1472,7 +1422,7 @@ export function SettingsApp() {
                     label={tr("settings.content.markdownPreview")}
                     onChange={(enableMarkdownPreview) => updateSettings({ enableMarkdownPreview })}
                   />
-                  <div className="check-grid">
+                  <div className="grid gap-2">
                     <CheckItem
                       icon={<Eye size={15} />}
                       title={tr("settings.content.markdown.title")}
@@ -1495,7 +1445,7 @@ export function SettingsApp() {
                     onChange={(key, value) => updateSettings({ [key]: value } as Partial<AppSettings>)}
                     tr={tr}
                     extraNodes={[
-                      <div className="setting-card permission-card" key="capture-multi-type">
+                      <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]" key="capture-multi-type">
                         <span>{tr("settings.capture.multiType.title")}</span>
                         <strong>{tr("settings.capture.multiType.summary")}</strong>
                         <p>{tr("settings.capture.multiType.description")}</p>
@@ -1618,7 +1568,7 @@ export function SettingsApp() {
                       max={1000000}
                       onChange={(logMaxLines) => updateSettings({ logMaxLines })}
                     />
-                    <div className="setting-row">
+                    <div className="flex items-center justify-between gap-8 py-3">
                       <span>{tr("settings.logs.retentionPolicy")}</span>
                       <strong>{tr("settings.logs.retentionPolicyValue")}</strong>
                     </div>
@@ -1709,7 +1659,7 @@ export function SettingsApp() {
                       {
                         label: tr("settings.update.status"),
                         value: (
-                          <span className="path">
+                          <span className="mono text-[11px] text-muted-foreground">
                             {state.update?.status ?? "idle"}
                             {typeof state.update?.downloadProgress === "number"
                               ? ` · ${Math.round(state.update.downloadProgress * 100)}%`
@@ -1721,7 +1671,7 @@ export function SettingsApp() {
                         ? [
                             {
                               label: tr("settings.update.releaseNotes"),
-                              value: <span className="path">{state.update.releaseNotes}</span>,
+                              value: <span className="mono text-[11px] text-muted-foreground">{state.update.releaseNotes}</span>,
                             },
                           ]
                         : []),
@@ -1730,7 +1680,7 @@ export function SettingsApp() {
                             {
                               label: tr("settings.update.error"),
                               value: (
-                                <span className="path">
+                                <span className="mono text-[11px] text-muted-foreground">
                                   {state.update.errorCode}
                                   {state.update.errorMessage ? ` · ${state.update.errorMessage}` : ""}
                                 </span>
@@ -1742,7 +1692,7 @@ export function SettingsApp() {
                         ? [
                             {
                               label: tr("settings.update.ignoredVersion"),
-                              value: <span className="path">{state.update.ignoredVersion}</span>,
+                              value: <span className="mono text-[11px] text-muted-foreground">{state.update.ignoredVersion}</span>,
                             },
                           ]
                         : []),
@@ -1750,7 +1700,7 @@ export function SettingsApp() {
                         ? [
                             {
                               label: tr("settings.update.lastChecked"),
-                              value: <span className="path">{new Date(state.update.lastCheckedAt).toLocaleString()}</span>,
+                              value: <span className="mono text-[11px] text-muted-foreground">{new Date(state.update.lastCheckedAt).toLocaleString()}</span>,
                             },
                           ]
                         : []),
@@ -1815,7 +1765,7 @@ export function SettingsApp() {
                       {
                         label: tr("settings.update.buildInfo"),
                         value: (
-                          <span className="path">
+                          <span className="mono text-[11px] text-muted-foreground">
                             {state.buildInfo
                               ? `${state.buildInfo.productName} ${state.buildInfo.currentVersion} · ${state.buildInfo.targetOs}-${state.buildInfo.targetArch}`
                               : tr("settings.update.buildLoading")}
@@ -1824,11 +1774,11 @@ export function SettingsApp() {
                       },
                       {
                         label: tr("settings.update.bundleId"),
-                        value: <span className="path">{state.buildInfo?.bundleIdentifier ?? "app.clipforge.desktop"}</span>,
+                        value: <span className="mono text-[11px] text-muted-foreground">{state.buildInfo?.bundleIdentifier ?? "app.clipforge.desktop"}</span>,
                       },
                       {
                         label: tr("settings.update.endpoint"),
-                        value: <span className="path">{state.buildInfo?.updaterEndpoint ?? "latest.json"}</span>,
+                        value: <span className="mono text-[11px] text-muted-foreground">{state.buildInfo?.updaterEndpoint ?? "latest.json"}</span>,
                       },
                     ]}
                     state="neutral"
@@ -1843,7 +1793,7 @@ export function SettingsApp() {
             renderSectionTabs({
               "tag-mode": (
                 <SettingGroup title={tr("settings.tab.tagMode")}>
-                  <div className="setting-row">
+                  <div className="flex items-center justify-between gap-8 py-3">
                     <span>{tr("settings.tags.generation")}</span>
                     <SegmentSetting
                       label={tr("settings.tags.generation")}
@@ -1859,44 +1809,44 @@ export function SettingsApp() {
               ),
               rules: (
                 <SettingGroup title={tr("settings.tab.rules")}>
-                  <div className="tag-rule-list">
+                  <div className="space-y-2">
                     {state.settings.tagRules.map((rule) => (
-                      <div className="tag-rule-row" key={rule.id}>
-                        <label className="tag-rule-field tag-rule-label-field" htmlFor={`tag-rule-${rule.id}-label`}>
-                          <span>{tr("settings.tags.name")}</span>
-                          <input
-                            className="rule-label"
+                      <div className="flex items-center gap-2" key={rule.id}>
+                        <label className="flex-1" htmlFor={`tag-rule-${rule.id}-label`}>
+                          <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.name")}</span>
+                          <Input
+                            className="h-7 rounded-md text-[13px]"
                             id={`tag-rule-${rule.id}-label`}
                             onChange={(event) => updateTagRule(rule.id, { label: event.currentTarget.value })}
                             value={rule.label}
                           />
                         </label>
-                        <label className="tag-rule-field tag-rule-query-field" htmlFor={`tag-rule-${rule.id}-query`}>
-                          <span>{tr("settings.tags.keyword")}</span>
-                          <input
-                            className="rule-query"
+                        <label className="flex-[2]" htmlFor={`tag-rule-${rule.id}-query`}>
+                          <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.keyword")}</span>
+                          <Input
+                            className="h-7 rounded-md text-[13px]"
                             id={`tag-rule-${rule.id}-query`}
                             onChange={(event) => updateTagRule(rule.id, { query: event.currentTarget.value })}
                             value={rule.query}
                           />
                         </label>
-                        <Tooltip side="top" sideOffset={8}>
+                        <Tooltip>
                           <TooltipTrigger asChild>
                             <button
                               aria-label={tr("settings.tags.deleteRule")}
-                              className="settings-action-button destructive icon-only"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10"
                               onClick={() => deleteTagRule(rule.id)}
                               type="button"
                             >
                               <Trash2 size={14} />
                             </button>
                           </TooltipTrigger>
-                          <TooltipContent className="settings-tooltip-content">{tr("settings.tags.deleteRule")}</TooltipContent>
+                          <TooltipContent side="top" sideOffset={8}>{tr("settings.tags.deleteRule")}</TooltipContent>
                         </Tooltip>
                       </div>
                     ))}
                   </div>
-                  <button className="settings-action-button secondary" onClick={addTagRule} type="button">
+                  <button className="mt-2 flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={addTagRule} type="button">
                     <Plus size={14} />
                     {tr("settings.tags.addRule")}
                   </button>
@@ -1908,9 +1858,7 @@ export function SettingsApp() {
             secondary={stickyStatusSecondary}
             state={state.saveFeedback.state}
           />
-        </SidebarInset>
-      </SidebarProvider>
-    </div>
-  </TooltipProvider>
+      </SettingsShell>
+    </TooltipProvider>
   );
 }

@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 /** 设置页错误兜底文案：区分根页面与单个页签的恢复提示。 */
 export interface SettingsErrorBoundaryCopy {
@@ -70,25 +71,30 @@ export class SettingsErrorBoundary extends Component<
     }
 
     return (
-      <section className="settings-fallback" role="alert">
-        <AlertTriangle size={18} />
-        <div>
-          <strong>{this.props.title}</strong>
-          <p title={this.state.errorMessage}>{this.props.message}</p>
+      <section className="flex flex-col items-center justify-center gap-3 py-12 text-center" role="alert">
+        <div className="grid h-10 w-10 place-items-center rounded-full bg-black/[0.04] dark:bg-white/[0.07]">
+          <AlertTriangle className="h-4 w-4 text-muted-foreground" />
         </div>
-        <button
-          className="settings-action-button secondary"
+        <div>
+          <p className="text-[13px] font-medium text-foreground">{this.props.title}</p>
+          <p className="mt-1 max-w-[320px] text-[12px] text-muted-foreground" title={this.state.errorMessage}>
+            {this.props.message}
+          </p>
+        </div>
+        <Button
+          className="h-7 gap-1.5 rounded-md text-[12px]"
           onClick={() =>
             this.setState((state) => ({
               errorMessage: "",
               resetCount: state.resetCount + 1,
             }))
           }
-          type="button"
+          size="sm"
+          variant="outline"
         >
           <RefreshCw size={13} />
           {this.props.retryLabel}
-        </button>
+        </Button>
       </section>
     );
   }

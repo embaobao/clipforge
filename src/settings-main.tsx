@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { SettingsApp } from "./settings";
 import { resolveAppLocale, t } from "./i18n";
 import { SettingsErrorBoundary } from "./settings/components/SettingsErrorBoundary";
-import "./settings.css";
+import "./index.css";
 
 const root = document.getElementById("root");
 if (root) {

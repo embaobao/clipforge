@@ -3,7 +3,8 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/animate-ui/primitives/animate/tooltip";
+} from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 
 /** 设置状态面板的语义状态：只影响提示强度，不承载业务判断。 */
 export type SettingsStatusPanelState = "neutral" | "good" | "warning" | "danger" | "pending";
@@ -43,6 +44,14 @@ function formatPanelActionError(error: unknown): string {
   return String(error);
 }
 
+const stateStyles: Record<SettingsStatusPanelState, string> = {
+  neutral: "bg-black/[0.03] dark:bg-white/[0.05]",
+  good: "bg-black/[0.03] dark:bg-white/[0.05]",
+  warning: "bg-black/[0.03] dark:bg-white/[0.05]",
+  danger: "bg-black/[0.03] dark:bg-white/[0.05]",
+  pending: "bg-black/[0.03] dark:bg-white/[0.05]",
+};
+
 /** 设置状态面板：统一承载权限、更新、诊断等只读状态和动作分类。 */
 export function SettingsStatusPanel({
   title,
@@ -68,65 +77,69 @@ export function SettingsStatusPanel({
   };
 
   return (
-    <section className={`settings-status-panel ${state}`} aria-label={title} data-dev-probe={probeId}>
-      <div className="settings-status-panel-main">
-        <span className="settings-status-panel-title">{title}</span>
-        <strong>{status}</strong>
-        {description ? <p>{description}</p> : null}
+    <section
+      className={`rounded-lg p-4 ${stateStyles[state]}`}
+      aria-label={title}
+      data-dev-probe={probeId}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-[13px] font-medium text-foreground">{title}</h3>
+          <p className="mono mt-0.5 text-[11px] text-muted-foreground">{status}</p>
+          {description ? (
+            <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
       </div>
 
       {items.length > 0 ? (
-        <dl className="settings-status-panel-items">
+        <dl className="mt-3 space-y-1.5 border-t border-black/[0.04] pt-3 dark:border-white/[0.06]">
           {items.map((item) => (
-            <div className="settings-status-panel-item" key={item.label}>
-              <dt>{item.label}</dt>
-              <dd>{item.value}</dd>
+            <div className="flex items-center justify-between gap-4" key={item.label}>
+              <dt className="text-[12px] text-muted-foreground">{item.label}</dt>
+              <dd className="min-w-0 truncate text-right text-[12px]">{item.value}</dd>
             </div>
           ))}
         </dl>
       ) : null}
 
-      {children ? <div className="settings-status-panel-extra">{children}</div> : null}
+      {children ? <div className="mt-3 border-t border-black/[0.04] pt-3 dark:border-white/[0.06]">{children}</div> : null}
 
       {actions.length > 0 ? (
-        <div className="settings-status-panel-actions">
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-black/[0.04] pt-3 dark:border-white/[0.06]">
           {actions.map((action) => {
             const Icon = action.icon;
+            const variant = action.variant === "primary" ? "default" : action.variant === "destructive" ? "destructive" : action.variant === "diagnostic" ? "secondary" : "outline";
             const button = (
-              <button
-                className={`settings-action-button ${action.variant ?? "secondary"}`}
+              <Button
+                aria-label={action.ariaLabel ?? action.label}
+                className="h-7 gap-1.5 rounded-md text-[12px]"
                 data-dev-probe={action.probeId}
                 disabled={action.disabled}
                 onClick={() => runAction(action)}
-                aria-label={action.ariaLabel ?? action.label}
-                type="button"
+                size="sm"
+                variant={variant}
               >
                 {Icon ? <Icon size={13} /> : null}
                 {action.label}
-              </button>
+              </Button>
             );
 
             return action.tooltip ? (
-              <Tooltip key={action.label} side="top" sideOffset={8}>
+              <Tooltip key={action.label}>
                 <TooltipTrigger asChild>
-                  <span
-                    aria-disabled={action.disabled || undefined}
-                    aria-label={action.tooltip}
-                    className="settings-status-panel-action-wrap"
-                  >
-                    {button}
-                  </span>
+                  <span className="inline-flex">{button}</span>
                 </TooltipTrigger>
-                <TooltipContent className="settings-tooltip-content">{action.tooltip}</TooltipContent>
+                <TooltipContent side="top" sideOffset={8}>{action.tooltip}</TooltipContent>
               </Tooltip>
             ) : (
-              <span className="settings-status-panel-action-wrap" key={action.label}>
+              <span className="inline-flex" key={action.label}>
                 {button}
               </span>
             );
           })}
           {actionError ? (
-            <p className="settings-status-panel-error" role="alert">
+            <p className="w-full text-[11px] text-destructive" role="alert">
               {actionError}
             </p>
           ) : null}
