@@ -1,6 +1,14 @@
 # OpenSpec 提案路线图与交接计划
 
-更新时间：2026-08-05
+更新时间：2026-09-02
+
+2026-09-02 清账与方向调整：**产品主线回归「打造好一个剪贴板」**。决策记录：
+
+1. `deepseek-harness-embedding` 整体后置：DSH 悬浮面板仅保留 **iframe 嵌官方 Web UI 实验形态**（2026-08-17 落地：守护进程骨架 `DshDaemonState`/`spawn/kill`/localhost-only/env 注入/退出清理 + `src/dsh/dsh-panel.tsx` iframe 面板），自研对话 UI、`POST /chat` 会话 API、快速唤起、i18n 全部后置，「后面看看需不需要自研」。tasks.md 已按实际代码对账（13/31 → 22/31）。
+2. 运行时基座存在切换候选（pi 等），基座取舍结论前不向 DSH runtime 深投；`clipboard_analyze` 一次性链路（Phase 0–5）保持可用。剪贴板打通场景由 `dsh-file-context-conversation` 承接、同步后置。
+3. 清账动作：`file-size-exemptions.json` 移除 2 个失效条目（`src/agent-panel.tsx`、`src/agent-chat-page.tsx` 已随旧 Agent 面板删除，7 → 5），门禁复跑通过；`cargo check` 复跑通过。
+4. 待办：`file-image-clipboard-support`（8 项）与 `clipboard-multi-format-fidelity`（4 项）剩余任务为同一张实机验收矩阵（7 个场景，见两提案 tasks.md），完成后归档两提案。
+5. AI 四案（`ai-model-plugin-productization` / `vercel-ai-sdk-integration` / `local-model-quick-integration` / `mastra-agent-runtime-evaluation`）维持后置，取舍结论不阻塞剪贴板主线；在 DSH 实验结论与 pi 评估出来前不合并、不废弃、不新增依赖。
 
 2026-08-05 归档 `settings-sidebar-component-library-recovery`：任务 14/14 已完成，delta 已合入 `openspec/specs/settings-interface/spec.md`，归档路径为 `openspec/changes/archive/2026-08-05-settings-sidebar-component-library-recovery/`。
 
@@ -67,7 +75,7 @@
 
 ## 当前 active change
 
-以下 11 个 change 来自 2026-08-05 的 live `openspec list`；已归档 change 不再计入当前执行队列：
+以下 14 个 change 来自 2026-09-02 的 live `openspec list`；已归档 change 不再计入当前执行队列：
 
 | 优先级 | Change | 当前进度 | 下一验收点 |
 | --- | --- | --- | --- |
@@ -81,6 +89,9 @@
 | P4.1 | `vercel-ai-sdk-integration` | 30/38 | 等 SDK 文档与真实 provider 边界确认后再决定是否接入 |
 | P4.x | `mastra-agent-runtime-evaluation` | 11/25 | 完成可旁路 sidecar/workbench POC 设计和基线测量，不安装到产品主路径 |
 | P4.x | `local-model-quick-integration` | 4/16 | 与 AI 产品化、Vercel AI SDK、Mastra 三案统一做取舍，不单独开工 |
+| P4.x | `deepseek-harness-embedding` | 22/31 | DSH 面板保留 iframe 实验形态；剩余项（/chat API、快速唤起、i18n、实机验收）全部后置，待基座（pi 等）取舍后再启动 |
+| P4.x | `dsh-file-context-conversation` | 1/22 | 随 DSH 链后置；恢复排期前硬依赖 `deepseek-harness-embedding` 的 `/chat` 会话 API 决策 |
+| P5 | `dsh-system-context-menu` | 0/14 | 重原生、冻结中，不在 v1 悬浮 DSH 主线 |
 | P4.5 | `codebase-modularity-refactor` | 6/26 | 只在功能开发触碰对应文件时同步推进 |
 
 ## 后续开发计划

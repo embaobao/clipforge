@@ -42,8 +42,9 @@
 | [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) | P1.x 首期 A 实现收尾，25/52 | 已新增独立 `onboarding` 窗口、设置页轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录、开机启动设置和固定窗口滚动回归门禁；仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界。sidebar 全量常驻、兜底四态和标准化日志仍为后续 phase |
 | [mastra-agent-runtime-evaluation](./changes/mastra-agent-runtime-evaluation/proposal.md) | P4.x 评估提案，11/25 | Mastra 只作为 Agent runtime 候选评估，不直接安装依赖，不进 quick panel 热路径；如果进入 POC，只允许可关闭、可旁路的 sidecar/workbench runtime，并先证明 quick panel P95、内存、打包签名、离线启动、tool allowlist 与 Settings Service redaction 边界 |
 | [external-hook-plugin-runtime](./changes/external-hook-plugin-runtime/proposal.md) | P3 后置方案评审，0/67 | 外部 Hook 插件运行时精简为 Block A/B：Block A 只收敛读取侧 collector 到 Hook manifest、4 态生命周期、洋葱 priority、沙盒、节流、熔断、延迟补写和单个 `clipboard.hook.run`；Block B 写入侧（Proposal/Apply/content.write）冻结，等真实用户故事再解冻 |
-| [dsh-file-context-conversation](./changes/dsh-file-context-conversation/proposal.md) | P4.x 新建，0/30 | 文件（文件夹）上下文的 DSH 对话集成：右键「复制地址」（验收既有项）+「在此文件开始对话」（文件内容感知分析、文件夹列项、多轮由常驻守护进程原生支持）。依赖 `deepseek-harness-embedding` 与 `file-image-clipboard-support`；系统级文件管理器右键见 `dsh-system-context-menu` |
-| [dsh-system-context-menu](./changes/dsh-system-context-menu/proposal.md) | P5 新建，0/12 | 系统级文件管理器右键（Finder Sync / Explorer Shell 扩展）：复制地址 + 用 ClipForge 分析，经 `clipforge://` URL Scheme 复用应用内能力。重原生、后置，不在 v1 悬浮 DSH 主线 |
+| [dsh-file-context-conversation](./changes/dsh-file-context-conversation/proposal.md) | P4.x 后置，1/22 | 文件（文件夹）上下文的 DSH 对话集成：右键「复制地址」（验收既有项）+「在此文件开始对话」（文件内容感知分析、文件夹列项、多轮由常驻守护进程原生支持）。依赖 `deepseek-harness-embedding` 与 `file-image-clipboard-support`；2026-09-02 起随 DSH 链后置，恢复排期前硬依赖 `/chat` 会话 API 决策；系统级文件管理器右键见 `dsh-system-context-menu` |
+| [deepseek-harness-embedding](./changes/deepseek-harness-embedding/proposal.md) | P4.x 后置实验，22/31 | DSH 内嵌为 AI 运行时底座。Phase 0–5 一次性 sidecar 链路端到端跑通；2026-08-17 提前落地 Phase 6 守护进程骨架（`DshDaemonState`、常驻 web carrier、健康探活、localhost-only、env 注入、退出清理）与 Phase 7 悬浮窗 iframe 集成（`src/dsh/dsh-panel.tsx` 嵌官方 Web UI）。2026-09-02 定位调整为**实验性 iframe 面板**：自研对话 UI、`/chat` 会话 API、快速唤起、i18n 全部后置，运行时基座可能切换 pi 等候选，基座取舍前不深投 |
+| [dsh-system-context-menu](./changes/dsh-system-context-menu/proposal.md) | P5 冻结，0/14 | 系统级文件管理器右键（Finder Sync / Explorer Shell 扩展）：复制地址 + 用 ClipForge 分析，经 `clipforge://` URL Scheme 复用应用内能力。重原生、冻结，不在 v1 悬浮 DSH 主线 |
 | [project-demo-gif-pipeline](./changes/project-demo-gif-pipeline/proposal.md) | P3 文档/资产方案，0/30 | 建立真实录屏转 gif 为主、Remotion 为辅的演示素材流水线，资产放 `docs/demos/`，不改变产品功能，不阻塞 onboarding 或剪贴板核心交付；已补 specs delta |
 | [local-model-quick-integration](./changes/local-model-quick-integration/proposal.md) | P4.x AI/Agent 后置候选，4/16 | 本地模型、第三方 API Key 导入和 AI 对话面板重构候选；已补 tasks/spec delta，方向约束为 OpenAI-compatible provider、显式导入、Settings Service redaction 和不阻塞 quick panel。需先评估与 `ai-model-plugin-productization` / `vercel-ai-sdk-integration` / `mastra-agent-runtime-evaluation` 的关系 |
 
@@ -71,7 +72,7 @@
 
 ## 建议推进顺序
 
-> 2026-08-05 当前有 11 个 active change。近期只推进剪贴板核心体验、首次引导和实机验收；AI/Agent 运行时先做统一评估，不直接进入产品热路径。
+> 2026-09-02 方向调整：产品主线回归「打造好一个剪贴板」。近期只推进剪贴板核心体验（格式闭环实机验收、归档）、首次引导和实机验收；DSH 仅保留 iframe 实验面板、全链后置；AI/Agent 运行时四案维持统一评估，不直接进入产品热路径，取舍结论前不新增依赖。
 
 1. P0：联合收尾 [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) 与 [frontend-surface-architecture-refactor](./changes/frontend-surface-architecture-refactor/proposal.md)，验证正式应用的开机启动、权限引导、虚线选中态、滚动跟随和复制/粘贴 P95。
 2. P1：完成 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) 与 [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) 的文本、HTML、图片、文件实机矩阵。

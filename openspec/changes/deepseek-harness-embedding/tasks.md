@@ -1,7 +1,10 @@
 # 任务：DeepSeek Harness 常驻守护进程 + 悬浮对话
 
-> 状态（2026-08-17）：v1 一次性 sidecar 链路（Phase 0–5）已端到端跑通，`cargo check` + `pnpm build:web` 通过。
-> 本任务在 v1 之上新增 **Phase 6（常驻守护进程）** 与 **Phase 7（悬浮对话 UI + 快速唤起 + 剪贴板打通）**，转向参考项目 Host-Service Separation。
+> 状态（2026-09-02）：产品主线回归剪贴板工具本体，本提案整体后置。DSH 面板定位为**实验性 iframe 集成**——
+> 仅保留「独立悬浮窗 + iframe 嵌 DSH 官方 Web UI」形态作为尝试（2026-08-17 拍板，2026-09-02 确认继续保留），
+> 不再投入自研对话 UI；运行时基座后续可能切换 pi 等候选，基座取舍前不向 DSH runtime 深投。
+> v1 一次性 sidecar 链路（Phase 0–5）已端到端跑通，`cargo check` + `pnpm build:web` 通过。
+> 2026-08-17 已提前落地 Phase 6 守护进程骨架与 Phase 7 悬浮窗 iframe 集成，以下清单已按实际代码与最新方向对齐。
 
 ## Phase 0：Spike 验证 ✅
 
@@ -38,29 +41,43 @@
 
 ---
 
-## Phase 6：常驻守护进程（Host-Service Separation）🟡
+## Phase 6：常驻守护进程（Host-Service Separation）🟡 骨架已落地，剩余后置
 
-- [ ] 新增 `src-tauri/src/dsh-daemon.rs`：`DshDaemonState { child, port, ready }`；`setup` 中 spawn node sidecar 加载 clipforge profile，常驻 host 服务 @ `127.0.0.1:PORT`（默认 3080，可 `CLIPFORGE_DSH_PORT` 覆盖）。
-- [ ] sidecar 改造 `sidecar.mjs`：由「一次性 boot+exit」改为「boot 后常驻 node http 服务」——`GET /health` → `{ok:true}`；`POST /chat` → `{conversationId, messages}` → 复用 agent session 流式/SSE 回传四类；移除 `process.exit` 看门狗（仅留崩溃兜底）。
-- [ ] 健康检查：tokio 定时 `reqwest` 轮询 `/health`，成功 `emit("dsh-ready")` + `ready=true`；失败指数退避重试，超限标记 degraded。
-- [ ] 日志重定向：消费 `CommandEvent::Stdout/Stderr` → `emit("dsh-log")`；`Terminated` → `ready=false` + `emit("dsh-terminated")`。
-- [ ] 新增 command `get_dsh_status`（轮询 `/health`）+ `restart_dsh_daemon`（kill+respawn+重置健康检查）。
-- [ ] 退出清理：`RunEvent::ExitRequested` 中 `child.kill()` 防孤儿进程。
-- [ ] localhost-only 硬约束：sidecar 启动 `--host 127.0.0.1`，拒绝 `0.0.0.0`。
-- [ ] 环境变量注入 `DEEPSEEK_API_KEY/BASE_URL/MODEL`/`DSH_HOME`（不落盘前端）；复用 `resolve_node`/`resolve_sidecar`。
-- [ ] `cargo check` + 单元/集成验证守护进程拉起、健康检查、重启、退出清理。
+> 2026-08-17 已落地：守护进程 spawn、常驻 web carrier、健康探活、localhost-only、env 注入、退出清理。
+> 实现并入 `src-tauri/src/dsh.rs`（未拆独立 `dsh-daemon.rs`，随 modularity 治理再抽）。
 
-## Phase 7：悬浮对话 UI + 快速唤起 + 剪贴板打通 🟡
+- [x] `DshDaemonState` + `spawn_dsh_daemon`：setup 中常驻拉起 node sidecar（`--serve`），web carrier @ `127.0.0.1:3080`；实现位于 `dsh.rs`，独立 `dsh-daemon.rs` 拆分后置
+- [x] sidecar 常驻改造（第一步）：`sidecar.mjs --serve` 启动 DSH web carrier 常驻，不 `process.exit`，事件循环由 carrier 持有
+- [x] 健康探活：Rust 侧 `dsh_daemon_healthy` 端口探活 + 前端 `dsh-panel` 500ms×30 轮询兜底；`emit("dsh-ready")` 事件化与指数退避后置
+- [x] 状态与控制命令：`get_dsh_status` / `start_dsh_daemon` / `stop_dsh_daemon` / `kill_dsh_daemon` 已注册；组合式 `restart_dsh_daemon` 后置（stop+start 可替代）
+- [x] 退出清理：`RunEvent::ExitRequested` → `kill_dsh_daemon`，防孤儿进程占用端口
+- [x] localhost-only 硬约束：host 固定 `127.0.0.1`（`dsh.rs` 安全边界注释），拒绝局域网暴露
+- [x] 环境变量注入 `DEEPSEEK_API_KEY` / `DSH_HOME`（不落盘前端）
+- [ ] （后置）`POST /chat` 会话 API：按 `conversationId` 缓存 agent session、流式回传；iframe 实验形态不依赖，待自研 UI / 基座（pi 等）取舍后再定
+- [ ] （后置）日志重定向：`CommandEvent::Stdout/Stderr` → `emit("dsh-log")`；`Terminated` → `ready=false` + `emit("dsh-terminated")`
+- [ ] （后置）端口覆盖与集成验证：`CLIPFORGE_DSH_PORT` 覆盖 + 启动失败重试相邻端口；守护进程拉起/健康/重启/退出清理实机确认
 
-- [ ] 新增 `src/agent/dsh-client.ts`：`dshChat({conversationId, messages, fileContext?})` → `invoke("dsh_chat")`；`getDshStatus()`；订阅 `dsh-ready`/`dsh-log`/`dsh-terminated`。
-- [ ] 新增 Rust command `dsh_chat`：转发守护进程 `/chat`，持 `conversationId`；守护进程未就绪 → 降级（保留 `analyze_clipboard` 一次性兜底）。
-- [ ] 重构 `dsh-panel.tsx`：对话式（消息流 + 输入框 + 流式 + 四类卡片 + 写回 + 历史），持 `conversationId`，多轮由守护进程原生支持。
-- [ ] 快速唤起：① 全局快捷键新增 DSH 专用键（如 `Cmd/Ctrl+Shift+J`，原 `⌘I` 已空出）→ `setActiveSurface("dsh")`；② 托盘菜单新增「打开 DSH 助手」→ `show_quick_panel` 聚焦 dsh；③ 快捷面板挂迷你 DSH 输入入口。
-- [ ] 剪贴板打通：列表/详情/右键「AI 分析」「在此文件开始对话」→ `setActiveSurface("dsh")` + 注入选中条目（文本 content 或文件 fileContext）为新对话首条；面板内「发送当前选中剪贴板」注入 `selectedClip.content`；结果写回 `onApplyTags`/`onApplyFolder`。
-- [ ] i18n：新增/核对 `main.dsh.*` / `main.quick.*` / `tray.openDsh` 等键（中/英）；门禁脚本补稳定 DOM marker（如 `data-dev-probe="dsh-surface"`）。
-- [ ] 验证：`pnpm build:web` + `cargo check`；手动验收快速唤起 + 多轮对话 + 剪贴板注入/写回。
+## Phase 7：悬浮对话 UI + 快速唤起 + 剪贴板打通 🟡 路线已转向 iframe 兼容模式
+
+> 2026-08-17 路线转向（盟哥拍板）：不自研对话 UI，悬浮窗 iframe 直接嵌 DSH 官方 Web UI。
+> 2026-09-02 确认：iframe 形态保留为实验终态候选，自研对话 UI 后置；剪贴板打通整体移交
+> `dsh-file-context-conversation`，随 DSH 链后置。
+
+- [x] 悬浮窗 surface：`open/hide/toggle_dsh_window` 独立悬浮窗（复用剪贴板窗体悬浮逻辑，label="dsh"）+ `src/dsh/dsh-panel.tsx` iframe 嵌官方 Web UI、守护进程就绪轮询与兜底拉起
+- [x] 服务层消费：`DSH_WEB_URL` / `getDshStatus` / `startDshDaemon` 并入 `src/agent/dsh-analysis.ts`（原计划的独立 `dsh-client.ts` 不再单列，随 iframe 形态收敛）
+- [ ] （后置）快速唤起：全局快捷键 DSH 专用键（原 `⌘I` 已空出）→ dsh surface；托盘菜单「打开 DSH 助手」；快捷面板迷你 DSH 入口
+- [ ] （后置）剪贴板打通：列表/详情/右键注入条目、结果写回 `onApplyTags`/`onApplyFolder` —— 移交 `dsh-file-context-conversation`
+- [ ] （后置）i18n：`dsh-panel` 内硬编码中文（标题/提示）收敛为 `main.dsh.*` 键（中/英）
+- [ ] （后置）实机验收：悬浮窗打开、iframe 加载、守护进程未就绪提示、关闭回到 clipboard surface
 
 ---
+
+## 2026-09-02 方向调整（清账决策记录）
+
+1. 产品主线回归「打造好一个剪贴板」：DSH 全链后置，不阻塞剪贴板格式闭环、onboarding 与前端架构收尾。
+2. DSH 面板仅保留 iframe 实验形态；自研对话 UI、`POST /chat` 会话 API、快速唤起、i18n 等全部后置，「后面看看需不需要自研」。
+3. 运行时基座存在切换候选（pi 等），基座取舍结论前不向 DSH runtime 深投；`clipboard_analyze` 一次性链路（Phase 0–5）保持可用。
+4. 剪贴板打通场景由 `dsh-file-context-conversation` 承接，排期同步后置。
 
 ## 关键技术坑（落地中实测，后续维护必读）
 
