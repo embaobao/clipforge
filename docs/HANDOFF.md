@@ -67,19 +67,21 @@
 - `5890d76` onboarding 向导拆分：`settings/onboarding-wizard.tsx`（422 行旧类）迁移至 `src/onboarding/components/`（shared 153 行 + OnboardingWizard 268 行 + Step/FeatureCard 小组件），全部换 Tailwind 语义类；键盘导航、快捷键录制、探针、写入路径行为不变；verify-settings-surface 断言路径随迁。
 - 验证：build:web ✓ / test:unit ✓ / test:boundaries ✓（两项拆分各验证一轮）；cargo check 未重跑（未触碰 src-tauri）；tauri dev 视觉走查跳过。
 
-## 待办事项（按优先级，批次 3 后更新）
+## 批次 4：openspec 对账 + AGENTS.md 对齐（2026-09-07 夜间，待办#5/#6 完成）
 
-1. **DSH 面板细节对齐**（原#4）
-   - iframe 与提示文本对齐设计稿；涉及视觉判断，建议盟哥白天人工确认后批量执行
+- `a4d519b` deepseek-harness-embedding/tasks.md 逐项 grep 核验：Phase 6/7 勾选状态与代码一致（09-02 已对齐，无脱节）；Phase 5「详情页/右键入口/历史复用」三个 UI 入口确认落地并勾选；补记对账核验。结论：**该提案剩余项全部为（后置），无可立即推进项**（动 DSH 须先过基座取舍决策——盟哥拍板项）。
+- `8674df9` AGENTS.md 两处过时描述更新：技术栈 UI 行、样式按功能拆分章节（旧 CSS 架构 → Tailwind v3 现实）。
+- 验证：build:web ✓ / test:unit ✓（纯文档改动，快速回归）。
 
-2. **全量回归**（原#5）
-   - `pnpm tauri dev` 视觉走查（**重点**：详情页/聚合页/onboarding 拆分重写区域的实际视觉效果未经人工确认）
+## 待办事项（按优先级，批次 4 后更新）
 
-3. **对账 openspec/changes/deepseek-harness-embedding/tasks.md**（Phase 6 半成品 / Phase 7 iframe 方案）
+1. **pnpm tauri dev 视觉走查**（原#2，**需要盟哥或有人工视觉判断时执行**）
+   - 重点：详情页/聚合页/onboarding 三个 surface 是批次 2/3 重写的 Tailwind 样式，未经人工确认
+   - DSH 面板 iframe 细节对齐（原#1）一并走查
 
-4. **AGENTS.md「样式按功能拆分」章节更新**：仍描述旧 CSS 架构，与 Tailwind 现实脱节
+2. **按 docs/PROPOSAL_ROADMAP.md 推进其他提案**（无需用户决策的条目；涉及产品方向取舍的先在 HANDOFF 记录待确认）
 
-5. **按 docs/PROPOSAL_ROADMAP.md 推进其他提案**（无需用户决策的条目）
+3. **剪贴板工具体验闭环自查**（AGENTS.md 主线）：搜索/复制/删除/归档/批量操作的焦点稳定与列表不跳动，可写自动化脚本核验的部分夜间推进
 
 ## 当前状态
 
