@@ -73,15 +73,24 @@
 - `8674df9` AGENTS.md 两处过时描述更新：技术栈 UI 行、样式按功能拆分章节（旧 CSS 架构 → Tailwind v3 现实）。
 - 验证：build:web ✓ / test:unit ✓（纯文档改动，快速回归）。
 
-## 待办事项（按优先级，批次 4 后更新）
+## 批次 5：全量回归（自动化部分）+ roadmap 对账（2026-09-07 夜间）
 
-1. **pnpm tauri dev 视觉走查**（原#2，**需要盟哥或有人工视觉判断时执行**）
-   - 重点：详情页/聚合页/onboarding 三个 surface 是批次 2/3 重写的 Tailwind 样式，未经人工确认
-   - DSH 面板 iframe 细节对齐（原#1）一并走查
+- `a4b923c` PROPOSAL_ROADMAP 补记 09-07 进展。**全量回归可自动化部分全部通过**：
+  `build:web` / `test:unit` / `test:boundaries` / `cargo check` 全绿（15 个存量 dead_code 警告非阻塞）；
+  `pnpm tauri dev` 后台冒烟通过（编译+启动+运行 70 秒无 error/panic，dev 实例已清理，未影响正式 release 实例）。
+- 核对 `file-image-clipboard-support` / `clipboard-multi-format-fidelity`：剩余 7+4 项全部需要真实系统剪贴板证据，**确认无法自动化勾选**，只能实机验收。
+- 记录无害告警：vendored 组件（message-scroller / animate-ui sidebar）4 个 `ease-[...]` 类的 Tailwind v3 歧义警告，暂不修改。
 
-2. **按 docs/PROPOSAL_ROADMAP.md 推进其他提案**（无需用户决策的条目；涉及产品方向取舍的先在 HANDOFF 记录待确认）
+## 待办事项（按优先级，批次 5 后更新）
 
-3. **剪贴板工具体验闭环自查**（AGENTS.md 主线）：搜索/复制/删除/归档/批量操作的焦点稳定与列表不跳动，可写自动化脚本核验的部分夜间推进
+**夜间任务的可自动化待办已清零**。剩余事项全部需要盟哥人工参与：
+
+1. **视觉走查**（最重要）：`pnpm tauri dev` 人工过一遍详情页/聚合页/onboarding 三个 surface（批次 2/3 重写的 Tailwind 样式未经人眼确认）；DSH 面板 iframe 细节一并看
+2. **7 场景实机验收矩阵**：`file-image-clipboard-support` + `clipboard-multi-format-fidelity` 剩余项（复制/粘贴/显示/清理证据），完成后两提案可归档
+3. **DSH 基座取舍决策**（盟哥拍板项）：pi 等候选评估结论出来前，DSH 后置项不推进
+4. **grilling 会话 Q1–Q4**：产品方向问题待回答
+
+夜间任务至此进入「无事可做秒退」状态：工作区干净、可自动化验证全绿、可推进提案项清零。后续夜晚的触发若仍无新待办（盟哥白天未新增），会话将直接退出。若确认不再需要，可删除定时任务 automation-7b5269b1。
 
 ## 当前状态
 
