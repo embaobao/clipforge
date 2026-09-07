@@ -10,7 +10,7 @@ import {
   type AppLanguagePreference,
 } from "../i18n";
 import { settingsService } from "../services/settings";
-import { OnboardingWizard } from "../settings/onboarding-wizard";
+import { OnboardingWizard } from "./components/OnboardingWizard";
 
 type OnboardingSettings = {
   language: AppLanguagePreference;

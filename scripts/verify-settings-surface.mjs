@@ -6,7 +6,8 @@ const root = process.cwd();
 const files = {
   app: "src/App.tsx",
   topToolbar: "src/clipboard/components/TopToolbar.tsx",
-  onboarding: "src/settings/onboarding-wizard.tsx",
+  onboarding: "src/onboarding/components/OnboardingWizard.tsx",
+  onboardingShared: "src/onboarding/components/onboarding-wizard-shared.ts",
   settings: "src/settings.tsx",
   controls: "src/settings/controls.tsx",
   settingsShell: "src/settings/components/SettingsShell.tsx",
@@ -58,6 +59,7 @@ function extractList(source, name) {
 const app = read(files.app);
 const topToolbar = read(files.topToolbar);
 const onboarding = read(files.onboarding);
+const onboardingShared = read(files.onboardingShared);
 const settings = read(files.settings);
 const controls = read(files.controls);
 const settingsShell = read(files.settingsShell);
@@ -66,17 +68,18 @@ const statusPanel = read(files.statusPanel);
 const animateTooltip = read(files.animateTooltip);
 
 // Onboarding surface: 只验证可重复的源代码语义，不碰真实系统权限或剪贴板回写。
+// 向导已拆分至 src/onboarding/components/：类型与常量在 onboarding-wizard-shared，交互在 OnboardingWizard。
 include(
-  onboarding,
+  onboardingShared,
   'type OnboardingStepKey = "welcome" | "accessibility" | "capture" | "shortcut" | "tour";',
   "onboarding wizard should expose the five-step flow",
 );
 assert(
-  JSON.stringify(extractList(onboarding, "STEPS")) === JSON.stringify(["welcome", "accessibility", "capture", "shortcut", "tour"]),
+  JSON.stringify(extractList(onboardingShared, "STEPS")) === JSON.stringify(["welcome", "accessibility", "capture", "shortcut", "tour"]),
   "onboarding wizard steps should stay ordered as welcome/accessibility/capture/shortcut/tour",
 );
 assert(
-  JSON.stringify(extractList(onboarding, "CAPTURE_FIELDS")) ===
+  JSON.stringify(extractList(onboardingShared, "CAPTURE_FIELDS")) ===
     JSON.stringify([
       "captureTextEnabled",
       "captureHtmlEnabled",
@@ -94,10 +97,10 @@ include(onboarding, 'event.key === "Enter"', "onboarding wizard should advance f
 include(onboarding, 'updateSettings({ onboardingCompleted: true });', "onboarding completion should persist onboardingCompleted");
 match(onboarding, /updateSettings\(\{\s*\[field\.key\]: checked\s*\}\)/, "capture toggles should write through updateSettings immediately");
 match(onboarding, /updateSettings\(\{\s*globalShortcut:\s*event\.currentTarget\.value\s*\}\)/, "shortcut input should save through updateSettings");
-include(onboarding, "settings.onboarding.feature.search.title", "onboarding feature overview should still include search");
-include(onboarding, "settings.onboarding.feature.favorite.title", "onboarding feature overview should still include favorites");
-include(onboarding, "settings.onboarding.feature.trash.title", "onboarding feature overview should still include trash");
-include(onboarding, "settings.onboarding.feature.agent.title", "onboarding feature overview should still include agent");
+include(onboardingShared, "settings.onboarding.feature.search.title", "onboarding feature overview should still include search");
+include(onboardingShared, "settings.onboarding.feature.favorite.title", "onboarding feature overview should still include favorites");
+include(onboardingShared, "settings.onboarding.feature.trash.title", "onboarding feature overview should still include trash");
+include(onboardingShared, "settings.onboarding.feature.agent.title", "onboarding feature overview should still include agent");
 
 // App shell: top navigation and first-launch onboarding handoff.
 match(topToolbar, /data-dev-probe="top-toolbar"[^>]*data-tauri-drag-region[^>]*onPointerDown=\{onDrag\}/, "top toolbar should remain the drag region");
