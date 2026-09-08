@@ -52,20 +52,15 @@ import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
+import { clampNumber, createClip, generateTags, normalizeClip, truncateText } from "./clipboard/clip-model";
 import {
   analyzeContent,
-  createTextRepresentation,
   detectKind,
   extractHashTags,
   extractUrls,
-  getPayloadKindFromFormat,
-  getPrimaryFormatForPayload,
-  makeId,
   normalizeTagList,
-  type ClipAnalysis,
   type ClipBucket,
   type ClipItem,
-  type ClipKind,
   type ClipPayloadKind,
   type ClipTypeFilter,
   type PasteMode,
@@ -252,67 +247,8 @@ const defaultSettings: AppSettings = {
 };
 
 
-function generateTags(content: string, settings: AppSettings): string[] {
-  if (settings.tagMode === "off") return [];
-  const analysis = analyzeContent(content);
-  return getTypeTags(analysis);
-}
-
-function getTypeTags(analysis: ClipAnalysis): string[] {
-  if (analysis.attachment) return [analysis.attachment.isImage ? "图片" : "资源"];
-  if (analysis.source === "github" || analysis.source === "gitlab" || analysis.source === "link") return ["链接"];
-  if (analysis.source === "command") return ["命令"];
-  if (analysis.source === "json") return ["JSON"];
-  if (analysis.source === "markdown") return ["Markdown"];
-  if (analysis.source === "code") return ["代码"];
-  return ["文本"];
-}
-function createClip(content: string, settings: AppSettings): ClipItem {
-  const now = Date.now();
-  const analysis = analyzeContent(content);
-  const kind = detectKind(content);
-  const payloadKind = kind === "attachment" ? (analysis.attachment?.isImage ? "image" : "file") : (kind as ClipPayloadKind);
-  const primaryFormat = getPrimaryFormatForPayload(payloadKind);
-  return {
-    id: makeId(),
-    content,
-    createdAt: now,
-    updatedAt: now,
-    lastSeenAt: now,
-    source: analysis.sourceName,
-    kind,
-    bucket: "history",
-    favorite: false,
-    tags: generateTags(content, settings),
-    copyCount: 0,
-    analysis,
-    payloadKind,
-    contentHash: `${payloadKind}:${now}`,
-    primaryFormat,
-    availableFormats: [primaryFormat],
-    representations: createTextRepresentation(content, payloadKind),
-    plainText: content,
-    searchText: content,
-    subKind: payloadKind === "html" ? "html" : null,
-    size: new Blob([content]).size,
-    fileTypes: null,
-    thumbnailPath: null,
-    imageFile: null,
-    isSensitive: false,
-    captureContext: {
-      schemaVersion: 1,
-      surface: "frontend",
-      sourceLabel: analysis.sourceName,
-      sourceApp: null,
-      applicationContext: null,
-      observedAt: now,
-      primaryFormat,
-      availableFormats: [primaryFormat],
-      environment: {},
-    },
-    metadata: {},
-    agentContext: {},
-  };
+function loadLocalSettings(): AppSettings {
+  return defaultSettings;
 }
 
 function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSettings {
@@ -397,95 +333,6 @@ function mergeSettings(value: Partial<AppSettings> | null | undefined): AppSetti
   };
 }
 
-function clampNumber(value: number, min: number, max: number, fallback: number) {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
-function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength - 1)}…`;
-}
-
-function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): ClipItem | null {
-  if (typeof raw.content !== "string" || !raw.content.trim()) return null;
-  const createdAt = typeof raw.createdAt === "number" ? raw.createdAt : Date.now();
-  const updatedAt = typeof raw.updatedAt === "number" ? raw.updatedAt : createdAt;
-  const lastSeenAt = typeof raw.lastSeenAt === "number" ? raw.lastSeenAt : updatedAt;
-  const analysis = analyzeContent(raw.content);
-  const detectedKind = detectKind(raw.content);
-  const validKinds: ClipKind[] = ["text", "code", "link", "markdown", "command", "attachment", "json", "chart", "table"];
-  const kind = validKinds.includes(raw.kind as ClipKind) ? (raw.kind as ClipKind) : detectedKind;
-  const payloadKind =
-    typeof raw.payloadKind === "string"
-      ? getPayloadKindFromFormat(raw.primaryFormat ?? "", raw.payloadKind as ClipPayloadKind)
-      : kind === "attachment"
-        ? (analysis.attachment?.isImage ? "image" : "file")
-        : (kind as ClipPayloadKind);
-  const primaryFormat =
-    typeof raw.primaryFormat === "string" && raw.primaryFormat
-      ? raw.primaryFormat
-      : getPrimaryFormatForPayload(payloadKind);
-  const availableFormats = Array.isArray(raw.availableFormats) && raw.availableFormats.length
-    ? raw.availableFormats.filter((format): format is string => typeof format === "string")
-    : [primaryFormat];
-  const representations = Array.isArray(raw.representations) && raw.representations.length
-    ? raw.representations
-    : createTextRepresentation(raw.content, payloadKind);
-  const tags = Array.isArray(raw.tags) ? normalizeTagList(raw.tags) : normalizeTagList(generateTags(raw.content, settings));
-  return {
-    id: typeof raw.id === "string" ? raw.id : makeId(),
-    content: raw.content,
-    createdAt,
-    updatedAt,
-    lastSeenAt,
-    lastCopiedAt: typeof raw.lastCopiedAt === "number" ? raw.lastCopiedAt : undefined,
-    deletedAt: typeof raw.deletedAt === "number" ? raw.deletedAt : null,
-    source: analysis.sourceName,
-    kind,
-    bucket:
-      raw.bucket === "archive" || raw.bucket === "snippet" || raw.bucket === "history"
-        ? raw.bucket
-        : "history",
-    favorite: Boolean(raw.favorite),
-    tags,
-    copyCount: typeof raw.copyCount === "number" ? raw.copyCount : 0,
-    analysis,
-    payloadKind,
-    contentHash: typeof raw.contentHash === "string" ? raw.contentHash : `${payloadKind}:${raw.id ?? createdAt}`,
-    primaryFormat,
-    availableFormats,
-    representations,
-    plainText: typeof raw.plainText === "string" ? raw.plainText : raw.content,
-    searchText: typeof raw.searchText === "string" ? raw.searchText : raw.content,
-    subKind: typeof raw.subKind === "string" ? raw.subKind : null,
-    width: typeof raw.width === "number" ? raw.width : null,
-    height: typeof raw.height === "number" ? raw.height : null,
-    size: typeof raw.size === "number" ? raw.size : new Blob([raw.content]).size,
-    fileTypes: typeof raw.fileTypes === "string" ? raw.fileTypes : null,
-    thumbnailPath: typeof raw.thumbnailPath === "string" ? raw.thumbnailPath : null,
-    imageFile: typeof raw.imageFile === "string" ? raw.imageFile : null,
-    isSensitive: Boolean(raw.isSensitive),
-    captureContext: raw.captureContext ?? {
-      schemaVersion: 1,
-      surface: "clipboard",
-      sourceLabel: raw.source ?? analysis.sourceName,
-      sourceApp: null,
-      applicationContext: null,
-      observedAt: lastSeenAt,
-      primaryFormat,
-      availableFormats,
-      environment: {},
-    },
-    metadata: raw.metadata && typeof raw.metadata === "object" ? raw.metadata : {},
-    agentContext: raw.agentContext && typeof raw.agentContext === "object" ? raw.agentContext : {},
-    sourceApp: raw.sourceApp,
-  };
-}
-
-function loadLocalSettings(): AppSettings {
-  return defaultSettings;
-}
 
 function retagClips(clips: ClipItem[], settings: AppSettings) {
   return clips.map((clip) => {
