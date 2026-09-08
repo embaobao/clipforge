@@ -51,6 +51,7 @@ import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
+import { matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
 import {
   analyzeContent,
   createTextRepresentation,
@@ -99,7 +100,7 @@ const usePanelUiStore = create<PanelUiState>()((set) => ({
   setClosing: (isClosing) => set((state) => (state.isClosing === isClosing ? state : { isClosing })),
 }));
 
-type TagRule = {
+export type TagRule = {
   id: string;
   label: string;
   query: string;
@@ -266,92 +267,6 @@ function getTypeTags(analysis: ClipAnalysis): string[] {
   if (analysis.source === "code") return ["代码"];
   return ["文本"];
 }
-
-
-function getSearchHaystack(item: ClipItem) {
-  const applicationContext = item.captureContext?.applicationContext;
-  return [
-    item.content,
-    item.source,
-    item.kind,
-    item.bucket,
-    item.analysis.title,
-    item.analysis.summary,
-    item.analysis.host,
-    item.tags.join(" "),
-    item.sourceApp?.name,
-    applicationContext && typeof applicationContext === "object" ? JSON.stringify(applicationContext) : "",
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-function fuzzyIncludes(haystack: string, needle: string) {
-  if (!needle) return true;
-  let offset = 0;
-  for (const char of needle) {
-    const found = haystack.indexOf(char, offset);
-    if (found < 0) return false;
-    offset = found + 1;
-  }
-  return true;
-}
-
-function matchesSearchTerm(item: ClipItem, rawTerm: string, settings: AppSettings) {
-  const term = normalizeSearch(rawTerm);
-  if (!term) return true;
-  const haystack = getSearchHaystack(item);
-  if (haystack.includes(term)) return true;
-  if (settings.pinyinSearchEnabled && /[a-z]/i.test(term)) {
-    const textFields = [
-      item.content,
-      item.analysis.title,
-      item.analysis.summary,
-      item.tags.join(" "),
-    ].filter(Boolean);
-    if (textFields.some((text) => matchPinyin(text, term, { precision: "any", space: "ignore" }) !== null)) {
-      return true;
-    }
-  }
-  return settings.fuzzySearchEnabled ? fuzzyIncludes(haystack, term) : false;
-}
-
-function matchesSavedSearch(item: ClipItem, rule: TagRule, settings: AppSettings) {
-  const terms = rule.query
-    .split(/[\s,，]+/)
-    .map((term) => term.trim())
-    .filter(Boolean);
-  if (!rule.label.trim() || !terms.length) return false;
-  return terms.some((term) => matchesSearchTerm(item, term, settings));
-}
-
-function removeSearchFilterToken(rawQuery: string, label: string) {
-  const normalizedLabel = normalizeSearch(label);
-  const labelValue = label.replace(/^#/, "").replace(/^[^:]+:/, "");
-  const normalizedValue = normalizeSearch(labelValue);
-  return rawQuery
-    .trim()
-    .split(/\s+/)
-    .filter((token) => {
-      const normalizedToken = normalizeSearch(token);
-      if (normalizedToken === normalizedLabel) return false;
-      if (normalizedLabel.startsWith("#")) {
-        return normalizedToken !== `#${normalizedValue}` && normalizedToken !== `tag:${normalizedValue}`;
-      }
-      if (normalizedLabel.startsWith("type:")) {
-        return normalizedToken !== normalizedLabel && normalizedToken !== `@${normalizedValue}`;
-      }
-      if (normalizedLabel.startsWith("@") && normalizedLabel.endsWith(":")) {
-        return normalizedToken !== normalizedLabel;
-      }
-      if (normalizedLabel.startsWith("kind:") || normalizedLabel.startsWith("file:") || normalizedLabel.startsWith("bucket:")) {
-        return normalizedToken !== normalizedLabel;
-      }
-      return true;
-    })
-    .join(" ");
-}
-
 function createClip(content: string, settings: AppSettings): ClipItem {
   const now = Date.now();
   const analysis = analyzeContent(content);
