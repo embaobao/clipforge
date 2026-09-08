@@ -19,7 +19,6 @@ import { TrashContextMenu } from "./clipboard/components/TrashContextMenu";
 import {
   getFilePathsFromClip,
   getShortcutModLabel,
-  middleEllipsis,
 } from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -68,6 +67,33 @@ import {
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
 import { analyzeClipboard, openDshWindow, type DshAnalyzeResult } from "./agent/dsh-analysis";
+import {
+  analyzeContent,
+  createTextRepresentation,
+  detectKind,
+  extractHashTags,
+  extractUrls,
+  getPayloadKindFromFormat,
+  getPrimaryFormatForPayload,
+  makeId,
+  normalizeTagList,
+  type ClipAnalysis,
+  type ClipBucket,
+  type ClipItem,
+  type ClipKind,
+  type ClipPayloadKind,
+  type ClipTypeFilter,
+  type PasteMode,
+} from "./clipboard/clip-model";
+
+export { extractHashTags, normalizeTagList } from "./clipboard/clip-model";
+export type {
+  ClipCaptureContext,
+  ClipItem,
+  ClipPayloadKind,
+  ClipboardRepresentation,
+} from "./clipboard/clip-model";
+
 export type PanelSurface = "clipboard" | "dsh";
 
 // 模块级：DSH 只读快速分析入口（详情页与右键菜单共用，不在任何组件作用域内）
@@ -83,18 +109,6 @@ async function analyzeClipboardWithDsh(item: ClipItem): Promise<DshAnalyzeResult
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
 
-type ClipKind = "text" | "code" | "link" | "markdown" | "command" | "attachment" | "json" | "chart" | "table";
-export type ClipPayloadKind = "text" | "link" | "markdown" | "code" | "command" | "html" | "rtf" | "file" | "image" | "json" | "chart" | "table";
-type ClipTypeFilter = "all" | ClipPayloadKind;
-type ClipBucket = "history" | "archive" | "snippet";
-type PasteMode = "rich" | "plain" | "filesAsPaths";
-
-type SourceAppInfo = {
-  name: string;
-  bundleId: string;
-  executablePath: string;
-  iconBase64?: string;
-};
 export type ViewKey = "history" | "favorites" | "trash";
 
 type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
@@ -102,96 +116,6 @@ type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
 
-export type ClipboardRepresentation = {
-  format: "text/plain" | "text/html" | "text/rtf" | "image/png" | "application/file-list" | "text/uri-list" | string;
-  storage: "inline" | "file" | "derived" | string;
-  content?: string | null;
-  fileName?: string | null;
-  size?: number | null;
-  hash?: string | null;
-  preferred?: boolean;
-};
-
-export type ClipCaptureContext = {
-  schemaVersion: number;
-  surface: string;
-  sourceLabel: string;
-  sourceApp?: Record<string, unknown> | null;
-  applicationContext?: Record<string, unknown> | null;
-  observedAt: number;
-  primaryFormat: string;
-  availableFormats: string[];
-  environment: Record<string, unknown>;
-};
-
-type ContentSource =
-  | "github"
-  | "gitlab"
-  | "command"
-  | "markdown"
-  | "code"
-  | "json"
-  | "table"
-  | "image"
-  | "file"
-  | "link"
-  | "text";
-
-type AttachmentInfo = {
-  name: string;
-  description: string;
-  target: string;
-  targetType: "url" | "path";
-  isImage: boolean;
-};
-
-type ClipAnalysis = {
-  source: ContentSource;
-  sourceName: string;
-  badge: string;
-  title: string;
-  summary: string;
-  url?: string;
-  host?: string;
-  isMarkdown: boolean;
-  attachment?: AttachmentInfo;
-};
-
-export type ClipItem = {
-  id: string;
-  content: string;
-  createdAt: number;
-  updatedAt: number;
-  lastSeenAt: number;
-  lastCopiedAt?: number;
-  source: string;
-  kind: ClipKind;
-  bucket: ClipBucket;
-  favorite: boolean;
-  tags: string[];
-  copyCount: number;
-  analysis: ClipAnalysis;
-  payloadKind: ClipPayloadKind;
-  contentHash: string;
-  primaryFormat: string;
-  availableFormats: string[];
-  representations: ClipboardRepresentation[];
-  plainText: string;
-  searchText?: string | null;
-  subKind?: string | null;
-  width?: number | null;
-  height?: number | null;
-  size?: number | null;
-  fileTypes?: string | null;
-  thumbnailPath?: string | null;
-  imageFile?: string | null;
-  isSensitive?: boolean;
-  captureContext: ClipCaptureContext;
-  metadata: Record<string, unknown>;
-  agentContext: Record<string, unknown>;
-  sourceApp?: SourceAppInfo;
-  deletedAt?: number | null;
-};
 
 type PanelUiState = {
   isClosing: boolean;
@@ -387,294 +311,6 @@ const defaultSettings: AppSettings = {
   textMaxSizeMb: 5,
 };
 
-function makeId() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-export function normalizeTagList(values: string[]): string[] {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  values.forEach((value) => {
-    const tag = normalizeTagName(value);
-    if (!tag) return;
-    const key = tag.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    tags.push(tag);
-  });
-  return tags.slice(0, 12);
-}
-
-export function extractHashTags(content: string): string[] {
-  return normalizeTagList(
-    Array.from(content.matchAll(/(^|[\s([{])#([\p{L}\p{N}_-]{1,32})/gu)).map((match) => match[2]),
-  );
-}
-
-function extractFirstUrl(content: string) {
-  const match = content.match(/https?:\/\/[^\s<>"')\]]+/i);
-  return match?.[0];
-}
-
-function extractUrls(content: string) {
-  return Array.from(new Set(content.match(/https?:\/\/[^\s<>"')\]]+/gi) ?? []));
-}
-
-const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "svg"]);
-const resourceExtensions = new Set([
-  ...imageExtensions,
-  "pdf",
-  "zip",
-  "txt",
-  "md",
-  "json",
-  "json5",
-  "csv",
-  "doc",
-  "docx",
-  "xls",
-  "xlsx",
-  "ppt",
-  "pptx",
-]);
-
-function getExtension(value: string) {
-  const clean = value.split(/[?#]/)[0] ?? value;
-  const name = clean.split(/[\\/]/).pop() ?? clean;
-  const match = name.match(/\.([a-z0-9]{2,8})$/i);
-  return match?.[1]?.toLowerCase() ?? "";
-}
-
-function getResourceName(value: string) {
-  try {
-    if (/^https?:\/\//i.test(value)) {
-      const url = new URL(value);
-      return decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() || url.hostname);
-    }
-  } catch {
-    return value;
-  }
-  return value.replace(/^file:\/\//, "").split(/[\\/]/).filter(Boolean).pop() || value;
-}
-
-function detectAttachment(content: string): AttachmentInfo | null {
-  const trimmed = content.trim();
-  const singleLine = trimmed.split(/\s+/)[0] ?? trimmed;
-  const url = extractFirstUrl(trimmed);
-  const target = url ?? singleLine;
-  const ext = getExtension(target);
-  if (!resourceExtensions.has(ext)) return null;
-  const isImage = imageExtensions.has(ext);
-  const targetType = /^https?:\/\//i.test(target) ? "url" : "path";
-  const name = getResourceName(target);
-  return {
-    name,
-    description: `${ext.toUpperCase()} · ${targetType === "url" ? "链接资源" : "本地资源"}`,
-    target,
-    targetType,
-    isImage,
-  };
-}
-
-function isCommandLike(content: string) {
-  const trimmed = content.trim();
-  if (!trimmed || /[\u4e00-\u9fa5]/.test(trimmed)) return false;
-  if (/^\$\s+\S+/.test(trimmed)) return true;
-  if (trimmed.includes("\n")) return false;
-  const [command = "", firstArg = ""] = trimmed.split(/\s+/);
-  const commandSet = new Set([
-    "pnpm",
-    "npm",
-    "npx",
-    "yarn",
-    "bun",
-    "cargo",
-    "git",
-    "gh",
-    "brew",
-    "tauri",
-    "node",
-    "python",
-    "python3",
-    "pip",
-    "pip3",
-    "curl",
-    "ssh",
-  ]);
-  if (!commandSet.has(command)) return false;
-  if (!firstArg) return false;
-  return /^[-./:@\w=]+$/.test(firstArg);
-}
-
-function isCodeLike(content: string) {
-  const trimmed = content.trim();
-  return (
-    /(^|\n)\s*(const|let|var|fn|func|class|import|export|def|type|interface|pub)\s/.test(
-      trimmed,
-    ) ||
-    trimmed.includes("=>") ||
-    trimmed.includes("```")
-  );
-}
-
-function isMarkdownLike(content: string) {
-  const trimmed = content.trim();
-  return (
-    /^#{1,6}\s+\S/m.test(trimmed) ||
-    /^[-*]\s+\S/m.test(trimmed) ||
-    /^\d+\.\s+\S/m.test(trimmed) ||
-    /\[[^\]]+\]\([^)]+\)/.test(trimmed) ||
-    /^>\s+\S/m.test(trimmed) ||
-    /^\|.+\|$/m.test(trimmed)
-  );
-}
-
-function isJsonLike(content: string) {
-  const trimmed = content.trim();
-  return (
-    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-    (trimmed.startsWith("[") && trimmed.endsWith("]"))
-  );
-}
-
-function parseUrlSummary(urlValue: string) {
-  try {
-    const url = new URL(urlValue);
-    const host = url.hostname.replace(/^www\./, "");
-    const parts = url.pathname.split("/").filter(Boolean);
-    if (host === "github.com" && parts.length >= 2) {
-      return {
-        source: "github" as ContentSource,
-        sourceName: "GitHub",
-        badge: "GH",
-        title: `${parts[0]}/${parts[1]}`,
-        summary: parts.slice(2).join("/") || host,
-        host,
-      };
-    }
-    if (host === "gitlab.com" && parts.length >= 2) {
-      return {
-        source: "gitlab" as ContentSource,
-        sourceName: "GitLab",
-        badge: "GL",
-        title: `${parts[0]}/${parts[1]}`,
-        summary: parts.slice(2).join("/") || host,
-        host,
-      };
-    }
-    return {
-      source: "link" as ContentSource,
-      sourceName: host,
-      badge: "URL",
-      title: host,
-      summary: url.pathname === "/" ? url.origin : `${url.pathname}${url.search}`,
-      host,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function analyzeContent(content: string): ClipAnalysis {
-  const normalized = content.replace(/\s+/g, " ").trim();
-  const firstLine = content.trim().split(/\r?\n/)[0]?.trim() || "";
-  const attachment = detectAttachment(content);
-  if (attachment) {
-    return {
-      source: attachment.isImage ? "image" : "file",
-      sourceName: attachment.isImage ? "Image" : "File",
-      badge: attachment.isImage ? "IMG" : "FILE",
-      title: attachment.name,
-      summary: attachment.description,
-      url: attachment.targetType === "url" ? attachment.target : undefined,
-      isMarkdown: false,
-      attachment,
-    };
-  }
-  const url = extractFirstUrl(content);
-  if (url) {
-    const summary = parseUrlSummary(url);
-    if (summary) {
-      return {
-        ...summary,
-        url,
-        isMarkdown: isMarkdownLike(content),
-      };
-    }
-  }
-  if (isCommandLike(content)) {
-    return {
-      source: "command",
-      sourceName: "Command",
-      badge: "$",
-      title: content.trim().split(/\s+/).slice(0, 3).join(" "),
-      summary: middleEllipsis(content, 44, 10),
-      isMarkdown: false,
-    };
-  }
-  if (isJsonLike(content)) {
-    const isArray = content.trimStart().startsWith("[");
-    return {
-      source: "json",
-      sourceName: "JSON",
-      badge: "JSON",
-      title: isArray ? "JSON Array" : "JSON Object",
-      summary: middleEllipsis(normalized, 56, 12),
-      isMarkdown: false,
-    };
-  }
-  if (isMarkdownLike(content)) {
-    const titleMatch = content.match(/^#{1,6}\s+(.+)$/m);
-    const title = titleMatch ? titleMatch[1].trim().slice(0, 60) : firstLine.slice(0, 60) || "Markdown";
-    return {
-      source: "markdown",
-      sourceName: "Markdown",
-      badge: "MD",
-      title,
-      summary: middleEllipsis(normalized, 56, 12),
-      isMarkdown: true,
-    };
-  }
-  if (isCodeLike(content)) {
-    const funcMatch = firstLine.match(/^(?:export\s+)?(?:async\s+)?(?:function|const|let|var)\s+(\w+)/);
-    const classNameMatch = firstLine.match(/^(?:export\s+)?class\s+(\w+)/);
-    const title = funcMatch 
-      ? `${funcMatch[1]}()` 
-      : classNameMatch 
-        ? `${classNameMatch[1]}` 
-        : firstLine.slice(0, 50) || "Code";
-    return {
-      source: "code",
-      sourceName: "Code",
-      badge: "{}",
-      title,
-      summary: middleEllipsis(normalized, 56, 12),
-      isMarkdown: false,
-    };
-  }
-  const textTitle = firstLine.length > 0 ? firstLine.slice(0, 60) : "空内容";
-  return {
-    source: "text",
-    sourceName: "Text",
-    badge: "T",
-    title: textTitle,
-    summary: content.length > firstLine.length ? middleEllipsis(content, 56, 12) : "",
-    isMarkdown: false,
-  };
-}
-
-function detectKind(content: string): ClipKind {
-  const analysis = analyzeContent(content);
-  if (analysis.attachment) return "attachment";
-  if (analysis.source === "github" || analysis.source === "gitlab" || analysis.source === "link") {
-    return "link";
-  }
-  if (analysis.source === "command") return "command";
-  if (analysis.source === "json") return "json";
-  if (analysis.source === "markdown") return "markdown";
-  if (analysis.source === "code") return "code";
-  return "text";
-}
 
 function generateTags(content: string, settings: AppSettings): string[] {
   if (settings.tagMode === "off") return [];
@@ -692,37 +328,6 @@ function getTypeTags(analysis: ClipAnalysis): string[] {
   return ["文本"];
 }
 
-function getPayloadKindFromFormat(primaryFormat: string, fallback: ClipPayloadKind): ClipPayloadKind {
-  if (primaryFormat === "image/png") return "image";
-  if (primaryFormat === "application/file-list") return "file";
-  if (primaryFormat === "text/html") return "html";
-  if (primaryFormat === "text/rtf") return "rtf";
-  if (primaryFormat === "text/uri-list") return "link";
-  return fallback;
-}
-
-function getPrimaryFormatForPayload(payloadKind: ClipPayloadKind) {
-  if (payloadKind === "image") return "image/png";
-  if (payloadKind === "file") return "application/file-list";
-  if (payloadKind === "html") return "text/html";
-  if (payloadKind === "rtf") return "text/rtf";
-  return "text/plain";
-}
-
-function createTextRepresentation(content: string, payloadKind: ClipPayloadKind): ClipboardRepresentation[] {
-  return [
-    {
-      format: getPrimaryFormatForPayload(payloadKind),
-      storage: "inline",
-      content,
-      size: new Blob([content]).size,
-      preferred: true,
-    },
-    ...(payloadKind === "html"
-      ? [{ format: "text/plain", storage: "derived", content: content.replace(/<[^>]+>/g, " "), preferred: false }]
-      : []),
-  ];
-}
 
 function getSearchHaystack(item: ClipItem) {
   const applicationContext = item.captureContext?.applicationContext;
