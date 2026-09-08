@@ -50,6 +50,7 @@ import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
 import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
+import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import {
   analyzeContent,
   createTextRepresentation,
@@ -933,66 +934,13 @@ function ClipForgeApp() {
     };
   }, []);
 
-  useEffect(() => {
-    if (isSettingsWindow) return;
-    const appWindow = getCurrentWindow();
-    let hideTimer: number | null = null;
-    let closeTimer: number | null = null;
-    const cancelHide = () => {
-      if (hideTimer) window.clearTimeout(hideTimer);
-      if (closeTimer) window.clearTimeout(closeTimer);
-      hideTimer = null;
-      closeTimer = null;
-      setPanelClosing(false);
-    };
-    appWindow
-      .onFocusChanged(({ payload: focused }) => {
-        if (focused) {
-          // 失焦淡出途中焦点又回来：恢复可见，避免停在透明态。
-          setIsPanelEntering(true);
-          blurHideInFlightRef.current = false;
-          cancelHide();
-          return;
-        }
-        if (Date.now() < panelFocusGraceUntilRef.current) {
-          logAppError("info", "panel-pin: blur ignored during focus grace window");
-          return;
-        }
-        if (blurHideInFlightRef.current) {
-          logAppError("info", "panel-pin: blur ignored, hide already in flight");
-          return;
-        }
-        cancelHide();
-        blurHideInFlightRef.current = true;
-        logAppError("info", "panel-pin: blur detected, scheduling hide in 60ms");
-        hideTimer = window.setTimeout(async () => {
-          // EcoPaste 式：隐藏决策以 Rust 的 PANEL_PINNED 为唯一权威源。
-          // 前端 settingsRef 可能与 Rust 不同步（重启 / 跨窗口写入），且 appWindow.hide()
-          // 直连 Tauri 绕过 Rust 守卫——故失焦隐藏前必须查 Rust 是否固定。
-          let pinned = false;
-          try {
-            pinned = await invoke<boolean>("is_panel_pinned_command");
-          } catch (error) {
-            logAppError("warn", "is_panel_pinned_command failed, assume not pinned", String(error));
-          }
-          if (pinned) {
-            blurHideInFlightRef.current = false;
-            logAppError("info", "panel-pin: Rust says pinned, blur hide cancelled");
-            return;
-          }
-          setIsPanelEntering(false);
-          setPanelClosing(true);
-          closeTimer = window.setTimeout(() => {
-            logAppError("info", "panel-pin: hide executing now");
-            invoke("hide_quick_panel_command")
-              .catch((error) => logAppError("warn", "Hide quick panel failed", String(error)))
-              .finally(() => setPanelClosing(false));
-          }, 180);
-        }, 60);
-      })
-      .catch((error) => logAppError("warn", "Register focus listener failed", String(error)));
-    return cancelHide;
-  }, [isSettingsWindow, setPanelClosing]);
+  usePanelBlurHide({
+    blurHideInFlightRef,
+    enabled: !isSettingsWindow,
+    panelFocusGraceUntilRef,
+    setIsPanelEntering,
+    setPanelClosing,
+  });
 
 
   useEffect(() => {
