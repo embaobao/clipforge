@@ -19,7 +19,6 @@ import {
   formatCommandError,
   normalizeLanguagePreference,
   resolveAppLocale,
-  setDocumentLocale,
   t,
   type AppLanguagePreference,
   type TranslationKey,
@@ -51,6 +50,7 @@ import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
+import { useSettingsSync } from "./clipboard/use-settings-sync";
 import {
   analyzeContent,
   createTextRepresentation,
@@ -147,11 +147,6 @@ export type AppSettings = {
   captureApplicationContext: boolean;
   imageMaxSizeMb: number;
   textMaxSizeMb: number;
-};
-
-type UserSettingsPayload = {
-  path: string;
-  settings: Partial<AppSettings>;
 };
 
 type DbInitPayload = {
@@ -808,9 +803,16 @@ function ClipForgeApp() {
   const searchRequestRef = useRef<SearchClipsRequest>({ bucket: "all", limit: 200 });
   const shellRef = useRef<HTMLElement | null>(null);
   const settingsRef = useRef<AppSettings>(settings);
-  const skipNextSettingsPersistRef = useRef(false);
-  const configReadyRef = useRef(false);
-  const configWriteTimerRef = useRef<number | null>(null);
+
+  useSettingsSync({
+    settings,
+    setSettings,
+    setClips,
+    settingsRef,
+    isSettingsWindow,
+    mergeSettings,
+    retagClips,
+  });
   const captureInFlightRef = useRef(false);
   const lastSeenClipboard = useRef("");
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -863,30 +865,6 @@ function ClipForgeApp() {
     setScrollOffset(top);
     setSearchCompact(top > 18);
   }, []);
-
-  useEffect(() => {
-    settingsRef.current = settings;
-    const locale = resolveAppLocale(settings.language);
-    setDocumentLocale(locale);
-    window.document.title = t(locale, "window.main.title");
-    void getCurrentWindow().setTitle(t(locale, "window.main.title")).catch((error) =>
-      logAppError("warn", "Set main window title failed", String(error)),
-    );
-    if (skipNextSettingsPersistRef.current) {
-      skipNextSettingsPersistRef.current = false;
-      return;
-    }
-    if (configReadyRef.current) {
-      if (configWriteTimerRef.current) window.clearTimeout(configWriteTimerRef.current);
-      configWriteTimerRef.current = window.setTimeout(() => {
-        invoke<void>("write_user_settings", { settings })
-          .catch((error) => logAppError("warn", "Sync user settings failed", String(error)));
-      }, 220);
-    }
-    return () => {
-      if (configWriteTimerRef.current) window.clearTimeout(configWriteTimerRef.current);
-    };
-  }, [settings]);
 
 
   useEffect(() => {
@@ -966,26 +944,6 @@ function ClipForgeApp() {
         if (cancelled) return;
         logAppError("error", "Initialize clip database failed", String(error));
         setNativeStatus(tr("main.status.databaseInitFailed"));
-      });
-    invoke<UserSettingsPayload>("read_user_settings")
-      .then((payload) => {
-        if (cancelled) return;
-        const merged = mergeSettings(payload?.settings);
-        skipNextSettingsPersistRef.current = true;
-        configReadyRef.current = true;
-        settingsRef.current = merged;
-        setSettings(merged);
-        if (!isSettingsWindow) {
-          setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
-          logAppError("info", "onboarding: startup settings loaded", {
-            onboardingCompleted: merged.onboardingCompleted,
-            onboardingShownAt: merged.onboardingShownAt,
-          });
-        }
-      })
-      .catch(() => {
-        if (cancelled) return;
-        configReadyRef.current = true;
       });
     return () => {
       cancelled = true;
