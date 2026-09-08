@@ -92,7 +92,7 @@
 1. **App.tsx 第二刀 ✅（夜间批次 6，`605de5a`）**：GlassSearchBar（192 行，含 SearchAutocomplete）/ VirtualList（181 行，ROW_HEIGHT/OVERSCAN 随迁）/ TrashPanel（132 行）/ QuickPastePanel（199 行）切至 `src/clipboard/components/`，panel-shared.ts（24 行）承载 logAppError + analyzeClipboardWithDsh；App.tsx 3658 → **2967 行**，新增导出 PanelDensity/AppSettings。
 2. **settings.tsx 第一刀 ✅（夜间批次 7，`bb10ec7`）**：切出 `src/settings/settings-model.ts`（347 行：AppSettings/各 payload 契约/导航常量/getInitialNavigationFromUrl），settings.tsx 1864 → **1566 行**；safeInvokeUpdateCheck/UpdateCheckState 本地保留（verify-runtime-boundaries 断言锚定）；verify-settings-surface 三条导航常量断言已随迁 model 文件。
 3. **settings.tsx 第二刀（下一步）**：主体 SettingsApp（约 1170 行）按 section 渲染函数切片（display/capture/storage/mcp-agent/update/tag-rules 各 section 的 JSX 块切为 `src/settings/sections/*.tsx`），每切一个跑全套。
-4. **App.tsx 主体（批次 11 后 2664 行）**：叶子切出进行中——批次 8 环境 hook、批次 9 失焦隐藏、批次 10 useClipboardList、批次 11 useSettingsSync ✅（`f8ea4cb`：持久化防抖 + read_user_settings，三个私有 refs 随迁，mergeSettings/retagClips 参数注入）。下一批候选：全局快捷键/托盘 effect 群；search 键盘导航与建议 handler 群（GlassSearchBar 的 props 来源，最大块）；搜索过滤纯函数域（getSearchHaystack/fuzzyIncludes/matchesSearchTerm 等 ~90 行，纯平移零风险，可先切）。每切一个跑全套。
+4. **App.tsx 主体（批次 12 后 2579 行）**：叶子切出进行中——批次 8-12 已完成环境 hook / 失焦隐藏 / useClipboardList / useSettingsSync / clip-search 纯函数域（`7b1da20`）。下一批候选：createClip/generateTags/getTypeTags/truncateText/normalizeClip 纯函数群随 clip-model 合并（normalizeClip 依赖 generateTags→AppSettings.tagMode，需把这几个函数整体迁入 clip-model 并注入 settings 类型，或 App 导出 AppSettings）；全局快捷键/托盘 effect 群；search 键盘导航 handler 群（最大块）。每切一个跑全套。
 5. **lib.rs（14284 行）**：按 codebase-modularity 提案顺序拆 settings/agent/mcp 模块（Rust 端改动必须 `cargo check` + `pnpm tauri dev` 冒烟）。
 
 ## 待办事项（按优先级，批次 5 后更新）
