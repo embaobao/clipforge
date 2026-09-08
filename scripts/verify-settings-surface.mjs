@@ -9,6 +9,7 @@ const files = {
   onboarding: "src/onboarding/components/OnboardingWizard.tsx",
   onboardingShared: "src/onboarding/components/onboarding-wizard-shared.ts",
   settings: "src/settings.tsx",
+  settingsModel: "src/settings/settings-model.ts",
   controls: "src/settings/controls.tsx",
   settingsShell: "src/settings/components/SettingsShell.tsx",
   codeTabs: "src/settings/components/SettingsCodeTabs.tsx",
@@ -61,6 +62,7 @@ const topToolbar = read(files.topToolbar);
 const onboarding = read(files.onboarding);
 const onboardingShared = read(files.onboardingShared);
 const settings = read(files.settings);
+const settingsModel = read(files.settingsModel);
 const controls = read(files.controls);
 const settingsShell = read(files.settingsShell);
 const codeTabs = read(files.codeTabs);
@@ -119,9 +121,9 @@ exclude(app, "main.dock.onboarding", "top nav menu should not expose an onboardi
 include(app, 'setActiveSurface("clipboard");', "top view changes should return to clipboard surface");
 
 // Settings surface: section routing, re-open onboarding, save path, copy path, tooltip and diagnostics.
-include(settings, 'const SECTION_LEGACY_ALIASES: Record<string, { section: SettingsSectionId; tab: SettingsTabId }> = {', "settings legacy aliases should remain explicit");
-include(settings, 'onboarding: { section: "shortcut-language", tab: "onboarding" },', "settings should still deep-link onboarding");
-include(settings, 'onboarding: "settings.tab.onboarding"', "settings should keep the onboarding tab label");
+include(settingsModel, 'const SECTION_LEGACY_ALIASES: Record<string, { section: SettingsSectionId; tab: SettingsTabId }> = {', "settings legacy aliases should remain explicit");
+include(settingsModel, 'onboarding: { section: "shortcut-language", tab: "onboarding" },', "settings should still deep-link onboarding");
+include(settingsModel, 'onboarding: "settings.tab.onboarding"', "settings should keep the onboarding tab label");
 include(settings, 'onboarding: (', "settings should still render onboarding inside shortcut-language tabs");
 include(settings, "<OnboardingEntryCard", "settings should still mount the onboarding entry card");
 include(settings, "<SettingsShell", "settings should still render the shell");
