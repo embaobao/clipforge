@@ -4,7 +4,6 @@
   "exempt": [
     { "path": "src/App.tsx", "target": 500, "track": "clipboard-panel-split" },
     { "path": "src/settings.tsx", "target": 500, "track": "settings-interface-redesign" },
-    { "path": "src/services/contracts.ts", "target": 500, "track": "contracts-split" },
     { "path": "src-tauri/src/lib.rs", "target": 500, "track": "lib-rs-module-split" }
   ]
 }
