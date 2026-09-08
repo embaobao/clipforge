@@ -90,9 +90,10 @@
 ### 剩余拆分方案（夜间接力，按序执行）
 
 1. **App.tsx 第二刀 ✅（夜间批次 6，`605de5a`）**：GlassSearchBar（192 行，含 SearchAutocomplete）/ VirtualList（181 行，ROW_HEIGHT/OVERSCAN 随迁）/ TrashPanel（132 行）/ QuickPastePanel（199 行）切至 `src/clipboard/components/`，panel-shared.ts（24 行）承载 logAppError + analyzeClipboardWithDsh；App.tsx 3658 → **2967 行**，新增导出 PanelDensity/AppSettings。
-2. **App.tsx 主体（约 2900 行 ClipForgeApp，下一步）**：按 hook 域拆——`useClipboardList`（查询/虚拟列表状态）、`useCaptureEvents`（capture/db-init/权限监听）、`useCopyPaste`（写回抑制/粘贴）、`usePanelShortcuts`（快捷键/托盘）、`useSettingsSync`。每拆一个 hook 跑全套验证；注意 verify-runtime-boundaries 对 App.tsx 的 PanelContentBoundary/runPrimaryOpenAction/resolvePrimaryPluginAction 断言、verify-hot-path 的否定断言仍指向 src/App.tsx 路径。
-3. **settings.tsx（1865 行）**：按现有 `src/settings/` 结构把 section 面板逐个切出（SettingsShell 已存在，主文件剩 catalog + 状态 + section 组件）。
-4. **lib.rs（14284 行）**：按 codebase-modularity 提案顺序拆 settings/agent/mcp 模块（Rust 端改动必须 `cargo check` + `pnpm tauri dev` 冒烟）。
+2. **settings.tsx 第一刀 ✅（夜间批次 7，`bb10ec7`）**：切出 `src/settings/settings-model.ts`（347 行：AppSettings/各 payload 契约/导航常量/getInitialNavigationFromUrl），settings.tsx 1864 → **1566 行**；safeInvokeUpdateCheck/UpdateCheckState 本地保留（verify-runtime-boundaries 断言锚定）；verify-settings-surface 三条导航常量断言已随迁 model 文件。
+3. **settings.tsx 第二刀（下一步）**：主体 SettingsApp（约 1170 行）按 section 渲染函数切片（display/capture/storage/mcp-agent/update/tag-rules 各 section 的 JSX 块切为 `src/settings/sections/*.tsx`），每切一个跑全套。
+4. **App.tsx 主体（约 2900 行 ClipForgeApp）**：批次 7 摸底结论——showQuickPanel/captureClipboard 等热路径回调与十余个 state/ref 深耦合（showQuickPanel 一次重置 10 个状态），整块 hook 化风险高。改为「叶子 effect 逐个切」：可安全切出的有——全局错误监听（window.error/unhandledrejection/environment 日志，仅依赖 logAppError）、accessibility-first-prompt 监听 + 权限检查、activeView localStorage 持久化。settingsRef/skipNextSettingsPersistRef/configReadyRef 被 settings 持久化 effect 与 read_user_settings 回调共享，不可单独挪。每切一个跑全套。
+5. **lib.rs（14284 行）**：按 codebase-modularity 提案顺序拆 settings/agent/mcp 模块（Rust 端改动必须 `cargo check` + `pnpm tauri dev` 冒烟）。
 
 ## 待办事项（按优先级，批次 5 后更新）
 
