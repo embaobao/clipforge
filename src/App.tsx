@@ -1,21 +1,8 @@
-import {
-  Clipboard,
-  Copy,
-  ExternalLink,
-  FileJson,
-  Search,
-  X,
-} from "lucide-react";
-import { ClipboardEmptyState } from "./clipboard/components/ClipboardEmptyState";
-import { ClipboardRow } from "./clipboard/components/ClipboardRow";
-import { ClipContextMenu } from "./clipboard/components/ClipContextMenu";
+import { Clipboard, Copy, ExternalLink, FileJson } from "lucide-react";
 import { PanelStatusFeedback } from "./clipboard/components/PanelStatusFeedback";
 import { TopToolbar } from "./clipboard/components/TopToolbar";
 import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
-import { QuickPreviewCard } from "./clipboard/components/QuickPreviewCard";
 import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
-import { TrashRow } from "./clipboard/components/TrashRow";
-import { TrashContextMenu } from "./clipboard/components/TrashContextMenu";
 import {
   getFilePathsFromClip,
   getShortcutModLabel,
@@ -24,19 +11,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
 import { toast } from "sonner";
-import {
-  autoUpdate,
-  flip,
-  FloatingPortal,
-  offset as floatingOffset,
-  shift,
-  useFloating,
-} from "@floating-ui/react";
-import type { ErrorInfo, MouseEvent, PointerEvent, ReactNode, RefObject, UIEvent } from "react";
+import type { ErrorInfo, PointerEvent, ReactNode, UIEvent } from "react";
 import {
   formatCommandError,
   normalizeLanguagePreference,
@@ -54,7 +33,6 @@ import {
   normalizeSearch,
   normalizeTagName,
   parseSearchCommand,
-  type ParsedSearchCommand,
   type SearchQueryAst,
   type SearchSuggestion,
 } from "./search-query";
@@ -66,7 +44,11 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
-import { analyzeClipboard, openDshWindow, type DshAnalyzeResult } from "./agent/dsh-analysis";
+import { openDshWindow } from "./agent/dsh-analysis";
+import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
+import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
+import { TrashPanel } from "./clipboard/components/TrashPanel";
+import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
 import {
   analyzeContent,
   createTextRepresentation,
@@ -95,24 +77,13 @@ export type {
 } from "./clipboard/clip-model";
 
 export type PanelSurface = "clipboard" | "dsh";
-
-// 模块级：DSH 只读快速分析入口（详情页与右键菜单共用，不在任何组件作用域内）
-async function analyzeClipboardWithDsh(item: ClipItem): Promise<DshAnalyzeResult | void> {
-  try {
-    const result = await analyzeClipboard(item.content ?? "", {});
-    return result;
-  } catch (error) {
-    console.warn("dsh-analysis: invoke failed", error);
-    return undefined;
-  }
-}
 import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
-import { recordNextFramePerf, startPerfSpan } from "./performance-smoke";
+import { startPerfSpan } from "./performance-smoke";
 
 export type ViewKey = "history" | "favorites" | "trash";
 
 type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
-type PanelDensity = "dense" | "normal" | "comfortable";
+export type PanelDensity = "dense" | "normal" | "comfortable";
 type TagMode = "similar" | "rules" | "off";
 type ContentDisplayMode = "summary" | "middle" | "raw";
 
@@ -133,7 +104,7 @@ type TagRule = {
   query: string;
 };
 
-type AppSettings = {
+export type AppSettings = {
   language: AppLanguagePreference;
   panelDensity: PanelDensity;
   quickItemLimit: number;
@@ -248,8 +219,6 @@ function isCaptureClipPayload(payload: unknown): payload is CaptureClipPayload {
 const ACTIVE_VIEW_KEY = "clipforge.active-view.v1";
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 const DEFAULT_SHORTCUT = "Control+V";
-const ROW_HEIGHT = 40;
-const OVERSCAN = 5;
 const DEFAULT_PANEL_HEIGHT = 400;
 const MAX_BROWSER_TIMER_DELAY_MS = 2_147_000_000;
 const CLEANUP_STARTUP_DELAY_MS = 60_000;
@@ -699,13 +668,6 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   return debounced;
 }
 
-function logAppError(level: "info" | "warn" | "error", message: string, context?: unknown) {
-  const contextText =
-    typeof context === "string" ? context : context ? JSON.stringify(context).slice(0, 8000) : "";
-  invoke("append_app_log", { level, message, context: contextText }).catch(() => {
-    if (level === "error") console.error(message, context);
-  });
-}
 
 function waitForPasteTriggerRelease(source: string): Promise<number> {
   if (source !== "cmd-number") return Promise.resolve(0);
@@ -2987,657 +2949,6 @@ function ClipForgeApp() {
   );
 }
 
-function GlassSearchBar({
-  activeFilterLabels,
-  inputRef,
-  onApplySuggestion,
-  activeSuggestionIndex,
-  onBlur,
-  onChange,
-  onClear,
-  onFocus,
-  onRemoveFilter,
-  onSelectSuggestionIndex,
-  parsedSearchCommand,
-  query,
-  suggestions,
-  tr,
-}: {
-  activeFilterLabels: string[];
-  inputRef: RefObject<HTMLInputElement | null>;
-  onApplySuggestion: (suggestion: SearchSuggestion) => void;
-  activeSuggestionIndex: number;
-  onBlur: () => void;
-  onChange: (value: string) => void;
-  onClear: () => void;
-  onFocus: () => void;
-  onRemoveFilter: (label: string) => void;
-  onSelectSuggestionIndex: (index: number) => void;
-  parsedSearchCommand: ParsedSearchCommand;
-  query: string;
-  suggestions: SearchSuggestion[];
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}) {
-  return (
-    <div className="flex w-full flex-col">
-      <div className="flex h-[52px] items-center gap-3 px-4">
-        <Search size={15} className="flex-shrink-0 text-muted-foreground" />
-        <input
-          aria-label={tr("main.search.aria")}
-          autoComplete="off"
-          className="h-full w-full bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
-          onBlur={onBlur}
-          onChange={(event) => onChange(event.currentTarget.value)}
-          onFocus={onFocus}
-          placeholder={tr("main.search.placeholder")}
-          ref={inputRef}
-          spellCheck={false}
-          value={query}
-        />
-        {query ? (
-          <button
-            aria-label={tr("main.search.clear")}
-            className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-black/5 active:scale-90 dark:hover:bg-white/[0.07]"
-            onClick={onClear}
-            type="button"
-          >
-            <X size={14} />
-          </button>
-        ) : null}
-      </div>
-      {activeFilterLabels.length ? (
-        <div className="flex flex-wrap gap-1.5 px-4 pb-2" aria-label={tr("main.search.activeFilters")}>
-          {activeFilterLabels.map((label) => (
-            <button
-              aria-label={tr("main.search.removeFilter", { label })}
-              className="inline-flex items-center gap-1 rounded-md border border-black/10 bg-black/[0.03] px-1.5 py-0.5 text-[11px] text-foreground transition-colors hover:bg-black/5 dark:border-white/[0.12] dark:bg-white/[0.05]"
-              key={label}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onRemoveFilter(label)}
-              type="button"
-            >
-              <span>{label}</span>
-              <X size={11} />
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {suggestions.length ? (
-        <SearchAutocomplete
-          activeIndex={activeSuggestionIndex}
-          inputRef={inputRef}
-          onApplySuggestion={onApplySuggestion}
-          onSelectIndex={onSelectSuggestionIndex}
-          parsedSearchCommand={parsedSearchCommand}
-          suggestions={suggestions}
-          tr={tr}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-// reui 式 autocomplete 下拉：以 @ / # 触发，floating-ui 把浮层 portal 到 body 层，
-// 绕开搜索栏祖先的 overflow/层叠，保证下拉一定可见；↑/↓/Enter 由外层 keydown 驱动 activeIndex。
-function SearchAutocomplete({
-  activeIndex,
-  inputRef,
-  onApplySuggestion,
-  onSelectIndex,
-  parsedSearchCommand,
-  suggestions,
-  tr,
-}: {
-  activeIndex: number;
-  inputRef: RefObject<HTMLInputElement | null>;
-  onApplySuggestion: (suggestion: SearchSuggestion) => void;
-  onSelectIndex: (index: number) => void;
-  parsedSearchCommand: ParsedSearchCommand;
-  suggestions: SearchSuggestion[];
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}) {
-  const { refs, x, y, strategy } = useFloating({
-    open: suggestions.length > 0,
-    placement: "bottom-start",
-    whileElementsMounted: autoUpdate,
-    middleware: [floatingOffset(6), flip({ padding: 8 }), shift({ padding: 8 })],
-  });
-  const listRef = useRef<HTMLDivElement | null>(null);
-
-  // 把浮层锚定到搜索输入框（输入框由外层 inputRef 持有，挂载后绑定）。
-  useLayoutEffect(() => {
-    if (inputRef.current) refs.setReference(inputRef.current);
-  }, [inputRef, refs]);
-
-  // 键盘移动高亮时，把当前项滚进下拉视口。
-  useEffect(() => {
-    const root = listRef.current;
-    if (!root) return;
-    const el = root.querySelector<HTMLElement>(`[data-idx="${activeIndex}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, suggestions]);
-
-  const ready = x != null && y != null;
-
-  return (
-    <FloatingPortal>
-      <div
-        ref={refs.setFloating}
-        className="z-[60] w-56 rounded-xl border border-black/5 bg-popover p-1 shadow-lg dark:border-white/[0.07]"
-        role="listbox"
-        aria-label={tr("main.search.suggestions")}
-        style={{
-          position: strategy,
-          top: 0,
-          left: 0,
-          visibility: ready ? "visible" : "hidden",
-          transform: `translate3d(${x ?? 0}px, ${y ?? 0}px, 0)`,
-        }}
-      >
-        <div className="max-h-60 overflow-auto py-0.5" ref={listRef}>
-          {suggestions.map((suggestion, index) => {
-            const token = getSearchSuggestionToken(suggestion);
-            const isActive =
-              (suggestion.kind === "favorite" && parsedSearchCommand.filterFavorite) ||
-              (suggestion.kind === "type" && parsedSearchCommand.typeFilter === suggestion.typeFilter) ||
-              (suggestion.kind === "saved" && parsedSearchCommand.tag === suggestion.tag);
-            return (
-              <button
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] outline-none transition-colors${index === activeIndex ? " bg-black/[0.045] dark:bg-white/[0.07]" : ""}${isActive ? " text-foreground" : " text-muted-foreground"}`}
-                data-idx={index}
-                key={suggestion.id}
-                onMouseDown={(event) => event.preventDefault()}
-                onMouseMove={() => onSelectIndex(index)}
-                onClick={() => onApplySuggestion(suggestion)}
-                role="option"
-                aria-selected={index === activeIndex}
-                type="button"
-              >
-                <span className="mono flex-shrink-0 rounded bg-black/[0.04] px-1 py-0.5 text-[11px] dark:bg-white/[0.07]">
-                  {token}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-foreground">{suggestion.label}</span>
-                <span className="flex-shrink-0 text-[11px] opacity-60">{suggestion.hint}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </FloatingPortal>
-  );
-}
-
-function TrashPanel({
-  activeId,
-  autoScroll,
-  clips,
-  emptySummary,
-  hasMore,
-  isLoadingMore,
-  multiSelectMode,
-  onEmptyTrash,
-  onDeleteSelected,
-  onHardDelete,
-  onLoadMore,
-  onPointerActive,
-  onRestore,
-  onRestoreSelected,
-  onSelect,
-  onStartMultiSelect,
-  onToggleSelected,
-  selectedIds,
-  settings,
-  tr,
-}: {
-  activeId: string | null;
-  autoScroll: boolean;
-  clips: ClipItem[];
-  emptySummary: string | null;
-  hasMore: boolean;
-  isLoadingMore: boolean;
-  multiSelectMode: boolean;
-  onEmptyTrash: () => void;
-  onDeleteSelected: () => void;
-  onHardDelete: (item: ClipItem) => void;
-  onLoadMore: () => void;
-  onPointerActive: () => void;
-  onRestore: (item: ClipItem) => void;
-  onRestoreSelected: () => void;
-  onSelect: (item: ClipItem) => void;
-  onStartMultiSelect: (id: string) => void;
-  onToggleSelected: (id: string) => void;
-  selectedIds: Set<string>;
-  settings: AppSettings;
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}) {
-  const selectedCount = clips.filter((item) => selectedIds.has(item.id)).length;
-  const [contextMenu, setContextMenu] = useState<{ item: ClipItem; x: number; y: number } | null>(null);
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
-  const openContextMenu = useCallback((event: MouseEvent<HTMLElement>, item: ClipItem) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onSelect(item);
-    if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
-    const menuWidth = 204;
-    const menuHeight = multiSelectMode ? 188 : 142;
-    setContextMenu({
-      item,
-      x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
-      y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
-    });
-  }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
-
-  if (!clips.length) {
-    return <ClipboardEmptyState variant="trash" emptySummary={emptySummary} tr={tr} />;
-  }
-  return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col" onPointerDown={onPointerActive}>
-        <VirtualList
-          activeId={activeId}
-          autoScroll={autoScroll}
-          className="flex-1"
-          hasMore={hasMore}
-          isLoadingMore={isLoadingMore}
-          itemHeight={settings.panelDensity === "comfortable" ? 44 : settings.panelDensity === "dense" ? 34 : 40}
-          items={clips}
-          onEndReached={onLoadMore}
-          onUserScroll={onPointerActive}
-          groupSize={10}
-          renderItem={(item, index) => (
-            <TrashRow
-              key={item.id}
-              item={item}
-              index={index}
-              activeId={activeId}
-              selectedIds={selectedIds}
-              multiSelectMode={multiSelectMode}
-              activeGroupStart={0}
-              density={settings.panelDensity}
-              settings={settings}
-              onSelect={onSelect}
-              onRestore={onRestore}
-              onHardDelete={onHardDelete}
-              onToggleSelected={onToggleSelected}
-              onStartMultiSelect={onStartMultiSelect}
-              onOpenContextMenu={openContextMenu}
-              tr={tr}
-            />
-          )}
-        />
-        {contextMenu ? (
-          <TrashContextMenu
-            item={contextMenu.item}
-            multiSelectMode={multiSelectMode}
-            onClose={closeContextMenu}
-            onDeleteSelected={onDeleteSelected}
-            onEmptyTrash={onEmptyTrash}
-            onHardDelete={onHardDelete}
-            onRestore={onRestore}
-            onRestoreSelected={onRestoreSelected}
-            onStartMultiSelect={onStartMultiSelect}
-            selectedCount={selectedCount}
-            tr={tr}
-            x={contextMenu.x}
-            y={contextMenu.y}
-          />
-        ) : null}
-      </div>
-    </section>
-  );
-}
-
-function VirtualList<T extends { id: string }>({
-  activeId,
-  className,
-  hasMore = false,
-  items,
-  isLoadingMore = false,
-  itemHeight = ROW_HEIGHT,
-  onEndReached,
-  onUserScroll,
-  renderItem,
-  autoScroll = true,
-  groupSize,
-  onActiveGroupChange,
-  scrollToGroupStart,
-}: {
-  activeId?: string | null;
-  className: string;
-  hasMore?: boolean;
-  items: T[];
-  isLoadingMore?: boolean;
-  itemHeight?: number;
-  onEndReached?: () => void;
-  onUserScroll?: () => void;
-  renderItem: (item: T, index: number) => ReactNode;
-  autoScroll?: boolean;
-  groupSize?: number;
-  onActiveGroupChange?: (groupStart: number) => void;
-  scrollToGroupStart?: number | null;
-}) {
-  const [scrollTop, setScrollTop] = useState(0);
-  const [height, setHeight] = useState(420);
-  const [, setScrollFeedback] = useState(false);
-  const isScrollFeedbackRef = useRef(false);
-  const scrollFeedbackTimerRef = useRef<number | null>(null);
-  const scrollRafRef = useRef<number | null>(null);
-  const pendingScrollTopRef = useRef(0);
-  const lastScrollPerfAtRef = useRef(0);
-  const lastAutoScrollActiveIdRef = useRef<string | null>(null);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  const setFeedback = useCallback(
-    (next: boolean) => {
-      if (isScrollFeedbackRef.current !== next) {
-        isScrollFeedbackRef.current = next;
-        setScrollFeedback(next);
-      }
-      if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
-      if (next) {
-        scrollFeedbackTimerRef.current = window.setTimeout(() => {
-          isScrollFeedbackRef.current = false;
-          setScrollFeedback(false);
-        }, 420);
-      }
-    },
-    [],
-  );
-
-  useEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    if (typeof ResizeObserver === "undefined") {
-      const syncHeight = () => setHeight(node.getBoundingClientRect().height || 420);
-      syncHeight();
-      window.addEventListener("resize", syncHeight);
-      return () => window.removeEventListener("resize", syncHeight);
-    }
-    const resizeObserver = new ResizeObserver(([entry]) => {
-      setHeight(entry.contentRect.height);
-    });
-    resizeObserver.observe(node);
-    return () => resizeObserver.disconnect();
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
-      if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
-    };
-  }, []);
-
-  // 选中项变化时把它滚到视口垂直居中（macOS 切换器手感）。
-  // 不做「已可见就跳过」的守卫：贴边跟随会显得选中行不居中；首尾由 max(0,…) 自然截停。
-  // 用 behavior:"auto" 即时定位而非 smooth：连续按方向键时 smooth 动画会追着按键跑，拖沓不跟手。
-  useEffect(() => {
-    if (!activeId || !autoScroll) {
-      lastAutoScrollActiveIdRef.current = null;
-      return;
-    }
-    if (lastAutoScrollActiveIdRef.current === activeId) return;
-    lastAutoScrollActiveIdRef.current = activeId;
-    const node = ref.current;
-    if (!node) return;
-    const index = items.findIndex((item) => item.id === activeId);
-    if (index < 0) return;
-    const itemTop = index * itemHeight;
-    const targetTop = Math.max(0, itemTop - node.clientHeight / 2 + itemHeight / 2);
-    setFeedback(true);
-    node.scrollTo({ top: targetTop, behavior: "auto" });
-  }, [activeId, autoScroll, itemHeight, setFeedback]);
-
-  // 分组：按视口中心算"激活分组"起始下标（groupSize 整数倍），上报父级（给 Cmd+0-9 用）。
-  useEffect(() => {
-    if (!groupSize || !onActiveGroupChange) return;
-    const centerIndex = Math.floor((scrollTop + height / 2) / itemHeight);
-    const groupStart = Math.max(0, Math.floor(centerIndex / groupSize) * groupSize);
-    onActiveGroupChange(groupStart);
-  }, [scrollTop, height, itemHeight, groupSize, onActiveGroupChange]);
-
-  // 父级命令：滚动到某个分组起始（Cmd+↑/↓ 切组用）。
-  useEffect(() => {
-    if (scrollToGroupStart == null) return;
-    const node = ref.current;
-    if (!node) return;
-    // 切组时下偏一点，避免组首行被顶部搜索/导航栏遮挡。
-    const GROUP_SCROLL_TOP_OFFSET = 56;
-    const top = Math.max(0, scrollToGroupStart * itemHeight - GROUP_SCROLL_TOP_OFFSET);
-    setFeedback(true);
-    node.scrollTo({ top, behavior: "smooth" });
-  }, [scrollToGroupStart, itemHeight, setFeedback]);
-
-  const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
-  const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
-  const visible = items.slice(start, start + visibleCount);
-  return (
-    <div
-      className={`${className} thin-scroll relative overflow-auto px-2`}
-      onTouchMove={onUserScroll}
-      onWheel={onUserScroll}
-      onScroll={(event) => {
-        const node = event.currentTarget;
-        const now = performance.now();
-        if (now - lastScrollPerfAtRef.current > 160) {
-          lastScrollPerfAtRef.current = now;
-          recordNextFramePerf("quick.scroll", { className });
-        }
-        pendingScrollTopRef.current = node.scrollTop;
-        if (!scrollRafRef.current) {
-          scrollRafRef.current = window.requestAnimationFrame(() => {
-            scrollRafRef.current = null;
-            setScrollTop(pendingScrollTopRef.current);
-          });
-        }
-        setFeedback(true);
-        if (hasMore && !isLoadingMore && node.scrollHeight - node.scrollTop - node.clientHeight < itemHeight * 6) {
-          onEndReached?.();
-        }
-      }}
-      ref={ref}
-    >
-      <div className="relative" style={{ height: items.length * itemHeight }}>
-        <div
-          className="absolute left-0 right-0 top-0 will-change-transform"
-          style={{ transform: `translateY(${start * itemHeight}px)` }}
-        >
-          {visible.map((item, index) => (
-            <div key={item.id}>
-              {renderItem(item, start + index)}
-            </div>
-          ))}
-          {isLoadingMore ? (
-            <div className="flex h-10 items-center justify-center text-[11px] text-muted-foreground">
-              加载更多...
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function QuickPastePanel({
-  activeId,
-  autoScroll,
-  clips,
-  copiedId,
-  emptySummary,
-  filePathStatuses,
-  hasMore,
-  isLoadingMore,
-  multiSelectMode,
-  onFavorite,
-  onFavoriteSelected,
-  onLoadMore,
-  onOpen,
-  onOpenAggregate,
-  onPointerActive,
-  onPaste,
-  onCopySelected,
-  onCopyMode,
-  onDelete,
-  onDeleteSelected,
-  onSelect,
-  onStartMultiSelect,
-  onToggleSelected,
-  onClearSelection,
-  selectedIds,
-  activeGroupStart,
-  onActiveGroupChange,
-  groupScrollTarget,
-  density,
-  onCreateSnippet,
-  quickPreviewOpen,
-  onToggleQuickPreview,
-  tr,
-}: {
-  activeId: string | null;
-  autoScroll: boolean;
-  clips: ClipItem[];
-  copiedId: string | null;
-  emptySummary: string | null;
-  filePathStatuses: Record<string, FilePathStatus>;
-  hasMore: boolean;
-  isLoadingMore: boolean;
-  limit: number;
-  multiSelectMode: boolean;
-  selectedIds: Set<string>;
-  onFavorite: (item: ClipItem) => void;
-  onFavoriteSelected: () => void;
-  onLoadMore: () => void;
-  onOpen: (item: ClipItem) => void;
-  onOpenAggregate: () => void;
-  onPointerActive: () => void;
-  onPaste: (item: ClipItem, source?: string) => void;
-  onCopySelected: () => void;
-  onCopyMode: (item: ClipItem, mode: PasteMode) => void;
-  onDelete: (item: ClipItem) => void;
-  onDeleteSelected: () => void;
-  onSelect: (item: ClipItem) => void;
-  onStartMultiSelect: (id: string) => void;
-  onToggleSelected: (id: string) => void;
-  onClearSelection: () => void;
-  activeGroupStart: number;
-  onActiveGroupChange: (groupStart: number) => void;
-  groupScrollTarget: number | null;
-  density?: PanelDensity;
-  onCreateSnippet?: () => void;
-  quickPreviewOpen: boolean;
-  onToggleQuickPreview: () => void;
-  tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}) {
-  const [contextMenu, setContextMenu] = useState<{ item: ClipItem; x: number; y: number } | null>(null);
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
-  const openContextMenu = useCallback((event: MouseEvent<HTMLElement>, item: ClipItem) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onSelect(item);
-    if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
-    const menuWidth = 204;
-    const menuHeight = multiSelectMode ? 190 : 332;
-    setContextMenu({
-      item,
-      x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
-      y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
-    });
-  }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
-
-  if (!clips.length) {
-    return (
-      <ClipboardEmptyState
-        emptySummary={emptySummary}
-        onCreateSnippet={onCreateSnippet}
-        tr={tr}
-        variant="history"
-      />
-    );
-  }
-
-  const selectedItem = clips.find((clip) => clip.id === activeId) ?? clips[0];
-
-  return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col" onPointerDown={onPointerActive}>
-        {quickPreviewOpen && selectedItem ? (
-          <QuickPreviewCard
-            item={selectedItem}
-            onClose={onToggleQuickPreview}
-            onCopyPlain={(item) => onCopyMode(item, "plain")}
-            onFavorite={onFavorite}
-            onPaste={onPaste}
-          />
-        ) : null}
-        <VirtualList
-          activeId={activeId}
-          autoScroll={autoScroll}
-          className="flex-1"
-          hasMore={hasMore}
-          isLoadingMore={isLoadingMore}
-          itemHeight={density === "comfortable" ? 44 : density === "dense" ? 34 : 40}
-          items={clips}
-          onEndReached={onLoadMore}
-          groupSize={10}
-          onActiveGroupChange={onActiveGroupChange}
-          scrollToGroupStart={groupScrollTarget}
-          renderItem={(item, index) => (
-            <ClipboardRow
-              activeGroupStart={activeGroupStart}
-              activeId={activeId}
-              copiedId={copiedId}
-              density={density}
-              filePathStatuses={filePathStatuses}
-              index={index}
-              item={item}
-              key={item.id}
-              multiSelectMode={multiSelectMode}
-              onFavorite={onFavorite}
-              onOpen={onOpen}
-              onOpenContextMenu={openContextMenu}
-              onPaste={onPaste}
-              onPin={() => toast.info("固定到顶部功能开发中")}
-              onSelect={onSelect}
-              onStartMultiSelect={onStartMultiSelect}
-              onToggleSelected={onToggleSelected}
-              selectedIds={selectedIds}
-              tr={tr}
-            />
-          )}
-        />
-        {contextMenu ? (
-          <ClipContextMenu
-            item={contextMenu.item}
-            multiSelectMode={multiSelectMode}
-            onClose={closeContextMenu}
-            onFavorite={onFavorite}
-            onFavoriteSelected={onFavoriteSelected}
-            onDelete={() => onDelete(contextMenu.item)}
-            onDeleteSelected={onDeleteSelected}
-            onOpenAggregate={onOpenAggregate}
-            onPaste={onPaste}
-            onCopyMode={(mode) => onCopyMode(contextMenu.item, mode)}
-            onAnalyzeClipboard={analyzeClipboardWithDsh}
-            onCopySelected={onCopySelected}
-            onStartMultiSelect={onStartMultiSelect}
-            onClearSelection={onClearSelection}
-            onOpenDetail={() => {
-              logAppError("info", "context-menu-detail", {
-                id: contextMenu.item.id,
-                hasUrl: Boolean(contextMenu.item.analysis.url),
-                hasAttachment: Boolean(contextMenu.item.analysis.attachment),
-              });
-              void navigateWorkspaceDetail(contextMenu.item.id);
-            }}
-            selectedCount={selectedIds.size}
-            tr={tr}
-            x={contextMenu.x}
-            y={contextMenu.y}
-          />
-        ) : null}
-      </div>
-    </section>
-  );
-}
 
 function App() {
   const locale = resolveAppLocale(loadLocalSettings().language);
