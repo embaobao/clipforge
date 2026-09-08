@@ -8,7 +8,6 @@ import {
   getShortcutModLabel,
 } from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,7 +24,7 @@ import {
   type AppLanguagePreference,
   type TranslationKey,
 } from "./i18n";
-import { checkFilePaths, pasteClipboard, readClipboard, writeClipboard, type FilePathStatus } from "./services/clipboard";
+import { checkFilePaths, pasteClipboard, writeClipboard, type FilePathStatus } from "./services/clipboard";
 import { resolvePrimaryPluginAction } from "./plugin-actions";
 import {
   getSearchSuggestionToken,
@@ -51,6 +50,7 @@ import { TrashPanel } from "./clipboard/components/TrashPanel";
 import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
+import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import {
   analyzeContent,
   createTextRepresentation,
@@ -165,16 +165,6 @@ type AccessibilityPermissionPayload = {
   message: string;
 };
 
-type CaptureClipPayload = {
-  status: "created" | "promoted";
-  item: ClipItem;
-};
-
-type QueryClipPayload = {
-  items: ClipItem[];
-  nextCursor?: string;
-  limit: number;
-};
 
 type CleanupClipPayload = {
   hardDeleted: number;
@@ -201,14 +191,6 @@ type SearchClipsRequest = {
   cursor?: string | null;
 };
 
-function isQueryClipPayload(payload: unknown): payload is QueryClipPayload {
-  return Boolean(payload && typeof payload === "object" && Array.isArray((payload as QueryClipPayload).items));
-}
-
-function isCaptureClipPayload(payload: unknown): payload is CaptureClipPayload {
-  const item = payload && typeof payload === "object" ? (payload as Partial<CaptureClipPayload>).item : null;
-  return Boolean(item && typeof item === "object" && typeof (item as Partial<ClipItem>).content === "string");
-}
 
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 const DEFAULT_SHORTCUT = "Control+V";
@@ -853,47 +835,28 @@ function ClipForgeApp() {
     clipsRef.current = clips;
   }, [clips]);
 
-  const appendLoadedClips = useCallback((items: ClipItem[], cursor?: string | null) => {
-    setClips((current) => {
-      const seen = new Set(current.map((item) => item.id));
-      const next = [
-        ...current,
-        ...items.filter((item) => {
-          if (seen.has(item.id)) return false;
-          seen.add(item.id);
-          return true;
-        }),
-      ].slice(0, settingsRef.current.maxStoredItems);
-      clipsRef.current = next;
-      return next;
-    });
-    setNextCursor(cursor ?? null);
-  }, []);
+  const { loadMoreClips, captureClipboard } = useClipboardList({
+    isSettingsWindow,
+    setClips,
+    clipsRef,
+    setNextCursor,
+    nextCursor,
+    setIsLoadingMore,
+    isLoadingMore,
+    setSelectedId,
+    setActiveView,
+    setNativeStatus,
+    setIsReadingClipboard,
+    searchRequestRef,
+    settingsRef,
+    captureInFlightRef,
+    lastSeenClipboard,
+    tr,
+    formatNativeError,
+    normalizeClip,
+    createClip,
+  });
 
-  const loadMoreClips = useCallback(async () => {
-    if (!nextCursor || isLoadingMore) return;
-    setIsLoadingMore(true);
-    try {
-      const payload = await invoke<QueryClipPayload>("search_clip_records", {
-        input: { ...searchRequestRef.current, cursor: nextCursor },
-      });
-      if (!isQueryClipPayload(payload)) throw new Error("Invalid search_clip_records payload");
-      const items = payload.items
-        .map((item) => normalizeClip(item, settingsRef.current))
-        .filter((item): item is ClipItem => Boolean(item));
-      appendLoadedClips(items, payload.nextCursor ?? null);
-      setNativeStatus(
-        payload.nextCursor
-          ? tr("main.status.loadMoreComplete", { count: clipsRef.current.length })
-          : tr("main.status.loadAllComplete", { count: clipsRef.current.length }),
-      );
-    } catch (error) {
-      logAppError("warn", "Load more clip records failed", String(error));
-      setNativeStatus(tr("main.status.loadMoreFailed"));
-    } finally {
-      setIsLoadingMore(false);
-    }
-  }, [appendLoadedClips, isLoadingMore, nextCursor, tr]);
 
   const handleScroll = useCallback((event: UIEvent<HTMLElement>) => {
     const top = event.currentTarget.scrollTop;
@@ -1029,79 +992,6 @@ function ClipForgeApp() {
     };
   }, [isSettingsWindow, tr]);
 
-  const syncCapturedClipboardPayload = useCallback(async (payload: CaptureClipPayload) => {
-    if (!isCaptureClipPayload(payload)) throw new Error("Invalid capture payload");
-    const nextClip = normalizeClip(payload.item, settingsRef.current) ?? createClip(payload.item.content, settingsRef.current);
-    try {
-      const result = await invoke<QueryClipPayload>("search_clip_records", {
-        input: {
-          bucket: "all",
-          limit: 200,
-        },
-      });
-      if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
-      const items = result.items
-        .map((item) => normalizeClip(item, settingsRef.current))
-        .filter((item): item is ClipItem => Boolean(item));
-      clipsRef.current = items;
-      setClips(items);
-      setNextCursor(result.nextCursor ?? null);
-      logAppError("info", "clipboard-promote: refreshed full list", {
-        promotedId: nextClip.id,
-        status: payload.status,
-        itemCount: items.length,
-      });
-    } catch (error) {
-      logAppError("warn", "clipboard-promote: refresh full list failed, using local merge", String(error));
-      const current = clipsRef.current.filter((item) => item.id !== nextClip.id);
-      const next = [nextClip, ...current].slice(0, settingsRef.current.maxStoredItems);
-      clipsRef.current = next;
-      setClips(next);
-    }
-    setSelectedId(nextClip.id);
-    setActiveView("history");
-    return payload.status;
-  }, []);
-
-  const captureClipboard = useCallback(
-    async (reason: "startup" | "manual" | "shortcut") => {
-      if (captureInFlightRef.current) return;
-      captureInFlightRef.current = true;
-      if (reason === "manual") {
-        setIsReadingClipboard(true);
-        setNativeStatus(tr("main.status.clipboardReading"));
-      }
-      try {
-        const payload = await readClipboard<ClipItem>({ sourceLabel: "Clipboard" });
-        if (!isCaptureClipPayload(payload)) throw new Error("Invalid capture_current_clipboard payload");
-        const capturedText = (payload.item.plainText || payload.item.content || "").trim();
-        if (capturedText) {
-          lastSeenClipboard.current = capturedText;
-        }
-        const result = await syncCapturedClipboardPayload(payload);
-        if (result === "created") {
-          setNativeStatus(
-            reason === "startup"
-              ? tr("main.status.clipboardCapturedStartup")
-              : reason === "manual"
-                ? tr("main.status.clipboardCapturedManual")
-                : reason === "shortcut"
-                  ? tr("main.status.clipboardCapturedShortcut")
-                  : tr("main.status.clipboardCapturedNew"),
-          );
-        } else {
-          setNativeStatus(tr("main.status.clipboardPromoted"));
-        }
-      } catch (error) {
-        setNativeStatus(formatNativeError(error));
-      } finally {
-        captureInFlightRef.current = false;
-        if (reason === "manual") setIsReadingClipboard(false);
-      }
-    },
-    [formatNativeError, syncCapturedClipboardPayload, tr],
-  );
-
   const showQuickPanel = useCallback(
     async (reason: "shortcut" | "tray") => {
       const finishPanelOpenPerf = startPerfSpan("panel.open", { reason });
@@ -1167,49 +1057,6 @@ function ClipForgeApp() {
       .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
   }, []);
 
-  // 后台剪贴板监听：Rust 线程每 100ms 读 pbpaste，变化时推 event
-  // 前端只需 listen，不依赖 WebView timer，隐藏时也能工作
-  useEffect(() => {
-    if (isSettingsWindow) return;
-    let unlisten: (() => void) | null = null;
-    const setup = async () => {
-      unlisten = await listen<{ changeCount: number; hasChange: boolean; preview?: string; previewLen?: number }>("clipboard-changed", async (event) => {
-        const payload = event.payload;
-        console.log("[CLIPBOARD] frontend received change:", payload);
-        if (!payload.hasChange) return;
-        // 后端已入库，前端直接从数据库刷新列表
-        try {
-          const result = await invoke<QueryClipPayload>("search_clip_records", {
-            input: searchRequestRef.current,
-          });
-          if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
-          const items = result.items
-            .map((item) => normalizeClip(item, settingsRef.current))
-            .filter((item): item is ClipItem => Boolean(item));
-          clipsRef.current = items;
-          setClips(items);
-          setNextCursor(result.nextCursor ?? null);
-          if (items.length > 0) {
-            setSelectedId(items[0].id);
-            setActiveView("history");
-          }
-          if (payload.preview) {
-            lastSeenClipboard.current = payload.preview.trim();
-          }
-          setNativeStatus(tr("main.status.clipboardCapturedNew"));
-        } catch (error) {
-          console.error("[CLIPBOARD] refresh failed:", error);
-        }
-      });
-      console.log("[CLIPBOARD] frontend listener registered");
-      setNativeStatus(tr("main.status.clipboardWatcherStarted"));
-    };
-    void setup();
-    void captureClipboard("startup");
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, [captureClipboard, isSettingsWindow, tr]);
 
   useEffect(() => {
     if (isSettingsWindow) return;
