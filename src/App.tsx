@@ -49,6 +49,7 @@ import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
 import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
+import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import {
   analyzeContent,
   createTextRepresentation,
@@ -77,7 +78,6 @@ export type {
 } from "./clipboard/clip-model";
 
 export type PanelSurface = "clipboard" | "dsh";
-import { getErrorDiagnostics, getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { startPerfSpan } from "./performance-smoke";
 
 export type ViewKey = "history" | "favorites" | "trash";
@@ -164,13 +164,6 @@ type AccessibilityPermissionPayload = {
   message: string;
 };
 
-type AccessibilityFirstPromptPayload = {
-  status: "granted" | "missing" | "unsupported" | "error";
-  message: string;
-  prompted: boolean;
-  createdAt: number;
-};
-
 type CaptureClipPayload = {
   status: "created" | "promoted";
   item: ClipItem;
@@ -216,7 +209,6 @@ function isCaptureClipPayload(payload: unknown): payload is CaptureClipPayload {
   return Boolean(item && typeof item === "object" && typeof (item as Partial<ClipItem>).content === "string");
 }
 
-const ACTIVE_VIEW_KEY = "clipforge.active-view.v1";
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 const DEFAULT_SHORTCUT = "Control+V";
 const DEFAULT_PANEL_HEIGHT = 400;
@@ -828,6 +820,7 @@ function ClipForgeApp() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 120);
+  usePanelEnvironmentEffects({ activeView, setNativeStatus, tr });
   const clipsRef = useRef<ClipItem[]>(clips);
   const searchRequestRef = useRef<SearchClipsRequest>({ bucket: "all", limit: 200 });
   const shellRef = useRef<HTMLElement | null>(null);
@@ -931,9 +924,6 @@ function ClipForgeApp() {
     };
   }, [settings]);
 
-  useEffect(() => {
-    localStorage.setItem(ACTIVE_VIEW_KEY, activeView);
-  }, [activeView]);
 
   useEffect(() => {
     return () => {
@@ -1004,52 +994,6 @@ function ClipForgeApp() {
     return cancelHide;
   }, [isSettingsWindow, setPanelClosing]);
 
-  useEffect(() => {
-    logAppError("info", "frontend-environment", getFrontendEnvironmentSnapshot());
-
-    const onError = (event: ErrorEvent) => {
-      logAppError("error", event.message, {
-        event: "window.error",
-        filename: event.filename,
-        lineno: event.lineno,
-        colno: event.colno,
-        ...getErrorDiagnostics(event.error ?? event.message),
-        frontend: getFrontendEnvironmentSnapshot(),
-      });
-    };
-    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
-      logAppError("error", "Unhandled promise rejection", {
-        event: "window.unhandledrejection",
-        ...getErrorDiagnostics(event.reason),
-        frontend: getFrontendEnvironmentSnapshot(),
-      });
-    };
-    window.addEventListener("error", onError);
-    window.addEventListener("unhandledrejection", onUnhandledRejection);
-    return () => {
-      window.removeEventListener("error", onError);
-      window.removeEventListener("unhandledrejection", onUnhandledRejection);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isSettingsWindow) return;
-    let disposed = false;
-    listen<AccessibilityFirstPromptPayload>("clipforge://accessibility-first-prompt", ({ payload }) => {
-      if (disposed) return;
-      logAppError("info", "accessibility-first-prompt", payload);
-      if (payload.status === "granted") {
-        setNativeStatus(tr("main.status.accessibilityGranted"));
-      } else if (payload.prompted) {
-        setNativeStatus(tr("main.status.accessibilityPrompted"));
-      } else {
-        setNativeStatus(payload.message || tr("main.status.accessibilityRecorded"));
-      }
-    }).catch((error) => logAppError("warn", "Register accessibility prompt listener failed", String(error)));
-    return () => {
-      disposed = true;
-    };
-  }, [isSettingsWindow, tr]);
 
   useEffect(() => {
     let cancelled = false;
