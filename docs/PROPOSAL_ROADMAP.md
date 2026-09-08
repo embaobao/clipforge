@@ -8,6 +8,7 @@
 2. 全量回归可自动化部分已覆盖：`build:web` / `test:unit` / `test:boundaries` / `cargo check` 全绿；`pnpm tauri dev` 后台冒烟通过（编译+启动+运行 70 秒无 error/panic，dev 实例已清理）。
 3. 已知待人工项：三个 surface（详情/聚合/onboarding）重写样式的**视觉走查**、`file-image-clipboard-support` × `clipboard-multi-format-fidelity` 的 **7 场景实机验收矩阵**（需真实系统剪贴板证据，无法自动化勾选）。
 4. 已知无害告警：`message-scroller.tsx` / `animate-ui/radix/sidebar.tsx` 中 4 个 `ease-[cubic-bezier(...)]` 类触发 Tailwind v3 歧义警告（vendored 第三方组件，CSS 正常生成），暂不修改。
+5. 新增 [`tailwind-v3-style-refactor`](../openspec/changes/tailwind-v3-style-refactor/proposal.md)（2026-09-07 补档）：为批次 1–5 的样式重构补立正式提案，含 `styling-architecture` spec delta（全局单源 / surface marker / 500 行门禁），主体 24/27 完成，剩余视觉走查与收尾。
 
 2026-09-02 清账与方向调整：**产品主线回归「打造好一个剪贴板」**。决策记录：
 
