@@ -81,6 +81,19 @@
 - 核对 `file-image-clipboard-support` / `clipboard-multi-format-fidelity`：剩余 7+4 项全部需要真实系统剪贴板证据，**确认无法自动化勾选**，只能实机验收。
 - 记录无害告警：vendored 组件（message-scroller / animate-ui sidebar）4 个 `ease-[...]` 类的 Tailwind v3 歧义警告，暂不修改。
 
+## 白天批次（2026-09-08）：提案补档 + 还债开发
+
+- `9f51816` 补立 `tailwind-v3-style-refactor` 提案（proposal/tasks + styling-architecture spec delta，validate --strict ✓）并登记 ROADMAP；DSH 面板核验为已完成（修正 HANDOFF 过时状态）。
+- `8f50df7` contracts.ts 按域拆分：`contracts/{clipboard,editor,agent,service}-contracts.ts`（≤317 行）+ barrel re-export（6 行），引用方零改动；**豁免清单 4 → 3 项**。
+- `a847591` App.tsx 第一刀：切出 `src/clipboard/clip-model.ts`（438 行，Clip 数据模型 + 内容分析纯函数），4051 → 3658 行，外部引用零改动。
+
+### 剩余拆分方案（夜间接力，按序执行）
+
+1. **App.tsx 第二刀（低风险）**：把 5 个子组件切到 `src/clipboard/components/`——GlassSearchBar、SearchAutocomplete、TrashPanel、VirtualList、QuickPastePanel（约 2990-3660 行区间，共 ~670 行）。完成后 App.tsx ≈ 2990 行。
+2. **App.tsx 主体（2178 行 ClipForgeApp）**：按 hook 域拆——`useClipboardList`（查询/虚拟列表状态）、`useCaptureEvents`（capture/db-init/权限监听）、`useCopyPaste`（写回抑制/粘贴）、`usePanelShortcuts`（快捷键/托盘）、`useSettingsSync`。每拆一个 hook 跑全套验证。
+3. **settings.tsx（1865 行）**：按现有 `src/settings/` 结构把 section 面板逐个切出（SettingsShell 已存在，主文件剩 catalog + 状态 + section 组件）。
+4. **lib.rs（14284 行）**：按 codebase-modularity 提案顺序拆 settings/agent/mcp 模块（Rust 端改动必须 `cargo check` + `pnpm tauri dev` 冒烟）。
+
 ## 待办事项（按优先级，批次 5 后更新）
 
 **夜间任务的可自动化待办已清零**。剩余事项全部需要盟哥人工参与：
@@ -99,7 +112,7 @@
 - **Workspace（详情页）**：已拆分完成，全部 Tailwind 语义类（批次 2）
 - **Workspace（聚合页）**：已拆分完成（批次 3），`workspace-panels.tsx` 仅剩 re-export
 - **Onboarding**：向导已拆分至 `src/onboarding/components/` 并清理旧类（批次 3）；`OnboardingApp.tsx` 根容器已 Tailwind
-- **DSH 面板**：已用 Tailwind 根容器，但内部 iframe 和提示文本细节可再对齐。
+- **DSH 面板**：已完成 Tailwind 化（核验：header/iframe/状态提示全为语义类，无旧类残留），无需再对齐。
 
 ## 关键文件清单
 
@@ -120,7 +133,7 @@
 | `src/workspace/components/MultiAggregateWorkspace.tsx` | 完成 | 118 行 + AggregateItem（批次 3） |
 | `src/onboarding/components/OnboardingWizard.tsx` | 完成 | 268 行 + shared/Step/FeatureCard（批次 3） |
 | `src/onboarding/OnboardingApp.tsx` | 完成 | 独立引导窗口，复用 components/OnboardingWizard |
-| `src/dsh/dsh-panel.tsx` | 部分 | 根容器已改，细节待对齐（待人工视觉走查） |
+| `src/dsh/dsh-panel.tsx` | 完成 | 已核验全 Tailwind 语义类（批次 6 复核） |
 
 ## 建议技能
 
