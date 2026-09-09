@@ -63,6 +63,7 @@ const onboarding = read(files.onboarding);
 const onboardingShared = read(files.onboardingShared);
 const settings = read(files.settings);
 const panelShared = read("src/clipboard/panel-shared.ts");
+const panelKeyboard = read("src/clipboard/use-panel-keyboard.ts");
 const settingsModel = read(files.settingsModel);
 const controls = read(files.controls);
 const settingsShell = read(files.settingsShell);
@@ -116,8 +117,8 @@ include(topToolbar, 'onSelect={() => onViewChange("trash")}', "top nav menu shou
 include(topToolbar, "onSelect={onOpenSettings}", "top nav menu should still open settings");
 include(topToolbar, "<DropdownMenuShortcut className=\"mono\">T</DropdownMenuShortcut>", "top nav shortcut hint should keep T for trash");
 include(topToolbar, "getShortcutModLabel()", "top nav shortcut hint should use platform modifier label");
-match(app, /if \(!editable && !event\.ctrlKey && !event\.metaKey && !event\.altKey && key === "t"\)/, "T shortcut should still switch to trash");
-match(app, /if \(\(event\.metaKey \|\| event\.ctrlKey\) && !event\.altKey && key === ","\)/, "Cmd/Ctrl+, shortcut should still open settings");
+match(panelKeyboard, /if \(!editable && !event\.ctrlKey && !event\.metaKey && !event\.altKey && key === "t"\)/, "T shortcut should still switch to trash");
+match(panelKeyboard, /if \(\(event\.metaKey \|\| event\.ctrlKey\) && !event\.altKey && key === ","\)/, "Cmd/Ctrl+, shortcut should still open settings");
 exclude(app, "main.dock.onboarding", "top nav menu should not expose an onboarding entry");
 include(app, 'setActiveSurface("clipboard");', "top view changes should return to clipboard surface");
 
