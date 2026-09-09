@@ -34,17 +34,25 @@
 
 ## Phase 5：前端组件拆分
 
-- [ ] settings.tsx 局部抽组件（SettingField/StatusPanel/CodeTabs 等，服务 settings-interface-redesign）
-- [ ] agent-panel.tsx 拆 parts（MessageScroller/Attachment/ToolPreview/ReferencePicker）
-- [ ] App.tsx 按 surface 拆（clipboard panel / detail / agent overlay）
-- [ ] 每个抽出的文件 ≤500 行
+- [x] settings.tsx 局部抽组件：SettingsShell/SettingsStatusPanel/SettingsCodeTabs/SettingsFieldRow/controls 等已抽至 src/settings/（服务 settings-interface-redesign，2026-09 完成）
+- [~] ~~agent-panel.tsx 拆 parts~~：agent-panel.tsx/agent-chat-page.tsx 已随旧 Agent 面板整体删除（2026-09 DSH 重构），任务作废
+- [ ] App.tsx 按 surface 拆（clipboard panel / detail / agent overlay）——进行中：4051 → 2355 行（-42%），已切 9 hooks + 5 子组件 + clip-model/clip-search/panel-settings 域模块（详见 docs/HANDOFF.md 剩余拆分方案），剩余 keydown 已完成、UI JSX 与写回域待切
+- [x] 每个抽出的文件 ≤500 行（全部新文件 ≤498 行，file-size 门禁全程通过）
 
 ## Phase 6：收尾
 
 - [ ] lib.rs window/log/tray 模块化，lib.rs 收敛到 setup + handler 注册
-- [ ] 豁免清单逐步清空（每拆完一个文件就从清单移除）
+- [ ] 豁免清单逐步清空（每拆完一个文件就从清单移除）——已 7 → 3（workspace-panels/contracts/agent-panel×2 已清，剩 App.tsx/settings.tsx/lib.rs）
 - [ ] 文件大小门禁对全部源文件 fail-mode 生效
 - [ ] `pnpm build` + `cargo check` + `cargo fmt --check` + 全部 verify 脚本通过
+
+### 状态记录（2026-09-10，Tailwind 重构期间的还债对账）
+
+- Phase 5 前端拆分大幅推进：workspace-panels（1831 行）→ 5 行 re-export + 7 个子组件；settings/onboarding 向导拆分完成；App.tsx 4051 → 2355（clip-model/clip-search/panel-settings 域模块 + usePanelEnvironment/BlurHide/WindowListeners/ClipboardList/SettingsSync/CleanupScheduler/Bootstrap/FilePathStatuses/Keyboard 九个 hook）。
+- contracts.ts（746 行）拆为 4 个域契约模块 + barrel。
+- 豁免清单 7 → 3：剩 App.tsx（2355）/ settings.tsx（1566）/ lib.rs（14284）。
+- 全程 file-size 门禁通过；verify 脚本断言随拆分同步迁移（断言语义不变）。
+- 剩余：App.tsx 写回域 + UI JSX、settings.tsx section 切片、lib.rs 三域拆分（方案见 docs/HANDOFF.md）。
 
 ### 状态记录（2026-07-16）
 
