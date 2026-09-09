@@ -10,7 +10,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { match as matchPinyin } from "pinyin-pro";
 import { create } from "zustand";
 import { toast } from "sonner";
 import type { ErrorInfo, PointerEvent, ReactNode, UIEvent } from "react";
@@ -25,8 +24,6 @@ import { pasteClipboard, writeClipboard, type FilePathStatus } from "./services/
 import { resolvePrimaryPluginAction } from "./plugin-actions";
 import {
   getSearchSuggestionToken,
-  matchesSearchSuggestionToken,
-  normalizeSearch,
   normalizeTagName,
   parseSearchCommand,
   type SearchQueryAst,
@@ -44,7 +41,7 @@ import { openDshWindow } from "./agent/dsh-analysis";
 import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
-import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
+import { analyzeClipboardWithDsh, logAppError, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { usePanelBootstrap } from "./clipboard/use-panel-bootstrap";
@@ -54,7 +51,7 @@ import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
-import { buildBaseSearchSuggestions, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
+import { buildBaseSearchSuggestions, buildSearchSuggestions, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
 import {
   createClip,
   normalizeClip,
@@ -222,35 +219,6 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
   }, [delayMs, value]);
   return debounced;
 }
-
-
-function waitForPasteTriggerRelease(source: string): Promise<number> {
-  if (source !== "cmd-number") return Promise.resolve(0);
-  return new Promise((resolve) => {
-    const started = Date.now();
-    let finished = false;
-    let timer = 0;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      window.clearTimeout(timer);
-      window.removeEventListener("keyup", onKeyUp, true);
-      window.removeEventListener("blur", finish, true);
-      resolve(Date.now() - started);
-    };
-    const onKeyUp = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Meta" || event.key === "Control" || (!event.metaKey && !event.ctrlKey)) {
-        finish();
-      }
-    };
-    window.addEventListener("keyup", onKeyUp, true);
-    window.addEventListener("blur", finish, true);
-    // 原上限 280ms 偏长，叠加 Rust 侧粘贴路径会让 Cmd+数字 粘贴明显延迟、甚至被当成「没触发」。
-    // 120ms 足以等到修饰键释放（首个 keyup 即 resolve），同时把整体延迟压下来。
-    timer = window.setTimeout(finish, 120);
-  });
-}
-
 type ErrorBoundaryCopy = {
   toastMessage: string;
   recoverLabel: string;
@@ -688,42 +656,10 @@ function ClipForgeApp() {
       .filter((item): item is ClipItem => Boolean(item));
   }, [filteredClips, selectedIds]);
 
-  const searchSuggestions = useMemo<SearchSuggestion[]>(() => {
-    const token = query.trim();
-    const commandToken = token.split(/\s+/).at(-1) ?? "";
-    // autocomplete 仅在「尾部 token 以 @ 或 # 开头」时触发：输入 @ 立即给出类型筛选下拉（@file: @img: …），
-    // 输入 # 给出标签下拉；普通文本搜索不再常驻类型条，避免噪声（reui 式 combobox 触发模型）。
-    if (!commandToken.startsWith("@") && !commandToken.startsWith("#")) return [];
-    // 已补全的过滤器（如选中 @file: / @收藏 后 query 里的完整 token）不再弹下拉，避免选中后残留单条建议。
-    const lowerToken = commandToken.toLowerCase();
-    if (baseSearchSuggestions.some((s) => getSearchSuggestionToken(s).toLowerCase() === lowerToken)) return [];
-    if (commandToken.startsWith("#")) {
-      const tagToken = normalizeSearch(commandToken.slice(1));
-      const tagCounts = new Map<string, { label: string; count: number }>();
-      clips.forEach((clip) => {
-        if (clip.deletedAt) return;
-        clip.tags.forEach((tag) => {
-          const key = tag.toLowerCase();
-          const current = tagCounts.get(key) ?? { label: tag, count: 0 };
-          current.count += 1;
-          tagCounts.set(key, current);
-        });
-      });
-      return Array.from(tagCounts.entries())
-        .filter(([key]) => !tagToken || key.includes(tagToken))
-        .slice(0, 8)
-        .map(([, value]) => ({ id: `tag:${value.label}`, label: value.label, hint: `${value.count}`, kind: "saved", tag: value.label }));
-    }
-    return baseSearchSuggestions
-      .filter((item) =>
-        matchesSearchSuggestionToken(
-          item,
-          commandToken,
-          (label, term) => matchPinyin(label, term, { precision: "any", space: "ignore" }) !== null,
-        ),
-      )
-      .slice(0, 8);
-  }, [baseSearchSuggestions, clips, isSearchActive, query]);
+  const searchSuggestions = useMemo(
+    () => buildSearchSuggestions(clips, query, baseSearchSuggestions),
+    [baseSearchSuggestions, clips, query],
+  );
 
   // autocomplete 下拉的高亮项索引；建议列表变化（输入/过滤）时重置到首项，使 Enter 默认应用第一项。
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);

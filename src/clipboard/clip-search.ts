@@ -3,7 +3,7 @@
 import { match as matchPinyin } from "pinyin-pro";
 import type { TranslationKey } from "../i18n";
 import type { AppSettings, ClipItem, ClipPayloadKind, TagRule } from "../App";
-import { normalizeSearch, type SearchSuggestion } from "../search-query";
+import { getSearchSuggestionToken, matchesSearchSuggestionToken, normalizeSearch, type SearchSuggestion } from "../search-query";
 
 /** 拼接条目全部可搜索字段为小写 haystack（内容/来源/分析/标签/来源应用/采集上下文）。 */
 export function getSearchHaystack(item: ClipItem) {
@@ -124,3 +124,42 @@ export function buildBaseSearchSuggestions(
   return [...base, ...saved];
 }
 
+/** 搜索建议下拉生成：尾部 token 以 @/# 触发（reui 式 combobox 模型），
+ *  已补全的过滤器不再弹下拉避免残留；# 走标签计数下拉，@ 走基础建议的拼音过滤。 */
+export function buildSearchSuggestions(
+  clips: ClipItem[],
+  query: string,
+  baseSearchSuggestions: SearchSuggestion[],
+): SearchSuggestion[] {
+  const token = query.trim();
+  const commandToken = token.split(/\s+/).at(-1) ?? "";
+  if (!commandToken.startsWith("@") && !commandToken.startsWith("#")) return [];
+  const lowerToken = commandToken.toLowerCase();
+  if (baseSearchSuggestions.some((s) => getSearchSuggestionToken(s).toLowerCase() === lowerToken)) return [];
+  if (commandToken.startsWith("#")) {
+    const tagToken = normalizeSearch(commandToken.slice(1));
+    const tagCounts = new Map<string, { label: string; count: number }>();
+    clips.forEach((clip) => {
+      if (clip.deletedAt) return;
+      clip.tags.forEach((tag) => {
+        const key = tag.toLowerCase();
+        const current = tagCounts.get(key) ?? { label: tag, count: 0 };
+        current.count += 1;
+        tagCounts.set(key, current);
+      });
+    });
+    return Array.from(tagCounts.entries())
+      .filter(([key]) => !tagToken || key.includes(tagToken))
+      .slice(0, 8)
+      .map(([, value]) => ({ id: `tag:${value.label}`, label: value.label, hint: `${value.count}`, kind: "saved", tag: value.label }));
+  }
+  return baseSearchSuggestions
+    .filter((item) =>
+      matchesSearchSuggestionToken(
+        item,
+        commandToken,
+        (label, term) => matchPinyin(label, term, { precision: "any", space: "ignore" }) !== null,
+      ),
+    )
+    .slice(0, 8);
+}

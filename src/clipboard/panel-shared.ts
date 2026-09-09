@@ -22,3 +22,30 @@ export async function analyzeClipboardWithDsh(item: ClipItem): Promise<DshAnalyz
     return undefined;
   }
 }
+
+/** 等待 Cmd/Ctrl 修饰键释放（Cmd+数字 粘贴场景）：首个修饰键 keyup 即 resolve，
+ *  返回等待耗时 ms；非 cmd-number 来源直接返回 0。上限 120ms 防止整体延迟过长。 */
+export function waitForPasteTriggerRelease(source: string): Promise<number> {
+  if (source !== "cmd-number") return Promise.resolve(0);
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let finished = false;
+    let timer = 0;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      window.clearTimeout(timer);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", finish, true);
+      resolve(Date.now() - started);
+    };
+    const onKeyUp = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Meta" || event.key === "Control" || (!event.metaKey && !event.ctrlKey)) {
+        finish();
+      }
+    };
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", finish, true);
+    timer = window.setTimeout(finish, 120);
+  });
+}
