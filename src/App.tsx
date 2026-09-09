@@ -53,8 +53,18 @@ import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
-import { matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
-import { createClip, normalizeClip, truncateText } from "./clipboard/clip-model";
+import { buildBaseSearchSuggestions, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
+import {
+  createClip,
+  normalizeClip,
+  truncateText,
+  type ContentDisplayMode,
+  type PanelArrowKey,
+  type PanelDensity,
+  type PanelSurface,
+  type TagMode,
+  type ViewKey,
+} from "./clipboard/clip-model";
 import {
   extractHashTags,
   extractUrls,
@@ -72,17 +82,11 @@ export type {
   ClipItem,
   ClipPayloadKind,
   ClipboardRepresentation,
+  PanelDensity,
+  ViewKey,
 } from "./clipboard/clip-model";
 
-export type PanelSurface = "clipboard" | "dsh";
 import { startPerfSpan } from "./performance-smoke";
-
-export type ViewKey = "history" | "favorites" | "trash";
-
-type PanelArrowKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
-export type PanelDensity = "dense" | "normal" | "comfortable";
-type TagMode = "similar" | "rules" | "off";
-type ContentDisplayMode = "summary" | "middle" | "raw";
 
 
 type PanelUiState = {
@@ -636,30 +640,10 @@ function ClipForgeApp() {
   }, []);
 
 
-  const baseSearchSuggestions = useMemo<SearchSuggestion[]>(() => {
-    const visible = clips.filter((item) => !item.deletedAt);
-    const countKind = (kind: ClipPayloadKind) => visible.filter((item) => item.payloadKind === kind).length;
-    const base: SearchSuggestion[] = [
-      { id: "favorite", label: tr("main.searchSuggestion.favorite"), hint: `${visible.filter((item) => item.favorite).length}`, kind: "favorite" },
-      { id: "link", label: tr("main.searchSuggestion.link"), hint: `${countKind("link")}`, kind: "type", typeFilter: "link" },
-      { id: "file", label: tr("main.searchSuggestion.file"), hint: `${countKind("file")}`, kind: "type", typeFilter: "file" },
-      { id: "image", label: tr("main.searchSuggestion.image"), hint: `${countKind("image")}`, kind: "type", typeFilter: "image" },
-      { id: "html", label: "HTML", hint: `${countKind("html")}`, kind: "type", typeFilter: "html" },
-      { id: "rtf", label: "RTF", hint: `${countKind("rtf")}`, kind: "type", typeFilter: "rtf" },
-      { id: "code", label: tr("main.searchSuggestion.code"), hint: `${countKind("code")}`, kind: "type", typeFilter: "code" },
-      { id: "json", label: "JSON", hint: `${countKind("json")}`, kind: "type", typeFilter: "json" },
-      { id: "command", label: tr("main.searchSuggestion.command"), hint: `${countKind("command")}`, kind: "type", typeFilter: "command" },
-      { id: "markdown", label: "Markdown", hint: `${countKind("markdown")}`, kind: "type", typeFilter: "markdown" },
-      { id: "table", label: tr("main.searchSuggestion.table"), hint: `${countKind("table")}`, kind: "type", typeFilter: "table" },
-      { id: "chart", label: tr("main.searchSuggestion.chart"), hint: `${countKind("chart")}`, kind: "type", typeFilter: "chart" },
-    ];
-    const saved = settings.tagRules
-      .map((rule) => rule.label.trim())
-      .filter(Boolean)
-      .slice(0, 4)
-      .map<SearchSuggestion>((tag) => ({ id: `saved:${tag}`, label: tag, hint: tr("main.searchSuggestion.rule"), kind: "saved", tag }));
-    return [...base, ...saved];
-  }, [clips, settings.tagRules, tr]);
+  const baseSearchSuggestions = useMemo(
+    () => buildBaseSearchSuggestions(clips, settings, tr),
+    [clips, settings.tagRules, tr],
+  );
 
   const parsedSearchCommand = useMemo(
     () => parseSearchCommand(debouncedQuery, baseSearchSuggestions),
