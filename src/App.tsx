@@ -4,7 +4,6 @@ import { TopToolbar } from "./clipboard/components/TopToolbar";
 import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
 import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
 import {
-  getFilePathsFromClip,
   getShortcutModLabel,
 } from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
@@ -22,7 +21,7 @@ import {
   type AppLanguagePreference,
   type TranslationKey,
 } from "./i18n";
-import { checkFilePaths, pasteClipboard, writeClipboard, type FilePathStatus } from "./services/clipboard";
+import { pasteClipboard, writeClipboard, type FilePathStatus } from "./services/clipboard";
 import { resolvePrimaryPluginAction } from "./plugin-actions";
 import {
   getSearchSuggestionToken,
@@ -48,6 +47,8 @@ import { TrashPanel } from "./clipboard/components/TrashPanel";
 import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
+import { usePanelBootstrap } from "./clipboard/use-panel-bootstrap";
+import { useFilePathStatuses } from "./clipboard/use-file-path-statuses";
 import { usePanelWindowListeners } from "./clipboard/use-panel-blur-hide";
 import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
@@ -149,17 +150,6 @@ export type AppSettings = {
   textMaxSizeMb: number;
 };
 
-type DbInitPayload = {
-  path: string;
-  schemaVersion: number;
-};
-
-type AccessibilityPermissionPayload = {
-  status: "granted" | "missing" | "unsupported";
-  canReadFocusedInput: boolean;
-  message: string;
-};
-
 
 type ExportTextFilesPayload = {
   directory: string;
@@ -178,22 +168,6 @@ type SearchClipsRequest = {
   limit?: number;
   cursor?: string | null;
 };
-
-
-function getStarterSampleContent(tr: (key: TranslationKey, params?: Record<string, string | number>) => string) {
-  return [
-    tr("main.sample.title"),
-    "",
-    tr("main.sample.description"),
-    tr("main.sample.shortcut.open"),
-    tr("main.sample.shortcut.paste"),
-    tr("main.sample.shortcut.favorite"),
-    tr("main.sample.shortcut.delete"),
-    tr("main.sample.shortcut.detail"),
-    "",
-    "https://ui.shadcn.com/docs/components/base/dropdown-menu",
-  ].join("\n");
-}
 
 
 function getBucketForView(view: ViewKey): ClipBucket | "trash" | null {
@@ -401,6 +375,7 @@ function ClipForgeApp() {
   const [isSearchActive, setSearchActive] = useState(false);
   const [nativeStatus, setNativeStatus] = useState(() => t(initialLocale, "main.status.clipboardReady"));
   const [filePathStatuses, setFilePathStatuses] = useState<Record<string, FilePathStatus>>({});
+
   const [lastCopiedId, setLastCopiedId] = useState<string | null>(null);
   const [, setIsReadingClipboard] = useState(false);
   const [, setIsPanelEntering] = useState(false);
@@ -448,6 +423,18 @@ function ClipForgeApp() {
     clipsRef.current = clips;
   }, [clips]);
 
+  usePanelBootstrap({
+    isSettingsWindow,
+    tr,
+    settingsRef,
+    setClips,
+    clipsRef,
+    setSelectedId,
+    setNextCursor,
+    setNativeStatus,
+    normalizeClip,
+  });
+
   const { loadMoreClips, captureClipboard } = useClipboardList({
     isSettingsWindow,
     setClips,
@@ -494,72 +481,6 @@ function ClipForgeApp() {
     setPanelClosing,
   });
 
-
-  useEffect(() => {
-    let cancelled = false;
-    invoke<AccessibilityPermissionPayload>("check_accessibility_permission")
-      .then((payload) => {
-        if (cancelled) return;
-        if (!payload.canReadFocusedInput) {
-          setNativeStatus(tr("main.status.accessibilityMissing"));
-        }
-      })
-      .catch((error) => logAppError("warn", "Check accessibility permission failed", String(error)));
-    invoke<DbInitPayload>("init_clip_database")
-      .then((payload) => {
-        if (cancelled) return;
-        logAppError("info", `Clip database ready at ${payload.path}`);
-        if (isSettingsWindow) return null;
-        return invoke<QueryClipPayload>("search_clip_records", {
-          input: {
-            bucket: "all",
-            limit: 200,
-          },
-        });
-      })
-      .then(async (payload) => {
-        if (!payload || cancelled || isSettingsWindow) return;
-        if (!isQueryClipPayload(payload)) throw new Error("Invalid search_clip_records payload");
-        let items = payload.items
-          .map((item) => normalizeClip(item, settingsRef.current))
-          .filter((item): item is ClipItem => Boolean(item));
-        if (!items.length) {
-          try {
-            const seedPayload = await invoke<CaptureClipPayload>("capture_clip_record", {
-              content: getStarterSampleContent(tr),
-              sourceLabel: "ClipForge",
-              observedAt: Date.now(),
-            });
-            if (!isCaptureClipPayload(seedPayload)) throw new Error("Invalid capture_clip_record payload");
-            const seedItem = normalizeClip(seedPayload.item, settingsRef.current);
-            if (seedItem) {
-              items = [seedItem];
-              setSelectedId(seedItem.id);
-              logAppError("info", "starter-sample: seeded intro clip", { id: seedItem.id });
-            }
-          } catch (error) {
-            logAppError("warn", "Seed starter sample clip failed", String(error));
-          }
-        }
-        if (cancelled) return;
-        setClips(items);
-        clipsRef.current = items;
-        setNextCursor(items.length === payload.items.length ? (payload.nextCursor ?? null) : null);
-        logAppError("info", "clip-list: initialized from database", {
-          itemCount: items.length,
-          rawCount: payload.items.length,
-          hasMore: Boolean(payload.nextCursor),
-        });
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        logAppError("error", "Initialize clip database failed", String(error));
-        setNativeStatus(tr("main.status.databaseInitFailed"));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isSettingsWindow, tr]);
 
   const showQuickPanel = useCallback(
     async (reason: "shortcut" | "tray") => {
@@ -740,34 +661,6 @@ function ClipForgeApp() {
   ]);
   filteredClipsRef.current = filteredClips;
 
-  useEffect(() => {
-    if (isSettingsWindow) return;
-    const paths = Array.from(
-      new Set(
-        filteredClips
-          .flatMap(getFilePathsFromClip)
-          .filter((path) => filePathStatuses[path] === undefined)
-          .slice(0, 200),
-      ),
-    );
-    if (!paths.length) return;
-    let cancelled = false;
-    checkFilePaths(paths)
-      .then((items) => {
-        if (cancelled || !items.length) return;
-        setFilePathStatuses((current) => {
-          const next = { ...current };
-          items.forEach((item) => {
-            next[item.path] = item;
-          });
-          return next;
-        });
-      })
-      .catch((error) => logAppError("warn", "Check file paths failed", String(error)));
-    return () => {
-      cancelled = true;
-    };
-  }, [filePathStatuses, filteredClips, isSettingsWindow]);
 
   const activeSearchSummary = useMemo(() => {
     const parts = [
@@ -785,6 +678,8 @@ function ClipForgeApp() {
     }
     return filteredClips[0] ?? null;
   }, [clips, filteredClips, selectedId]);
+
+  useFilePathStatuses({ filePathStatuses, filteredClips, isSettingsWindow, setFilePathStatuses });
 
   const selectedInList = useMemo(() => {
     const itemsById = new Map(filteredClips.map((item) => [item.id, item]));
