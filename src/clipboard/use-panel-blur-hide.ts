@@ -87,3 +87,45 @@ export function usePanelBlurHide({
     return cancelHide;
   }, [enabled, setPanelClosing, setIsPanelEntering, panelFocusGraceUntilRef, blurHideInFlightRef]);
 }
+
+/** 托盘/快捷键唤起与隐藏事件监听（clipforge://show-quick-panel / hide-quick-panel）。 */
+export function usePanelWindowListeners({
+  enabled,
+  setPanelClosing,
+  setIsPanelEntering,
+  settingsRef,
+  showQuickPanel,
+}: {
+  enabled: boolean;
+  setPanelClosing: (closing: boolean) => void;
+  setIsPanelEntering: (entering: boolean) => void;
+  settingsRef: { current: { panelPinned: boolean } };
+  showQuickPanel: (reason: "shortcut" | "tray") => void;
+}) {
+  useEffect(() => {
+    if (!enabled) return;
+    const appWindow = getCurrentWindow();
+    const unlisteners: Array<() => void> = [];
+    appWindow
+      .listen<string>("clipforge://show-quick-panel", ({ payload }) => {
+        showQuickPanel(payload === "tray" ? "tray" : "shortcut");
+      })
+      .then((unlisten) => unlisteners.push(unlisten))
+      .catch((error) => logAppError("warn", "Register tray listener failed", String(error)));
+    appWindow
+      .listen<string>("clipforge://hide-quick-panel", () => {
+        if (settingsRef.current.panelPinned) {
+          logAppError("info", "panel-pin: hide-quick-panel event ignored, panel pinned");
+          return;
+        }
+        // Rust 侧隐藏（粘贴 / 托盘切换走 hide_panel）后复位 is-entering，下次唤起才能淡入。
+        setIsPanelEntering(false);
+        setPanelClosing(false);
+      })
+      .then((unlisten) => unlisteners.push(unlisten))
+      .catch((error) => logAppError("warn", "Register quick panel hide listener failed", String(error)));
+    return () => {
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, [enabled, setPanelClosing, setIsPanelEntering, settingsRef, showQuickPanel]);
+}

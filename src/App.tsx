@@ -49,6 +49,8 @@ import { TrashPanel } from "./clipboard/components/TrashPanel";
 import { analyzeClipboardWithDsh, logAppError } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
+import { usePanelWindowListeners } from "./clipboard/use-panel-blur-hide";
+import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
@@ -157,13 +159,6 @@ type AccessibilityPermissionPayload = {
 };
 
 
-type CleanupClipPayload = {
-  hardDeleted: number;
-  retentionHardDeleted: number;
-  overflowHardDeleted: number;
-  ranAt: number;
-};
-
 type ExportTextFilesPayload = {
   directory: string;
   count: number;
@@ -186,8 +181,6 @@ type SearchClipsRequest = {
 const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 const DEFAULT_SHORTCUT = "Control+V";
 const DEFAULT_PANEL_HEIGHT = 400;
-const MAX_BROWSER_TIMER_DELAY_MS = 2_147_000_000;
-const CLEANUP_STARTUP_DELAY_MS = 60_000;
 function getStarterSampleContent(tr: (key: TranslationKey, params?: Record<string, string | number>) => string) {
   return [
     tr("main.sample.title"),
@@ -763,6 +756,19 @@ function ClipForgeApp() {
     [captureClipboard, tr],
   );
 
+  usePanelWindowListeners({
+    enabled: !isSettingsWindow,
+    setPanelClosing,
+    setIsPanelEntering,
+    settingsRef,
+    showQuickPanel,
+  });
+
+  useCleanupScheduler({
+    isSettingsWindow,
+    settings,
+  });
+
   const handleWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     const target = event.target;
@@ -777,82 +783,6 @@ function ClipForgeApp() {
       .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
   }, []);
 
-
-  useEffect(() => {
-    if (isSettingsWindow) return;
-    if (!settings.cleanupEnabled) return;
-    let timer = 0;
-    let disposed = false;
-    let cleanupRunning = false;
-    const intervalMs = Math.max(1, settings.cleanupIntervalHours) * 60 * 60 * 1000;
-    const scheduleNext = (delayMs: number) => {
-      if (disposed) return;
-      const safeDelayMs = Math.min(Math.max(0, delayMs), MAX_BROWSER_TIMER_DELAY_MS);
-      timer = window.setTimeout(() => {
-        if (delayMs > MAX_BROWSER_TIMER_DELAY_MS) {
-          scheduleNext(delayMs - MAX_BROWSER_TIMER_DELAY_MS);
-          return;
-        }
-        runCleanup();
-      }, safeDelayMs);
-    };
-    const runCleanup = () => {
-      if (disposed || cleanupRunning) return;
-      cleanupRunning = true;
-      invoke<CleanupClipPayload>("cleanup_clip_records", {
-        retentionDays: settings.softDeletedRetentionDays,
-        maxActiveItems: settings.maxStoredItems,
-      })
-        .then((payload) => {
-          if (payload.hardDeleted > 0) {
-            logAppError("info", "Cleanup completed", payload);
-          }
-        })
-        .catch((error) => logAppError("warn", "Cleanup failed", String(error)))
-        .finally(() => {
-          cleanupRunning = false;
-          scheduleNext(intervalMs);
-        });
-    };
-    scheduleNext(CLEANUP_STARTUP_DELAY_MS);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-    };
-  }, [
-    isSettingsWindow,
-    settings.cleanupEnabled,
-    settings.cleanupIntervalHours,
-    settings.maxStoredItems,
-    settings.softDeletedRetentionDays,
-  ]);
-
-  useEffect(() => {
-    if (isSettingsWindow) return;
-    const appWindow = getCurrentWindow();
-    const unlisteners: Array<() => void> = [];
-    appWindow
-      .listen<string>("clipforge://show-quick-panel", ({ payload }) => {
-        showQuickPanel(payload === "tray" ? "tray" : "shortcut");
-      })
-      .then((unlisten) => unlisteners.push(unlisten))
-      .catch((error) => logAppError("warn", "Register tray listener failed", String(error)));
-    appWindow
-      .listen<string>("clipforge://hide-quick-panel", () => {
-        if (settingsRef.current.panelPinned) {
-          logAppError("info", "panel-pin: hide-quick-panel event ignored, panel pinned");
-          return;
-        }
-        // Rust 侧隐藏（粘贴 / 托盘切换走 hide_panel）后复位 is-entering，下次唤起才能淡入。
-        setIsPanelEntering(false);
-        setPanelClosing(false);
-      })
-      .then((unlisten) => unlisteners.push(unlisten))
-      .catch((error) => logAppError("warn", "Register quick panel hide listener failed", String(error)));
-    return () => {
-      unlisteners.forEach((unlisten) => unlisten());
-    };
-  }, [isSettingsWindow, setPanelClosing, showQuickPanel]);
 
   const baseSearchSuggestions = useMemo<SearchSuggestion[]>(() => {
     const visible = clips.filter((item) => !item.deletedAt);
