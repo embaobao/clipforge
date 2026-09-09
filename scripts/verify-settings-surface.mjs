@@ -62,6 +62,7 @@ const topToolbar = read(files.topToolbar);
 const onboarding = read(files.onboarding);
 const onboardingShared = read(files.onboardingShared);
 const settings = read(files.settings);
+const panelShared = read("src/clipboard/panel-shared.ts");
 const settingsModel = read(files.settingsModel);
 const controls = read(files.controls);
 const settingsShell = read(files.settingsShell);
@@ -108,7 +109,7 @@ include(onboardingShared, "settings.onboarding.feature.agent.title", "onboarding
 match(topToolbar, /data-dev-probe="top-toolbar"[^>]*data-tauri-drag-region[^>]*onPointerDown=\{onDrag\}/, "top toolbar should remain the drag region");
 match(topToolbar, /data-dev-probe="top-search-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "search slot should block drag on pointer down");
 match(topToolbar, /data-dev-probe="top-action-slot"[^>]*onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/, "action slot should block drag on pointer down");
-match(app, /target\.closest\("button, input, textarea, select, a, \[role='menuitem'\]"\)/, "interactive targets should stay exempt from window dragging");
+match(panelShared, /target\.closest\("button, input, textarea, select, a, \[role='menuitem'\]"\)/, "interactive targets should stay exempt from window dragging");
 include(topToolbar, 'activeView === "history"', "top nav should keep the history scope");
 include(topToolbar, 'activeView === "favorites"', "top nav should keep the favorites scope");
 include(topToolbar, 'onSelect={() => onViewChange("trash")}', "top nav menu should still switch to trash");

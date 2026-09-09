@@ -7,12 +7,11 @@ import {
   getShortcutModLabel,
 } from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { toast } from "sonner";
-import type { ErrorInfo, PointerEvent, ReactNode, UIEvent } from "react";
+import type { ErrorInfo, ReactNode, UIEvent } from "react";
 import {
   formatCommandError,
   resolveAppLocale,
@@ -41,7 +40,7 @@ import { openDshWindow } from "./agent/dsh-analysis";
 import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
-import { analyzeClipboardWithDsh, logAppError, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
+import { analyzeClipboardWithDsh, createWindowDragHandler, logAppError, useDebouncedValue, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { usePanelBootstrap } from "./clipboard/use-panel-bootstrap";
@@ -211,14 +210,6 @@ function buildSearchClipsRequest({
   };
 }
 
-function useDebouncedValue<T>(value: T, delayMs: number) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(timer);
-  }, [delayMs, value]);
-  return debounced;
-}
 type ErrorBoundaryCopy = {
   toastMessage: string;
   recoverLabel: string;
@@ -514,19 +505,7 @@ function ClipForgeApp() {
     settings,
   });
 
-  const handleWindowDrag = useCallback((event: PointerEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
-    const target = event.target;
-    if (
-      target instanceof Element &&
-      target.closest("button, input, textarea, select, a, [role='menuitem']")
-    ) {
-      return;
-    }
-    getCurrentWindow()
-      .startDragging()
-      .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
-  }, []);
+  const handleWindowDrag = createWindowDragHandler();
 
 
   const baseSearchSuggestions = useMemo(

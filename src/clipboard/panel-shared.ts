@@ -1,5 +1,7 @@
 /** 快速面板共享桥接：模块级日志与 DSH 分析入口（主体与子组件共用，不挂在组件作用域内）。 */
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useEffect, useState } from "react";
 import type { ClipItem } from "../App";
 import { analyzeClipboard, type DshAnalyzeResult } from "../agent/dsh-analysis";
 
@@ -48,4 +50,28 @@ export function waitForPasteTriggerRelease(source: string): Promise<number> {
     window.addEventListener("blur", finish, true);
     timer = window.setTimeout(finish, 120);
   });
+}
+
+/** 防抖值 hook：delayMs 内的连续更新只在静默后落一次（搜索输入等场景）。 */
+export function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+  return debounced;
+}
+
+/** 面板空白处拖拽移动窗口（排除按钮/输入/链接等交互元素）。 */
+export function createWindowDragHandler() {
+  return (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, input, textarea, select, a, [role='menuitem']")) {
+      return;
+    }
+    getCurrentWindow()
+      .startDragging()
+      .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
+  };
 }
