@@ -9,7 +9,6 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { create } from "zustand";
 import { toast } from "sonner";
 import type { ErrorInfo, ReactNode, UIEvent } from "react";
 import {
@@ -25,7 +24,6 @@ import {
   getSearchSuggestionToken,
   normalizeTagName,
   parseSearchCommand,
-  type SearchQueryAst,
   type SearchSuggestion,
 } from "./search-query";
 import {
@@ -50,7 +48,8 @@ import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
-import { buildBaseSearchSuggestions, buildSearchSuggestions, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken } from "./clipboard/clip-search";
+import { usePanelUiStore } from "./clipboard/panel-shared";
+import { buildBaseSearchSuggestions, buildSearchClipsRequest, buildSearchSuggestions, isFavoriteView, getBucketForView, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken, type SearchClipsRequest } from "./clipboard/clip-search";
 import {
   createClip,
   normalizeClip,
@@ -66,9 +65,7 @@ import {
   extractHashTags,
   extractUrls,
   normalizeTagList,
-  type ClipBucket,
   type ClipItem,
-  type ClipPayloadKind,
   type ClipTypeFilter,
   type PasteMode,
 } from "./clipboard/clip-model";
@@ -84,17 +81,6 @@ export type {
 } from "./clipboard/clip-model";
 
 import { startPerfSpan } from "./performance-smoke";
-
-
-type PanelUiState = {
-  isClosing: boolean;
-  setClosing: (isClosing: boolean) => void;
-};
-
-const usePanelUiStore = create<PanelUiState>()((set) => ({
-  isClosing: false,
-  setClosing: (isClosing) => set((state) => (state.isClosing === isClosing ? state : { isClosing })),
-}));
 
 export type TagRule = {
   id: string;
@@ -146,69 +132,11 @@ export type AppSettings = {
   textMaxSizeMb: number;
 };
 
-
 type ExportTextFilesPayload = {
   directory: string;
   count: number;
   files: string[];
 };
-
-type SearchClipsRequest = {
-  text?: string;
-  bucket?: "all" | ClipBucket | "trash";
-  kinds?: string[];
-  types?: ClipPayloadKind[];
-  tags?: string[];
-  fileExtensions?: string[];
-  favorite?: boolean;
-  limit?: number;
-  cursor?: string | null;
-};
-
-
-function getBucketForView(view: ViewKey): ClipBucket | "trash" | null {
-  if (view === "history") return "history";
-  if (view === "trash") return "trash";
-  if (view === "favorites") return null;
-  return null;
-}
-
-function isFavoriteView(view: ViewKey): boolean {
-  return view === "favorites";
-}
-
-function buildSearchClipsRequest({
-  activeTag,
-  activeTypeFilter,
-  activeView,
-  ast,
-  cursor,
-  filterFavorite,
-  limit,
-}: {
-  activeTag: string | null;
-  activeTypeFilter: ClipTypeFilter;
-  activeView: ViewKey;
-  ast: SearchQueryAst;
-  cursor?: string | null;
-  filterFavorite: boolean;
-  limit: number;
-}): SearchClipsRequest {
-  const bucket = ast.bucket !== "all" ? ast.bucket : (getBucketForView(activeView) ?? "all");
-  const tags = normalizeTagList([...(activeTag ? [activeTag] : []), ...ast.tags]);
-  const types = activeTypeFilter !== "all" ? [activeTypeFilter] : ast.types;
-  return {
-    text: ast.text.trim() || undefined,
-    bucket,
-    kinds: ast.kinds.length ? ast.kinds : undefined,
-    types: types.length ? types : undefined,
-    tags: tags.length ? tags : undefined,
-    fileExtensions: ast.fileExtensions.length ? ast.fileExtensions : undefined,
-    favorite: isFavoriteView(activeView) || filterFavorite || ast.favorite ? true : undefined,
-    limit,
-    cursor,
-  };
-}
 
 type ErrorBoundaryCopy = {
   toastMessage: string;
@@ -416,13 +344,11 @@ function ClipForgeApp() {
     createClip,
   });
 
-
   const handleScroll = useCallback((event: UIEvent<HTMLElement>) => {
     const top = event.currentTarget.scrollTop;
     setScrollOffset(top);
     setSearchCompact(top > 18);
   }, []);
-
 
   useEffect(() => {
     return () => {
@@ -439,7 +365,6 @@ function ClipForgeApp() {
     setIsPanelEntering,
     setPanelClosing,
   });
-
 
   const showQuickPanel = useCallback(
     async (reason: "shortcut" | "tray") => {
@@ -506,7 +431,6 @@ function ClipForgeApp() {
   });
 
   const handleWindowDrag = createWindowDragHandler();
-
 
   const baseSearchSuggestions = useMemo(
     () => buildBaseSearchSuggestions(clips, settings, tr),
@@ -607,7 +531,6 @@ function ClipForgeApp() {
     settings,
   ]);
   filteredClipsRef.current = filteredClips;
-
 
   const activeSearchSummary = useMemo(() => {
     const parts = [
@@ -1983,7 +1906,6 @@ function ClipForgeApp() {
     </main>
   );
 }
-
 
 function App() {
   const locale = resolveAppLocale(loadLocalSettings().language);

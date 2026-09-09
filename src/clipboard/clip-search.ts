@@ -2,8 +2,9 @@
  *  纯函数域，不依赖 React；AppSettings/TagRule 类型从 App 引入（type-only，无运行时环）。 */
 import { match as matchPinyin } from "pinyin-pro";
 import type { TranslationKey } from "../i18n";
-import type { AppSettings, ClipItem, ClipPayloadKind, TagRule } from "../App";
-import { getSearchSuggestionToken, matchesSearchSuggestionToken, normalizeSearch, type SearchSuggestion } from "../search-query";
+import type { AppSettings, ClipItem, ClipPayloadKind, TagRule, ViewKey } from "../App";
+import { normalizeTagList, type ClipBucket, type ClipTypeFilter } from "./clip-model";
+import { getSearchSuggestionToken, matchesSearchSuggestionToken, normalizeSearch, type SearchQueryAst, type SearchSuggestion } from "../search-query";
 
 /** 拼接条目全部可搜索字段为小写 haystack（内容/来源/分析/标签/来源应用/采集上下文）。 */
 export function getSearchHaystack(item: ClipItem) {
@@ -162,4 +163,62 @@ export function buildSearchSuggestions(
       ),
     )
     .slice(0, 8);
+}
+
+// ===== 搜索请求域（从 App.tsx 迁入）=====
+
+export type SearchClipsRequest = {
+  text?: string;
+  bucket?: "all" | ClipBucket | "trash";
+  kinds?: string[];
+  types?: ClipPayloadKind[];
+  tags?: string[];
+  fileExtensions?: string[];
+  favorite?: boolean;
+  limit?: number;
+  cursor?: string | null;
+};
+
+export function getBucketForView(view: ViewKey): ClipBucket | "trash" | null {
+  if (view === "history") return "history";
+  if (view === "trash") return "trash";
+  if (view === "favorites") return null;
+  return null;
+}
+
+export function isFavoriteView(view: ViewKey): boolean {
+  return view === "favorites";
+}
+
+export function buildSearchClipsRequest({
+  activeTag,
+  activeTypeFilter,
+  activeView,
+  ast,
+  cursor,
+  filterFavorite,
+  limit,
+}: {
+  activeTag: string | null;
+  activeTypeFilter: ClipTypeFilter;
+  activeView: ViewKey;
+  ast: SearchQueryAst;
+  cursor?: string | null;
+  filterFavorite: boolean;
+  limit: number;
+}): SearchClipsRequest {
+  const bucket = ast.bucket !== "all" ? ast.bucket : (getBucketForView(activeView) ?? "all");
+  const tags = normalizeTagList([...(activeTag ? [activeTag] : []), ...ast.tags]);
+  const types = activeTypeFilter !== "all" ? [activeTypeFilter] : ast.types;
+  return {
+    text: ast.text.trim() || undefined,
+    bucket,
+    kinds: ast.kinds.length ? ast.kinds : undefined,
+    types: types.length ? types : undefined,
+    tags: tags.length ? tags : undefined,
+    fileExtensions: ast.fileExtensions.length ? ast.fileExtensions : undefined,
+    favorite: isFavoriteView(activeView) || filterFavorite || ast.favorite ? true : undefined,
+    limit,
+    cursor,
+  };
 }

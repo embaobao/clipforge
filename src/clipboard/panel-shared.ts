@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";
+import { create } from "zustand";
 import type { ClipItem } from "../App";
 import { analyzeClipboard, type DshAnalyzeResult } from "../agent/dsh-analysis";
 
@@ -75,3 +76,16 @@ export function createWindowDragHandler() {
       .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
   };
 }
+
+// ===== 面板 UI 全局状态（从 App.tsx 迁入）=====
+
+export type PanelUiState = {
+  isClosing: boolean;
+  setClosing: (isClosing: boolean) => void;
+};
+
+export const usePanelUiStore = create<PanelUiState>()((set) => ({
+  isClosing: false,
+  setClosing: (isClosing) => set((state) => (state.isClosing === isClosing ? state : { isClosing })),
+}));
+
