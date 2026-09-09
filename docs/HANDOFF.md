@@ -92,7 +92,7 @@
 1. **App.tsx 第二刀 ✅（夜间批次 6，`605de5a`）**：GlassSearchBar（192 行，含 SearchAutocomplete）/ VirtualList（181 行，ROW_HEIGHT/OVERSCAN 随迁）/ TrashPanel（132 行）/ QuickPastePanel（199 行）切至 `src/clipboard/components/`，panel-shared.ts（24 行）承载 logAppError + analyzeClipboardWithDsh；App.tsx 3658 → **2967 行**，新增导出 PanelDensity/AppSettings。
 2. **settings.tsx 第一刀 ✅（夜间批次 7，`bb10ec7`）**：切出 `src/settings/settings-model.ts`（347 行：AppSettings/各 payload 契约/导航常量/getInitialNavigationFromUrl），settings.tsx 1864 → **1566 行**；safeInvokeUpdateCheck/UpdateCheckState 本地保留（verify-runtime-boundaries 断言锚定）；verify-settings-surface 三条导航常量断言已随迁 model 文件。
 3. **settings.tsx 第二刀（下一步）**：主体 SettingsApp（约 1170 行）按 section 渲染函数切片（display/capture/storage/mcp-agent/update/tag-rules 各 section 的 JSX 块切为 `src/settings/sections/*.tsx`），每切一个跑全套。
-4. **App.tsx 主体（批次 15 后 2207 行）**：叶子切出进行中——批次 8-15 已完成环境 hook / 失焦隐藏+托盘监听 / useClipboardList / useSettingsSync / useCleanupScheduler / clip-search / clip-model / panel-settings 域（`8f466d0`）。下一批候选：search 键盘导航与建议 handler 群（最大块，GlassSearchBar 的 props 来源，含 Cmd+0-9 分组快捷键、方向键导航、粘贴触发释放等待 waitForPasteTriggerRelease）；剪贴板轮询/写回抑制 effect（若仍残留）；UI 类型群（PanelSurface/ViewKey/PanelDensity 等，可迁 clip-model 或独立 types 文件）。每切一个跑全套。
+4. **App.tsx 主体（批次 16 后 2191 行）**：叶子切出进行中——批次 8-16 已完成环境 hook / 失焦隐藏+托盘监听 / useClipboardList / useSettingsSync / useCleanupScheduler / clip-search / clip-model（含 UI 类型群）/ panel-settings / 搜索建议生成（`179d9e5`）。下一批候选：search 键盘导航与建议 handler 群（最大块，Cmd+0-9 分组、方向键导航、waitForPasteTriggerRelease）；剪贴板轮询/写回抑制 effect（若仍残留）；剩余 UI 渲染 JSX（主体最后的大头，可按 TopCommandBar/ModeBar/ClipboardList 区块切展示组件）。每切一个跑全套。
 5. **lib.rs（14284 行）**：按 codebase-modularity 提案顺序拆 settings/agent/mcp 模块（Rust 端改动必须 `cargo check` + `pnpm tauri dev` 冒烟）。
 
 ## 待办事项（按优先级，批次 5 后更新）
