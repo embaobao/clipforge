@@ -92,7 +92,10 @@
 1. **App.tsx 第二刀 ✅（夜间批次 6，`605de5a`）**：GlassSearchBar（192 行，含 SearchAutocomplete）/ VirtualList（181 行，ROW_HEIGHT/OVERSCAN 随迁）/ TrashPanel（132 行）/ QuickPastePanel（199 行）切至 `src/clipboard/components/`，panel-shared.ts（24 行）承载 logAppError + analyzeClipboardWithDsh；App.tsx 3658 → **2967 行**，新增导出 PanelDensity/AppSettings。
 2. **settings.tsx 第一刀 ✅（夜间批次 7，`bb10ec7`）**：切出 `src/settings/settings-model.ts`（347 行：AppSettings/各 payload 契约/导航常量/getInitialNavigationFromUrl），settings.tsx 1864 → **1566 行**；safeInvokeUpdateCheck/UpdateCheckState 本地保留（verify-runtime-boundaries 断言锚定）；verify-settings-surface 三条导航常量断言已随迁 model 文件。
 3. **settings.tsx 第二刀（下一步）**：主体 SettingsApp（约 1170 行）按 section 渲染函数切片（display/capture/storage/mcp-agent/update/tag-rules 各 section 的 JSX 块切为 `src/settings/sections/*.tsx`），每切一个跑全套。
-4. **App.tsx 主体（批次 20 后 1924 行）**：叶子切出进行中——批次 8-20 累计 9 个 hook/域模块 + 5 个子组件（`f8b9fa6`，搜索请求域+usePanelUiStore 本批）。剩余只剩两块硬骨头：**全局 keydown 键盘导航 effect**（约 300 行，引用 30+ handler——建议拆两半：先「视图/多选/收藏类快捷键」后「方向键/Cmd+0-9」）；**UI 渲染 JSX**（主体 return，按 TopCommandBar/ModeBar/ClipboardList/Overlay 区块切展示组件）。另剩零散：markClipCopied/updateClip/canOpenClipTarget/exportSelectedTextFiles 等写回域函数。每切一个跑全套；切走函数前先 grep verify 脚本断言。
+4. **App.tsx 主体（批次 21 后 1921 行）**：批次 8-21 累计切出 9 个 hook/域模块 + 5 个子组件 + 10 个纯函数群（`e7e7c45`）。**剩余只剩两块硬骨头，建议新会话（上下文充裕）分两批执行**：
+   - **A. 全局 keydown 键盘导航 effect**（约 300 行）：依赖清单已盘——switchClipboardView/togglePanelPinned/favoriteSelectedClips/runPrimaryOpenAction/copySelectedClips/handlePanelArrowNavigation/applySearchSuggestion/exportSelectedTextFiles + selectedId/activeView/multiSelectMode/filteredClips/selectedInList/searchRef/settingsRef + 十余个 setter。参数注入对象约 25 项；注意 verify-runtime-boundaries 锚定 runPrimaryOpenAction..updateClip 切片、verify-settings-surface 锚定拖拽排除断言（已在 panel-shared）。
+   - **B. UI 渲染 JSX**（主体 return，约 800 行）：按 TopCommandBar/ModeBar/ClipboardList/StatusBar/Overlay 区块切展示组件，props 由现有 state/handler 直接传递。
+   另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
 5. **lib.rs（14284 行）**：按 codebase-modularity 提案顺序拆 settings/agent/mcp 模块（Rust 端改动必须 `cargo check` + `pnpm tauri dev` 冒烟）。
 
 ## 待办事项（按优先级，批次 5 后更新）
