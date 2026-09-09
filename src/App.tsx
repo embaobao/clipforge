@@ -67,6 +67,7 @@ import {
   normalizeTagList,
   type ClipItem,
   type ClipTypeFilter,
+  canOpenClipTarget,
   type PasteMode,
 } from "./clipboard/clip-model";
 
@@ -1409,10 +1410,6 @@ function ClipForgeApp() {
       logAppError("warn", "Open detail file path failed", { target: path, error: String(error) });
       setNativeStatus(tr("main.status.openPathFailed"));
     }
-  }
-
-  function canOpenClipTarget(item: ClipItem) {
-    return Boolean(item.analysis.attachment || item.analysis.url);
   }
 
   async function runPrimaryOpenAction(item: ClipItem, source: "shortcut" | "keyboard" | "click" | "context-menu" | "detail") {

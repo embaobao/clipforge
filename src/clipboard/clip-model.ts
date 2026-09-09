@@ -463,3 +463,8 @@ export type PanelDensity = "dense" | "normal" | "comfortable";
 export type TagMode = "similar" | "rules" | "off";
 /** 内容展示模式。 */
 export type ContentDisplayMode = "summary" | "middle" | "raw";
+
+/** 条目是否可打开目标（附件或链接）。 */
+export function canOpenClipTarget(item: ClipItem) {
+  return Boolean(item.analysis.attachment || item.analysis.url);
+}
