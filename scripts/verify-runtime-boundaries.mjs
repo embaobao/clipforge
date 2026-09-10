@@ -5,6 +5,7 @@ const root = process.cwd();
 const appPath = path.join(root, "src/App.tsx");
 // 详情页溢出菜单已拆分至独立文件（插件动作失败边界在其中）。
 const overflowMenuPath = path.join(root, "src/workspace/components/DetailOverflowMenu.tsx");
+const shortcutSectionPath = path.join(root, "src/settings/sections/ShortcutLanguageSection.tsx");
 const settingsPath = path.join(root, "src/settings.tsx");
 const settingsCatalogPath = path.join(root, "src/settings/settings-field-catalog.ts");
 const zhLocalePath = path.join(root, "src/i18n/locales/zh-CN.json");
@@ -30,6 +31,7 @@ function sliceBetween(source, start, end) {
 const app = read(appPath);
 const overflowMenu = read(overflowMenuPath);
 const settings = read(settingsPath);
+const shortcutSection = read(shortcutSectionPath);
 const settingsCatalog = read(settingsCatalogPath);
 const zhLocale = read(zhLocalePath);
 
@@ -49,13 +51,13 @@ assert(detailActions.includes("workspace-plugin-action-failed"), "Workspace acti
 assert(!detailActions.includes("throw error"), "Workspace action strip rethrows plugin failures");
 
 assert(settings.includes("async function safeInvokeUpdateCheck"), "Settings update check is not isolated");
-assert(settings.includes('tr("settings.accessibility.title")'), "Settings accessibility title is not wired to i18n");
+assert(shortcutSection.includes('tr("settings.accessibility.title")'), "Settings accessibility title is not wired to i18n");
 assert(settingsCatalog.includes('labelKey: "settings.section.shortcutLanguage"'), "Settings section navigation is not wired to i18n keys");
 assert(settings.includes('tr(item.labelKey)'), "Settings section navigation labels are not translated at render time");
-assert(settings.includes('tr("settings.shortcut.quickOpen")'), "Settings shortcut copy is not wired to i18n");
+assert(shortcutSection.includes('tr("settings.shortcut.quickOpen")'), "Settings shortcut copy is not wired to i18n");
 assert(settings.includes('tr("settings.display.density")'), "Settings display density copy is not wired to i18n");
-assert(settings.includes('tr("settings.accessibility.status.granted")'), "Settings accessibility granted state is not wired to i18n");
-assert(settings.includes('tr("settings.accessibility.action.request")'), "Settings accessibility request action is not wired to i18n");
+assert(shortcutSection.includes('tr("settings.accessibility.status.granted")'), "Settings accessibility granted state is not wired to i18n");
+assert(shortcutSection.includes('tr("settings.accessibility.action.request")'), "Settings accessibility request action is not wired to i18n");
 assert(settings.includes('status: tr("settings.accessibility.status.reset")'), "Settings accessibility reset status is not wired to i18n");
 assert(zhLocale.includes('"settings.accessibility.title": "macOS 辅助功能权限"'), "Settings accessibility copy is missing from zh-CN locale");
 const safeUpdate = sliceBetween(settings, "async function safeInvokeUpdateCheck", "const tagModeLabels");
