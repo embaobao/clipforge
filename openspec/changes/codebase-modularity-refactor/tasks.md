@@ -38,6 +38,11 @@
 - [~] ~~agent-panel.tsx 拆 parts~~：agent-panel.tsx/agent-chat-page.tsx 已随旧 Agent 面板整体删除（2026-09 DSH 重构），任务作废
 - [ ] App.tsx 按 surface 拆（clipboard panel / detail / agent overlay）——进行中：4051 → 2355 行（-42%），已切 9 hooks + 5 子组件 + clip-model/clip-search/panel-settings 域模块（详见 docs/HANDOFF.md 剩余拆分方案），剩余 keydown 已完成、UI JSX 与写回域待切
 - [x] 每个抽出的文件 ≤500 行（全部新文件 ≤498 行，file-size 门禁全程通过）
+- [ ] App.tsx 剩余切片（2026-09-10 盟哥授权全量推进，当前 1692 行）：
+  - [ ] 写回域接线：useClipWriteback（已建文件未接线）——注意 verify-runtime-boundaries 的 updateClip 终点锚同步改 updateClipContent
+  - [ ] 写回域深链：copyClip/copyText/pasteClip/captureStandardTextClip/updateClipContent/openClipTarget → use-clip-writeback.ts 二批
+  - [ ] search 域：handleSearchChange/applySearchSuggestion/closeSearchIfEmpty/removeSearchFilter 等
+  - [ ] UI JSX：TopCommandBar/ModeBar/列表参数组装/Overlay 区块切展示组件
 
 ## Phase 6：收尾
 
