@@ -64,6 +64,7 @@ const onboardingShared = read(files.onboardingShared);
 const settings = read(files.settings);
 const panelShared = read("src/clipboard/panel-shared.ts");
 const panelKeyboard = read("src/clipboard/use-panel-keyboard.ts");
+const shortcutSection = read("src/settings/sections/ShortcutLanguageSection.tsx");
 const settingsModel = read(files.settingsModel);
 const controls = read(files.controls);
 const settingsShell = read(files.settingsShell);
@@ -126,8 +127,8 @@ include(app, 'setActiveSurface("clipboard");', "top view changes should return t
 include(settingsModel, 'const SECTION_LEGACY_ALIASES: Record<string, { section: SettingsSectionId; tab: SettingsTabId }> = {', "settings legacy aliases should remain explicit");
 include(settingsModel, 'onboarding: { section: "shortcut-language", tab: "onboarding" },', "settings should still deep-link onboarding");
 include(settingsModel, 'onboarding: "settings.tab.onboarding"', "settings should keep the onboarding tab label");
-include(settings, 'onboarding: (', "settings should still render onboarding inside shortcut-language tabs");
-include(settings, "<OnboardingEntryCard", "settings should still mount the onboarding entry card");
+include(shortcutSection, 'onboarding: (', "settings should still render onboarding inside shortcut-language tabs");
+include(shortcutSection, "<OnboardingEntryCard", "settings should still mount the onboarding entry card");
 include(settings, "<SettingsShell", "settings should still render the shell");
 include(settingsShell, 'data-surface="settings"', "settings shell should expose the settings surface marker");
 include(settings, 'recordNextFramePerf("settings.section"', "settings sidebar changes should stay observable");
