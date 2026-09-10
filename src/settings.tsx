@@ -3,13 +3,9 @@ import { settingsService } from "./services/settings";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  ExternalLink,
-  Eye,
   FileDown,
-  FileCode,
   Plus,
   RefreshCw,
-  Terminal,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -25,19 +21,15 @@ import {
 import {
   SettingGroup,
   SegmentSetting,
-  NumberSetting,
-  ToggleSetting,
-  CheckItem,
-  ReadonlyField,
 } from "./settings/controls";
 import { ShortcutLanguageSection } from "./settings/sections/ShortcutLanguageSection";
+import { CaptureContentSection, StorageLogsSection } from "./settings/sections/CaptureStorageSections";
 import { DisplayPanelSection } from "./settings/sections/DisplayPanelSection";
 import { SettingsCodeTabs, type SettingsCodeTab } from "./settings/components/SettingsCodeTabs";
 import { SettingsErrorBoundary } from "./settings/components/SettingsErrorBoundary";
 import { SettingsShell } from "./settings/components/SettingsShell";
 import { SettingsStatusPanel, type SettingsStatusPanelState } from "./settings/components/SettingsStatusPanel";
 import { SettingsStickyStatusBar } from "./settings/components/SettingsStickyStatusBar";
-import { SettingsFieldRow } from "./settings/components/SettingsFieldRow";
 import { type SettingsTabId } from "./settings/settings-field-catalog";
 import {
   Tooltip,
@@ -73,7 +65,6 @@ import {
   type BuildInfoPayload,
 } from "./settings/settings-model";
 
-
 interface UpdateCheckState {
   status: "idle" | "checking" | "available" | "latest" | "downloading" | "ready" | "failed";
   currentVersion: string;
@@ -86,7 +77,6 @@ interface UpdateCheckState {
   errorCode?: string;
   errorMessage?: string;
 }
-
 
 async function safeInvokeUpdateCheck(): Promise<UpdateCheckState> {
   try {
@@ -102,7 +92,6 @@ async function safeInvokeUpdateCheck(): Promise<UpdateCheckState> {
     };
   }
 }
-
 
 export function SettingsApp() {
   const manualShortcutId = useId();
@@ -814,267 +803,34 @@ export function SettingsApp() {
               ),
             })}
 
-          {section === "capture-content" &&
-            renderSectionTabs({
-              search: (
-                <SettingGroup title={tr("settings.tab.search")}>
-                  <ToggleSetting
-                    checked={state.settings.fuzzySearchEnabled}
-                    label={tr("settings.content.fuzzySearch")}
-                    onChange={(fuzzySearchEnabled) => updateSettings({ fuzzySearchEnabled })}
-                  />
-                  <ToggleSetting
-                    checked={state.settings.pinyinSearchEnabled}
-                    label={tr("settings.content.pinyinSearch")}
-                    onChange={(pinyinSearchEnabled) => updateSettings({ pinyinSearchEnabled })}
-                  />
-                  <div className="grid gap-2">
-                    <CheckItem
-                      icon={<ExternalLink size={15} />}
-                      title={tr("settings.content.link.title")}
-                      body={tr("settings.content.link.body")}
-                    />
-                    <CheckItem
-                      icon={<Terminal size={15} />}
-                      title={tr("settings.content.command.title")}
-                      body={tr("settings.content.command.body")}
-                    />
-                  </div>
-                </SettingGroup>
-              ),
-              preview: (
-                <SettingGroup title={tr("settings.tab.preview")}>
-                  <ToggleSetting
-                    checked={state.settings.enableMarkdownPreview}
-                    label={tr("settings.content.markdownPreview")}
-                    onChange={(enableMarkdownPreview) => updateSettings({ enableMarkdownPreview })}
-                  />
-                  <div className="grid gap-2">
-                    <CheckItem
-                      icon={<Eye size={15} />}
-                      title={tr("settings.content.markdown.title")}
-                      body={tr("settings.content.markdown.body")}
-                    />
-                    <CheckItem
-                      icon={<FileCode size={15} />}
-                      title={tr("settings.content.code.title")}
-                      body={tr("settings.content.code.body")}
-                    />
-                  </div>
-                </SettingGroup>
-              ),
-              "capture-types": (
-                <SettingGroup title={tr("settings.tab.captureTypes")}>
-                  <SettingsFieldRow
-                    section="capture-content"
-                    tab="capture-types"
-                    values={state.settings as unknown as Record<string, unknown>}
-                    onChange={(key, value) => updateSettings({ [key]: value } as Partial<AppSettings>)}
-                    tr={tr}
-                    extraNodes={[
-                      <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]" key="capture-multi-type">
-                        <span>{tr("settings.capture.multiType.title")}</span>
-                        <strong>{tr("settings.capture.multiType.summary")}</strong>
-                        <p>{tr("settings.capture.multiType.description")}</p>
-                      </div>,
-                    ]}
-                  />
-                </SettingGroup>
-              ),
-              limits: (
-                <SettingGroup title={tr("settings.tab.limits")}>
-                  <NumberSetting
-                    label={tr("settings.capture.imageMaxSize")}
-                    max={1024}
-                    min={1}
-                    onChange={(imageMaxSizeMb) => updateSettings({ imageMaxSizeMb })}
-                    value={state.settings.imageMaxSizeMb}
-                  />
-                  <NumberSetting
-                    label={tr("settings.capture.textMaxSize")}
-                    max={100}
-                    min={1}
-                    onChange={(textMaxSizeMb) => updateSettings({ textMaxSizeMb })}
-                    value={state.settings.textMaxSizeMb}
-                  />
-                </SettingGroup>
-              ),
-            })}
+          {section === "capture-content" && (
+            <CaptureContentSection
+              renderTabs={renderSectionTabs}
+              settings={state.settings}
+              tr={tr}
+              updateSettings={updateSettings}
+            />
+          )}
 
-          {section === "storage-logs" &&
-            renderSectionTabs({
-              data: (
-                <SettingGroup title={tr("settings.storage.data.title")}>
-                    <ReadonlyField
-                      copyLabel={tr("settings.action.copy")}
-                      label={tr("settings.storage.configPath")}
-                      onCopy={(label, value) => void copySettingsSnippet(label, value)}
-                      value={state.configPath}
-                    />
-                    <ReadonlyField
-                      copyLabel={tr("settings.action.copy")}
-                      label={tr("settings.storage.databasePath")}
-                      onCopy={(label, value) => void copySettingsSnippet(label, value)}
-                      value={state.databasePath}
-                    />
-                    <NumberSetting
-                      label={tr("settings.storage.maxItems")}
-                      value={state.settings.maxStoredItems}
-                      min={50}
-                      max={5000}
-                      onChange={(maxStoredItems) => updateSettings({ maxStoredItems })}
-                    />
-                    <NumberSetting
-                      label={tr("settings.storage.pollInterval")}
-                      value={state.settings.clipboardPollMs}
-                      min={500}
-                      max={5000}
-                      onChange={(clipboardPollMs) => updateSettings({ clipboardPollMs })}
-                    />
-                </SettingGroup>
-              ),
-              cleanup: (
-                <SettingGroup title={tr("settings.tab.cleanup")}>
-                    <ToggleSetting
-                      checked={state.settings.cleanupEnabled}
-                      label={tr("settings.storage.cleanupEnabled")}
-                      onChange={(cleanupEnabled) => updateSettings({ cleanupEnabled })}
-                    />
-                    <NumberSetting
-                      label={tr("settings.storage.cleanupInterval")}
-                      value={state.settings.cleanupIntervalHours}
-                      min={1}
-                      max={720}
-                      onChange={(cleanupIntervalHours) => updateSettings({ cleanupIntervalHours })}
-                    />
-                    <NumberSetting
-                      label={tr("settings.storage.retentionDays")}
-                      value={state.settings.softDeletedRetentionDays}
-                      min={1}
-                      max={365}
-                      onChange={(softDeletedRetentionDays) =>
-                        updateSettings({ softDeletedRetentionDays })
-                      }
-                    />
-                </SettingGroup>
-              ),
-              logs: (
-                <SettingGroup title={tr("settings.logs.title")}>
-                    <ReadonlyField
-                      copyLabel={tr("settings.action.copy")}
-                      description={
-                        state.logStats
-                          ? tr("settings.logs.lineCount", {
-                              size: formatBytes(state.logStats.sizeBytes),
-                              count: state.logStats.lineCount,
-                            })
-                          : tr("settings.status.loading")
-                      }
-                      label={tr("settings.logs.file")}
-                      onCopy={(label, value) => void copySettingsSnippet(label, value)}
-                      value={state.logStats?.path ?? ""}
-                    />
-                    <NumberSetting
-                      label={tr("settings.logs.maxSize")}
-                      value={state.settings.logMaxSizeMb}
-                      min={1}
-                      max={1024}
-                      onChange={(logMaxSizeMb) => updateSettings({ logMaxSizeMb })}
-                    />
-                    <NumberSetting
-                      label={tr("settings.logs.keepRatio")}
-                      value={Math.round(state.settings.logKeepRatio * 100)}
-                      min={10}
-                      max={95}
-                      onChange={(percent) => updateSettings({ logKeepRatio: percent / 100 })}
-                    />
-                    <NumberSetting
-                      label={tr("settings.logs.maxLines")}
-                      value={state.settings.logMaxLines}
-                      min={1000}
-                      max={1000000}
-                      onChange={(logMaxLines) => updateSettings({ logMaxLines })}
-                    />
-                    <div className="flex items-center justify-between gap-8 py-3">
-                      <span>{tr("settings.logs.retentionPolicy")}</span>
-                      <strong>{tr("settings.logs.retentionPolicyValue")}</strong>
-                    </div>
-                    <ToggleSetting
-                      checked={state.settings.logAutoCleanup}
-                      label={tr("settings.logs.autoCleanup")}
-                      onChange={(logAutoCleanup) => updateSettings({ logAutoCleanup })}
-                    />
-                    <NumberSetting
-                      label={tr("settings.logs.cleanupInterval")}
-                      value={state.settings.logCleanupIntervalMin}
-                      min={60}
-                      max={1440}
-                      onChange={(logCleanupIntervalMin) =>
-                        updateSettings({ logCleanupIntervalMin })
-                      }
-                    />
-                    <ToggleSetting
-                      checked={state.settings.debugLogsEnabled}
-                      label={tr("settings.logs.debugLogs")}
-                      onChange={(debugLogsEnabled) => updateSettings({ debugLogsEnabled })}
-                    />
-                </SettingGroup>
-              ),
-              diagnostics: (
-                <SettingGroup title={tr("settings.diagnostics.title")}>
-                    <SettingsStatusPanel
-                      actions={[
-                        {
-                          label: tr("settings.diagnostics.exportBundle"),
-                          onClick: () => void exportDiagnosticsBundle(),
-                          icon: FileDown,
-                          variant: "diagnostic",
-                          tooltip: tr("settings.diagnostics.exportBundle"),
-                          probeId: "settings-action:diagnostics.export",
-                        },
-                        {
-                          label: dangerConfirmation === "cleanupLogs" ? tr("settings.diagnostics.confirmAgain") : tr("settings.diagnostics.cleanupNow"),
-                          onClick: () => {
-                            if (dangerConfirmation === "cleanupLogs") {
-                              void cleanupLogsNow();
-                              return;
-                            }
-                            setDangerConfirmation("cleanupLogs");
-                          },
-                          icon: Trash2,
-                          variant: "destructive",
-                          tooltip: tr("settings.diagnostics.cleanupTooltip"),
-                          probeId: "settings-action:diagnostics.cleanup",
-                          ariaLabel:
-                            dangerConfirmation === "cleanupLogs"
-                              ? tr("settings.diagnostics.confirmCleanup")
-                              : tr("settings.diagnostics.cleanupTooltip"),
-                        },
-                        {
-                          label: tr("settings.diagnostics.refresh"),
-                          onClick: () => void refreshLogStats(),
-                          icon: RefreshCw,
-                          variant: "secondary",
-                          tooltip: tr("settings.diagnostics.refreshLogStats"),
-                          probeId: "settings-action:diagnostics.refresh",
-                        },
-                      ]}
-                      description={
-                        state.logStats
-                          ? tr("settings.logs.lineCount", {
-                              size: formatBytes(state.logStats.sizeBytes),
-                              count: state.logStats.lineCount,
-                            })
-                          : tr("settings.status.waitingLogStats")
-                      }
-                      state={logActionStatus.state}
-                      status={logActionStatus.message || tr("settings.diagnostics.statusIdle")}
-                      title={tr("settings.diagnostics.title")}
-                      probeId="settings-status:diagnostics"
-                    />
-                </SettingGroup>
-              ),
-            })}
+          {section === "storage-logs" && (
+            <StorageLogsSection
+              configPath={state.configPath}
+              copySettingsSnippet={copySettingsSnippet}
+              databasePath={state.databasePath}
+              dangerConfirmation={dangerConfirmation}
+              formatBytes={formatBytes}
+              logActionStatus={logActionStatus}
+              logStats={state.logStats}
+              refreshLogStats={refreshLogStats}
+              renderTabs={renderSectionTabs}
+              setDangerConfirmation={(v) => setDangerConfirmation(v as "cleanupLogs" | null)}
+              settings={state.settings}
+              tr={tr}
+              updateSettings={updateSettings}
+              cleanupLogsNow={cleanupLogsNow}
+              exportDiagnosticsBundle={exportDiagnosticsBundle}
+            />
+          )}
 
           {section === "update-distribution" &&
             renderSectionTabs({
