@@ -29,6 +29,11 @@ export type ClipWritebackOptions = {
   lastSeenClipboard: { current: string };
   selectedId: string | null;
   setIsPanelEntering: (v: boolean) => void;
+  setSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  setMultiSelectMode: (v: boolean) => void;
+  setMultiPreviewOpen: (v: boolean) => void;
+  openPath: (path: string) => Promise<void>;
+  openUrl: (url: string) => Promise<void>;
 };
 
 /** 写回域首批操作：markClipCopied（复制后的乐观标记）、updateClip（字段更新写库+本地同步）、exportSelectedTextFiles。 */
@@ -45,6 +50,11 @@ export function useClipWriteback({
   lastSeenClipboard,
   selectedId,
   setIsPanelEntering,
+  setSelectedIds,
+  setMultiSelectMode,
+  setMultiPreviewOpen,
+  openPath,
+  openUrl,
 }: ClipWritebackOptions) {
   /** 复制成功后的乐观 UI：置最新复制 id、选中、copyCount+1，1.4s 后清除高亮。 */
   function markClipCopied(item: ClipItem, status: string) {
@@ -113,7 +123,178 @@ export function useClipWriteback({
     }
   }
 
-  return { markClipCopied, captureStandardTextClip, copyText, updateClip, exportSelectedTextFiles, pasteClip };
+
+  async function favoriteSelectedClips(items: ClipItem[]) {
+    if (!items.length) return;
+    const targetFavorite = !items.every((item) => item.favorite);
+    await Promise.all(
+      items.map((item) =>
+        invoke("update_clip_record", { input: { id: item.id, favorite: targetFavorite } }),
+      ),
+    ).catch((error) => logAppError("warn", "Batch favorite failed", String(error)));
+    const ids = new Set(items.map((item) => item.id));
+    setClips((current) =>
+      current.map((clip) => (ids.has(clip.id) ? { ...clip, favorite: targetFavorite } : clip)),
+    );
+    toast.success(
+      targetFavorite
+        ? tr("main.toast.favoritedCount", { count: items.length })
+        : tr("main.toast.unfavoritedCount", { count: items.length }),
+    );
+  }
+
+
+  async function copySelectedClips(items: ClipItem[]) {
+    if (!items.length) {
+      setNativeStatus(tr("main.status.selectBeforeAggregate"));
+      return;
+    }
+    const text = items.map((item) => item.content).join("\n\n");
+    try {
+      const aggregate = await captureStandardTextClip(
+        text,
+        "ui:multi-select-aggregate",
+        { itemIds: items.map((item) => item.id), itemCount: items.length },
+        [tr("main.tag.aggregate")],
+      );
+      const payload = await writeClipboard<ClipItem>({
+        id: aggregate.id,
+        pasteMode: "rich",
+        source: "ui:multi-select-aggregate",
+      });
+      const normalized = normalizeClip(payload, settingsRef.current);
+      if (normalized) {
+        setClips((current) => {
+          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+          clipsRef.current = next;
+          return next;
+        });
+      }
+      lastSeenClipboard.current = text.trim();
+      setNativeStatus(tr("main.status.aggregateCopied", { count: items.length }));
+    } catch {
+      await navigator.clipboard.writeText(text);
+      setNativeStatus(tr("main.status.aggregateCopiedBrowser", { count: items.length }));
+    }
+    toast.success(tr("main.toast.aggregateCopied", { count: items.length }), {
+      description: truncateText(text, 42),
+    });
+    const now = Date.now();
+    setLastCopiedId(items[0]?.id ?? null);
+    items.forEach((item) => {
+      invoke("update_clip_record", { input: { id: item.id, copied: true } }).catch((error) =>
+        logAppError("warn", "Update aggregated copied state failed", String(error)),
+      );
+    });
+    setClips((current) =>
+      current.map((clip) =>
+        items.some((item) => item.id === clip.id)
+          ? {
+              ...clip,
+              copyCount: clip.copyCount + 1,
+              lastCopiedAt: now,
+              updatedAt: now,
+            }
+          : clip,
+      ),
+    );
+    window.setTimeout(() => setLastCopiedId(null), 1400);
+    setSelectedIds(new Set());
+    setMultiSelectMode(false);
+    setMultiPreviewOpen(false);
+  }
+
+
+  async function openClipTarget(item: ClipItem, targetUrlOverride?: string) {
+    const attachment = item.analysis.attachment;
+    if (!targetUrlOverride && attachment?.targetType === "path") {
+      try {
+        await openPath(attachment.target.replace(/^file:\/\//, ""));
+        setNativeStatus(tr("main.status.openedTarget", { target: attachment.name }));
+      } catch (error) {
+        logAppError("warn", "Open path failed", { target: attachment.target, error: String(error) });
+        setNativeStatus(tr("main.status.openPathFailed"));
+      }
+      return;
+    }
+    const targetUrl = targetUrlOverride ?? (attachment?.targetType === "url" ? attachment.target : item.analysis.url);
+    if (!targetUrl) return;
+    try {
+      await openUrl(targetUrl);
+      setNativeStatus(tr("main.status.openedTarget", { target: item.analysis.sourceName }));
+    } catch (error) {
+      logAppError("warn", "Open URL failed", { target: targetUrl, error: String(error) });
+      window.open(targetUrl, "_blank", "noopener,noreferrer");
+      setNativeStatus(tr("main.status.openedInBrowser"));
+    }
+  }
+
+
+  async function openSystemPath(path: string) {
+    if (!path) return;
+    try {
+      await openPath(path.replace(/^file:\/\//, ""));
+      setNativeStatus(tr("main.status.openedTarget", { target: path.split(/[\\/]/).filter(Boolean).at(-1) ?? path }));
+    } catch (error) {
+      logAppError("warn", "Open detail file path failed", { target: path, error: String(error) });
+      setNativeStatus(tr("main.status.openPathFailed"));
+    }
+  }
+
+
+  async function updateClipContent(
+    item: ClipItem,
+    content: string,
+    tags?: string[],
+    context?: { sessionId: string; draftVersion: number },
+  ) {
+    const payload = await invoke<Partial<ClipItem>>("save_editor_draft", {
+      input: {
+        id: item.id,
+        sessionId: context?.sessionId ?? `editor_${item.id}`,
+        draftVersion: context?.draftVersion ?? 1,
+        content,
+        tags: tags ? normalizeTagList(tags) : normalizeTagList(item.tags),
+        metadata: {
+          source: "detail-compact-editor",
+          payloadKind: item.payloadKind,
+        },
+      },
+    });
+    const normalized = normalizeClip(payload, settingsRef.current);
+    if (!normalized) throw new Error(tr("main.error.emptySavedClip"));
+    setClips((current) => {
+      const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+      clipsRef.current = next;
+      return next;
+    });
+    setSelectedId(normalized.id);
+    setNativeStatus(tr("main.status.detailSaved"));
+    logAppError("info", "clip-detail-edit: saved", {
+      id: normalized.id,
+      payloadKind: normalized.payloadKind,
+      chars: normalized.content.length,
+      tags: normalized.tags,
+      sessionId: context?.sessionId,
+      draftVersion: context?.draftVersion,
+    });
+    return normalized;
+  }
+
+
+  return {
+    markClipCopied,
+    captureStandardTextClip,
+    copyText,
+    updateClip,
+    exportSelectedTextFiles,
+    pasteClip,
+    favoriteSelectedClips,
+    copySelectedClips,
+    openClipTarget,
+    openSystemPath,
+    updateClipContent,
+  };
 
   async function captureStandardTextClip(
     text: string,

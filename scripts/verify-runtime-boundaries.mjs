@@ -36,7 +36,7 @@ const zhLocale = read(zhLocalePath);
 assert(app.includes("class PanelContentBoundary"), "Panel content boundary is missing");
 assert(app.includes("<PanelContentBoundary") && app.includes("resetKey={`workspace:"), "Workspace router is not wrapped in the panel boundary");
 
-const primaryAction = sliceBetween(app, "async function runPrimaryOpenAction", "function updateClipContent");
+const primaryAction = sliceBetween(app, "async function runPrimaryOpenAction", "async function deleteClips");
 assert(primaryAction.includes("try {"), "Primary plugin action has no failure boundary");
 assert(primaryAction.includes("resolvePrimaryPluginAction"), "Primary plugin action resolver is not covered");
 assert(primaryAction.includes('logAppError("warn", "quick-action: plugin action failed"'), "Primary plugin action failure is not logged");
