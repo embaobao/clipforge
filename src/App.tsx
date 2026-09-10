@@ -47,6 +47,7 @@ import { usePanelWindowListeners } from "./clipboard/use-panel-blur-hide";
 import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isCaptureClipPayload, isQueryClipPayload, useClipboardList, type CaptureClipPayload, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
+import { useClipWriteback } from "./clipboard/use-clip-writeback";
 import { usePanelKeyboard } from "./clipboard/use-panel-keyboard";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
 import { usePanelUiStore } from "./clipboard/panel-shared";
@@ -132,12 +133,6 @@ export type AppSettings = {
   captureApplicationContext: boolean;
   imageMaxSizeMb: number;
   textMaxSizeMb: number;
-};
-
-type ExportTextFilesPayload = {
-  directory: string;
-  count: number;
-  files: string[];
 };
 
 type ErrorBoundaryCopy = {
@@ -728,27 +723,16 @@ function ClipForgeApp() {
     window.setTimeout(() => searchRef.current?.focus(), 0);
   };
 
-  function markClipCopied(item: ClipItem, status: string) {
-    const now = Date.now();
-    setLastCopiedId(item.id);
-    setNativeStatus(status);
-    setSelectedId(item.id);
-    setClips((current) => {
-      const base = current.find((clip) => clip.id === item.id) ?? item;
-      const updated = {
-        ...base,
-        copyCount: base.copyCount + 1,
-        lastCopiedAt: now,
-        updatedAt: now,
-      };
-      const next = current
-        .map((clip) => (clip.id === item.id ? updated : clip))
-        .slice(0, settingsRef.current.maxStoredItems);
-      clipsRef.current = next;
-      return next;
-    });
-    window.setTimeout(() => setLastCopiedId(null), 1400);
-  }
+  const { markClipCopied, updateClip, exportSelectedTextFiles } = useClipWriteback({
+    setClips,
+    clipsRef,
+    settingsRef,
+    setLastCopiedId,
+    setNativeStatus,
+    setSelectedId,
+    tr,
+    formatNativeError,
+  });
 
   const togglePanelPinned = useCallback(() => {
     const nextPinned = !settingsRef.current.panelPinned;
@@ -757,6 +741,58 @@ function ClipForgeApp() {
       logAppError("warn", "Toggle panel pin failed", String(error)),
     );
   }, []);
+
+  usePanelKeyboard({
+    activeView,
+    activeSurface,
+    query,
+    selectedId,
+    selectedClip,
+    selectedInList,
+    filteredClips,
+    multiSelectMode,
+    isMultiPreviewOpen,
+    quickPreviewOpen,
+    isSearchActive,
+    searchSuggestions,
+    activeSuggestionIndex,
+    workspaceRoute: { name: workspaceRoute.name, clipId: workspaceRoute.clipId },
+    tr,
+    searchRef,
+    settingsRef,
+    activeGroupStartRef,
+    programmaticGroupUntilRef,
+    switchClipboardView,
+    togglePanelPinned,
+    favoriteSelectedClips,
+    updateClip,
+    runPrimaryOpenAction,
+    copySelectedClips,
+    copyClip,
+    hardDeleteClips,
+    deleteClips,
+    restoreClips,
+    pasteClip,
+    handlePanelArrowNavigation,
+    applySearchSuggestion,
+    focusSearch,
+    navigateWorkspaceList,
+    setQuery,
+    setActiveTag,
+    setFilterFavorite,
+    setActiveTypeFilter,
+    setSelectedId,
+    setSelectedIds,
+    setMultiSelectMode,
+    setKeyboardNavigating,
+    setMultiPreviewOpen,
+    setQuickPreviewOpen,
+    setSearchActive,
+    setIsPanelEntering,
+    setActiveGroupStart,
+    setGroupScrollTarget,
+    setActiveSuggestionIndex,
+  });
 
   async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
     const finishCopyPerf = startPerfSpan("quick.copy", { source: "ui", pasteMode });
@@ -1070,83 +1106,6 @@ function ClipForgeApp() {
     setMultiPreviewOpen(false);
   }
 
-  async function exportSelectedTextFiles(items: ClipItem[]) {
-    if (!items.length) {
-      setNativeStatus(tr("main.status.selectBeforeExportTextFiles"));
-      return;
-    }
-
-  usePanelKeyboard({
-    activeView,
-    activeSurface,
-    query,
-    selectedId,
-    selectedClip,
-    selectedInList,
-    filteredClips,
-    multiSelectMode,
-    isMultiPreviewOpen,
-    quickPreviewOpen,
-    isSearchActive,
-    searchSuggestions,
-    activeSuggestionIndex,
-    workspaceRoute: { name: workspaceRoute.name, clipId: workspaceRoute.clipId },
-    tr,
-    searchRef,
-    settingsRef,
-    activeGroupStartRef,
-    programmaticGroupUntilRef,
-    switchClipboardView,
-    togglePanelPinned,
-    favoriteSelectedClips,
-    updateClip,
-    runPrimaryOpenAction,
-    copySelectedClips,
-    copyClip,
-    hardDeleteClips,
-    deleteClips,
-    restoreClips,
-    pasteClip,
-    handlePanelArrowNavigation,
-    applySearchSuggestion,
-    focusSearch,
-    navigateWorkspaceList,
-    setQuery,
-    setActiveTag,
-    setFilterFavorite,
-    setActiveTypeFilter,
-    setSelectedId,
-    setSelectedIds,
-    setMultiSelectMode,
-    setKeyboardNavigating,
-    setMultiPreviewOpen,
-    setQuickPreviewOpen,
-    setSearchActive,
-    setIsPanelEntering,
-    setActiveGroupStart,
-    setGroupScrollTarget,
-    setActiveSuggestionIndex,
-  });
-    try {
-      const result = await invoke<ExportTextFilesPayload>("export_clip_text_files", {
-        items: items.map((item) => ({
-          title: item.analysis.title || item.analysis.sourceName || item.payloadKind,
-          content: item.content,
-        })),
-      });
-      setNativeStatus(
-        tr("main.status.exportedTextFiles", {
-          count: result.count,
-          directory: result.directory,
-        }),
-      );
-      toast.success(tr("main.toast.exportedTextFiles", { count: result.count }));
-    } catch (error) {
-      logAppError("warn", "Export selected text files failed", String(error));
-      setNativeStatus(formatNativeError(error));
-    }
-  }
-
 
   async function openClipTarget(item: ClipItem, targetUrlOverride?: string) {
     const attachment = item.analysis.attachment;
@@ -1218,23 +1177,6 @@ function ClipForgeApp() {
     }
   }
 
-  function updateClip(id: string, next: Partial<ClipItem>) {
-    const updatedAt = Date.now();
-    invoke("update_clip_record", {
-      input: {
-        id,
-        bucket: next.bucket,
-        favorite: typeof next.favorite === "boolean" ? next.favorite : undefined,
-      },
-    }).catch((error) => logAppError("warn", "Update clip failed", String(error)));
-    setClips((current) => {
-      const updated = current.map((item) =>
-        item.id === id ? { ...item, ...next, updatedAt } : item,
-      );
-      clipsRef.current = updated;
-      return updated;
-    });
-  }
 
   async function updateClipContent(
     item: ClipItem,
