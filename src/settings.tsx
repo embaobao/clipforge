@@ -3,11 +3,8 @@ import { settingsService } from "./services/settings";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  FileDown,
   Plus,
-  RefreshCw,
   Trash2,
-  UploadCloud,
 } from "lucide-react";
 import { getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { recordNextFramePerf } from "./performance-smoke";
@@ -22,13 +19,14 @@ import {
   SettingGroup,
   SegmentSetting,
 } from "./settings/controls";
+import { McpAgentSection, TagRulesSection, UpdateDistributionSection } from "./settings/sections/AgentUpdateTagSections";
 import { ShortcutLanguageSection } from "./settings/sections/ShortcutLanguageSection";
 import { CaptureContentSection, StorageLogsSection } from "./settings/sections/CaptureStorageSections";
 import { DisplayPanelSection } from "./settings/sections/DisplayPanelSection";
-import { SettingsCodeTabs, type SettingsCodeTab } from "./settings/components/SettingsCodeTabs";
 import { SettingsErrorBoundary } from "./settings/components/SettingsErrorBoundary";
 import { SettingsShell } from "./settings/components/SettingsShell";
-import { SettingsStatusPanel, type SettingsStatusPanelState } from "./settings/components/SettingsStatusPanel";
+import { type SettingsCodeTab } from "./settings/components/SettingsCodeTabs";
+import { type SettingsStatusPanelState } from "./settings/components/SettingsStatusPanel";
 import { SettingsStickyStatusBar } from "./settings/components/SettingsStickyStatusBar";
 import { type SettingsTabId } from "./settings/settings-field-catalog";
 import {
@@ -731,77 +729,44 @@ export function SettingsApp() {
               renderTabs={renderSectionTabs}
             />
           )}
-          {section === "mcp-agent" &&
-            renderSectionTabs({
-              status: (
-                <SettingGroup title={tr("settings.tab.status")}>
-                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-                    <span>{tr("settings.integration.mcp.title")}</span>
-                    <strong>{state.mcp?.running ? tr("settings.integration.mcp.running") : tr("settings.integration.mcp.unknown")} · {state.mcp?.transport ?? "stdio"}</strong>
-                    <p>{tr("settings.integration.mcp.description")}</p>
-                    <p className="mono mt-2 text-[11px] text-muted-foreground">{state.mcp?.tools.join(" / ") || tr("settings.integration.mcp.emptyTools")}</p>
-                    <div className="flex gap-2">
-                      <button className="flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={() => void refreshMcpStatus()} type="button">
-                        <RefreshCw size={13} />
-                        {tr("settings.diagnostics.refresh")}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-                    <span>{tr("settings.integration.provider.title")}</span>
-                    <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
-                    <p>{tr("settings.integration.provider.description")}</p>
-                  </div>
-                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-                    <span>{tr("settings.manual.currentTools")}</span>
-                    <p>{state.mcp?.tools.join(" / ") || tr("settings.status.loading")}</p>
-                  </div>
-                </SettingGroup>
-              ),
-              install: (
-                <SettingGroup title={tr("settings.tab.install")}>
-                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-                    <span>{tr("settings.manual.agentQuickStart")}</span>
-                    <strong>{tr("settings.manual.agentSummary")}</strong>
-                    <p>{tr("settings.manual.agentDescription")}</p>
-                    <SettingsCodeTabs
-                      copyLabel={tr("settings.action.copy")}
-                      tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "install" || tab.value === "command")}
-                      onCopy={copyMcpAgentCodeTab}
-                    />
-                    <p>{tr("settings.manual.successContract")}</p>
-                    <p>{tr("settings.manual.errorContract")}</p>
-                  </div>
-                </SettingGroup>
-              ),
-              "json-rpc": (
-                <SettingGroup title={tr("settings.tab.jsonRpc")}>
-                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-                    <span>{tr("settings.integration.examples.title")}</span>
-                    <strong>{tr("settings.integration.examples.summary")}</strong>
-                    <SettingsCodeTabs
-                      copyLabel={tr("settings.action.copy")}
-                      tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "tools" || tab.value === "json-rpc")}
-                      onCopy={copyMcpAgentCodeTab}
-                    />
-                  </div>
-                </SettingGroup>
-              ),
-              provider: (
-                <SettingGroup title={tr("settings.tab.provider")}>
-                  <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-                    <span>{tr("settings.integration.provider.title")}</span>
-                    <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
-                    <p>{tr("settings.integration.provider.description")}</p>
-                    <SettingsCodeTabs
-                      copyLabel={tr("settings.action.copy")}
-                      tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "provider")}
-                      onCopy={copyMcpAgentCodeTab}
-                    />
-                  </div>
-                </SettingGroup>
-              ),
-            })}
+          {section === "mcp-agent" && (
+            <McpAgentSection
+              copyMcpAgentCodeTab={copyMcpAgentCodeTab}
+              getConfiguredAgentProviderCount={getConfiguredAgentProviderCount}
+              mcpAgentCodeTabs={mcpAgentCodeTabs}
+              refreshMcpStatus={refreshMcpStatus}
+              renderTabs={renderSectionTabs}
+              state={state}
+              tr={tr}
+            />
+          )}
+
+          {section === "update-distribution" && (
+            <UpdateDistributionSection
+              buildInfo={state.buildInfo}
+              checkUpdateNow={checkUpdateNow}
+              downloadUpdateNow={downloadUpdateNow}
+              ignoreCurrentUpdate={ignoreCurrentUpdate}
+              installUpdateNow={installUpdateNow}
+              renderTabs={renderSectionTabs}
+              tr={tr}
+              update={state.update}
+              updateStatusCopy={updateStatusCopy}
+            />
+          )}
+
+          {section === "tag-rules" && (
+            <TagRulesSection
+              addTagRule={addTagRule}
+              deleteTagRule={deleteTagRule}
+              renderTabs={renderSectionTabs}
+              settings={state.settings}
+              tagModeLabels={tagModeLabels}
+              tr={tr}
+              updateSettings={updateSettings}
+              updateTagRule={updateTagRule}
+            />
+          )}
 
           {section === "capture-content" && (
             <CaptureContentSection
@@ -831,146 +796,6 @@ export function SettingsApp() {
               exportDiagnosticsBundle={exportDiagnosticsBundle}
             />
           )}
-
-          {section === "update-distribution" &&
-            renderSectionTabs({
-              version: (
-                <SettingGroup title={tr("settings.tab.version")}>
-                  <SettingsStatusPanel
-                    description={updateStatusCopy}
-                    items={[
-                      {
-                        label: tr("settings.update.status"),
-                        value: (
-                          <span className="mono text-[11px] text-muted-foreground">
-                            {state.update?.status ?? "idle"}
-                            {typeof state.update?.downloadProgress === "number"
-                              ? ` · ${Math.round(state.update.downloadProgress * 100)}%`
-                              : ""}
-                          </span>
-                        ),
-                      },
-                      ...(state.update?.releaseNotes
-                        ? [
-                            {
-                              label: tr("settings.update.releaseNotes"),
-                              value: <span className="mono text-[11px] text-muted-foreground">{state.update.releaseNotes}</span>,
-                            },
-                          ]
-                        : []),
-                      ...(state.update?.errorCode
-                        ? [
-                            {
-                              label: tr("settings.update.error"),
-                              value: (
-                                <span className="mono text-[11px] text-muted-foreground">
-                                  {state.update.errorCode}
-                                  {state.update.errorMessage ? ` · ${state.update.errorMessage}` : ""}
-                                </span>
-                              ),
-                            },
-                          ]
-                        : []),
-                      ...(state.update?.ignoredVersion
-                        ? [
-                            {
-                              label: tr("settings.update.ignoredVersion"),
-                              value: <span className="mono text-[11px] text-muted-foreground">{state.update.ignoredVersion}</span>,
-                            },
-                          ]
-                        : []),
-                      ...(state.update?.lastCheckedAt
-                        ? [
-                            {
-                              label: tr("settings.update.lastChecked"),
-                              value: <span className="mono text-[11px] text-muted-foreground">{new Date(state.update.lastCheckedAt).toLocaleString()}</span>,
-                            },
-                          ]
-                        : []),
-                    ]}
-                    state={state.update?.status === "failed" ? "danger" : state.update?.status === "checking" || state.update?.status === "downloading" ? "pending" : state.update?.status === "available" || state.update?.status === "ready" ? "warning" : "neutral"}
-                    status={`${state.update?.currentVersion ?? "0.1.0"} · ${state.update?.channel ?? "stable"}`}
-                    title={tr("settings.update.currentVersion")}
-                  />
-                </SettingGroup>
-              ),
-              "update-flow": (
-                <SettingGroup title={tr("settings.tab.updateFlow")}>
-                  <SettingsStatusPanel
-                    actions={[
-                      {
-                        label: tr("settings.update.action.check"),
-                        onClick: () => void checkUpdateNow(),
-                        icon: RefreshCw,
-                        variant: "primary",
-                        tooltip: tr("settings.update.action.check"),
-                        probeId: "settings-action:update.check",
-                      },
-                      {
-                        label: tr("settings.update.action.download"),
-                        onClick: () => void downloadUpdateNow(),
-                        icon: FileDown,
-                        variant: "secondary",
-                        disabled: state.update?.status !== "available",
-                        tooltip: tr("settings.update.action.download"),
-                        probeId: "settings-action:update.download",
-                      },
-                      {
-                        label: tr("settings.update.action.install"),
-                        onClick: () => void installUpdateNow(),
-                        icon: UploadCloud,
-                        variant: "secondary",
-                        disabled: state.update?.status !== "ready",
-                        tooltip: tr("settings.update.action.install"),
-                        probeId: "settings-action:update.install",
-                      },
-                      {
-                        label: tr("settings.update.action.ignore"),
-                        onClick: () => void ignoreCurrentUpdate(),
-                        variant: "secondary",
-                        disabled: !state.update?.availableVersion,
-                        tooltip: tr("settings.update.action.ignore"),
-                        probeId: "settings-action:update.ignore",
-                      },
-                    ]}
-                    description={updateStatusCopy}
-                    state={state.update?.status === "failed" ? "danger" : state.update?.status === "checking" || state.update?.status === "downloading" ? "pending" : state.update?.status === "available" || state.update?.status === "ready" ? "warning" : "neutral"}
-                    status={state.update?.status ?? "idle"}
-                    title={tr("settings.update.actions")}
-                    probeId="settings-status:update-flow"
-                  />
-                </SettingGroup>
-              ),
-              build: (
-                <SettingGroup title={tr("settings.tab.build")}>
-                  <SettingsStatusPanel
-                    items={[
-                      {
-                        label: tr("settings.update.buildInfo"),
-                        value: (
-                          <span className="mono text-[11px] text-muted-foreground">
-                            {state.buildInfo
-                              ? `${state.buildInfo.productName} ${state.buildInfo.currentVersion} · ${state.buildInfo.targetOs}-${state.buildInfo.targetArch}`
-                              : tr("settings.update.buildLoading")}
-                          </span>
-                        ),
-                      },
-                      {
-                        label: tr("settings.update.bundleId"),
-                        value: <span className="mono text-[11px] text-muted-foreground">{state.buildInfo?.bundleIdentifier ?? "app.clipforge.desktop"}</span>,
-                      },
-                      {
-                        label: tr("settings.update.endpoint"),
-                        value: <span className="mono text-[11px] text-muted-foreground">{state.buildInfo?.updaterEndpoint ?? "latest.json"}</span>,
-                      },
-                    ]}
-                    state="neutral"
-                    status={state.buildInfo?.currentVersion ?? state.update?.currentVersion ?? "0.1.0"}
-                    title={tr("settings.update.buildInfo")}
-                  />
-                </SettingGroup>
-              ),
-            })}
 
           {section === "tag-rules" &&
             renderSectionTabs({
