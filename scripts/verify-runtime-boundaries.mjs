@@ -6,6 +6,7 @@ const appPath = path.join(root, "src/App.tsx");
 // 详情页溢出菜单已拆分至独立文件（插件动作失败边界在其中）。
 const overflowMenuPath = path.join(root, "src/workspace/components/DetailOverflowMenu.tsx");
 const shortcutSectionPath = path.join(root, "src/settings/sections/ShortcutLanguageSection.tsx");
+const displayPanelSectionPath = path.join(root, "src/settings/sections/DisplayPanelSection.tsx");
 const settingsPath = path.join(root, "src/settings.tsx");
 const settingsCatalogPath = path.join(root, "src/settings/settings-field-catalog.ts");
 const zhLocalePath = path.join(root, "src/i18n/locales/zh-CN.json");
@@ -32,6 +33,7 @@ const app = read(appPath);
 const overflowMenu = read(overflowMenuPath);
 const settings = read(settingsPath);
 const shortcutSection = read(shortcutSectionPath);
+const displayPanelSection = read(displayPanelSectionPath);
 const settingsCatalog = read(settingsCatalogPath);
 const zhLocale = read(zhLocalePath);
 
@@ -55,7 +57,7 @@ assert(shortcutSection.includes('tr("settings.accessibility.title")'), "Settings
 assert(settingsCatalog.includes('labelKey: "settings.section.shortcutLanguage"'), "Settings section navigation is not wired to i18n keys");
 assert(settings.includes('tr(item.labelKey)'), "Settings section navigation labels are not translated at render time");
 assert(shortcutSection.includes('tr("settings.shortcut.quickOpen")'), "Settings shortcut copy is not wired to i18n");
-assert(settings.includes('tr("settings.display.density")'), "Settings display density copy is not wired to i18n");
+assert(displayPanelSection.includes('tr("settings.display.density")'), "Settings display density copy is not wired to i18n");
 assert(shortcutSection.includes('tr("settings.accessibility.status.granted")'), "Settings accessibility granted state is not wired to i18n");
 assert(shortcutSection.includes('tr("settings.accessibility.action.request")'), "Settings accessibility request action is not wired to i18n");
 assert(settings.includes('status: tr("settings.accessibility.status.reset")'), "Settings accessibility reset status is not wired to i18n");
