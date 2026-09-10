@@ -7,6 +7,17 @@ pub fn init<R>(app_handle: tauri::AppHandle<R>)
 where
     R: Runtime,
 {
+    // 双实例隔离开关：dev/测试实例设置 CLIPFORGE_DISABLE_CAPTURE=1 时跳过剪贴板监听，
+    // 避免与正式实例同时采集造成重复入库（2026-09-10 双实例互相触发污染剪贴板历史）。
+    if std::env::var("CLIPFORGE_DISABLE_CAPTURE").as_deref() == Ok("1") {
+        crate::log_to_file(
+            "warn",
+            "clipboard-monitor",
+            "capture disabled: CLIPFORGE_DISABLE_CAPTURE=1 (secondary instance)",
+        );
+        return;
+    }
+
     start_log_maintenance_thread();
 
     let spawn_result = thread::Builder::new()
