@@ -36,7 +36,7 @@
 
 - [x] settings.tsx 局部抽组件：SettingsShell/SettingsStatusPanel/SettingsCodeTabs/SettingsFieldRow/controls 等已抽至 src/settings/（服务 settings-interface-redesign，2026-09 完成）
 - [~] ~~agent-panel.tsx 拆 parts~~：agent-panel.tsx/agent-chat-page.tsx 已随旧 Agent 面板整体删除（2026-09 DSH 重构），任务作废
-- [ ] App.tsx 按 surface 拆（clipboard panel / detail / agent overlay）——进行中：4051 → 2355 行（-42%），已切 9 hooks + 5 子组件 + clip-model/clip-search/panel-settings 域模块（详见 docs/HANDOFF.md 剩余拆分方案），剩余 keydown 已完成、UI JSX 与写回域待切
+- [ ] App.tsx 按 surface 拆——2026-09-10 完成 4051 → 1334 行（-67%）：10 hooks + 8 子组件 + 3 域模块 + UI store；剩余 1334 行为状态粘合层，进一步压缩需状态 store 化（架构改动，待盟哥拍板）
 - [x] 每个抽出的文件 ≤500 行（全部新文件 ≤498 行，file-size 门禁全程通过）
 - [ ] App.tsx 剩余切片（2026-09-10 盟哥授权全量推进，当前 1692 行）：
   - [ ] 写回域接线：useClipWriteback（已建文件未接线）——注意 verify-runtime-boundaries 的 updateClip 终点锚同步改 updateClipContent
