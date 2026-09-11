@@ -97,7 +97,7 @@
    - **A. 全局 keydown 键盘导航 effect**（约 300 行）：依赖清单已盘——switchClipboardView/togglePanelPinned/favoriteSelectedClips/runPrimaryOpenAction/copySelectedClips/handlePanelArrowNavigation/applySearchSuggestion/exportSelectedTextFiles + selectedId/activeView/multiSelectMode/filteredClips/selectedInList/searchRef/settingsRef + 十余个 setter。参数注入对象约 25 项；注意 verify-runtime-boundaries 锚定 runPrimaryOpenAction..updateClip 切片、verify-settings-surface 锚定拖拽排除断言（已在 panel-shared）。
    - **B. UI 渲染 JSX**（主体 return，约 800 行）：按 TopCommandBar/ModeBar/ClipboardList/StatusBar/Overlay 区块切展示组件，props 由现有 state/handler 直接传递。
    另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
-5. **lib.rs（14284 行）**：按 codebase-modularity 提案顺序拆 settings/agent/mcp 模块（Rust 端改动必须 `cargo check` + `pnpm tauri dev` 冒烟）。
+5. **lib.rs（批次 35 后 14058 行）**：Phase 3 第一小步 ✅（`e2d8e94`，schema 校验域五函数迁入 settings_service.rs 并 pub 导出，调用点零改动）。后续批次按序：① settings_service_* 五个 Tauri command（2921-3160 区）迁入 settings_service/commands.rs；② settings_json_schema 已迁、settings_service_patch/replace/reset 迁入时一并接管 SETTINGS_WRITE_LOCK（锁被写回抑制区 13408-13500 共享，迁移时须 pub 导出或改经命令层）；③ agent/mcp 域（Phase 4）。每段过 cargo check + 带隔离开关冒烟。
 
 ## 待办事项（按优先级，批次 5 后更新）
 
