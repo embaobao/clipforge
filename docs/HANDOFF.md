@@ -97,6 +97,7 @@
    - **A. 全局 keydown 键盘导航 effect**（约 300 行）：依赖清单已盘——switchClipboardView/togglePanelPinned/favoriteSelectedClips/runPrimaryOpenAction/copySelectedClips/handlePanelArrowNavigation/applySearchSuggestion/exportSelectedTextFiles + selectedId/activeView/multiSelectMode/filteredClips/selectedInList/searchRef/settingsRef + 十余个 setter。参数注入对象约 25 项；注意 verify-runtime-boundaries 锚定 runPrimaryOpenAction..updateClip 切片、verify-settings-surface 锚定拖拽排除断言（已在 panel-shared）。
    - **B. UI 渲染 JSX**（主体 return，约 800 行）：按 TopCommandBar/ModeBar/ClipboardList/StatusBar/Overlay 区块切展示组件，props 由现有 state/handler 直接传递。
    另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
+4b. **DSH 全链删除（批次 36-38）✅**：前端 -528 行（`6275653`，删 src/dsh/、dsh-main、dsh-analysis、DetailDshPanel 及全部引用链，AI 分析入口暂缺位待 pi 恢复）+ Rust -553 行（`d7c7bd2`/`8fc1dcb`，删 dsh.rs 484 行、lib.rs 命令注册/守护进程/退出清理、tauri dsh 窗口 4→3）；DSH 三提案归档至 archive/2026-09-11-*（`0c694e7`）。前端零残留（grep 复查）。**pi-sdk-agent-foundation 提案接管 Agent 能力**（Phase 2 依赖引入待启动）。
 5. **lib.rs（批次 35 后 14058 行）**：Phase 3 第一小步 ✅（`e2d8e94`，schema 校验域五函数迁入 settings_service.rs 并 pub 导出，调用点零改动）。后续批次按序：① settings_service_* 五个 Tauri command（2921-3160 区）迁入 settings_service/commands.rs；② settings_json_schema 已迁、settings_service_patch/replace/reset 迁入时一并接管 SETTINGS_WRITE_LOCK（锁被写回抑制区 13408-13500 共享，迁移时须 pub 导出或改经命令层）；③ agent/mcp 域（Phase 4）。每段过 cargo check + 带隔离开关冒烟。
 
 ## 待办事项（按优先级，批次 5 后更新）
