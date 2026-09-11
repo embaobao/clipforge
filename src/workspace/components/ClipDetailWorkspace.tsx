@@ -21,6 +21,7 @@ import {
   SmartFormatPanel,
   TruncatedPre,
 } from "./DetailPreview";
+import { PiAnalysisBar } from "./PiAnalysisBar";
 import {
   appendWorkspacePanelLog,
   compactInlineText,
@@ -62,6 +63,8 @@ type ClipDetailWorkspaceProps = {
     context?: { sessionId: string; draftVersion: number },
   ) => Promise<ClipItem | void>;
   quickActions?: DetailQuickAction[];
+  /** Agent provider 配置（settings.agentProviders），用于 pi 底层 AI 分析；空数组时分析按钮禁用。 */
+  agentProviders?: Array<Record<string, unknown>>;
 };
 
 /** 详情页外壳：只读态（工具条 + 元信息 + 内容/链接/采集上下文折叠区）与编辑态（快捷编辑器）切换。
@@ -83,6 +86,7 @@ export function ClipDetailWorkspace({
   onSearchTag,
   onUpdateContent,
   quickActions = [],
+  agentProviders = [],
 }: ClipDetailWorkspaceProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftContent, setDraftContent] = useState("");
@@ -297,6 +301,7 @@ export function ClipDetailWorkspace({
               onToggleImageActualSize={() => setImageActualSize((current) => !current)}
             />
           </WorkspaceCrumb>
+          <PiAnalysisBar agentProviders={agentProviders} clip={clip} onSearchTag={onSearchTag} />
           <DetailMeta
             applicationContextSummary={applicationContextSummary}
             clip={clip}
