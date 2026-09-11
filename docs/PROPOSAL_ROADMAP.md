@@ -6,6 +6,7 @@
 
 1. **pi sdk 确立为 Agent 能力基础**：选定 github.com/earendil-works/pi（TS Agent 工具箱 + 可编程 SDK，npm @mariozechner/pi-coding-agent），新建 [pi-sdk-agent-foundation](../openspec/changes/pi-sdk-agent-foundation/proposal.md) 提案承接全部 Agent 能力（条目分析/智能标签/未来助手面板），validate --strict ✓。
 2. **DSH 全链废弃删除**：deepseek-harness-embedding / dsh-file-context-conversation / dsh-system-context-menu 三提案已标记废弃（头部声明 + 指向 pi 提案），代码删除为 pi-sdk-agent-foundation Phase 1（夜间任务首个大战役），删除完成后三提案 --skip-specs 归档。基座取舍决策就此关闭。
+2. **DSH 三提案已归档（2026-09-11）**：`2026-09-11-deepseek-harness-embedding` / `2026-09-11-dsh-file-context-conversation` / `2026-09-11-dsh-system-context-menu`；DSH 代码全链删除完成（前端 -528 行 + Rust -553 行 + 配置），前端零残留。
 3. 顺带决策记录：CLIPFORGE_DISABLE_CAPTURE=1 双实例隔离开关已落地（2026-09-10 双实例污染事故的防再发）。
 
 2026-09-07 进展（夜间批次 1–4，Tailwind v3 视觉重构收尾）：
