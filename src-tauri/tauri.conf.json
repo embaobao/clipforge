@@ -61,23 +61,6 @@
         "alwaysOnTop": false,
         "visibleOnAllWorkspaces": false,
         "visible": false
-      },
-      {
-        "label": "dsh",
-        "title": "AI 助手 (DeepSeek Harness)",
-        "url": "dsh.html",
-        "width": 900,
-        "height": 640,
-        "minWidth": 720,
-        "minHeight": 480,
-        "resizable": true,
-        "decorations": false,
-        "transparent": true,
-        "shadow": true,
-        "hiddenTitle": true,
-        "alwaysOnTop": true,
-        "visibleOnAllWorkspaces": true,
-        "visible": false
       }
     ],
     "security": {

@@ -32,11 +32,6 @@ mod context_collector_runtime;
 mod context_collectors;
 mod context_collector_system;
 mod settings_service;
-mod dsh;
-use dsh::{
-    analyze_clipboard, get_dsh_status, kill_dsh_daemon, spawn_dsh_daemon, start_dsh_daemon,
-    stop_dsh_daemon, DshDaemonState,
-};
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
 use settings_service::{
@@ -5992,34 +5987,6 @@ fn toggle_quick_panel_command<R: tauri::Runtime>(
     }
 }
 
-// ── DSH 独立悬浮窗命令：复用剪贴板窗体的悬浮逻辑（label="dsh"），与剪贴板完全一致的
-// 唤起 / 定位 / 失焦隐藏 / 固定能力，使 DSH 能悬浮于其他应用之上快速使用 Agent。 ──
-
-#[tauri::command]
-fn open_dsh_window<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<PanelTriggerPayload, String> {
-    open_floating_window(&app, "dsh", "command", false)
-}
-
-#[tauri::command]
-fn hide_dsh_window<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<PanelTriggerPayload, String> {
-    hide_floating_window(&app, "dsh", "command", false)
-}
-
-#[tauri::command]
-fn toggle_dsh_window<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<PanelTriggerPayload, String> {
-    toggle_floating_window(&app, "dsh", "toggle", false);
-    let window = app
-        .get_webview_window("dsh")
-        .ok_or_else(|| "dsh window is not available".to_string())?;
-    Ok(panel_trigger_payload(&window, "toggle", "toggle", ""))
-}
-
 #[tauri::command]
 fn focus_quick_panel_command<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -8595,17 +8562,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 监听、去重、设置过滤和入库统一收敛在 clipboard::watcher，避免保留第二条采集路径。
     clipboard::watcher::init(app.handle().clone());
 
-    // DSH 常驻守护进程：常驻拉起 web carrier，供悬浮 dsh surface 嵌入官方 Web UI。
-    // 失败仅记日志降级，不阻断剪贴板主流程。
-    let dsh_daemon_state = DshDaemonState::default();
-    if let Err(error) = spawn_dsh_daemon(&dsh_daemon_state, None) {
-        log_to_file(
-            "warn",
-            "dsh-daemon",
-            &format!("auto start DSH daemon failed: {}", error),
-        );
-    }
-    app.manage(dsh_daemon_state);
 
     #[cfg(debug_assertions)]
     schedule_dev_window_trigger(app.handle().clone());
@@ -10478,10 +10434,6 @@ pub fn run() {
             agent_get_run,
             agent_get_transcript,
             agent_restore_session,
-            analyze_clipboard,
-            start_dsh_daemon,
-            stop_dsh_daemon,
-            get_dsh_status,
             capture_clip_record,
             capture_current_clipboard,
             capture_live_application_context,
@@ -10545,9 +10497,6 @@ pub fn run() {
             start_mcp_server,
             stop_mcp_server,
             get_mcp_status,
-            open_dsh_window,
-            hide_dsh_window,
-            toggle_dsh_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClipForge")
@@ -10557,7 +10506,6 @@ pub fn run() {
                 tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
             ) {
                 cleanup_agent_children();
-                kill_dsh_daemon(&app_handle.state::<DshDaemonState>());
             }
         });
 }
