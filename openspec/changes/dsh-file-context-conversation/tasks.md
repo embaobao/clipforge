@@ -1,5 +1,10 @@
 # 任务：文件（文件夹）上下文的 DSH 对话集成
 
+> ⛔ **已废弃（2026-09-11 盟哥拍板）**：pi sdk（github.com/earendil-works/pi）确立为 ClipForge
+> Agent 能力基础，DSH 全链废弃删除。本提案不再推进；删除进度与能力替代见
+> [pi-sdk-agent-foundation](../pi-sdk-agent-foundation/proposal.md)。归档待 DSH 代码删除完成后执行。
+
+
 > 状态（2026-08-17 立项）：基于既有 DSH 集成与文件采集能力，补「文件上下文」场景。能力雏形已存在，以增量改动为主。
 > 多轮对话改由 `deepseek-harness-embedding` Phase 6 常驻守护进程原生支持（去掉原 v1 无状态/v2 常驻拆分）。
 

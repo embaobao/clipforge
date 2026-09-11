@@ -1,5 +1,10 @@
 # 任务：系统级文件管理器右键
 
+> ⛔ **已废弃（2026-09-11 盟哥拍板）**：pi sdk（github.com/earendil-works/pi）确立为 ClipForge
+> Agent 能力基础，DSH 全链废弃删除。本提案不再推进；删除进度与能力替代见
+> [pi-sdk-agent-foundation](../pi-sdk-agent-foundation/proposal.md)。归档待 DSH 代码删除完成后执行。
+
+
 > 状态（2026-08-17 立项）：重原生扩展，后置。依赖 `dsh-file-context-conversation` 与 `deepseek-harness-embedding` Phase 6–7。应用内等价能力已具备，本提案只把入口外移到系统文件管理器。
 
 ## Phase 1：URL Scheme 桥接（主进程侧，前置）🟡

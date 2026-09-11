@@ -1,5 +1,10 @@
 # 任务：DeepSeek Harness 常驻守护进程 + 悬浮对话
 
+> ⛔ **已废弃（2026-09-11 盟哥拍板）**：pi sdk（github.com/earendil-works/pi）确立为 ClipForge
+> Agent 能力基础，DSH 全链废弃删除。本提案不再推进；删除进度与能力替代见
+> [pi-sdk-agent-foundation](../pi-sdk-agent-foundation/proposal.md)。归档待 DSH 代码删除完成后执行。
+
+
 > 状态（2026-09-02）：产品主线回归剪贴板工具本体，本提案整体后置。DSH 面板定位为**实验性 iframe 集成**——
 > 仅保留「独立悬浮窗 + iframe 嵌 DSH 官方 Web UI」形态作为尝试（2026-08-17 拍板，2026-09-02 确认继续保留），
 > 不再投入自研对话 UI；运行时基座后续可能切换 pi 等候选，基座取舍前不向 DSH runtime 深投。

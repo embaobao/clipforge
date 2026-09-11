@@ -2,6 +2,12 @@
 
 更新时间：2026-09-07
 
+2026-09-11 重大方向决策（盟哥拍板）：
+
+1. **pi sdk 确立为 Agent 能力基础**：选定 github.com/earendil-works/pi（TS Agent 工具箱 + 可编程 SDK，npm @mariozechner/pi-coding-agent），新建 [pi-sdk-agent-foundation](../openspec/changes/pi-sdk-agent-foundation/proposal.md) 提案承接全部 Agent 能力（条目分析/智能标签/未来助手面板），validate --strict ✓。
+2. **DSH 全链废弃删除**：deepseek-harness-embedding / dsh-file-context-conversation / dsh-system-context-menu 三提案已标记废弃（头部声明 + 指向 pi 提案），代码删除为 pi-sdk-agent-foundation Phase 1（夜间任务首个大战役），删除完成后三提案 --skip-specs 归档。基座取舍决策就此关闭。
+3. 顺带决策记录：CLIPFORGE_DISABLE_CAPTURE=1 双实例隔离开关已落地（2026-09-10 双实例污染事故的防再发）。
+
 2026-09-07 进展（夜间批次 1–4，Tailwind v3 视觉重构收尾）：
 
 1. 视觉重构全部入库：基线分批提交 → 详情页/聚合页/onboarding 拆分完成（`workspace-panels.tsx` 1831 行 → 纯 re-export，全部子组件 ≤500 行 Tailwind 语义类）；file-size 豁免清单剩 4 项（App.tsx / settings.tsx / contracts.ts / lib.rs）。
