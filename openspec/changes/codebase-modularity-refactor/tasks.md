@@ -19,11 +19,11 @@
 ## Phase 3：lib.rs settings 模块拆分（服务 settings-service B3）
 
 - [ ] 抽 `src-tauri/src/settings/mod.rs`：SettingsService get/patch/replace/reset + revision + emit
-- [ ] 抽 `settings/schema.rs`：settings_json_schema + 校验
+- [x] 抽 settings 校验域：settings_json_schema/resolve_schema_ref/validate_settings_value/settings_validation_error/validate_settings_patch 五函数（~225 行）迁入 settings_service.rs 并 pub 导出（2026-09-11，lib.rs 14284→14058；实际落位 settings_service.rs 而非新目录，避免多一层模块）
 - [ ] 抽 `settings/write.rs`：原子写 + Mutex（依赖 B2 先落地）
 - [ ] 抽 `settings/commands.rs`：settings_service_* Tauri command 适配层
 - [ ] 抽 `settings/mcp.rs`：clipf.settings.*/clipf.agent.* dispatch（复用 service，满足 B3）
-- [ ] lib.rs 只保留模块声明 + 命令注册，移除 settings 相关内联实现
+- [ ] lib.rs 只保留模块声明 + 命令注册，移除 settings 相关内联实现——进行中：schema 校验域已迁（上）；settings_service_* 七命令（~240 行）+ 辅助函数链（sync_launch_at_login/sync_global_shortcut/refresh_tray_menu/emit_settings_changed/settings_write_response/log_slow_settings_operation）与 SETTINGS_WRITE_LOCK 待迁，建议新会话满上下文执行
 - [ ] `cargo check` + `cargo fmt` + verify 脚本通过
 
 ## Phase 4：lib.rs agent / mcp 模块拆分
