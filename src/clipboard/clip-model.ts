@@ -451,8 +451,8 @@ export function normalizeClip(raw: Partial<ClipItem>, settings: AppSettings): Cl
 
 // ===== 面板 UI 状态类型（从 App.tsx 迁入，供主体与子组件共用）=====
 
-/** 主窗口 surface：快速剪贴板 or DSH 助手。 */
-export type PanelSurface = "clipboard" | "dsh";
+/** 主窗口 surface：快速剪贴板（pi 集成后评估助手形态，见 pi-sdk-agent-foundation）。 */
+export type PanelSurface = "clipboard";
 /** 主列表视图。 */
 export type ViewKey = "history" | "favorites" | "trash";
 /** 列表键盘导航方向键。 */

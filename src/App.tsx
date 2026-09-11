@@ -34,11 +34,10 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
-import { openDshWindow } from "./agent/dsh-analysis";
 import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
-import { analyzeClipboardWithDsh, createWindowDragHandler, logAppError, useDebouncedValue, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
+import { createWindowDragHandler, logAppError, useDebouncedValue, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { usePanelBootstrap } from "./clipboard/use-panel-bootstrap";
@@ -1013,9 +1012,6 @@ function ClipForgeApp() {
         <TopToolbar
           activeView={activeView}
           onDrag={handleWindowDrag}
-          onOpenDsh={() => {
-            void openDshWindow();
-          }}
           onOpenSettings={() => {
             invoke("open_settings_window").catch((error) =>
               logAppError("warn", "Open settings window failed", String(error)),
@@ -1207,7 +1203,6 @@ function ClipForgeApp() {
                   onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
                   onSearchTag={searchByTag}
                   onUpdateContent={updateClipContent}
-                  onAnalyzeClipboard={analyzeClipboardWithDsh}
                   quickActions={[
                     ...(clip && canOpenClipTarget(clip)
                       ? [

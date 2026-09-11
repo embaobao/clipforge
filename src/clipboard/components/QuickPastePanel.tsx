@@ -6,7 +6,7 @@ import type { ClipItem, PanelDensity } from "../../App";
 import type { PasteMode } from "../../clipboard/clip-model";
 import type { FilePathStatus } from "../../services/clipboard";
 import type { TranslationKey } from "../../i18n";
-import { analyzeClipboardWithDsh, logAppError } from "../panel-shared";
+import { logAppError } from "../panel-shared";
 import { navigateWorkspaceDetail } from "../../routes/workspace-router";
 import { ClipContextMenu } from "./ClipContextMenu";
 import { ClipboardEmptyState } from "./ClipboardEmptyState";
@@ -175,7 +175,6 @@ export function QuickPastePanel({
             onOpenAggregate={onOpenAggregate}
             onPaste={onPaste}
             onCopyMode={(mode) => onCopyMode(contextMenu.item, mode)}
-            onAnalyzeClipboard={analyzeClipboardWithDsh}
             onCopySelected={onCopySelected}
             onStartMultiSelect={onStartMultiSelect}
             onClearSelection={onClearSelection}

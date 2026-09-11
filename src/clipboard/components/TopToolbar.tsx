@@ -1,7 +1,7 @@
 // 主面板顶部工具栏（design-spec 视觉层重构）
 // 搜索槽 + 视图范围按钮（History/Favorites/片段/更多），保持业务 handler 不变。
 import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
-import { Clock, MoreHorizontal, ScanSearch, Scissors, Settings2, Star, Trash2 } from "lucide-react";
+import { Clock, MoreHorizontal, Scissors, Settings2, Star, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { getShortcutModLabel } from "../clipboard-domain";
@@ -29,7 +29,6 @@ export interface TopToolbarProps {
   /** 面板级方向键导航；用于避免顶部栏按钮抢占列表下钻/返回快捷键。 */
   onPanelArrowKey?: (key: PanelArrowKey) => void;
   onDrag: (event: PointerEvent<HTMLElement>) => void;
-  onOpenDsh: () => void;
   onOpenSettings: () => void;
   onViewChange: (view: ViewKey) => void;
   searchBar: ReactNode;
@@ -47,7 +46,6 @@ export function TopToolbar({
   activeView,
   onPanelArrowKey,
   onDrag,
-  onOpenDsh,
   onOpenSettings,
   onViewChange,
   searchBar,
@@ -163,14 +161,6 @@ export function TopToolbar({
             align="end"
             sideOffset={8}
           >
-            <DropdownMenuItem
-              className="rounded-lg px-2 py-1.5 text-[12.5px]"
-              data-dev-probe="top-menu-dsh"
-              onSelect={onOpenDsh}
-            >
-              <ScanSearch size={14} />
-              <span>AI 分析</span>
-            </DropdownMenuItem>
             <DropdownMenuItem
               className="rounded-lg px-2 py-1.5 text-[12.5px]"
               data-dev-probe="top-menu-trash"

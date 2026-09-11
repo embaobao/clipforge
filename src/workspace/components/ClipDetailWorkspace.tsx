@@ -1,15 +1,13 @@
-import { ChevronDown, ChevronUp, Copy, ExternalLink, FileJson, FileText, Pencil, ScanSearch } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, ExternalLink, FileJson, FileText, Pencil, } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ClipItem } from "../../App";
 import { detectSensitiveEditorFields } from "../../editor/sensitive";
 import { formatCommandError } from "../../i18n";
 import type { FilePathStatus } from "../../services/clipboard";
-import type { DshAnalyzeResult } from "../../agent/dsh-analysis";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WorkspaceCrumb } from "./WorkspaceCrumb";
-import { DetailDshPanel, useDshQuickAnalysis } from "./DetailDshPanel";
 import { DetailMeta } from "./DetailMeta";
 import { DetailOverflowMenu } from "./DetailOverflowMenu";
 import { DetailQuickEditor } from "./DetailQuickEditor";
@@ -54,7 +52,6 @@ type ClipDetailWorkspaceProps = {
   onOpen: (clip: ClipItem) => void;
   onOpenPath?: (path: string) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
-  onAnalyzeClipboard?: (clip: ClipItem) => Promise<DshAnalyzeResult | void> | DshAnalyzeResult | void;
   onPrevious?: () => void;
   onNext?: () => void;
   onSearchTag: (tag: string) => void;
@@ -68,7 +65,7 @@ type ClipDetailWorkspaceProps = {
 };
 
 /** 详情页外壳：只读态（工具条 + 元信息 + 内容/链接/采集上下文折叠区）与编辑态（快捷编辑器）切换。
- *  预览渲染、DSH 分析、元信息、溢出菜单分别由 DetailPreview / DetailDshPanel / DetailMeta / DetailOverflowMenu 承载。 */
+ *  预览渲染、元信息、溢出菜单分别由 DetailPreview / DetailMeta / DetailOverflowMenu 承载（AI 分析随 pi-sdk 迁移待恢复）。 */
 export function ClipDetailWorkspace({
   clip,
   filePathStatuses,
@@ -81,7 +78,6 @@ export function ClipDetailWorkspace({
   onOpen,
   onOpenPath,
   onPasteText,
-  onAnalyzeClipboard,
   onPrevious,
   onNext,
   onSearchTag,
@@ -97,7 +93,6 @@ export function ClipDetailWorkspace({
   const [imageActualSize, setImageActualSize] = useState(false);
   const [editorSessionId, setEditorSessionId] = useState("");
   const [draftVersion, setDraftVersion] = useState(1);
-  const dsh = useDshQuickAnalysis({ clip, editorSessionId, draftVersion, onAnalyzeClipboard, onUpdateContent });
 
   useEffect(() => {
     setDraftContent(clip?.content ?? "");
@@ -274,18 +269,6 @@ export function ClipDetailWorkspace({
                 <ChevronDown size={12} />
               </button>
               <button
-                aria-busy={dsh.isAnalyzing}
-                aria-label="AI 分析"
-                className={toolButtonClass}
-                data-dsh-action="detail"
-                disabled={!onAnalyzeClipboard || dsh.isAnalyzing}
-                onClick={() => void dsh.runDshAnalysis()}
-                title={dsh.isAnalyzing ? "分析中…" : "AI 分析（DeepSeek Harness）"}
-                type="button"
-              >
-                <ScanSearch size={12} />
-              </button>
-              <button
                 aria-label={tr("main.detail.editContent")}
                 className={toolButtonClass}
                 onClick={() => {
@@ -314,19 +297,6 @@ export function ClipDetailWorkspace({
               onToggleImageActualSize={() => setImageActualSize((current) => !current)}
             />
           </WorkspaceCrumb>
-          {(dsh.isAnalyzing || dsh.dshResult || dsh.dshError) ? (
-            <div className="px-4 pt-2">
-              <DetailDshPanel
-                isAnalyzing={dsh.isAnalyzing}
-                dshError={dsh.dshError}
-                dshHistory={dsh.dshHistory}
-                dshResult={dsh.dshResult}
-                onApplyFolder={() => void dsh.applyDshFolder()}
-                onApplyTags={() => void dsh.applyDshTags()}
-                onSearchTag={onSearchTag}
-              />
-            </div>
-          ) : null}
           <DetailMeta
             applicationContextSummary={applicationContextSummary}
             clip={clip}
