@@ -45,7 +45,32 @@ export const clipboardSearchTool = {
   },
 };
 
+/** 读最新一条剪贴板条目（等价于 clipboard_search limit=1 的快捷形态）。 */
+export const clipboardReadLatestTool = {
+  name: "clipboard_read_latest",
+  description: "读取用户最近一条剪贴板条目（id、类型、标题、摘要与全文）。当用户问「我刚复制的内容」或需要最近条目上下文时使用。",
+  parameters: Type.Object({}),
+  execute: async () => {
+    const payload = await searchClips({ limit: 1 });
+    const item = payload.items[0];
+    const result = item
+      ? {
+          id: item.id,
+          payloadKind: item.payloadKind,
+          title: item.analysis.title,
+          summary: item.analysis.summary,
+          tags: item.tags,
+          content: item.content,
+        }
+      : { empty: true };
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      details: result,
+    };
+  },
+};
+
 /** ClipForge Agent 可用的全部工具（后续新增写回类工具需先过安全评审）。 */
 export function clipForgeTools() {
-  return [clipboardSearchTool];
+  return [clipboardSearchTool, clipboardReadLatestTool];
 }
