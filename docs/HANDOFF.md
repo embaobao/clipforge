@@ -99,6 +99,11 @@
    另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
 4b. **DSH 全链删除（批次 36-38）✅**：前端 -528 行（`6275653`，删 src/dsh/、dsh-main、dsh-analysis、DetailDshPanel 及全部引用链，AI 分析入口暂缺位待 pi 恢复）+ Rust -553 行（`d7c7bd2`/`8fc1dcb`，删 dsh.rs 484 行、lib.rs 命令注册/守护进程/退出清理、tauri dsh 窗口 4→3）；DSH 三提案归档至 archive/2026-09-11-*（`0c694e7`）。前端零残留（grep 复查）。**pi-sdk-agent-foundation 提案接管 Agent 能力**（Phase 2 依赖引入待启动）。
 4c. **pi sdk Phase 2 完成 ✅（批次 39-40 + 44-47）**：依赖引入、适配层（provider-config/analysis/stream）、AI 分析入口恢复（PiAnalysisBar）、工具（clipboard_search/read_latest）、provider 配置 UI 确认已存在（catalog 驱动，读取通道 resolveDefaultPiProvider 已接通）。Phase 3（功能点深化）与结构化 provider 表单为可选后续。
+4d2. **lib.rs 拆分序②（SETTINGS_WRITE_LOCK 接管）侦察（批次 48）**：settings 写盘链分布——
+   - **紧凑组**（命令层相邻，纯平移候选）：log_slow_settings_operation(2374)/sync_launch_at_login_from_settings(2511)/emit_settings_changed(2633)/settings_write_response(2655)/refresh_tray_menu_after_settings_write(2672)；SETTINGS_WRITE_LOCK(2362, 已 pub(crate))。
+   - **分散组**：read_user_settings(5327, **主体 27 处引用**)/write_user_settings(5418, 7 处)/sync_global_shortcut_registration(8146, 快捷键域深处)。
+   - 评估：紧凑组五函数可先随命令层迁（迁后经 crate:: 反向引用或 re-export）；read_user_settings 引用面巨大，迁出收益低（其本体依赖 settings_path/DB 连接），建议**留主体**、命令层经 crate:: 调用即可。refresh_tray_menu 仅命令层 1 处使用 ✓ 随迁无阻力。
+   - 结论：拆分序② 的可安全迁移量为「紧凑组五函数」（约 150 行），lib.rs 预计 13813→13650；read/write_user_settings 与快捷键域留主体。每段过 cargo check + 冒烟。
 4d. **lib.rs Phase 4 agent/mcp 域侦察（批次 44-45 补全）**：
    - **agent 域**：函数群分散于 1413-1810（约 400 行连续：agent_detect_candidates/local_agent_candidate/openai_compatible_agent_candidate/cached_readiness/agent_candidate_by_id/check_agent_candidate/check_openai_compatible_models/provider_configs_with_readiness/compact_agent_text/agent_context_summary 等）+ 2327-2361（resolve_agent_config/agent_check_provider/agent_list_provider_models）+ 2703（agent_detect）+ 640-680 三 struct。属 **Phase 4 级别大手术**（600+ 行、依赖链深），需新会话满上下文分批执行。
    - **mcp 域**：两块分布——① 5857-5920（start/stop_mcp_server/get_mcp_status 命令）；② 11710-12000 区（mcp_status_payload/mcp_tool_names/run_mcp_stdio——**pub，被 stdio 入口调用**/handle_mcp_request/mcp_error 系列/mcp_tools/mcp_tool_specs）；另有 608 McpStatusPayload/874 McpToolSpec struct。约 400+ 行，迁 mcp/mod.rs 时 run_mcp_stdio 须 pub 导出（main/stdio 入口调用）。
