@@ -3,6 +3,7 @@
 import { ScanSearch } from "lucide-react";
 import { useState } from "react";
 import { analyzeClipWithPi, resolveDefaultPiProvider, type ClipPiAnalysis } from "../../agent/pi/analysis";
+import { getPiHistory, recordPiHistory } from "../../agent/pi/analysis-history";
 import type { ClipItem } from "../../App";
 
 export type PiAnalysisBarProps = {
@@ -14,6 +15,7 @@ export type PiAnalysisBarProps = {
 /** AI 分析条：按钮触发 → 分析中 → 摘要与标签建议（标签点击走搜索）。 */
 export function PiAnalysisBar({ clip, agentProviders, onSearchTag }: PiAnalysisBarProps) {
   const [analysis, setAnalysis] = useState<ClipPiAnalysis | null>(null);
+  const [history] = useState(getPiHistory);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const disabled = agentProviders.length === 0 || analyzing;
@@ -28,7 +30,9 @@ export function PiAnalysisBar({ clip, agentProviders, onSearchTag }: PiAnalysisB
         setError("尚未配置 Agent provider（设置 → MCP/Agent）");
         return;
       }
-      setAnalysis(await analyzeClipWithPi(clip, providerConfig));
+      const result = await analyzeClipWithPi(clip, providerConfig);
+      setAnalysis(result);
+      recordPiHistory({ clipId: clip.id, summary: result.summary, tags: result.tags });
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -73,6 +77,17 @@ export function PiAnalysisBar({ clip, agentProviders, onSearchTag }: PiAnalysisB
                 >
                   #{tag}
                 </button>
+              ))}
+            </div>
+          ) : null}
+          {history.length ? (
+            <div className="mt-2 border-t border-black/[0.04] pt-2 dark:border-white/[0.06]">
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">最近分析</div>
+              {history.slice(0, 3).map((h, i) => (
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground" key={`${h.at}-${i}`}>
+                  <span className="shrink-0">{new Date(h.at).toLocaleTimeString()}</span>
+                  <span className="truncate">{h.summary}</span>
+                </div>
               ))}
             </div>
           ) : null}
