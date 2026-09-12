@@ -98,7 +98,8 @@
    - **B. UI 渲染 JSX**（主体 return，约 800 行）：按 TopCommandBar/ModeBar/ClipboardList/StatusBar/Overlay 区块切展示组件，props 由现有 state/handler 直接传递。
    另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
 4b. **DSH 全链删除（批次 36-38）✅**：前端 -528 行（`6275653`，删 src/dsh/、dsh-main、dsh-analysis、DetailDshPanel 及全部引用链，AI 分析入口暂缺位待 pi 恢复）+ Rust -553 行（`d7c7bd2`/`8fc1dcb`，删 dsh.rs 484 行、lib.rs 命令注册/守护进程/退出清理、tauri dsh 窗口 4→3）；DSH 三提案归档至 archive/2026-09-11-*（`0c694e7`）。前端零残留（grep 复查）。**pi-sdk-agent-foundation 提案接管 Agent 能力**（Phase 2 依赖引入待启动）。
-4c. **pi sdk Phase 2 首批 ✅（批次 39，`d36145b`）**：pi-ai/pi-agent-core@0.73.1 引入；src/agent/pi/provider-config.ts 适配层（provider 映射 + piComplete 最小补全）；allowBuilds 白名单补 @google/genai/protobufjs（pnpm 11.7 新字段 allowBuilds 取代 package.json.pnpm）。下一批：piComplete 接入详情页 AI 分析（恢复入口）+ 工具注册。
+4c. **pi sdk Phase 2 完成 ✅（批次 39-40 + 44）**：首批（`d36145b`，依赖引入/provider-config 适配层/allowBuilds 白名单）+ 二批（`ec8e68f`，analysis.ts + PiAnalysisBar 详情页 AI 分析入口恢复）+ 收尾（本批 `8582637`，clipboard_read_latest 工具）。Phase 2 待办仅剩：stream 流式调用、provider 配置 UI 对接。
+4d. **lib.rs Phase 4 agent/mcp 域侦察（批次 44）**：agent 域函数群分散于 1413-1810（约 400 行连续）+ 2327-2361 + 2703 + 640-680 三 struct，属 Phase 4 级别大手术（600+ 行、依赖链深），需新会话满上下文分批执行；mcp 域（run_mcp_stdio/call_mcp_tool/mcp_tool_specs）侦察待做。
 5. **lib.rs（批次 43 后 13813 行）**：拆分序① ✅（`4f09b97`，schema 域 + settings_service_* 七命令迁入 settings_service.rs/commands.rs，锁 pub(crate)），冒烟 ✓。拆分序②：SETTINGS_WRITE_LOCK 接管——锁被写回抑制区 13400-13500 共享，迁移时 pub 导出或写回链改经命令层；③ agent/mcp 域（Phase 4）。每段过 cargo check + 带隔离开关冒烟。
 
 ## 待办事项（按优先级，批次 5 后更新）
