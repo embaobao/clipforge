@@ -108,7 +108,7 @@
    - **agent 域**：函数群分散于 1413-1810（约 400 行连续：agent_detect_candidates/local_agent_candidate/openai_compatible_agent_candidate/cached_readiness/agent_candidate_by_id/check_agent_candidate/check_openai_compatible_models/provider_configs_with_readiness/compact_agent_text/agent_context_summary 等）+ 2327-2361（resolve_agent_config/agent_check_provider/agent_list_provider_models）+ 2703（agent_detect）+ 640-680 三 struct。属 **Phase 4 级别大手术**（600+ 行、依赖链深），需新会话满上下文分批执行。
    - **mcp 域**：两块分布——① 5857-5920（start/stop_mcp_server/get_mcp_status 命令）；② 11710-12000 区（mcp_status_payload/mcp_tool_names/run_mcp_stdio——**pub，被 stdio 入口调用**/handle_mcp_request/mcp_error 系列/mcp_tools/mcp_tool_specs）；另有 608 McpStatusPayload/874 McpToolSpec struct。约 400+ 行，迁 mcp/mod.rs 时 run_mcp_stdio 须 pub 导出（main/stdio 入口调用）。
    - 侦察结论：agent/mcp 两域均属 Phase 4 级别，建议各自独立会话满上下文执行；每段过 cargo check + 带隔离开关冒烟。
-5. **lib.rs（批次 43 后 13813 行）**：拆分序① ✅（`4f09b97`，schema 域 + settings_service_* 七命令迁入 settings_service.rs/commands.rs，锁 pub(crate)），冒烟 ✓。拆分序②：SETTINGS_WRITE_LOCK 接管——锁被写回抑制区 13400-13500 共享，迁移时 pub 导出或写回链改经命令层；③ agent/mcp 域（Phase 4）。每段过 cargo check + 带隔离开关冒烟。
+5. **lib.rs（批次 49 后 13745 行）**：拆分序① ✅（schema 域）+ 拆分序② ✅（`96de00e`，写盘编排辅助四函数迁入 commands.rs，累计 329 行；sync_launch 主体两处调用经 re-export 零改动；refresh_tray 留主体经 crate:: 引用并补 Emitter trait），冒烟 ✓。拆分序③：agent/mcp 域（Phase 4 级别，侦察已入档 4d 条，需满上下文分批执行）。settings 写盘链剩余 read/write_user_settings 与快捷键域留主体（侦察结论：迁出收益低）。
 
 ## 待办事项（按优先级，批次 5 后更新）
 
