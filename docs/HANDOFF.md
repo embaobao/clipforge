@@ -98,7 +98,7 @@
    - **B. UI 渲染 JSX**（主体 return，约 800 行）：按 TopCommandBar/ModeBar/ClipboardList/StatusBar/Overlay 区块切展示组件，props 由现有 state/handler 直接传递。
    另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
 4b. **DSH 全链删除（批次 36-38）✅**：前端 -528 行（`6275653`，删 src/dsh/、dsh-main、dsh-analysis、DetailDshPanel 及全部引用链，AI 分析入口暂缺位待 pi 恢复）+ Rust -553 行（`d7c7bd2`/`8fc1dcb`，删 dsh.rs 484 行、lib.rs 命令注册/守护进程/退出清理、tauri dsh 窗口 4→3）；DSH 三提案归档至 archive/2026-09-11-*（`0c694e7`）。前端零残留（grep 复查）。**pi-sdk-agent-foundation 提案接管 Agent 能力**（Phase 2 依赖引入待启动）。
-4c. **pi sdk Phase 2 完成 ✅（批次 39-40 + 44-47）**：依赖引入、适配层（provider-config/analysis/stream）、AI 分析入口恢复（PiAnalysisBar）、工具（clipboard_search/read_latest）、provider 配置 UI 确认已存在（catalog 驱动，读取通道 resolveDefaultPiProvider 已接通）。Phase 3（功能点深化）与结构化 provider 表单为可选后续。
+4c. **pi sdk Phase 2 完成 ✅ + Phase 3 首项 ✅（批次 39-40 + 44-50）**：依赖引入、适配层（provider-config/analysis/stream/history）、AI 分析入口恢复（PiAnalysisBar）、工具（clipboard_search/read_latest）、provider 配置 UI 确认已存在（catalog 驱动）；分析历史持久化 ✅（`32c1e9e`，localStorage）。Phase 3 待办：stream 流式接入 UI、provider 结构化表单（可选）。
 4d2. **lib.rs 拆分序②（SETTINGS_WRITE_LOCK 接管）侦察（批次 48）**：settings 写盘链分布——
    - **紧凑组**（命令层相邻，纯平移候选）：log_slow_settings_operation(2374)/sync_launch_at_login_from_settings(2511)/emit_settings_changed(2633)/settings_write_response(2655)/refresh_tray_menu_after_settings_write(2672)；SETTINGS_WRITE_LOCK(2362, 已 pub(crate))。
    - **分散组**：read_user_settings(5327, **主体 27 处引用**)/write_user_settings(5418, 7 处)/sync_global_shortcut_registration(8146, 快捷键域深处)。
