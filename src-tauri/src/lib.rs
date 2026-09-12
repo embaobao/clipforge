@@ -50,6 +50,10 @@ use settings_service::{
     settings_service_agent_providers_payload,
     settings_service_agent_check,
     settings_service_agent_models,
+    sync_launch_at_login_from_settings,
+    emit_settings_changed,
+    log_slow_settings_operation,
+    settings_write_response,
 };
 
 fn command_error(code: &str, detail: impl AsRef<str>) -> String {
@@ -2371,16 +2375,6 @@ fn agent_list_provider_models(
 pub(crate) static SETTINGS_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 记录一次设置操作的耗时，超 300ms 写 app log（B6：300ms 性能预算可观测）。
-fn log_slow_settings_operation(operation: &str, duration_ms: i64) {
-    if duration_ms > 300 {
-        log_to_file(
-            "warn",
-            "settings-service",
-            &format!("slow {operation} durationMs={duration_ms} > 300"),
-        );
-    }
-}
-
 fn log_panel_open_step(reason: &str, step: &str, started: Instant, last: &mut Instant) {
     let now = Instant::now();
     let step_ms = now.duration_since(*last).as_millis();
@@ -2441,7 +2435,7 @@ fn redact_provider_api_key(provider: &mut Value) {
     }
 }
 
-fn desired_launch_at_login(settings: &Value) -> bool {
+pub(crate) fn desired_launch_at_login(settings: &Value) -> bool {
     settings
         .get("launchAtLogin")
         .and_then(Value::as_bool)
@@ -2506,29 +2500,6 @@ fn set_launch_at_login_native<R: tauri::Runtime>(
     enabled: bool,
 ) -> Result<LaunchAtLoginPayload, String> {
     Ok(read_launch_at_login_status(app, enabled))
-}
-
-fn sync_launch_at_login_from_settings<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    settings: &Value,
-    reason: &str,
-) {
-    let desired = desired_launch_at_login(settings);
-    match set_launch_at_login_native(app, desired) {
-        Ok(status) => log_to_file(
-            "info",
-            "autostart",
-            &format!(
-                "sync reason={} desired={} enabled={} supported={}",
-                reason, status.desired, status.enabled, status.supported
-            ),
-        ),
-        Err(error) => log_to_file(
-            "warn",
-            "autostart",
-            &format!("sync reason={} failed: {}", reason, error),
-        ),
-    }
 }
 
 #[tauri::command]
@@ -2628,45 +2599,6 @@ fn settings_reset_public(scope: Option<String>, confirmed: Option<bool>) -> Resu
     }
     write_user_settings(current)?;
     public_settings_payload(true)
-}
-
-fn emit_settings_changed<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    previous_revision: String,
-    revision: String,
-    changed_paths: Vec<String>,
-    actor: &str,
-    mode: &str,
-    updated_at: i64,
-) {
-    let _ = app.emit(
-        "settings_changed",
-        json!({
-            "revision": revision,
-            "previousRevision": previous_revision,
-            "changedPaths": changed_paths,
-            "actor": actor,
-            "mode": mode,
-            "updatedAt": updated_at
-        }),
-    );
-}
-
-fn settings_write_response(
-    settings: Value,
-    previous_revision: String,
-    changed_paths: Vec<String>,
-    include_schema: bool,
-) -> Result<Value, String> {
-    let mut payload = public_settings_payload(include_schema)?;
-    payload["previousRevision"] = Value::String(previous_revision);
-    payload["changedPaths"] = Value::Array(changed_paths.into_iter().map(Value::String).collect());
-    payload["nextActions"] = json!([
-        "Prefer settings_service_patch / clipf.settings.patch for follow-up changes.",
-        "Use settings_service_get / clipf.settings.get to refresh schema and revision before replace/reset."
-    ]);
-    payload["settings"] = redact_settings_value(&settings);
-    Ok(payload)
 }
 
 fn refresh_tray_menu_after_settings_write<R: tauri::Runtime>(

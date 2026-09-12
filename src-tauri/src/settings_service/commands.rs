@@ -2,16 +2,16 @@
 //! 依赖主体辅助函数经 crate:: 引用；SETTINGS_WRITE_LOCK 已 pub(crate)。
 
 use serde_json::{json, Value};
+use tauri::Emitter;
 
 use crate::AgentProviderModelsPayload;
 use crate::AgentProviderReadiness;
 use crate::SETTINGS_WRITE_LOCK;
 use crate::agent_check_provider;
 use crate::agent_list_provider_models;
-use crate::emit_settings_changed;
-use crate::log_slow_settings_operation;
 use crate::log_to_file;
 use crate::now_millis;
+use crate::redact_settings_value;
 use crate::prepare_settings_patch;
 use crate::prepare_settings_replace;
 use crate::prepare_settings_reset;
@@ -21,10 +21,10 @@ use crate::public_settings_payload;
 use crate::settings_service_resolve_agent_config;
 use crate::write_user_settings;
 use crate::settings_revision;
-use crate::settings_write_response;
 use crate::sync_global_shortcut_registration;
-use crate::sync_launch_at_login_from_settings;
 use crate::validate_settings_patch;
+use crate::set_launch_at_login_native;
+use crate::desired_launch_at_login;
 
 // ---- settings_service_get ----
 #[tauri::command]
@@ -244,6 +244,86 @@ pub fn settings_service_agent_models(
     provider_id: Option<String>,
 ) -> Result<AgentProviderModelsPayload, String> {
     agent_list_provider_models(provider_id)
+}
+
+// ---- 设置写盘编排辅助（从 lib.rs 迁入）----
+
+pub fn settings_write_response(
+    settings: Value,
+    previous_revision: String,
+    changed_paths: Vec<String>,
+    include_schema: bool,
+) -> Result<Value, String> {
+    let mut payload = public_settings_payload(include_schema)?;
+    payload["previousRevision"] = Value::String(previous_revision);
+    payload["changedPaths"] = Value::Array(changed_paths.into_iter().map(Value::String).collect());
+    payload["nextActions"] = json!([
+        "Prefer settings_service_patch / clipf.settings.patch for follow-up changes.",
+        "Use settings_service_get / clipf.settings.get to refresh schema and revision before replace/reset."
+    ]);
+    payload["settings"] = redact_settings_value(&settings);
+    Ok(payload)
+}
+
+
+
+pub fn emit_settings_changed<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    previous_revision: String,
+    revision: String,
+    changed_paths: Vec<String>,
+    actor: &str,
+    mode: &str,
+    updated_at: i64,
+) {
+    let _ = app.emit(
+        "settings_changed",
+        json!({
+            "revision": revision,
+            "previousRevision": previous_revision,
+            "changedPaths": changed_paths,
+            "actor": actor,
+            "mode": mode,
+            "updatedAt": updated_at
+        }),
+    );
+}
+
+
+
+pub fn sync_launch_at_login_from_settings<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    settings: &Value,
+    reason: &str,
+) {
+    let desired = desired_launch_at_login(settings);
+    match set_launch_at_login_native(app, desired) {
+        Ok(status) => log_to_file(
+            "info",
+            "autostart",
+            &format!(
+                "sync reason={} desired={} enabled={} supported={}",
+                reason, status.desired, status.enabled, status.supported
+            ),
+        ),
+        Err(error) => log_to_file(
+            "warn",
+            "autostart",
+            &format!("sync reason={} failed: {}", reason, error),
+        ),
+    }
+}
+
+
+
+pub fn log_slow_settings_operation(operation: &str, duration_ms: i64) {
+    if duration_ms > 300 {
+        log_to_file(
+            "warn",
+            "settings-service",
+            &format!("slow {operation} durationMs={duration_ms} > 300"),
+        );
+    }
 }
 
 
