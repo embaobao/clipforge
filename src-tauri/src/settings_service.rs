@@ -1,3 +1,6 @@
+pub mod commands;
+pub use commands::{settings_service_agent_check, settings_service_agent_models, settings_service_agent_providers, settings_service_agent_providers_payload, settings_service_get, settings_service_patch, settings_service_replace, settings_service_reset};
+
 use serde_json::{json, Value};
 use std::hash::{Hash, Hasher};
 

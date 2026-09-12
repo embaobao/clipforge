@@ -36,11 +36,20 @@ mod settings_service;
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
 use settings_service::{
 
+
     merge_settings_patch, prepare_patch as prepare_settings_patch,
     prepare_replace as prepare_settings_replace, prepare_reset as prepare_settings_reset,
     settings_changed_paths, settings_revision,
     settings_json_schema,
     validate_settings_patch,
+    settings_service_get,
+    settings_service_patch,
+    settings_service_replace,
+    settings_service_reset,
+    settings_service_agent_providers,
+    settings_service_agent_providers_payload,
+    settings_service_agent_check,
+    settings_service_agent_models,
 };
 
 fn command_error(code: &str, detail: impl AsRef<str>) -> String {
@@ -2359,7 +2368,7 @@ fn agent_list_provider_models(
 
 /// 设置写入互斥锁（B2b）：保护 read-modify-write 全段，避免设置窗 + MCP/主面板并发写入导致 lost-update。
 /// 只在编排函数（settings_service_*、update_clipforge_settings）里持有；底层 read/write 不加锁，避免重入死锁。
-static SETTINGS_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static SETTINGS_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 记录一次设置操作的耗时，超 300ms 写 app log（B6：300ms 性能预算可观测）。
 fn log_slow_settings_operation(operation: &str, duration_ms: i64) {
@@ -2688,211 +2697,6 @@ fn refresh_tray_menu_after_settings_write<R: tauri::Runtime>(
             ),
         }
     }
-}
-
-#[tauri::command]
-fn settings_service_get(include_schema: Option<bool>) -> Result<Value, String> {
-    // 记录耗时（B6）：300ms 是控制面操作的硬预算，超限写 log 便于回归追踪。
-    let started = std::time::Instant::now();
-    let mut payload = public_settings_payload(include_schema.unwrap_or(true))?;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    payload["durationMs"] = json!(duration_ms);
-    log_slow_settings_operation("get", duration_ms);
-    Ok(payload)
-}
-
-#[tauri::command]
-fn settings_service_patch<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    patch: Value,
-    actor: Option<String>,
-    reason: Option<String>,
-    expected_revision: Option<String>,
-) -> Result<Value, String> {
-    let started = std::time::Instant::now();
-    let _write_guard = SETTINGS_WRITE_LOCK
-        .lock()
-        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
-    validate_settings_patch(&patch)?;
-    let previous = read_user_settings()?.settings;
-    let draft = prepare_settings_patch(&previous, &patch, expected_revision.as_deref())?;
-    let previous_revision = draft.previous_revision;
-    let changed_paths = draft.changed_paths;
-    let next = draft.next;
-    write_user_settings(next.clone())?;
-    if changed_paths.iter().any(|path| path == "$.launchAtLogin") {
-        sync_launch_at_login_from_settings(&app, &next, "settings-service-patch");
-    }
-    sync_global_shortcut_registration(&app);
-    refresh_tray_menu_after_settings_write(&app, "settings-service-patch");
-    let updated_at = now_millis()?;
-    let revision = settings_revision(&next);
-    emit_settings_changed(
-        &app,
-        previous_revision.clone(),
-        revision,
-        changed_paths.clone(),
-        actor.as_deref().unwrap_or("settings-window"),
-        "patch",
-        updated_at,
-    );
-    log_to_file(
-        "info",
-        "settings-service",
-        &format!(
-            "patch actor={} reason={} changed={}",
-            actor.as_deref().unwrap_or("settings-window"),
-            reason.as_deref().unwrap_or(""),
-            changed_paths.join(",")
-        ),
-    );
-    let mut response = settings_write_response(next, previous_revision, changed_paths, true)?;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    response["durationMs"] = json!(duration_ms);
-    log_slow_settings_operation("patch", duration_ms);
-    Ok(response)
-}
-
-#[tauri::command]
-fn settings_service_replace<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    settings: Value,
-    actor: Option<String>,
-    reason: Option<String>,
-    expected_revision: Option<String>,
-    confirmed: Option<bool>,
-) -> Result<Value, String> {
-    let started = std::time::Instant::now();
-    if confirmed != Some(true) {
-        return Err("SETTINGS_REPLACE_REQUIRES_CONFIRMATION: use patch for partial updates or retry with confirmed=true".to_string());
-    }
-    let _write_guard = SETTINGS_WRITE_LOCK
-        .lock()
-        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
-    validate_settings_patch(&settings)?;
-    let previous = read_user_settings()?.settings;
-    let draft = prepare_settings_replace(&previous, settings, expected_revision.as_deref())?;
-    let previous_revision = draft.previous_revision;
-    let changed_paths = draft.changed_paths;
-    let next = draft.next;
-    write_user_settings(next.clone())?;
-    sync_launch_at_login_from_settings(&app, &next, "settings-service-replace");
-    sync_global_shortcut_registration(&app);
-    refresh_tray_menu_after_settings_write(&app, "settings-service-replace");
-    let updated_at = now_millis()?;
-    let revision = settings_revision(&next);
-    emit_settings_changed(
-        &app,
-        previous_revision.clone(),
-        revision,
-        changed_paths.clone(),
-        actor.as_deref().unwrap_or("settings-window"),
-        "replace",
-        updated_at,
-    );
-    log_to_file(
-        "warn",
-        "settings-service",
-        &format!(
-            "replace actor={} reason={} changed={}",
-            actor.as_deref().unwrap_or("settings-window"),
-            reason.as_deref().unwrap_or(""),
-            changed_paths.join(",")
-        ),
-    );
-    let mut response = settings_write_response(next, previous_revision, changed_paths, true)?;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    response["durationMs"] = json!(duration_ms);
-    log_slow_settings_operation("replace", duration_ms);
-    Ok(response)
-}
-
-#[tauri::command]
-fn settings_service_reset<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    scope: Option<String>,
-    actor: Option<String>,
-    reason: Option<String>,
-    expected_revision: Option<String>,
-    confirmed: Option<bool>,
-) -> Result<Value, String> {
-    let started = std::time::Instant::now();
-    if confirmed != Some(true) {
-        return Err(
-            "SETTINGS_RESET_REQUIRES_CONFIRMATION: retry with scope and confirmed=true".to_string(),
-        );
-    }
-    let _write_guard = SETTINGS_WRITE_LOCK
-        .lock()
-        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
-    let scope = scope.ok_or_else(|| {
-        "SETTINGS_RESET_REQUIRES_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags".to_string()
-    })?;
-    let previous = read_user_settings()?.settings;
-    let draft = prepare_settings_reset(&previous, &scope, expected_revision.as_deref())?;
-    let previous_revision = draft.previous_revision;
-    let changed_paths = draft.changed_paths;
-    let next = draft.next;
-    write_user_settings(next.clone())?;
-    sync_launch_at_login_from_settings(&app, &next, "settings-service-reset");
-    sync_global_shortcut_registration(&app);
-    refresh_tray_menu_after_settings_write(&app, "settings-service-reset");
-    let updated_at = now_millis()?;
-    let revision = settings_revision(&next);
-    emit_settings_changed(
-        &app,
-        previous_revision.clone(),
-        revision,
-        changed_paths.clone(),
-        actor.as_deref().unwrap_or("settings-window"),
-        "reset",
-        updated_at,
-    );
-    log_to_file(
-        "warn",
-        "settings-service",
-        &format!(
-            "reset scope={} actor={} reason={} changed={}",
-            scope,
-            actor.as_deref().unwrap_or("settings-window"),
-            reason.as_deref().unwrap_or(""),
-            changed_paths.join(",")
-        ),
-    );
-    let mut response = settings_write_response(next, previous_revision, changed_paths, true)?;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    response["durationMs"] = json!(duration_ms);
-    log_slow_settings_operation("reset", duration_ms);
-    Ok(response)
-}
-
-#[tauri::command]
-fn settings_service_agent_providers() -> Result<Value, String> {
-    settings_service_agent_providers_payload()
-}
-
-fn settings_service_agent_providers_payload() -> Result<Value, String> {
-    let config = settings_service_resolve_agent_config()?;
-    Ok(json!({
-        "activeProviderId": config.active_provider_id,
-        "providers": config.providers,
-        "tools": config.tools,
-        "revision": settings_revision(&read_user_settings()?.settings)
-    }))
-}
-
-#[tauri::command]
-fn settings_service_agent_check(
-    provider_id: Option<String>,
-) -> Result<AgentProviderReadiness, String> {
-    agent_check_provider(provider_id)
-}
-
-#[tauri::command]
-fn settings_service_agent_models(
-    provider_id: Option<String>,
-) -> Result<AgentProviderModelsPayload, String> {
-    agent_list_provider_models(provider_id)
 }
 
 #[tauri::command]
