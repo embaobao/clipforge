@@ -9826,6 +9826,47 @@ fn schedule_dev_perf_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>, target: 
     counts[source] = (counts[source] ?? 0) + 1;
     return counts;
   }}, {{}});
+  // 垂直几何探针（验收专用）：找出渲染到视口顶边之上/底边之下的元素，并给出列表结构坐标。
+  const rectOf = (element) => {{
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return {{ top: Math.round(rect.top * 10) / 10, bottom: Math.round(rect.bottom * 10) / 10, height: Math.round(rect.height * 10) / 10 }};
+  }};
+  const viewportHeight = window.innerHeight;
+  const verticalEscaped = Array.from(document.querySelectorAll("body *"))
+    .map((element) => {{
+      const rect = element.getBoundingClientRect();
+      return {{ tag: element.tagName, cls: String(element.className ?? "").slice(0, 60), top: Math.round(rect.top * 10) / 10, bottom: Math.round(rect.bottom * 10) / 10, height: Math.round(rect.height * 10) / 10, text: (element.textContent ?? "").trim().slice(0, 30) }};
+    }})
+    .filter((item) => item.height > 4 && item.top < -1 && item.bottom > 0)
+    .slice(0, 10);
+  const scroller = Array.from(document.querySelectorAll("div")).find((el) => el.classList.contains("thin-scroll"));
+  const articles = Array.from(document.querySelectorAll("article")).slice(0, 4).map(rectOf);
+  const mainEl = document.querySelector("main");
+  const bodyEl = document.body;
+  const vgeom = {{
+    viewportHeight,
+    scrollY: window.scrollY,
+    html: rectOf(document.documentElement),
+    body: rectOf(bodyEl),
+    bodyStyle: {{
+      margin: getComputedStyle(bodyEl).margin,
+      padding: getComputedStyle(bodyEl).padding,
+      display: getComputedStyle(bodyEl).display,
+      alignItems: getComputedStyle(bodyEl).alignItems,
+      justifyContent: getComputedStyle(bodyEl).justifyContent,
+      minHeight: getComputedStyle(bodyEl).minHeight
+    }},
+    bodyChildren: Array.from(bodyEl.children).map((child) => rectOf(child)),
+    mainTransform: mainEl ? getComputedStyle(mainEl).transform : null,
+    mainAnimation: mainEl ? getComputedStyle(mainEl).animationName : null,
+    main: rectOf(mainEl),
+    header: rectOf(document.querySelector("header")),
+    footer: rectOf(document.querySelector("footer")),
+    firstArticles: articles,
+    scroller: scroller ? {{ top: Math.round(scroller.getBoundingClientRect().top * 10) / 10, scrollTop: scroller.scrollTop, clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight }} : null,
+    verticalEscaped
+  }};
   return {{
     target: {target_json},
     href: window.location.href,
@@ -9834,6 +9875,7 @@ fn schedule_dev_perf_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>, target: 
     repeatCount: {repeat_count},
     hasPerfCollector: Boolean(perf),
     settingsButtonCount: settingsButtons.length,
+    vgeom,
     layout: {{
       viewportWidth,
       documentOverflowX,
