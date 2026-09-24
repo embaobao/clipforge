@@ -46,14 +46,14 @@ export function ClipboardContentPreview({ item, fileMissing, density, tr }: Clip
   return (
     <div className="flex min-w-0 flex-col justify-center leading-tight">
       {parts.split ? (
-        <AppTooltip content={getItemTooltip(item, tr)}>
+        <AppTooltip content={getItemTooltip(item, tr)} portal>
           <p className="truncate text-[13px] leading-tight tracking-[-0.005em] text-foreground" aria-label={parts.full}>
             <span>{parts.head}</span>
             <span className="text-muted-foreground">{parts.tail}</span>
           </p>
         </AppTooltip>
       ) : (
-        <AppTooltip content={getItemTooltip(item, tr)}>
+        <AppTooltip content={getItemTooltip(item, tr)} portal>
           <p className="truncate text-[13px] leading-tight tracking-[-0.005em] text-foreground" aria-label={parts.text}>
             {parts.text}
           </p>

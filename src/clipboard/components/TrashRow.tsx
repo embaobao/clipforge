@@ -110,14 +110,14 @@ export function TrashRow({
 
       <div className="flex min-w-0 flex-col justify-center leading-tight">
         {parts.split ? (
-          <AppTooltip content={getItemTooltip(item, tr)}>
+          <AppTooltip content={getItemTooltip(item, tr)} portal>
             <p className="truncate text-[13px] text-foreground" aria-label={parts.full}>
               <span>{parts.head}</span>
               <span className="text-muted-foreground">{parts.tail}</span>
             </p>
           </AppTooltip>
         ) : (
-          <AppTooltip content={getItemTooltip(item, tr)}>
+          <AppTooltip content={getItemTooltip(item, tr)} portal>
             <p className="truncate text-[13px] text-foreground" aria-label={parts.text}>
               {parts.text}
             </p>

@@ -188,6 +188,114 @@
   background: transparent;
 }
 
+/* ---------- 行内 tooltip（AppTooltip 常驻挂载结构） ---------- */
+/* 卡片常驻 DOM、默认隐身（opacity + visibility），hover/focus 才显示；
+   迁移 Tailwind v3 时旧组件 CSS 被移除，这里按全局共享样式一次性补齐。 */
+.app-tooltip {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.app-tooltip-card {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: max-content;
+  max-width: 264px;
+  max-height: 232px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.06),
+    0 8px 24px -8px rgb(0 0 0 / 0.18);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms;
+}
+.app-tooltip:hover .app-tooltip-card,
+.app-tooltip:focus-within .app-tooltip-card {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.app-tooltip-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.app-tooltip-main strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.app-tooltip-main span {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+.app-tooltip-body {
+  font-size: 12px;
+  color: hsl(var(--popover-foreground) / 0.85);
+}
+.app-tooltip-preview {
+  margin-top: 6px;
+}
+/* portal 版（挂到 body，left/top 由内联样式给定） */
+.quick-panel-tooltip-card {
+  position: absolute;
+  /* portal 版不在 .app-tooltip 悬停链路内，需自行保持可见 */
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+}
+.quick-panel-tooltip-card.has-preview {
+  max-width: 320px;
+}
+
+/* ---------- 运行时错误提示（ErrorBoundary 兜底条） ---------- */
+.runtime-error-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(92vw, 440px);
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.06),
+    0 12px 32px -12px rgb(0 0 0 / 0.24);
+  font-size: 12px;
+}
+.runtime-error-toast .text-button {
+  flex-shrink: 0;
+  color: hsl(var(--primary));
+  font-size: 12px;
+  font-weight: 500;
+}
+.runtime-error-toast .text-button:hover {
+  text-decoration: underline;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .panel-in,
   .float-y,

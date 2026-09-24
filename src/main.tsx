@@ -9,6 +9,21 @@ import "./index.css";
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <TooltipProvider delayDuration={300}>
     <App />
-    <Toaster position="top-center" />
+    <Toaster
+      position="top-center"
+      duration={1400}
+      toastOptions={{
+        style: {
+          background: "hsl(var(--popover))",
+          color: "hsl(var(--popover-foreground))",
+          border: "none",
+          borderRadius: "8px",
+          boxShadow:
+            "0 0 0 0.5px rgb(0 0 0 / 0.06), 0 8px 24px -8px rgb(0 0 0 / 0.18)",
+          fontSize: "12px",
+          padding: "6px 12px",
+        },
+      }}
+    />
   </TooltipProvider>,
 );

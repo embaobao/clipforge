@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import type { TranslationKey } from "../i18n";
 import { waitForPasteTriggerRelease, logAppError } from "./panel-shared";
 import { startPerfSpan } from "../performance-smoke";
-import { extractHashTags, normalizeTagList, truncateText } from "./clip-model";
+import { extractHashTags, normalizeTagList } from "./clip-model";
 import { pasteClipboard, writeClipboard } from "../services/clipboard";
 
 type ExportTextFilesPayload = {
@@ -176,9 +176,7 @@ export function useClipWriteback({
       await navigator.clipboard.writeText(text);
       setNativeStatus(tr("main.status.aggregateCopiedBrowser", { count: items.length }));
     }
-    toast.success(tr("main.toast.aggregateCopied", { count: items.length }), {
-      description: truncateText(text, 42),
-    });
+    toast.success(tr("main.toast.aggregateCopied", { count: items.length }));
     const now = Date.now();
     setLastCopiedId(items[0]?.id ?? null);
     items.forEach((item) => {
@@ -373,7 +371,7 @@ export function useClipWriteback({
       }
       lastSeenClipboard.current = text.trim();
       setNativeStatus(tr("main.status.copiedCodeSystem"));
-      toast.success("已复制到剪贴板", { description: truncateText(text, 42) });
+      toast.success(tr("main.toast.copied"));
       logAppError("info", "copy-text: invoke success", {
         source,
         chars: text.length,
@@ -384,7 +382,7 @@ export function useClipWriteback({
       logAppError("warn", "Copy text failed", { source, error: String(error), ...context });
       await navigator.clipboard.writeText(text);
       setNativeStatus(tr("main.status.copiedCodeBrowser"));
-      toast.success("已复制到剪贴板", { description: truncateText(text, 42) });
+      toast.success(tr("main.toast.copied"));
     } finally {
       finishCopyPerf({ status: perfStatus });
     }
