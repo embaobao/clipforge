@@ -164,7 +164,7 @@ pub(super) fn external_collectors_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn validate_collector_output(value: &Value) -> Value {
+pub(super) fn validate_collector_output(value: &Value) -> Value {
     let mut errors = Vec::new();
     if value.get("schemaVersion").and_then(Value::as_i64) != Some(1) {
         errors.push("schemaVersion must be 1".to_string());

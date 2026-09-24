@@ -10,6 +10,9 @@ use external::{
     collectors_directory, external_collectors_enabled, load_external_collectors,
     run_external_collector,
 };
+// 私有 re-export：tests.rs 经 `use super::validate_collector_output` 引用（子模块可访问祖先私有项）。
+#[cfg(test)]
+use external::validate_collector_output;
 
 const PROTOCOL: &str = "clipforge.application-context.collector.v1";
 const DEFAULT_TIMEOUT_MS: u64 = 500;

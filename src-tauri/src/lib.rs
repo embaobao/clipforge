@@ -123,8 +123,6 @@ const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 400.0;
 const QUICK_PANEL_MIN_HEIGHT: f64 = 320.0;
 const QUICK_PANEL_MAX_HEIGHT: f64 = 760.0;
 const QUICK_PANEL_MARGIN: f64 = 12.0;
-const DSH_PANEL_WIDTH: f64 = 900.0;
-const DSH_PANEL_HEIGHT: f64 = 640.0;
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_BUNDLE_IDENTIFIER: &str = "app.clipforge.desktop";
 
@@ -217,8 +215,6 @@ static AGENT_READINESS_CACHE: std::sync::OnceLock<
     Arc<Mutex<HashMap<String, AgentProviderReadiness>>>,
 > = std::sync::OnceLock::new();
 static PANEL_LAST_POSITION: std::sync::OnceLock<Arc<Mutex<Option<NormalizedPosition>>>> =
-    std::sync::OnceLock::new();
-static POSITION_DEBOUNCE: std::sync::OnceLock<Arc<Mutex<Option<std::time::Instant>>>> =
     std::sync::OnceLock::new();
 #[cfg(debug_assertions)]
 static DEV_QUICK_PROBE_TARGET_READY: AtomicBool = AtomicBool::new(false);
@@ -428,25 +424,6 @@ struct BuildInfoPayload {
     target_os: String,
     target_arch: String,
     updater_endpoint: String,
-}
-
-#[derive(Deserialize)]
-struct ReleaseManifest {
-    version: String,
-    notes: Option<String>,
-    platforms: Option<std::collections::HashMap<String, ReleasePlatform>>,
-    clipforge: Option<ReleaseManifestMeta>,
-}
-
-#[derive(Deserialize)]
-struct ReleasePlatform {
-    signature: Option<String>,
-    url: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ReleaseManifestMeta {
-    channel: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -3303,198 +3280,6 @@ fn persist_update_state(state: &UpdateCheckState) -> Result<(), String> {
         serde_json::to_string_pretty(state).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())
-}
-
-fn check_update_manifest(manifest_path: &str, now: i64) -> UpdateCheckState {
-    let mut state = base_update_state(now);
-    let raw = match fs::read_to_string(manifest_path) {
-        Ok(raw) => raw,
-        Err(error) => {
-            state.status = "failed".to_string();
-            state.error_code = Some("MANIFEST_READ_FAILED".to_string());
-            state.error_message = Some(error.to_string());
-            return state;
-        }
-    };
-    let manifest: ReleaseManifest = match serde_json::from_str(&raw) {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            state.status = "failed".to_string();
-            state.error_code = Some("MANIFEST_PARSE_FAILED".to_string());
-            state.error_message = Some(error.to_string());
-            return state;
-        }
-    };
-    state.channel = manifest
-        .clipforge
-        .and_then(|meta| meta.channel)
-        .unwrap_or_else(|| "stable".to_string());
-    state.release_notes = manifest.notes;
-
-    if state.ignored_version.as_deref() == Some(manifest.version.as_str()) {
-        state.status = "latest".to_string();
-        return state;
-    }
-    if !version_is_newer(&manifest.version, &state.current_version) {
-        state.status = "latest".to_string();
-        return state;
-    }
-
-    let platform_key = update_platform_key();
-    let Some(platform) = manifest
-        .platforms
-        .as_ref()
-        .and_then(|platforms| platforms.get(&platform_key))
-    else {
-        state.status = "failed".to_string();
-        state.available_version = Some(manifest.version);
-        state.error_code = Some("PLATFORM_NOT_FOUND".to_string());
-        state.error_message = Some(format!("manifest missing platform {platform_key}"));
-        return state;
-    };
-    if platform.url.as_deref().unwrap_or("").trim().is_empty() {
-        state.status = "failed".to_string();
-        state.available_version = Some(manifest.version);
-        state.error_code = Some("ARTIFACT_URL_MISSING".to_string());
-        state.error_message = Some("manifest platform url is empty".to_string());
-        return state;
-    }
-    if platform
-        .signature
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
-    {
-        state.status = "failed".to_string();
-        state.available_version = Some(manifest.version);
-        state.error_code = Some("SIGNATURE_MISSING".to_string());
-        state.error_message = Some("manifest platform signature is empty".to_string());
-        return state;
-    }
-
-    state.status = "available".to_string();
-    state.available_version = Some(manifest.version);
-    state.error_code = None;
-    state.error_message = None;
-    state
-}
-
-fn update_platform_key() -> String {
-    let os = match std::env::consts::OS {
-        "macos" => "darwin",
-        other => other,
-    };
-    let arch = match std::env::consts::ARCH {
-        "aarch64" => "aarch64",
-        "x86_64" => "x86_64",
-        other => other,
-    };
-    format!("{os}-{arch}")
-}
-
-fn version_is_newer(candidate: &str, current: &str) -> bool {
-    let parse = |value: &str| {
-        value
-            .trim_start_matches('v')
-            .split(['.', '-'])
-            .take(3)
-            .map(|part| part.parse::<u64>().unwrap_or(0))
-            .collect::<Vec<_>>()
-    };
-    let mut candidate_parts = parse(candidate);
-    let mut current_parts = parse(current);
-    candidate_parts.resize(3, 0);
-    current_parts.resize(3, 0);
-    candidate_parts > current_parts
-}
-
-#[cfg(test)]
-mod update_tests {
-    use super::*;
-
-    fn write_manifest(name: &str, body: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("clipforge-{name}-{}.json", std::process::id()));
-        fs::write(&path, body).expect("write manifest");
-        path
-    }
-
-    #[test]
-    fn compares_semver_versions() {
-        assert!(version_is_newer("0.2.0", "0.1.9"));
-        assert!(version_is_newer("v1.0.0", "0.9.9"));
-        assert!(!version_is_newer("0.1.0", "0.1.0"));
-        assert!(!version_is_newer("0.1.0", "0.1.1"));
-    }
-
-    #[test]
-    fn reads_available_local_manifest() {
-        let platform = update_platform_key();
-        let path = write_manifest(
-            "available",
-            &format!(
-                r#"{{
-  "version": "99.99.98",
-  "notes": "test update",
-  "platforms": {{
-    "{platform}": {{ "signature": "signed", "url": "https://example.invalid/clipforge.dmg" }}
-  }},
-  "clipforge": {{ "channel": "stable" }}
-}}"#
-            ),
-        );
-        let state = check_update_manifest(path.to_string_lossy().as_ref(), 1);
-        assert_eq!(state.status, "available");
-        assert_eq!(state.available_version.as_deref(), Some("99.99.98"));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn rejects_unsigned_local_manifest() {
-        let platform = update_platform_key();
-        let path = write_manifest(
-            "unsigned",
-            &format!(
-                r#"{{
-  "version": "99.99.97",
-  "platforms": {{
-    "{platform}": {{ "signature": "", "url": "https://example.invalid/clipforge.dmg" }}
-  }}
-}}"#
-            ),
-        );
-        let state = check_update_manifest(path.to_string_lossy().as_ref(), 1);
-        assert_eq!(state.status, "failed");
-        assert_eq!(state.error_code.as_deref(), Some("SIGNATURE_MISSING"));
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn reports_missing_manifest_file() {
-        let path =
-            std::env::temp_dir().join(format!("clipforge-missing-{}.json", std::process::id()));
-        let state = check_update_manifest(path.to_string_lossy().as_ref(), 1);
-        assert_eq!(state.status, "failed");
-        assert_eq!(state.error_code.as_deref(), Some("MANIFEST_READ_FAILED"));
-    }
-
-    #[test]
-    fn reports_platform_mismatch() {
-        let path = write_manifest(
-            "platform-mismatch",
-            r#"{
-  "version": "99.99.96",
-  "platforms": {
-    "windows-x86_64": { "signature": "signed", "url": "https://example.invalid/clipforge.exe" }
-  }
-}"#,
-        );
-        let state = check_update_manifest(path.to_string_lossy().as_ref(), 1);
-        assert_eq!(state.status, "failed");
-        assert_eq!(state.error_code.as_deref(), Some("PLATFORM_NOT_FOUND"));
-        let _ = fs::remove_file(path);
-    }
 }
 
 #[tauri::command]
@@ -7050,31 +6835,6 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_column(
-    conn: &Connection,
-    table: &str,
-    column: &str,
-    definition: &str,
-) -> Result<(), String> {
-    let mut stmt = conn
-        .prepare(&format!("PRAGMA table_info({table})"))
-        .map_err(|error| error.to_string())?;
-    let columns = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|error| error.to_string())?;
-    for existing in columns {
-        if existing.map_err(|error| error.to_string())? == column {
-            return Ok(());
-        }
-    }
-    conn.execute(
-        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
-        [],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 fn content_hash(kind: &str, content: &[u8]) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(kind.as_bytes());
@@ -10245,7 +10005,7 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building ClipForge")
-        .run(|app_handle, event| {
+        .run(|_app_handle, event| {
             if matches!(
                 event,
                 tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
@@ -10352,122 +10112,6 @@ fn open_panel<R: tauri::Runtime>(
     }
 }
 
-/// 通用浮窗打开：按 window label 复用剪贴板窗体的完整悬浮逻辑（定位策略 + NSPanel 浮动显示）。
-/// `is_clipboard=true` 时附加剪贴板专属逻辑（辅助功能授权提示、粘贴目标快照、emit show-quick-panel 事件）；
-/// DSH 传 `false` 跳过这些、使用更大的固定尺寸（DSH_PANEL_WIDTH × DSH_PANEL_HEIGHT）。
-fn open_floating_window<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    label: &str,
-    reason: &str,
-    is_clipboard: bool,
-) -> Result<PanelTriggerPayload, String> {
-    let panel_started = Instant::now();
-    let mut panel_last_step = panel_started;
-    if let Some(window) = app.get_webview_window(label) {
-        if is_clipboard {
-            maybe_prompt_accessibility_on_first_panel(app, reason);
-        }
-        log_panel_open_step(reason, "first-permission-dispatch", panel_started, &mut panel_last_step);
-        let strategy = get_strategy_for_source(reason);
-        let strategy_clone = strategy.clone();
-        log_panel_open_step(reason, "resolve-strategy", panel_started, &mut panel_last_step);
-
-        let (cx, cy) = cursor_logical_point(&window).unwrap_or((-1.0, -1.0));
-        let _cursor_monitor = monitor_for_logical_point(&window, cx, cy)
-            .map(|m| get_monitor_id(&m))
-            .unwrap_or_default();
-        log_panel_open_step(reason, "cursor-monitor", panel_started, &mut panel_last_step);
-        if is_clipboard {
-            let reason_owned = reason.to_string();
-            let fallback = if cx >= 0.0 && cy >= 0.0 {
-                Some((cx, cy))
-            } else {
-                None
-            };
-            thread::spawn(move || {
-                snapshot_paste_target_bounds(&reason_owned, fallback);
-            });
-        }
-
-        let (panel_width, panel_h) = if is_clipboard {
-            resolve_panel_dims()
-        } else {
-            (DSH_PANEL_WIDTH, DSH_PANEL_HEIGHT)
-        };
-        let panel_height = panel_position(&window, panel_width, panel_h)
-            .map(|(_, _, h)| h)
-            .unwrap_or(panel_h);
-        let _ = window.set_size(LogicalSize::new(panel_width, panel_height));
-        log_panel_open_step(reason, "size-and-height", panel_started, &mut panel_last_step);
-
-        let position_source: String =
-            match apply_position_strategy(&window, strategy, panel_width, panel_height) {
-                Some((x, y)) => {
-                    set_panel_position(&window, x, y);
-                    format!("sync-{:?}", strategy_clone)
-                }
-                None => {
-                    if let Some((fx, fy, _)) = panel_position(&window, panel_width, panel_height) {
-                        set_panel_position(&window, fx, fy);
-                    }
-                    format!("fallback-{:?}", strategy_clone)
-                }
-            };
-        log_panel_open_step(reason, "position", panel_started, &mut panel_last_step);
-
-        show_floating_window_by_label(app, label, &window);
-        log_panel_open_step(reason, "show-window", panel_started, &mut panel_last_step);
-        if is_clipboard {
-            let _ = window.emit("clipforge://show-quick-panel", reason);
-        }
-        log_panel_open_step(reason, "emit-show", panel_started, &mut panel_last_step);
-
-        let payload = panel_trigger_payload(
-            &window,
-            reason,
-            &position_source,
-            &format!("{:?}", strategy_clone),
-        );
-        log_panel_open_step(reason, "payload", panel_started, &mut panel_last_step);
-        Ok(payload)
-    } else {
-        Err(format!("{} window is not available", label))
-    }
-}
-
-fn async_position_debounced<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    window_label: String,
-    strategy: PanelPositionStrategy,
-    panel_width: f64,
-    panel_height: f64,
-) {
-    let now = std::time::Instant::now();
-    let mut last_call = POSITION_DEBOUNCE
-        .get_or_init(|| Arc::new(Mutex::new(None)))
-        .lock()
-        .unwrap();
-
-    if let Some(last) = *last_call {
-        if now.duration_since(last) < std::time::Duration::from_millis(50) {
-            return;
-        }
-    }
-    *last_call = Some(now);
-
-    thread::spawn(move || {
-        thread::sleep(std::time::Duration::from_millis(10));
-
-        if let Some(window) = app.get_webview_window(&window_label) {
-            if let Some((x, y)) =
-                apply_position_strategy(&window, strategy, panel_width, panel_height)
-            {
-                let _ = set_panel_position(&window, x, y);
-            }
-        }
-    });
-}
-
 fn hide_panel<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     reason: &str,
@@ -10498,46 +10142,6 @@ fn hide_panel<R: tauri::Runtime>(
         let _ = window.hide();
     }
     let _ = window.emit("clipforge://hide-quick-panel", reason);
-    Ok(panel_trigger_payload(&window, reason, "hidden", ""))
-}
-
-/// 通用浮窗隐藏：按 label 复用剪贴板窗体的失焦隐藏 + 固定(pinned)逻辑。
-/// `is_clipboard=true` 时附加保存位置与 emit hide-quick-panel 事件；DSH 传 `false` 跳过。
-fn hide_floating_window<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    label: &str,
-    reason: &str,
-    is_clipboard: bool,
-) -> Result<PanelTriggerPayload, String> {
-    let window = app
-        .get_webview_window(label)
-        .ok_or_else(|| format!("{} window is not available", label))?;
-
-    if is_panel_pinned() {
-        log_to_file("debug", "panel-pin", &format!("hide skipped: {} is pinned", label));
-        return Ok(panel_trigger_payload(&window, reason, "pinned", ""));
-    }
-
-    if is_clipboard {
-        save_panel_position(&window);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(panel) = app.get_webview_panel(label) {
-            panel.resign_key_window();
-            panel.hide();
-        } else {
-            let _ = window.hide();
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window.hide();
-    }
-    if is_clipboard {
-        let _ = window.emit("clipforge://hide-quick-panel", reason);
-    }
     Ok(panel_trigger_payload(&window, reason, "hidden", ""))
 }
 
@@ -10584,43 +10188,6 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
         let _ = hide_panel(app, reason);
     } else {
         show_quick_panel(app, reason);
-    }
-}
-
-/// 通用浮窗显隐切换：DSH（及可扩展的其他浮窗）使用，按 label 走对应通用开/关逻辑。
-fn toggle_floating_window<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    label: &str,
-    reason: &str,
-    is_clipboard: bool,
-) {
-    let window = match app.get_webview_window(label) {
-        Some(window) => window,
-        None => return,
-    };
-    let visible = window.is_visible().unwrap_or(false);
-    let focused = window.is_focused().unwrap_or(false);
-    let panel_visible = app
-        .get_webview_panel(label)
-        .ok()
-        .map(|panel| panel.is_visible())
-        .unwrap_or(false);
-    log_to_file(
-        "info",
-        "panel-toggle",
-        &format!(
-            "toggle label={} decision={} windowVisible={} windowFocused={} panelVisible={}",
-            label,
-            if visible { "hide" } else { "show" },
-            visible,
-            focused,
-            panel_visible
-        ),
-    );
-    if visible {
-        let _ = hide_floating_window(app, label, reason, is_clipboard);
-    } else {
-        let _ = open_floating_window(app, label, reason, is_clipboard);
     }
 }
 
@@ -10693,18 +10260,6 @@ fn panel_trigger_payload<R: tauri::Runtime>(
         accessibility_status: accessibility.status,
         message: accessibility.message,
     }
-}
-
-fn position_panel_window_fast<R: tauri::Runtime>(
-    window: &tauri::WebviewWindow<R>,
-    panel_width: f64,
-    panel_height: f64,
-) {
-    if let Some((x, y, _)) = panel_position(window, panel_width, panel_height) {
-        set_panel_position(window, x, y);
-    }
-    let _ = window.set_always_on_top(true);
-    let _ = window.set_visible_on_all_workspaces(true);
 }
 
 #[cfg(target_os = "macos")]
@@ -10960,7 +10515,6 @@ fn panel_position<R: tauri::Runtime>(
     panel_width: f64,
     fallback_height: f64,
 ) -> Option<(f64, f64, f64)> {
-    let mut panel_height = fallback_height;
     // 优先用【逻辑点】光标命中屏；光标读不到时退到 primary（不用 current_monitor，隐藏态陈旧）。
     let monitor = cursor_logical_point(window)
         .and_then(|(x, y)| monitor_for_logical_point(window, x, y))
@@ -10972,7 +10526,7 @@ fn panel_position<R: tauri::Runtime>(
         let position = work_area.position.to_logical::<f64>(scale);
         let size = work_area.size.to_logical::<f64>(scale);
         let max_height = (size.height - QUICK_PANEL_MARGIN * 2.0).min(QUICK_PANEL_MAX_HEIGHT);
-        panel_height = fallback_height
+        let panel_height = fallback_height
             .min(max_height.max(QUICK_PANEL_MIN_HEIGHT))
             .max(QUICK_PANEL_MIN_HEIGHT);
         let fallback_x = position.x + size.width - panel_width - QUICK_PANEL_MARGIN;
@@ -11269,22 +10823,8 @@ fn position_tray_center<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> 
     Ok(())
 }
 
-fn position_tray_center_fallback<R: tauri::Runtime>(
-    window: &tauri::WebviewWindow<R>,
-    panel_width: f64,
-    panel_height: f64,
-) -> Option<(f64, f64)> {
-    match position_tray_center(window) {
-        Ok(()) => None,
-        Err(_) => {
-            log_to_file("warn", "panel-position", "trayCenter fallback also failed");
-            None
-        }
-    }
-}
-
 fn position_window_center<R: tauri::Runtime>(
-    window: &tauri::WebviewWindow<R>,
+    _window: &tauri::WebviewWindow<R>,
     panel_width: f64,
     panel_height: f64,
 ) -> Option<(f64, f64)> {
