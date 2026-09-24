@@ -147,7 +147,8 @@
   }
 }
 .panel-in {
-  animation: panel-in 0.45s cubic-bezier(0.32, 0.72, 0, 1) both;
+  /* 不用 both 填充：动画若在隐藏 webview 中被冻结，静止态必须回到天然可见（from 是 opacity:0）。 */
+  animation: panel-in 0.45s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @keyframes float-y {

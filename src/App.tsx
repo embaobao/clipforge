@@ -265,7 +265,10 @@ function ClipForgeApp() {
 
   const [lastCopiedId, setLastCopiedId] = useState<string | null>(null);
   const [, setIsReadingClipboard] = useState(false);
-  const [, setIsPanelEntering] = useState(false);
+  // 面板进入动画门控：真实运行时必须等唤起事件（showQuickPanel）才挂上 panel-in，
+  // 否则动画在 webview 隐藏的首启阶段就开始并被冻结在 from{opacity:0}，面板永久不可见。
+  // 浏览器预览没有唤起事件，初始 true 保持加载即播放入场。
+  const [isPanelEntering, setIsPanelEntering] = useState(() => !isTauriRuntime());
   const [, setScrollOffset] = useState(0);
   const [, setSearchCompact] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -388,6 +391,10 @@ function ClipForgeApp() {
       setFilterFavorite(false);
       setSearchActive(true);
       setIsPanelEntering(true);
+      // 动画退出保险：后台 app 的 WKWebView 可能冻结 CSS 动画时间轴（面板停在 from{opacity:0}）。
+      // 500ms 后无条件摘掉 panel-in，让面板回到天然可见态——时间轴正常时动画已播完（450ms），
+      // 冻结时也能保证面板可见；隐藏路径已会复位 entering，不影响下次唤起重播。
+      window.setTimeout(() => setIsPanelEntering(false), 500);
       // 非激活面板不能依赖第一下普通字符来“唤醒”搜索；打开后立即渲染并聚焦输入框。
       [0, 80, 180].forEach((delay) => {
         const timer = window.setTimeout(() => {
@@ -1016,7 +1023,7 @@ function ClipForgeApp() {
       // 高度同理：h-fit 但不超过视口（悬浮窗窗高即视口高，min 320）。
       // 注意用 100vh 而非 100%：max-height 的百分比在 iframe/窗口径链下会被视为 indefinite，
       // 实测不生效（main 溢出裁掉底部栏）；vh 在任何容器内都确定。
-      className={`relative mx-auto grid h-fit max-h-[min(640px,100vh)] w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow panel-in${isPanelClosing ? " pointer-events-none" : ""}`}
+      className={`relative mx-auto grid h-fit max-h-[min(640px,100vh)] w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow${isPanelEntering ? " panel-in" : ""}${isPanelClosing ? " pointer-events-none" : ""}`}
       ref={shellRef}
     >
       {workspaceRoute.name !== "detail" && (
