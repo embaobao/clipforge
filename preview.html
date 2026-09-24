@@ -1,0 +1,144 @@
+<!doctype html>
+<!-- 悬浮窗实时验证器（dev-only，不参与 Tauri 打包产物使用）：
+     把真实主面板（index.html + App）嵌在可实时拖动的悬浮窗框里，
+     默认 420×400（= tauri.conf.json 的 main 窗口默认尺寸），
+     右下角拖拽即刻改变窗口大小，用于悬浮窗尺寸下的视觉/交互走查。
+     生产走查数据由 App 在「dev + 非 Tauri」环境自动注入演示条目。 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ClipForge 悬浮窗验证器</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+        background:
+          radial-gradient(1200px 600px at 20% 0%, rgb(120 144 180 / 0.25), transparent 60%),
+          radial-gradient(1000px 700px at 90% 100%, rgb(150 120 180 / 0.2), transparent 55%),
+          linear-gradient(160deg, #3a4a63 0%, #232c3d 55%, #1a2230 100%);
+        color: #e8ecf3;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      /* 顶部控制台 */
+      .console {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 10px 16px;
+        background: rgb(10 14 22 / 0.55);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid rgb(255 255 255 / 0.08);
+        font-size: 12px;
+      }
+      .console strong { font-size: 13px; }
+      .console .hint { color: #9aa7bb; }
+      .presets { display: flex; gap: 6px; margin-left: auto; }
+      .presets button {
+        appearance: none;
+        border: 1px solid rgb(255 255 255 / 0.16);
+        background: rgb(255 255 255 / 0.06);
+        color: #e8ecf3;
+        border-radius: 7px;
+        padding: 4px 10px;
+        font-size: 11.5px;
+        cursor: pointer;
+        transition: background 120ms ease;
+      }
+      .presets button:hover { background: rgb(255 255 255 / 0.14); }
+      .presets button.active { background: rgb(255 255 255 / 0.2); border-color: rgb(255 255 255 / 0.35); }
+      #size-readout {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 11.5px;
+        color: #cfe0ff;
+        min-width: 96px;
+        text-align: right;
+      }
+      /* 桌面区：窗框居中，右下角可拖拽实时改尺寸 */
+      .stage {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+        overflow: auto;
+      }
+      #float-frame {
+        /* 与 tauri.conf.json main 窗口一致：默认 420×400，最小约 320×320 */
+        width: 420px;
+        height: 400px;
+        min-width: 240px;
+        min-height: 240px;
+        max-width: 96%;
+        max-height: 92%;
+        resize: both;
+        overflow: hidden;
+        border-radius: 14px;
+        box-shadow:
+          0 0 0 0.5px rgb(255 255 255 / 0.14),
+          0 16px 48px -12px rgb(0 0 0 / 0.55),
+          0 48px 120px -24px rgb(0 0 0 / 0.5);
+        background: transparent;
+      }
+      #float-frame iframe {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: transparent;
+      }
+      .footnote { padding: 8px 16px 12px; font-size: 11px; color: #8b98ac; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div class="console">
+      <strong>悬浮窗验证器</strong>
+      <span class="hint">主面板已载入演示数据 · 拖动窗框右下角可实时改变窗口大小</span>
+      <span id="size-readout">420 × 400</span>
+      <div class="presets" id="presets">
+        <button data-w="320" data-h="320">最小 320</button>
+        <button data-w="420" data-h="400" class="active">默认 420×400</button>
+        <button data-w="480" data-h="640">设计 480×640</button>
+        <button data-w="600" data-h="1000">最大 600×1000</button>
+      </div>
+    </div>
+    <div class="stage">
+      <div id="float-frame">
+        <iframe id="panel" src="/?lang=zh-CN" title="ClipForge 主面板"></iframe>
+      </div>
+    </div>
+    <div class="footnote">iframe 视口 = 悬浮窗客户区；面板材质模糊的是本页背景，效果等价于桌面壁纸。</div>
+    <script>
+      (function () {
+        var frame = document.getElementById("float-frame");
+        var readout = document.getElementById("size-readout");
+        var presetBox = document.getElementById("presets");
+        function sync() {
+          var w = Math.round(frame.getBoundingClientRect().width);
+          var h = Math.round(frame.getBoundingClientRect().height);
+          readout.textContent = w + " × " + h;
+          var buttons = presetBox.querySelectorAll("button");
+          var matched = false;
+          buttons.forEach(function (b) {
+            var on = Number(b.dataset.w) === w && Number(b.dataset.h) === h;
+            b.classList.toggle("active", on);
+            if (on) matched = true;
+          });
+          if (!matched && buttons.length) buttons[buttons.length - 1].classList.remove("active");
+        }
+        new ResizeObserver(sync).observe(frame);
+        presetBox.addEventListener("click", function (event) {
+          var btn = event.target.closest("button");
+          if (!btn) return;
+          frame.style.width = btn.dataset.w + "px";
+          frame.style.height = btn.dataset.h + "px";
+          sync();
+        });
+        sync();
+      })();
+    </script>
+  </body>
+</html>

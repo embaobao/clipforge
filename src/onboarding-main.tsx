@@ -1,3 +1,5 @@
+// 必须在任何 @tauri-apps/api 使用之前安装 web mock 协议桥（dev-only 副作用导入）。
+import "./services/tauri-web-mock";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { resolveAppLocale, t } from "./i18n";
