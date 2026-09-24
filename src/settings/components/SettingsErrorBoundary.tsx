@@ -67,7 +67,8 @@ export class SettingsErrorBoundary extends Component<
 
   render() {
     if (!this.state.errorMessage) {
-      return <div key={this.state.resetCount}>{this.props.children}</div>;
+      // 包装层必须撑满高度，否则内部 shell 的 h-full 断链退化为内容高度（设置窗口被压扁）。
+      return <div className="h-full" key={this.state.resetCount}>{this.props.children}</div>;
     }
 
     return (

@@ -1,10 +1,9 @@
-import { ChevronDown, ChevronUp, Copy, ExternalLink, FileJson, FileText, Pencil, } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, ExternalLink, FileJson, Pencil, } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { ClipItem } from "../../App";
 import { detectSensitiveEditorFields } from "../../editor/sensitive";
 import { formatCommandError } from "../../i18n";
 import type { FilePathStatus } from "../../services/clipboard";
-import { ButtonGroup } from "@/components/ui/button-group";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WorkspaceCrumb } from "./WorkspaceCrumb";
@@ -112,7 +111,7 @@ export function ClipDetailWorkspace({
 
   if (!clip) {
     return (
-      <section className="h-full overflow-auto bg-background" data-surface="workspace">
+      <section className="h-full overflow-auto bg-transparent" data-surface="workspace">
         <WorkspaceCrumb title={tr("main.detail.title")} onBack={onBack} tr={tr} />
         <div className="flex h-full items-center justify-center p-8 text-center text-[13px] text-muted-foreground">{tr("main.detail.missing")}</div>
       </section>
@@ -243,50 +242,49 @@ export function ClipDetailWorkspace({
 
   const menuActions = quickActions.filter((action) => action.id !== "open-target" && action.id !== "copy");
   const hasImageActions = clip.payloadKind === "image";
-  const toolButtonClass = "inline-flex h-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.05] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
+  // 头部操作钮统一 28px ghost 圆角方形，与主面板工具栏同一命中语言（设计规范 §3）。
+  const toolButtonClass = "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.05] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
   const accordionTriggerClass = "gap-2 rounded-md px-1 py-2.5 text-[12px] font-normal hover:no-underline [&>em]:text-[11px] [&>em]:font-normal [&>em]:not-italic [&>em]:text-muted-foreground [&>svg:first-child]:shrink-0 [&>span]:truncate";
 
   return (
-    <section className="flex h-full flex-col overflow-auto bg-background" data-surface="workspace">
+    <section className="flex h-full flex-col overflow-auto bg-transparent" data-surface="workspace">
       {!isEditing ? (
         <>
           <WorkspaceCrumb title={tr("main.detail.title")} subtitle={mode} onBack={handleBack} tr={tr}>
-            <ButtonGroup className="rounded-md border border-border/60">
-              <button
-                aria-label={tr("main.detail.previous")}
-                className={`${toolButtonClass} rounded-l-md border-r border-border/60`}
-                disabled={!onPrevious}
-                onClick={onPrevious}
-                title={tr("main.detail.previousShortcut")}
-                type="button"
-              >
-                <ChevronUp size={12} />
-              </button>
-              <button
-                aria-label={tr("main.detail.next")}
-                className={`${toolButtonClass} border-r border-border/60`}
-                disabled={!onNext}
-                onClick={onNext}
-                title={tr("main.detail.nextShortcut")}
-                type="button"
-              >
-                <ChevronDown size={12} />
-              </button>
-              <button
-                aria-label={tr("main.detail.editContent")}
-                className={toolButtonClass}
-                onClick={() => {
-                  setDraftContent(clip.content);
-                  setDraftTags(normalizeDetailTags(clip.tags));
-                  setEditError("");
-                  setIsEditing(true);
-                }}
-                title={tr("main.detail.quickEditTooltip")}
-                type="button"
-              >
-                <Pencil size={12} />
-              </button>
-            </ButtonGroup>
+            <button
+              aria-label={tr("main.detail.previous")}
+              className={toolButtonClass}
+              disabled={!onPrevious}
+              onClick={onPrevious}
+              title={tr("main.detail.previousShortcut")}
+              type="button"
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              aria-label={tr("main.detail.next")}
+              className={toolButtonClass}
+              disabled={!onNext}
+              onClick={onNext}
+              title={tr("main.detail.nextShortcut")}
+              type="button"
+            >
+              <ChevronDown size={14} />
+            </button>
+            <button
+              aria-label={tr("main.detail.editContent")}
+              className={toolButtonClass}
+              onClick={() => {
+                setDraftContent(clip.content);
+                setDraftTags(normalizeDetailTags(clip.tags));
+                setEditError("");
+                setIsEditing(true);
+              }}
+              title={tr("main.detail.quickEditTooltip")}
+              type="button"
+            >
+              <Pencil size={14} />
+            </button>
             <DetailOverflowMenu
               clip={clip}
               hasImageActions={hasImageActions}
@@ -362,110 +360,105 @@ export function ClipDetailWorkspace({
             onSaveAndPaste={() => void saveDraftContent("paste")}
           />
         ) : (
-          <Accordion className="space-y-1" collapsible defaultValue="content" type="single">
-            <AccordionItem value="content">
-              <AccordionTrigger className={accordionTriggerClass}>
-                <FileText size={14} />
-                <span>{tr("main.detail.contentTitle")}</span>
-                <em>{tr("main.detail.editorStats", { chars: clip.content.length, lines: clip.content.split(/\r?\n/).length })}</em>
-              </AccordionTrigger>
-              <AccordionContent className="pt-2">
-                {clip.payloadKind === "image" ? (
-                  <ImageFilePreview
-                    actualSize={imageActualSize}
-                    clip={clip}
-                    onClosePreview={() => setImagePreviewOpen(false)}
-                    onOpenPreview={() => setImagePreviewOpen(true)}
-                    previewOpen={imagePreviewOpen}
-                    tr={tr}
-                  />
-                ) : clip.payloadKind === "file" ? (
-                  <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />
-                ) : imageUrl ? (
-                  <img alt={clip.analysis.title} className="max-h-72 rounded-lg object-contain" src={imageUrl} />
-                ) : clip.payloadKind === "html" ? (
-                  <HtmlPreview clip={clip} content={clip.content} onCopy={onCopy} tr={tr} />
-                ) : clip.analysis.url || clip.kind === "link" ? (
-                  <LinkPreview clip={clip} links={links} onOpen={onOpen} tr={tr} />
-                ) : isLikelyJson(clip) ? (
-                  <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
-                ) : isLikelyMarkdown(clip) ? (
-                  <Tabs defaultValue="rendered">
-                    <TabsList className="inline-flex gap-1 rounded-lg bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
-                      <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="rendered">渲染后</TabsTrigger>
-                      <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="raw">原内容</TabsTrigger>
-                    </TabsList>
-                    <TabsContent value="rendered">
-                      <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
-                    </TabsContent>
-                    <TabsContent value="raw">
-                      <TruncatedPre clip={clip} />
-                    </TabsContent>
-                  </Tabs>
-                ) : (
-                  <>
-                    <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
+          /* 阅读态：内容预览直出（打开即见），链接为 chip 行，采集上下文默认折叠 */
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
+            <div className="min-h-0 flex-1 overflow-auto">
+              {clip.payloadKind === "image" ? (
+                <ImageFilePreview
+                  actualSize={imageActualSize}
+                  clip={clip}
+                  onClosePreview={() => setImagePreviewOpen(false)}
+                  onOpenPreview={() => setImagePreviewOpen(true)}
+                  previewOpen={imagePreviewOpen}
+                  tr={tr}
+                />
+              ) : clip.payloadKind === "file" ? (
+                <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />
+              ) : imageUrl ? (
+                <img alt={clip.analysis.title} className="max-h-72 rounded-lg object-contain" src={imageUrl} />
+              ) : clip.payloadKind === "html" ? (
+                <HtmlPreview clip={clip} content={clip.content} onCopy={onCopy} tr={tr} />
+              ) : clip.analysis.url || clip.kind === "link" ? (
+                <LinkPreview clip={clip} links={links} onOpen={onOpen} tr={tr} />
+              ) : isLikelyJson(clip) ? (
+                <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
+              ) : isLikelyMarkdown(clip) ? (
+                <Tabs defaultValue="rendered">
+                  <TabsList className="inline-flex gap-1 rounded-lg bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
+                    <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="rendered">渲染后</TabsTrigger>
+                    <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="raw">原内容</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="rendered">
+                    <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
+                  </TabsContent>
+                  <TabsContent value="raw">
                     <TruncatedPre clip={clip} />
-                  </>
-                )}
-              </AccordionContent>
-            </AccordionItem>
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                <>
+                  <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
+                  <TruncatedPre clip={clip} />
+                </>
+              )}
+            </div>
 
             {safeLinks.length ? (
-              <AccordionItem value="links">
-                <AccordionTrigger className={accordionTriggerClass}>
-                  <ExternalLink size={14} />
-                  <span>{tr("main.detail.linkList")}</span>
-                  <em>{safeLinks.length}</em>
-                </AccordionTrigger>
-                <AccordionContent className="pt-2">
-                  <div aria-label={tr("main.detail.linkList")} className="grid grid-cols-2 gap-1.5">
-                    {safeLinks.slice(0, 12).map((url) => (
-                      <button
-                        className="flex min-w-0 items-center gap-1.5 rounded-md border border-border/60 px-2 py-1.5 text-left text-[12px] hover:bg-black/[0.04] dark:hover:bg-white/[0.07]"
-                        key={url.href}
-                        onClick={() => window.open(url.href, "_blank", "noopener,noreferrer")}
-                        type="button"
-                      >
-                        <ExternalLink className="shrink-0" size={12} />
-                        <span className="truncate">{url.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
+              <div className="shrink-0">
+                <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                  <ExternalLink size={12} />
+                  {tr("main.detail.linkList")}
+                  <span className="mono">{safeLinks.length}</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5" aria-label={tr("main.detail.linkList")}>
+                  {safeLinks.slice(0, 12).map((url) => (
+                    <button
+                      className="flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border border-black/[0.06] bg-black/[0.02] px-2 text-[12px] text-foreground transition-colors hover:bg-black/[0.05] dark:border-white/[0.09] dark:bg-white/[0.04] dark:hover:bg-white/[0.08]"
+                      key={url.href}
+                      onClick={() => window.open(url.href, "_blank", "noopener,noreferrer")}
+                      title={url.href}
+                      type="button"
+                    >
+                      <ExternalLink className="shrink-0" size={11} />
+                      <span className="truncate">{url.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ) : null}
 
-            <AccordionItem value="capture-context">
-              <AccordionTrigger className={accordionTriggerClass}>
-                <FileJson size={14} />
-                <span>{tr("main.detail.captureContext")}</span>
-                <em>{tr("main.detail.captureContextFields", { count: captureContextFieldCount })}</em>
-              </AccordionTrigger>
-              <AccordionContent className="space-y-2 pt-2">
-                <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                  <span className="min-w-0 truncate">{applicationContextSummary || tr("main.detail.captureContextUnavailable")}</span>
-                  <button
-                    className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
-                    onClick={() =>
-                      onCopyText(captureContextJson, `detail:capture-context:${clip.id}`, {
-                        businessChain: "workspace-router -> detail-route -> capture-context-json -> copy",
-                        clipId: clip.id,
-                        contextSchema: "ClipboardCaptureContext.v2",
-                        chars: captureContextJson.length,
-                      })
-                    }
-                    type="button"
-                  >
-                    <Copy size={11} />
-                    {tr("main.detail.copyCaptureContext")}
-                  </button>
-                </div>
-                <pre aria-label={tr("main.detail.captureContext")} className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/[0.03] p-3 text-[11px] leading-relaxed dark:bg-white/[0.05]"><code>{captureContextJson}</code></pre>
-              </AccordionContent>
-            </AccordionItem>
-
-          </Accordion>
+            {/* 采集上下文：默认折叠，点开看原始 JSON */}
+            <Accordion className="shrink-0" collapsible type="single">
+              <AccordionItem value="capture-context">
+                <AccordionTrigger className={accordionTriggerClass}>
+                  <FileJson size={14} />
+                  <span>{tr("main.detail.captureContext")}</span>
+                  <em>{tr("main.detail.captureContextFields", { count: captureContextFieldCount })}</em>
+                </AccordionTrigger>
+                <AccordionContent className="space-y-2 pt-2">
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                    <span className="min-w-0 truncate">{applicationContextSummary || tr("main.detail.captureContextUnavailable")}</span>
+                    <button
+                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+                      onClick={() =>
+                        onCopyText(captureContextJson, `detail:capture-context:${clip.id}`, {
+                          businessChain: "workspace-router -> detail-route -> capture-context-json -> copy",
+                          clipId: clip.id,
+                          contextSchema: "ClipboardCaptureContext.v2",
+                          chars: captureContextJson.length,
+                        })
+                      }
+                      type="button"
+                    >
+                      <Copy size={11} />
+                      {tr("main.detail.copyCaptureContext")}
+                    </button>
+                  </div>
+                  <pre aria-label={tr("main.detail.captureContext")} className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/[0.03] p-3 text-[11px] leading-relaxed dark:bg-white/[0.05]"><code>{captureContextJson}</code></pre>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </div>
         )}
       </div>
     </section>

@@ -42,7 +42,7 @@ export function ClipboardEmptyState({ variant, emptySummary, onCreateSnippet, tr
           size="sm"
           variant="outline"
         >
-          新建片段 <span className="mono ml-1 text-muted-foreground">⌘N</span>
+          {tr("main.empty.createSnippet")} <span className="mono ml-1 text-muted-foreground">⌘N</span>
         </Button>
       ) : null}
     </div>

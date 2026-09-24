@@ -45,7 +45,7 @@ export function SettingsShell({
   return (
     <div
       className={cn(
-        "panel-in flex h-full w-full overflow-hidden rounded-[12px] bg-card window-shadow",
+        "panel-in flex h-full w-full flex-col overflow-hidden rounded-[12px] bg-card window-shadow",
         className,
       )}
       data-surface="settings"
@@ -62,23 +62,24 @@ export function SettingsShell({
 
       <div className="flex min-h-0 flex-1">
         {/* 侧栏 */}
-        <aside className="w-[172px] shrink-0 space-y-px border-r border-black/[0.05] bg-black/[0.02] p-2 dark:border-white/[0.07] dark:bg-white/[0.03]">
+        <aside className="w-[200px] shrink-0 space-y-px border-r border-black/[0.05] bg-black/[0.02] p-2 dark:border-white/[0.07] dark:bg-white/[0.03]">
           {items.map(({ id, label, icon: Icon }) => {
             const active = id === activeId;
             return (
               <button
                 key={id}
                 className={cn(
-                  "flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-[12.5px] transition-colors duration-100 active:scale-[0.98]",
+                  "flex h-8 w-full items-center gap-2 whitespace-nowrap rounded-md px-2.5 text-[12.5px] transition-colors duration-100 active:scale-[0.98]",
                   active
                     ? "bg-black/[0.06] font-medium text-foreground dark:bg-white/[0.1]"
                     : "text-muted-foreground hover:bg-black/[0.03] dark:hover:bg-white/[0.05]",
                 )}
                 onClick={() => onSelect(id)}
+                title={label}
                 type="button"
               >
-                {Icon ? <Icon className="h-[13px] w-[13px]" size={13} /> : null}
-                {label}
+                {Icon ? <Icon className="h-[13px] w-[13px] flex-shrink-0" size={13} /> : null}
+                <span className="truncate">{label}</span>
               </button>
             );
           })}

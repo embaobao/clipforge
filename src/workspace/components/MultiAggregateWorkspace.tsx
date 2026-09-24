@@ -47,7 +47,7 @@ export function MultiAggregateWorkspace({
   };
 
   return (
-    <section className="h-full overflow-auto bg-background" data-surface="workspace">
+    <section className="h-full overflow-auto bg-transparent" data-surface="workspace">
       <WorkspaceCrumb title={tr("main.aggregate.title")} subtitle={tr("main.aggregate.subtitle", { count: items.length, chars: totalChars })} onBack={onBack} tr={tr}>
         <button aria-label={tr("main.aggregate.exportTexts")} className={crumbIconButtonClass} disabled={!items.length || isExporting} onClick={() => void handleExportTextFiles()} title={tr("main.aggregate.exportTexts")} type="button">
           <FileDown size={14} />

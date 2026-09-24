@@ -37,8 +37,8 @@ export interface TopToolbarProps {
 
 const scopeBase =
   "flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors active:scale-90";
-const scopeInactive = "hover:bg-black/5 dark:hover:bg-white/[0.07]";
-const scopeActive = "bg-foreground text-background hover:bg-foreground/90";
+const scopeInactive = "hover:bg-black/5 hover:text-foreground dark:hover:bg-white/[0.07]";
+const scopeActive = "bg-black/[0.08] text-foreground dark:bg-white/[0.12]";
 const scopeDisabled = "opacity-40 cursor-not-allowed";
 
 /** 主面板顶部工具栏：搜索槽、范围按钮、更多菜单。 */
@@ -73,7 +73,7 @@ export function TopToolbar({
 
   return (
     <header
-      className="grid h-[52px] grid-cols-[1fr_auto] items-center gap-2 px-3"
+      className="grid h-[52px] min-w-0 grid-cols-[1fr_auto] items-center gap-2 px-3"
       data-dev-probe="top-toolbar"
       data-tauri-drag-region
       onKeyDownCapture={handleToolbarKeyDownCapture}
@@ -129,7 +129,7 @@ export function TopToolbar({
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              aria-label="片段"
+              aria-label={tr("main.dock.snippets")}
               className={cn(scopeBase, scopeDisabled)}
               data-dev-probe="top-scope-snippets"
               disabled
@@ -139,7 +139,7 @@ export function TopToolbar({
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
-            <span>片段</span>
+            <span>{tr("main.dock.snippets")}</span>
           </TooltipContent>
         </Tooltip>
 
@@ -151,7 +151,7 @@ export function TopToolbar({
               data-dev-probe="top-menu-trigger"
               type="button"
             >
-              <MoreHorizontal size={16} />
+              <MoreHorizontal size={15} />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent

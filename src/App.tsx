@@ -37,7 +37,7 @@ import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/worksp
 import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
-import { createWindowDragHandler, logAppError, useDebouncedValue, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
+import { createWindowDragHandler, isTauriRuntime, logAppError, useDebouncedValue, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { usePanelBootstrap } from "./clipboard/use-panel-bootstrap";
@@ -213,8 +213,13 @@ function ClipForgeApp() {
     [],
   );
   const initialSettings = useMemo(loadLocalSettings, []);
-  const initialLocale = resolveAppLocale(initialSettings.language);
-  const [settings, setSettings] = useState<AppSettings>(initialSettings);
+  // URL ?lang=zh-CN|en-US 覆盖语言：供悬浮窗验证器/截图脚本固定界面语言，不写入设置。
+  const urlLanguage = useMemo(() => {
+    const value = new URLSearchParams(window.location.search).get("lang");
+    return value === "zh-CN" || value === "en-US" ? value : null;
+  }, []);
+  const initialLocale = resolveAppLocale(urlLanguage ?? initialSettings.language);
+  const [settings, setSettings] = useState<AppSettings>({ ...initialSettings, language: urlLanguage ?? initialSettings.language });
   const locale = resolveAppLocale(settings.language);
   const tr = useCallback((key: TranslationKey, params?: Record<string, string | number>) => t(locale, key, params), [locale]);
   const formatNativeError = useCallback((error: unknown) => formatCommandError(tr, error), [tr]);
@@ -254,7 +259,7 @@ function ClipForgeApp() {
   }, []);
   const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
   const [quickPreviewOpen, setQuickPreviewOpen] = useState(false);
-  const [isSearchActive, setSearchActive] = useState(false);
+  const [isSearchActive, setSearchActive] = useState(() => !isTauriRuntime());
   const [nativeStatus, setNativeStatus] = useState(() => t(initialLocale, "main.status.clipboardReady"));
   const [filePathStatuses, setFilePathStatuses] = useState<Record<string, FilePathStatus>>({});
 
@@ -278,6 +283,7 @@ function ClipForgeApp() {
     setClips,
     settingsRef,
     isSettingsWindow,
+    urlLanguage,
     mergeSettings,
     retagClips,
   });
@@ -1005,7 +1011,12 @@ function ClipForgeApp() {
   return (
     <main
       data-surface="clipboard"
-      className={`relative mx-auto grid h-fit max-h-[640px] w-[480px] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow panel-in${isPanelClosing ? " pointer-events-none" : ""}`}
+      // 宽度：设计基准 480px，但悬浮窗实际 420px（tauri.conf 默认）且最小 320px；
+      // w-[min(480px,100%)] 保证小窗/浏览器窄窗口下收缩适配，不再裁掉右侧操作区。
+      // 高度同理：h-fit 但不超过视口（悬浮窗窗高即视口高，min 320）。
+      // 注意用 100vh 而非 100%：max-height 的百分比在 iframe/窗口径链下会被视为 indefinite，
+      // 实测不生效（main 溢出裁掉底部栏）；vh 在任何容器内都确定。
+      className={`relative mx-auto grid h-fit max-h-[min(640px,100vh)] w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow panel-in${isPanelClosing ? " pointer-events-none" : ""}`}
       ref={shellRef}
     >
       {workspaceRoute.name !== "detail" && (

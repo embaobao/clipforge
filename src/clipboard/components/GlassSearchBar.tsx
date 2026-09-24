@@ -41,13 +41,13 @@ export function GlassSearchBar({
   tr,
 }: GlassSearchBarProps) {
   return (
-    <div className="flex w-full flex-col">
-      <div className="flex h-[52px] items-center gap-3 px-4">
+    <div className="flex w-full min-w-0 flex-col">
+      <div className="flex h-[52px] min-w-0 items-center gap-3 px-4">
         <Search size={15} className="flex-shrink-0 text-muted-foreground" />
         <input
           aria-label={tr("main.search.aria")}
           autoComplete="off"
-          className="h-full w-full bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+          className="h-full w-full min-w-0 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
           onBlur={onBlur}
           onChange={(event) => onChange(event.currentTarget.value)}
           onFocus={onFocus}
