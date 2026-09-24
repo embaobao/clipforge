@@ -110,11 +110,23 @@
    - 侦察结论：agent/mcp 两域均属 Phase 4 级别，建议各自独立会话满上下文执行；每段过 cargo check + 带隔离开关冒烟。
 5. **lib.rs（批次 49 后 13745 行）**：拆分序① ✅（schema 域）+ 拆分序② ✅（`96de00e`，写盘编排辅助四函数迁入 commands.rs，累计 329 行；sync_launch 主体两处调用经 re-export 零改动；refresh_tray 留主体经 crate:: 引用并补 Emitter trait），冒烟 ✓。拆分序③：agent/mcp 域（Phase 4 级别，侦察已入档 4d 条，需满上下文分批执行）。settings 写盘链剩余 read/write_user_settings 与快捷键域留主体（侦察结论：迁出收益低）。
 
+## 批次 51-55（2026-09-24 白天）：交互规范 v1.0 + 自动化走查基线（视觉走查人工缺位问题的解法）
+
+新增 `docs/INTERACTION_SPEC.md`（悬浮窗适配/反馈三件套/图标按钮/页面结构/快捷键/数据降级六章），并建了一套浏览器内可跑的走查基线，把「只能人眼过」的视觉走查变成可回归断言：
+
+- `8545f3a` 基建：`tauri-web-mock.ts`（与 Rust 同名同参命令协议桥，dev-only，三入口第一行导入）+ `preview.html` 预览壳 + 种子数据 + ego-browser 驱动脚本 2 套（交互回归 14 用例 / 逐交互视觉走查 13 用例 + 性能采样，截图落 `/tmp/clipforge-visual/audit/`）。修复 networkidle 被 Vite HMR 长连接卡死：改 load + 显式轮询。`pnpm test:interaction` 入 package.json。
+- `ee5b040` 反馈三件套对齐：toast 轻胶囊（12px/6×12/8px/1.4s，去 description）；tooltip portal 优先上方 + 首帧估计高度后 useLayoutEffect 校正；状态栏右侧 max-w-[58%] truncate；补 4 个 i18n key 清硬编码。
+- `b74d370` 右键菜单受控常开（非受控永远弹不出的真 bug）+ `getCurrentWindowSafe`/`isTauriRuntime` 浏览器降级（同步抛错曾致 ErrorBoundary 重挂载死循环）+ `?lang=` URL 固定语言。
+- `08c547a` 悬浮窗窄窗适配（w-[min(480px,100%)]，420/320 不再裁操作区）+ ClipDetailWorkspace 主内容直出重构（链接 chip、采集上下文默认折叠、底色透明）。
+- `de2b180` Rust：`CLIPFORGE_DATA_DIR` 数据目录隔离（tauri dev 并行验证不碰正式数据）。
+
+**验证（2026-09-24 全套）**：build:web ✓ / 交互回归 14/14 PASS / 视觉走查 13/13 PASS（320 窄窗零溢出）/ 性能：搜索 136ms、0 长任务 / cargo check ✓（21 存量警告非阻塞）。
+
 ## 待办事项（按优先级，批次 5 后更新）
 
 **夜间任务的可自动化待办已清零**。剩余事项全部需要盟哥人工参与：
 
-1. **视觉走查**（最重要）：`pnpm tauri dev` 人工过一遍详情页/聚合页/onboarding 三个 surface（批次 2/3 重写的 Tailwind 样式未经人眼确认）；DSH 面板 iframe 细节一并看
+1. **真机走查**（仍缺人眼）：浏览器自动化基线（批次 51-55）已覆盖 14 交互 + 13 视觉断言，但 `pnpm tauri dev` 实机过一遍详情页/聚合页/onboarding 三个 surface 仍待盟哥执行；可用 `CLIPFORGE_DATA_DIR=$(mktemp -d) pnpm tauri dev` 隔离数据并行验证
 2. **7 场景实机验收矩阵**：`file-image-clipboard-support` + `clipboard-multi-format-fidelity` 剩余项（复制/粘贴/显示/清理证据），完成后两提案可归档
 3. **DSH 基座取舍决策**（盟哥拍板项）：pi 等候选评估结论出来前，DSH 后置项不推进
 4. **grilling 会话 Q1–Q4**：产品方向问题待回答
