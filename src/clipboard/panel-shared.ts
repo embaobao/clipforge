@@ -51,6 +51,25 @@ export function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+/** 非 Tauri 运行时（浏览器预览/Story）安全获取当前窗口；getCurrentWindow() 在缺 metadata
+ *  时会同步抛 TypeError，effect 内直接调用会触发 ErrorBoundary 重挂载死循环。 */
+export function getCurrentWindowSafe(): ReturnType<typeof getCurrentWindow> | null {
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
+}
+
+/** 是否运行在 Tauri 原生运行时（浏览器预览返回 false，供 dev-only 降级分支判断）。 */
+export function isTauriRuntime(): boolean {
+  const runtime = globalThis as typeof globalThis & {
+    __TAURI__?: unknown;
+    __TAURI_INTERNALS__?: unknown;
+  };
+  return Boolean(runtime.__TAURI__ || runtime.__TAURI_INTERNALS__);
+}
+
 /** 面板空白处拖拽移动窗口（排除按钮/输入/链接等交互元素）。 */
 export function createWindowDragHandler() {
   return (event: React.PointerEvent<HTMLElement>) => {
@@ -59,7 +78,9 @@ export function createWindowDragHandler() {
     if (target instanceof Element && target.closest("button, input, textarea, select, a, [role='menuitem']")) {
       return;
     }
-    getCurrentWindow()
+    const appWindow = getCurrentWindowSafe();
+    if (!appWindow) return;
+    appWindow
       .startDragging()
       .catch((error) => logAppError("warn", "Start window dragging failed", String(error)));
   };

@@ -81,7 +81,14 @@ export function ClipContextMenu({
   };
 
   return (
-    <DropdownMenu onOpenChange={(open) => { if (!open) onClose(); }}>
+    // 受控常开：菜单由右键事件触发挂载，Radix 触发器（1px 隐形按钮）出现在右键点之后，
+    // 收不到点击事件，默认非受控模式永远不会弹出。这里挂载即打开，交给 onOpenChange/Esc/选项点击关闭。
+    <DropdownMenu
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           className="fixed h-px w-px opacity-0"

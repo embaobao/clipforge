@@ -1,8 +1,7 @@
 /** 快速面板失焦自动隐藏 hook（从 App.tsx 切出）：blur 后延迟查询 Rust 固定状态，未固定则淡出并隐藏窗口。 */
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
-import { logAppError } from "./panel-shared";
+import { getCurrentWindowSafe, logAppError } from "./panel-shared";
 
 export type PanelBlurHideOptions = {
   /** 设置窗口实例不注册失焦隐藏（settings 复用同一组件树时为 false）。 */
@@ -28,7 +27,9 @@ export function usePanelBlurHide({
 }: PanelBlurHideOptions) {
   useEffect(() => {
     if (!enabled) return;
-    const appWindow = getCurrentWindow();
+    // 浏览器预览无 Tauri 窗口对象；getCurrentWindow() 同步抛错会触发重挂载死循环。
+    const appWindow = getCurrentWindowSafe();
+    if (!appWindow) return;
     let hideTimer: number | null = null;
     let closeTimer: number | null = null;
     const cancelHide = () => {
@@ -104,7 +105,9 @@ export function usePanelWindowListeners({
 }) {
   useEffect(() => {
     if (!enabled) return;
-    const appWindow = getCurrentWindow();
+    // 浏览器预览无 Tauri 窗口对象；getCurrentWindow() 同步抛错会触发重挂载死循环。
+    const appWindow = getCurrentWindowSafe();
+    if (!appWindow) return;
     const unlisteners: Array<() => void> = [];
     appWindow
       .listen<string>("clipforge://show-quick-panel", ({ payload }) => {

@@ -1,13 +1,12 @@
 /** 设置同步域 hook（从 App.tsx 切出）：settings 变化的防抖持久化、窗口标题同步、启动时读取远端配置。
  *  边界：mergeSettings/retagClips 由调用方注入（它们的默认值链留在主体）；三个持久化私有 refs 随本 hook。 */
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { ClipItem } from "../App";
 import type { AppSettings } from "../App";
 import { resolveAppLocale, setDocumentLocale, t } from "../i18n";
-import { logAppError } from "./panel-shared";
+import { getCurrentWindowSafe, logAppError } from "./panel-shared";
 
 type UserSettingsPayload = {
   path: string;
@@ -20,6 +19,8 @@ export type SettingsSyncOptions = {
   setClips: Dispatch<SetStateAction<ClipItem[]>>;
   settingsRef: { current: AppSettings };
   isSettingsWindow: boolean;
+  /** URL ?lang= 固定语言（悬浮窗验证器/截图脚本）：启动读取配置后仍强制覆盖，不被持久化值冲掉。 */
+  urlLanguage: AppSettings["language"] | null;
   mergeSettings: (value: Partial<AppSettings> | null | undefined) => AppSettings;
   retagClips: (clips: ClipItem[], settings: AppSettings) => ClipItem[];
 };
@@ -31,6 +32,7 @@ export function useSettingsSync({
   setClips,
   settingsRef,
   isSettingsWindow,
+  urlLanguage,
   mergeSettings,
   retagClips,
 }: SettingsSyncOptions) {
@@ -44,9 +46,13 @@ export function useSettingsSync({
     const locale = resolveAppLocale(settings.language);
     setDocumentLocale(locale);
     window.document.title = t(locale, "window.main.title");
-    void getCurrentWindow().setTitle(t(locale, "window.main.title")).catch((error) =>
-      logAppError("warn", "Set main window title failed", String(error)),
-    );
+    // 浏览器预览无 Tauri 窗口对象；同步 getCurrentWindow() 会抛错并触发重挂载死循环。
+    const appWindow = getCurrentWindowSafe();
+    if (appWindow) {
+      void appWindow.setTitle(t(locale, "window.main.title")).catch((error) =>
+        logAppError("warn", "Set main window title failed", String(error)),
+      );
+    }
     if (skipNextSettingsPersistRef.current) {
       skipNextSettingsPersistRef.current = false;
       return;
@@ -71,12 +77,14 @@ export function useSettingsSync({
       .then((payload) => {
         if (cancelled) return;
         const merged = mergeSettings(payload?.settings);
+        // URL ?lang= 优先：验证器固定语言时，远端配置读到 system 也不能覆盖 URL 指定值。
+        const next = urlLanguage ? { ...merged, language: urlLanguage } : merged;
         skipNextSettingsPersistRef.current = true;
         configReadyRef.current = true;
-        settingsRef.current = merged;
-        setSettings(merged);
+        settingsRef.current = next;
+        setSettings(next);
         if (!isSettingsWindow) {
-          setClips((items) => retagClips(items, merged).slice(0, merged.maxStoredItems));
+          setClips((items) => retagClips(items, next).slice(0, next.maxStoredItems));
           logAppError("info", "onboarding: startup settings loaded", {
             onboardingCompleted: merged.onboardingCompleted,
             onboardingShownAt: merged.onboardingShownAt,

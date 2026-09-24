@@ -55,7 +55,13 @@ export function TrashContextMenu({
   };
 
   return (
-    <DropdownMenu onOpenChange={(open) => { if (!open) onClose(); }}>
+    // 受控常开：与 ClipContextMenu 同因——触发器在右键事件之后才生成，非受控永远不会弹出。
+    <DropdownMenu
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           className="fixed h-px w-px opacity-0"
