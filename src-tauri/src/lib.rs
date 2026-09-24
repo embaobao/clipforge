@@ -6843,6 +6843,15 @@ fn parse_log_line(line: &str) -> Option<AppLogEntryPayload> {
 }
 
 fn settings_path() -> Result<PathBuf, String> {
+    // 数据目录隔离（测试/开发专用）：设置 CLIPFORGE_DATA_DIR 后，设置、数据库、日志、
+    // 图片缓存等全部数据都写到该目录，用于 tauri dev 并行验证真实交互而不触碰正式数据。
+    // 未设置时保持原行为（~/Library/Application Support/ClipForge），生产环境不受影响。
+    if let Ok(custom_dir) = std::env::var("CLIPFORGE_DATA_DIR") {
+        let trimmed = custom_dir.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed).join("settings.json5"));
+        }
+    }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| "HOME is not available".to_string())?;
