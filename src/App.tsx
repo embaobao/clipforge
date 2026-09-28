@@ -1,6 +1,7 @@
 import { Clipboard, Copy, ExternalLink, FileJson } from "lucide-react";
 import { PanelStatusFeedback } from "./clipboard/components/PanelStatusFeedback";
 import { TopToolbar } from "./clipboard/components/TopToolbar";
+import { checkAnimFreeze } from "./clipboard/anim-freeze-guard";
 import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
 import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
 import {
@@ -391,6 +392,8 @@ function ClipForgeApp() {
       setFilterFavorite(false);
       setSearchActive(true);
       setIsPanelEntering(true);
+      // 唤起时复检动画冻结：用户激活 app 后时间轴可能已解冻，摘守卫恢复动效；仍冻结则继续压制。
+      checkAnimFreeze();
       // 动画退出保险：后台 app 的 WKWebView 可能冻结 CSS 动画时间轴（面板停在 from{opacity:0}）。
       // 500ms 后无条件摘掉 panel-in，让面板回到天然可见态——时间轴正常时动画已播完（450ms），
       // 冻结时也能保证面板可见；隐藏路径已会复位 entering，不影响下次唤起重播。

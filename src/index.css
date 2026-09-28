@@ -151,6 +151,18 @@
   animation: panel-in 0.45s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* ---------- 动画冻结守卫（cf-anim-frozen） ----------
+   后台 app 的 WKWebView 冻结 CSS 动画时间轴时（anim-freeze-guard 探针判定），
+   把所有动画/过渡压到 0.01ms 即时完成：opacity 类入场的终帧均为天然可见态，
+   toast/行/面板不再卡在 from 帧；解冻后守卫摘除此类，动效自动恢复。 */
+.cf-anim-frozen *,
+.cf-anim-frozen *::before,
+.cf-anim-frozen *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  transition-duration: 0.01ms !important;
+}
+
 @keyframes float-y {
   0%,
   100% {

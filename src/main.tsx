@@ -4,7 +4,11 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { installAnimFreezeGuard } from "./clipboard/anim-freeze-guard";
 import "./index.css";
+
+// 后台 app 的 WKWebView 可能冻结 CSS 动画时间轴（面板/toast 卡入场帧），启动即检测并挂守卫。
+installAnimFreezeGuard();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <TooltipProvider delayDuration={300}>
