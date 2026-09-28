@@ -54,7 +54,22 @@ const iframeDoc = () =>
         if (!card) return { found: false };
         const r = card.getBoundingClientRect();
         const vis = doc.defaultView.getComputedStyle(card).visibility === "visible";
-        return { found: true, visible: vis, left: Math.round(r.left), right: Math.round(r.right), inViewport: r.left >= -1 && r.right <= win.innerWidth + 1 };
+        // heightOk：portal 卡曾因 bottom 未复位塌成 16px 白胶囊，必须校验内容高度
+        return { found: true, visible: vis, height: Math.round(r.height), heightOk: r.height >= 40, left: Math.round(r.left), right: Math.round(r.right), inViewport: r.left >= -1 && r.right <= win.innerWidth + 1 };
+      })(),
+      // 调试：列出全部 tooltip 卡（区分 portal/行内）与环境状态，定位偶发失败用
+      tooltipDebug: (() => {
+        const dbg = win.__dbgTooltipEvents ?? [];
+        return {
+          focus: doc.hasFocus(),
+          hidden: doc.hidden,
+          events: dbg.slice(-6),
+          cards: [...doc.querySelectorAll(".app-tooltip-card")].map((c) => {
+            const r = c.getBoundingClientRect();
+            const cs = doc.defaultView.getComputedStyle(c);
+            return { cls: c.className.slice(0, 60), inlineVis: c.style.visibility || null, vis: cs.visibility, h: Math.round(r.height), top: Math.round(r.top), text: (c.textContent ?? "").slice(0, 14) };
+          }),
+        };
       })(),
     };
   });
@@ -103,6 +118,15 @@ await page.evaluate(() => document.getElementById("panel").contentWindow.__clipf
 await page.reload();
 await page.waitForLoadState("load");
 await page.waitForTimeout(2200);
+// 在 iframe 里记录 blur/visibilitychange/focus 事件时间线，供 tooltip 偶发失败定位
+await page.evaluate(() => {
+  const win = document.getElementById("panel").contentWindow;
+  win.__dbgTooltipEvents = [];
+  const push = (type) => win.__dbgTooltipEvents.push(`${type}@${Math.round(win.performance.now())}`);
+  win.addEventListener("blur", () => push("blur"));
+  win.addEventListener("focus", () => push("focus"));
+  win.document.addEventListener("visibilitychange", () => push(`vis:${win.document.hidden}`));
+});
 await setPanel(420, 400);
 await page.waitForTimeout(400);
 let state = await iframeDoc();
@@ -214,12 +238,21 @@ state = await iframeDoc();
 report("T10 → 详情页 + ← 返回列表", detailOk && hasWorkspace && state.rows === 10, `title=${state.crumbTitle} backRows=${state.rows}`);
 
 // ---------- T11 行 tooltip（portal 到 iframe body，视口内可见） ----------
+// 前置用例的选中自动居中可能让列表处于滚动态（第 1 行半藏在 header 下），先滚回顶部再 hover。
+await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const scroller = doc.querySelector(".thin-scroll");
+  if (scroller) scroller.scrollTop = 0;
+});
+await page.waitForTimeout(300);
 await hoverInIframe("article p", 0);
 await page.waitForTimeout(600);
 state = await iframeDoc();
 await page.screenshot({ path: "/tmp/clipforge-visual/11-tooltip.png" });
 await page.mouse.move(5, 5);
-report("T11 tooltip 可见且不超视口", state.tooltipCard.found && state.tooltipCard.visible && state.tooltipCard.inViewport, JSON.stringify(state.tooltipCard));
+// 通过时只报卡片几何；失败时附带事件时间线/焦点等调试信息
+const t11Pass = state.tooltipCard.found && state.tooltipCard.visible && state.tooltipCard.heightOk && state.tooltipCard.inViewport;
+report("T11 tooltip 可见、高度未塌陷且不超视口", t11Pass, t11Pass ? JSON.stringify(state.tooltipCard) : JSON.stringify({ card: state.tooltipCard, dbg: state.tooltipDebug }));
 
 // ---------- T12 顶栏图标按钮尺寸统一 28px ----------
 state = await iframeDoc();
@@ -238,6 +271,105 @@ await page.evaluate(() => {
 await page.waitForTimeout(700);
 state = await iframeDoc();
 report("T13 剪贴板变化事件 → 新条目入库", state.rows >= rowsBeforeSeed + 1, `rows=${rowsBeforeSeed}->${state.rows}`);
+
+// ---------- T15 多行数据：列表可滚动 + 滚轮后虚拟窗口更新 ----------
+// 回归「数据多了不能滚动」：QuickPastePanel 根节点 flex-1 在 block 父级下失效，
+// 列表随内容长到 3000px+、overflow-auto 永不生效。断言容器可滚且滚后窗口渲染到底部行。
+await page.evaluate(() => {
+  const win = document.getElementById("panel").contentWindow;
+  for (let i = 0; i < 80; i++) win.__clipforgeMock.seedText(`回归批量条目 ${i}`);
+  win.__clipforgeMock.emit("clipboard-changed", { changeCount: 1, hasChange: true, preview: "回归批量条目 79" });
+});
+await page.waitForTimeout(800);
+const frameRect15 = await page.evaluate(() => {
+  const f = document.getElementById("panel").getBoundingClientRect();
+  return { x: f.x + 200, y: f.y + 200 };
+});
+// 少量滚轮验证滚轮链路可用；直达底部用 scrollTop（滚轮到底后会链式滚动外层预览页，干扰后续坐标）。
+await page.mouse.move(frameRect15.x, frameRect15.y);
+for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, 240); await page.waitForTimeout(60); }
+const wheelScrolled = await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  return Math.round(doc.querySelector(".thin-scroll")?.scrollTop ?? -1);
+});
+await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const scroller = doc.querySelector(".thin-scroll");
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+});
+await page.waitForTimeout(400);
+const scrollState = await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const scroller = doc.querySelector(".thin-scroll");
+  const texts = [...doc.querySelectorAll("article")].map((a) => a.textContent ?? "");
+  return {
+    scrollable: scroller ? scroller.scrollHeight > scroller.clientHeight : false,
+    scrollTop: Math.round(scroller?.scrollTop ?? -1),
+    deepRowVisible: texts.some((t) => t.includes("回归批量条目 0")),
+  };
+});
+report("T15 多行列表可滚动且虚拟窗口更新", scrollState.scrollable && wheelScrolled > 100 && scrollState.scrollTop > 400 && scrollState.deepRowVisible, JSON.stringify({ wheelScrolled, ...scrollState }));
+
+// ---------- T16 hover 连续下移：浮卡不吞被盖住行的 hover（移出即消） ----------
+// 回归「hover 之后就有问题」：portal 浮卡 pointer-events:auto 时会盖住相邻行并吃掉它们的 hover。
+// 前置：外层预览页与列表都回滚到顶，保证坐标计算时 iframe 位置稳定。
+await page.evaluate(() => {
+  window.scrollTo(0, 0);
+  const doc = document.getElementById("panel").contentDocument;
+  const scroller = doc.querySelector(".thin-scroll");
+  if (scroller) scroller.scrollTop = 0;
+});
+await page.waitForTimeout(400);
+const rowCenter = (idx) =>
+  page.evaluate((i) => {
+    const doc = document.getElementById("panel").contentDocument;
+    const frame = document.getElementById("panel").getBoundingClientRect();
+    const r = doc.querySelectorAll("article")[i].getBoundingClientRect();
+    return { x: frame.x + r.x + r.width / 2, y: frame.y + r.y + r.height / 2 };
+  }, idx);
+const rc0 = await rowCenter(0);
+await page.mouse.move(rc0.x, rc0.y);
+await page.waitForTimeout(400);
+const rc3 = await rowCenter(3);
+for (let y = rc0.y; y <= rc3.y; y += 8) { await page.mouse.move(rc3.x, y); await page.waitForTimeout(40); }
+await page.waitForTimeout(400);
+const hoverSweep = await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const rows = [...doc.querySelectorAll("article")];
+  const hoveredIdx = rows.findIndex((a) => a.matches(":hover"));
+  const card = doc.querySelector(".quick-panel-tooltip-card");
+  return {
+    hoveredIdx,
+    cardText: card?.textContent?.slice(0, 24) ?? null,
+    row3Text: rows[3]?.textContent?.slice(0, 24) ?? null,
+  };
+});
+// 失败时补抓环境状态：焦点/隐藏/事件时间线/悬停链路，定位偶发干扰
+let hoverDbg = null;
+if (hoverSweep.hoveredIdx !== 3) {
+  hoverDbg = await page.evaluate((pt) => {
+    const win = document.getElementById("panel").contentWindow;
+    const doc = win.document;
+    const frame = document.getElementById("panel").getBoundingClientRect();
+    const el = doc.elementFromPoint(pt.x - frame.x, pt.y - frame.y);
+    const rows = [...doc.querySelectorAll("article")];
+    return {
+      focus: doc.hasFocus(),
+      hidden: doc.hidden,
+      scrollTop: Math.round(doc.querySelector(".thin-scroll")?.scrollTop ?? -1),
+      frame: { x: Math.round(frame.x), y: Math.round(frame.y) },
+      hit: el ? el.tagName + "." + String(el.className).slice(0, 40) : null,
+      hitRowIdx: rows.indexOf(el?.closest?.("article") ?? null),
+      events: (win.__dbgTooltipEvents ?? []).slice(-6),
+    };
+  }, rc3);
+}
+report(
+  "T16 浮卡不吞被盖行 hover（移出即消）",
+  hoverSweep.hoveredIdx === 3 && Boolean(hoverSweep.cardText && hoverSweep.row3Text && hoverSweep.cardText.includes(hoverSweep.row3Text.slice(0, 8))),
+  JSON.stringify({ ...hoverSweep, ...(hoverDbg ? { dbg: hoverDbg } : {}) }),
+);
+await page.mouse.move(5, 5);
 
 // ---------- T14 设置页：无错误 + 侧栏不换行 ----------
 await page.goto(SETTINGS);

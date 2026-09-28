@@ -15,7 +15,6 @@ export interface AppTooltipProps {
 }
 
 /** 常驻挂载的 tooltip 容器：children 是触发区，app-tooltip-card 是浮卡。 */
-const ESTIMATED_HEIGHT = 248;
 
 /** portal 卡定位：优先放触发区上方（不盖下一行），高度钳制在可用空间内（超出可滚动）；left clamp 在视口内。 */
 function computePortalPosition(rect: DOMRect, height: number) {
@@ -34,20 +33,46 @@ export function AppTooltip({ children, className, content, preview, portal = fal
   const closeTimerRef = useRef<number | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const triggerRectRef = useRef<DOMRect | null>(null);
+  const [portalOpen, setPortalOpen] = useState(false);
   const [portalPosition, setPortalPosition] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
 
   useEffect(() => () => {
     if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
   }, []);
 
-  // 首帧按估计高度定位后立即用实际渲染高度校正（估计值偏大，会错误选择下方）。
-  useLayoutEffect(() => {
-    if (!portalPosition || !cardRef.current || !triggerRectRef.current) return;
-    const actualHeight = cardRef.current.getBoundingClientRect().height;
-    if (Math.abs(actualHeight - ESTIMATED_HEIGHT) > 8) {
-      setPortalPosition(computePortalPosition(triggerRectRef.current, actualHeight));
+  const closePortal = () => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
     }
-  }, [portalPosition]);
+    setPortalOpen(false);
+    setPortalPosition(null);
+  };
+
+  // 两阶段定位：先隐身挂载量真实高度（CSS max-height 232px 内），再算位置显示；
+  // useLayoutEffect 在绘制前同步执行，隐身中间帧不会被画出来（旧实现按估计高度先显示
+  // 再校正，第一帧会闪在错误位置）。测量值随 maxHeight 约束微调时反复校正直到收敛
+  // （收敛判定是位置不再变化，返回旧对象让 React bail out，避免同值新对象死循环）。
+  useLayoutEffect(() => {
+    if (!portal || !portalOpen || !cardRef.current || !triggerRectRef.current) return;
+    const actualHeight = cardRef.current.getBoundingClientRect().height;
+    const next = computePortalPosition(triggerRectRef.current, actualHeight);
+    setPortalPosition((prev) =>
+      prev && Math.abs(prev.top - next.top) <= 1 && Math.abs(prev.maxHeight - next.maxHeight) <= 1 && prev.left === next.left
+        ? prev
+        : next,
+    );
+  }, [portal, portalOpen, portalPosition]);
+
+  // 面板是 blur 驱动隐藏的后台 app：窗口失焦隐藏时 pointerleave 不会送达，浮卡会常驻卡住，
+  // 失焦直接关掉。不监听 visibilitychange（自动化环境会误触发 document.hidden），
+  // 也不监听 scroll（虚拟列表滚动会卸载触发行组件，portal 随之卸载，无需额外处理）。
+  useEffect(() => {
+    if (!portal || !portalOpen) return;
+    window.addEventListener("blur", closePortal);
+    return () => window.removeEventListener("blur", closePortal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portal, portalOpen]);
 
   const cancelClose = () => {
     if (closeTimerRef.current === null) return;
@@ -58,15 +83,21 @@ export function AppTooltip({ children, className, content, preview, portal = fal
   const scheduleClose = () => {
     if (!portal) return;
     cancelClose();
-    closeTimerRef.current = window.setTimeout(() => setPortalPosition(null), 80);
+    closeTimerRef.current = window.setTimeout(() => {
+      setPortalOpen(false);
+      setPortalPosition(null);
+    }, 80);
   };
 
   const showPortal = (event: PointerEvent<HTMLDivElement>) => {
     if (!portal) return;
     cancelClose();
-    const rect = event.currentTarget.getBoundingClientRect();
-    triggerRectRef.current = rect;
-    setPortalPosition(computePortalPosition(rect, ESTIMATED_HEIGHT));
+    // 定位基准优先取整行（article）：触发区是行内文本 <p>，直接用它的 rect 会把
+    // 6px 间距算在文本上，卡片下沿会盖住行的内边距区（验收按整行边界断言）。
+    const anchor = event.currentTarget.closest("article") ?? event.currentTarget;
+    triggerRectRef.current = anchor.getBoundingClientRect();
+    setPortalPosition(null);
+    setPortalOpen(true);
   };
 
   const tooltipCard = (
@@ -80,10 +111,9 @@ export function AppTooltip({ children, className, content, preview, portal = fal
       onContextMenu={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
-      onPointerEnter={portal ? cancelClose : undefined}
-      onPointerLeave={portal ? scheduleClose : undefined}
+      ref={cardRef}
       role="tooltip"
-      style={portalPosition ?? undefined}
+      style={portal ? portalPosition ?? { left: 0, top: 0, visibility: "hidden" } : undefined}
     >
       <div className="app-tooltip-main">
         <strong>{content.title}</strong>
@@ -102,7 +132,9 @@ export function AppTooltip({ children, className, content, preview, portal = fal
     >
       {children}
       {portal
-        ? portalPosition && typeof document !== "undefined" ? createPortal(tooltipCard, document.body) : null
+        ? portalOpen && typeof document !== "undefined"
+          ? createPortal(tooltipCard, document.body)
+          : null
         : tooltipCard}
     </div>
   );

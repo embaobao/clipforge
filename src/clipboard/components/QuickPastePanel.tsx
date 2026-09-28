@@ -116,7 +116,10 @@ export function QuickPastePanel({
   const selectedItem = clips.find((clip) => clip.id === activeId) ?? clips[0];
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    // h-full 而非 flex-1：父级（App 的 section）是 block 不是 flex，flex-1 不生效会让
+    // 列表高度随内容长到 3026px、overflow-auto 永不出现（表现就是「不能滚动」）。
+    // h-full 对齐 detail/aggregate 表面的既有写法，沿 grid minmax(0,1fr) 行高向下传递。
+    <section className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 flex-col" onPointerDown={onPointerActive}>
         {quickPreviewOpen && selectedItem ? (
           <QuickPreviewCard

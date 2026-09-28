@@ -269,10 +269,14 @@
 /* portal 版（挂到 body，left/top 由内联样式给定） */
 .quick-panel-tooltip-card {
   position: absolute;
+  /* 基础类带 bottom: calc(100% + 6px)（行内锚定版用）；portal 版用内联 top 定位，
+     必须复位 bottom，否则 top+bottom 同时约束把高度算塌成 padding（16px 白胶囊）。 */
+  bottom: auto;
   /* portal 版不在 .app-tooltip 悬停链路内，需自行保持可见 */
   opacity: 1;
   visibility: visible;
-  pointer-events: auto;
+  /* 不响应指针（交互规范：移出即消）。卡片会盖住相邻行，若可交互会吃掉被盖行的 hover。 */
+  pointer-events: none;
   transform: none;
 }
 .quick-panel-tooltip-card.has-preview {

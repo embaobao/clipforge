@@ -75,7 +75,8 @@ export function TrashPanel({
     return <ClipboardEmptyState variant="trash" emptySummary={emptySummary} tr={tr} />;
   }
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    // h-full 而非 flex-1：父级是 block 容器，flex-1 不生效（详见 QuickPastePanel 同位置注释）。
+    <section className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 flex-1 flex-col" onPointerDown={onPointerActive}>
         <VirtualList
           activeId={activeId}

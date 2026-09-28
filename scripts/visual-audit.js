@@ -116,9 +116,10 @@ s = await ev(() => {
   const rows = [...doc.querySelectorAll("article")].map((a) => a.getBoundingClientRect());
   const row2 = rows[1];
   const style = doc.defaultView.getComputedStyle(card);
-  return { found: true, opacity: style.opacity, above: cr.bottom <= row2.top + 1, coversRow: cr.top < row2.bottom && cr.bottom > row2.top, inViewport: cr.left >= -1 && cr.right <= innerWidth + 1 };
+  // heightOk：portal 卡曾因 bottom 未复位塌成 16px 白胶囊（只露一截文字），高度必须能容纳标题+正文
+  return { found: true, opacity: style.opacity, height: Math.round(cr.height), heightOk: cr.height >= 40, above: cr.bottom <= row2.top + 1, coversRow: cr.top < row2.bottom && cr.bottom > row2.top, inViewport: cr.left >= -1 && cr.right <= innerWidth + 1 };
 });
-report("A03 行 tooltip（上方显示、不盖悬停行、视口内）", s.found && s.opacity === "1" && s.above && !s.coversRow && s.inViewport, JSON.stringify(s));
+report("A03 行 tooltip（上方显示、不盖悬停行、视口内、高度未塌陷）", s.found && s.opacity === "1" && s.heightOk && s.above && !s.coversRow && s.inViewport, JSON.stringify(s));
 await shot("A03-row-tooltip");
 await page.mouse.move(4, 4);
 
