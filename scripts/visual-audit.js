@@ -106,20 +106,44 @@ await shot("A02-row-hover");
 
 // ---------- A03 行 tooltip：显示在悬停行上方、不盖住下一行 ----------
 await page.mouse.move(r.x, r.y - 2);
-await page.waitForTimeout(500);
-s = await ev(() => {
+// hover 意图延时 500ms：停留满延时 + 渲染后再断言
+await page.waitForTimeout(900);
+const probeTooltip = () => ev(() => {
   const doc = document.getElementById("panel").contentDocument;
   // 必须取 portal 浮卡（.quick-panel-tooltip-card）；普通 .app-tooltip-card 是行内隐藏卡，选择器会命中错的
   const card = doc.querySelector(".quick-panel-tooltip-card");
   if (!card) return { found: false };
+  const win = doc.defaultView;
   const cr = card.getBoundingClientRect();
   const rows = [...doc.querySelectorAll("article")].map((a) => a.getBoundingClientRect());
   const row2 = rows[1];
-  const style = doc.defaultView.getComputedStyle(card);
+  const list = doc.querySelector(".thin-scroll")?.getBoundingClientRect();
+  const style = win.getComputedStyle(card);
   // heightOk：portal 卡曾因 bottom 未复位塌成 16px 白胶囊（只露一截文字），高度必须能容纳标题+正文
-  return { found: true, opacity: style.opacity, height: Math.round(cr.height), heightOk: cr.height >= 40, above: cr.bottom <= row2.top + 1, coversRow: cr.top < row2.bottom && cr.bottom > row2.top, inViewport: cr.left >= -1 && cr.right <= innerWidth + 1 };
+  // equalWidth：浮卡与行等宽（左右对齐列表 px-2 内边距），不随内容忽宽忽窄
+  // withinList：垂直钳制在列表容器内，永不盖搜索栏/底栏（旧版顶行出卡会压住顶栏）
+  return {
+    found: true,
+    opacity: style.opacity,
+    height: Math.round(cr.height),
+    heightOk: cr.height >= 40,
+    equalWidth: Math.abs(cr.left - 8) <= 1 && Math.abs(cr.right - (win.innerWidth - 8)) <= 1,
+    above: cr.bottom <= row2.top + 1,
+    coversRow: cr.top < row2.bottom && cr.bottom > row2.top,
+    withinList: list ? cr.top >= list.top - 1 && cr.bottom <= list.bottom + 1 : false,
+    inViewport: cr.left >= -1 && cr.right <= win.innerWidth + 1,
+  };
 });
-report("A03 行 tooltip（上方显示、不盖悬停行、视口内、高度未塌陷）", s.found && s.opacity === "1" && s.heightOk && s.above && !s.coversRow && s.inViewport, JSON.stringify(s));
+s = await probeTooltip();
+// 自动化页面偶发 1ms 级 hidden 抖动会冻结 hover/transition：卡住时 ±1px 抖动重试，最多 3 次
+for (let attempt = 0; !(s.found && s.opacity === "1") && attempt < 3; attempt++) {
+  await page.mouse.move(r.x + 1, r.y - 2);
+  await page.waitForTimeout(60);
+  await page.mouse.move(r.x, r.y - 2);
+  await page.waitForTimeout(700);
+  s = await probeTooltip();
+}
+report("A03 行 tooltip（等宽、不盖悬停行、钳制在列表内、高度未塌陷）", s.found && s.opacity === "1" && s.heightOk && s.equalWidth && !s.coversRow && s.withinList && s.inViewport, JSON.stringify(s));
 await shot("A03-row-tooltip");
 await page.mouse.move(4, 4);
 

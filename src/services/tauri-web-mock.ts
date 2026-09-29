@@ -23,6 +23,11 @@ type MockRecord = {
   plainText: string;
   metadata: Record<string, unknown>;
   captureContext: Record<string, unknown>;
+  /** 图片条目：本地路径或 data: URL（浏览器预览用 data:，convertFileSrc 原样透传）。 */
+  imageFile?: string | null;
+  thumbnailPath?: string | null;
+  width?: number | null;
+  height?: number | null;
 };
 
 const DB_KEY = "clipforge-webmock-v1";
@@ -157,8 +162,9 @@ function emitEvent(event: string, payload: unknown): void {
 const callbacks = new Map<number, { fn: (data: unknown) => void; once: boolean }>();
 let callbackSeq = 0;
 
-/** 简单文本搜索：大小写不敏感包含匹配（对齐 Rust 侧最小行为，供样式验证）。 */
-function filterRecords(input: Record<string, unknown>): MockRecord[] {
+/** 简单文本搜索：大小写不敏感包含匹配（对齐 Rust 侧最小行为，供样式验证）。
+ *  支持 cursor 分页（偏移式，对齐 Rust 键集分页的前端契约）：返回 nextCursor 供 loadMore。 */
+function filterRecords(input: Record<string, unknown>): { items: MockRecord[]; nextCursor: string | null } {
   let result = [...db];
   const text = typeof input.text === "string" ? input.text.trim().toLowerCase() : "";
   if (text) {
@@ -166,7 +172,10 @@ function filterRecords(input: Record<string, unknown>): MockRecord[] {
   }
   if (input.favorite === true) result = result.filter((record) => record.favorite);
   const limit = typeof input.limit === "number" ? input.limit : 200;
-  return result.slice(0, limit);
+  const offset = typeof input.cursor === "string" ? Number.parseInt(input.cursor, 10) || 0 : 0;
+  const items = result.slice(offset, offset + limit);
+  const nextCursor = offset + items.length < result.length ? String(offset + items.length) : null;
+  return { items, nextCursor };
 }
 
 /** 命令分发：覆盖主面板/详情页/设置页全部 invoke 路径；未列出的命令返回最小合理值。 */
@@ -179,8 +188,12 @@ async function mockInvoke(cmd: string, args: Record<string, unknown> = {}): Prom
     case "search_clip_records": {
       const input = (args.input ?? {}) as Record<string, unknown>;
       // 返回全部记录（含已删），过滤逻辑由前端按 activeView 完成，与 Rust 行为一致。
-      const items = filterRecords(input);
-      return { items: items.map(toPublic), limit: typeof input.limit === "number" ? input.limit : 200 };
+      const { items, nextCursor } = filterRecords(input);
+      return {
+        items: items.map(toPublic),
+        limit: typeof input.limit === "number" ? input.limit : 200,
+        nextCursor,
+      };
     }
     case "capture_clip_record": {
       const input = (args.input ?? args) as Record<string, unknown>;
@@ -437,6 +450,36 @@ function install(): void {
       seedDb();
     },
     seedText: (content: string, sourceLabel = "mock") => upsertRecord(content, sourceLabel),
+    /** 播种图片条目：验证行内缩略图 / 悬浮卡大图 / 快速预览的图片渲染链路。 */
+    seedImage: (src: string, width = 640, height = 400, sourceLabel = "mock") => {
+      const now = Date.now();
+      const record: MockRecord = {
+        id: `web-img-${now}-${seq++}`,
+        content: "截图.png",
+        createdAt: now,
+        updatedAt: now,
+        lastSeenAt: now,
+        favorite: false,
+        deletedAt: null,
+        bucket: "all",
+        source: sourceLabel,
+        tags: [],
+        kind: "attachment",
+        payloadKind: "image",
+        primaryFormat: "image/png",
+        availableFormats: ["image/png"],
+        representations: [],
+        plainText: "截图.png",
+        metadata: {},
+        captureContext: {},
+        imageFile: src,
+        width,
+        height,
+      };
+      db = [record, ...db];
+      saveDb(db);
+      return { status: "created" as const, item: toPublic(record) };
+    },
   };
 
   window.clearInterval(pollTimer);

@@ -73,14 +73,14 @@ export function TopToolbar({
 
   return (
     <header
-      className="grid h-[52px] min-w-0 grid-cols-[1fr_auto] items-center gap-2 px-3"
+      className="grid h-11 min-w-0 cursor-grab grid-cols-[1fr_auto] items-center gap-2 px-3 active:cursor-grabbing"
       data-dev-probe="top-toolbar"
       data-tauri-drag-region
       onKeyDownCapture={handleToolbarKeyDownCapture}
       onPointerDown={onDrag}
     >
       <div
-        className="flex min-w-0 items-center gap-2"
+        className="flex min-w-0 cursor-default items-center gap-2"
         data-dev-probe="top-search-slot"
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -88,7 +88,7 @@ export function TopToolbar({
       </div>
 
       <div
-        className="flex items-center gap-1"
+        className="flex cursor-default items-center gap-1"
         data-dev-probe="top-action-slot"
         onPointerDown={(event) => event.stopPropagation()}
       >

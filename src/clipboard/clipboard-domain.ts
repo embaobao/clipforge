@@ -3,7 +3,7 @@
 // 纯函数无副作用、不依赖 React/DOM，供主面板行组件（ClipboardContentPreview / ClipboardRowActions / ClipboardRow）和 App.tsx 共用。
 // TODO: ClipItem 当前 type-only 从 ../App 引入；后续 App.tsx 拆分时迁到共享 types 模块。
 import type { TranslationKey } from "../i18n";
-import type { FilePathStatus } from "../services/clipboard";
+import { getImagePath, type FilePathStatus } from "../services/clipboard";
 import type { ClipItem } from "../App";
 
 /** i18n 翻译函数类型（与 App.tsx 内各处签名一致）。 */
@@ -94,6 +94,20 @@ export function getClipboardLine(item: ClipItem) {
   const firstLineRaw = newlineAt >= 0 ? source.slice(0, newlineAt) : source;
   const line = firstLineRaw.replace(/\s+/g, " ").trim();
   return line || item.analysis.title || "";
+}
+
+/**
+ * 图片条目的可加载图源：本地文件路径经 asset 协议转换；无可用源返回 null（调用方回退文本行）。
+ * variant=thumb 行内小图优先缩略图文件（原图可能几 MB，28px 缩略图不值得解码全量）；
+ * variant=full 悬浮卡/快速预览优先原图，缩略图兜底。
+ */
+export function getClipImageSrc(item: ClipItem, variant: "thumb" | "full" = "full"): string | null {
+  if (item.payloadKind !== "image") return null;
+  const candidates =
+    variant === "thumb"
+      ? [item.thumbnailPath, item.imageFile, item.analysis.attachment?.target]
+      : [item.imageFile, item.analysis.attachment?.target, item.thumbnailPath];
+  return getImagePath(candidates.find(Boolean));
 }
 
 /** 判断 file 类 clip 的文件是否缺失（任一路径不存在即缺失）。 */

@@ -1,12 +1,19 @@
 /** 快速面板虚拟列表：固定行高窗口化渲染 + 选中项自动居中 + 分组滚动命令 + 滚动性能埋点。 */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { recordNextFramePerf } from "../../performance-smoke";
 
 /** 列表默认行高（density 之外的兜底值）。 */
 export const ROW_HEIGHT = 40;
-/** 虚拟渲染上下多渲染的行数，滚动时避免白边。 */
-export const OVERSCAN = 5;
+/** 虚拟渲染上下多渲染的行数，滚动时避免白边。
+ *  8 行 ≈ 320px 缓冲：图片行挂载即解码，overscan 太小会在快速滚动时露白（「滚动白屏」）。 */
+export const OVERSCAN = 8;
+
+/**
+ * 滚动中判定（供行 tooltip 的 hover 意图抑制用）：滚动反馈窗口（约 420ms）内返回 true。
+ * 默认返回 false，非列表场景（详情页等）不抑制。
+ */
+export const ListScrollingContext = createContext<() => boolean>(() => false);
 
 export type VirtualListProps<T extends { id: string }> = {
   activeId?: string | null;
@@ -48,10 +55,33 @@ export function VirtualList<T extends { id: string }>({
   const pendingScrollTopRef = useRef(0);
   const lastScrollPerfAtRef = useRef(0);
   const lastAutoScrollActiveIdRef = useRef<string | null>(null);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
+
+  // WKWebView 的怪癖：列表滚动、指针原地不动时，滚动停下后不会对新位置的行重新发
+  // pointerenter（Chrome 会重发）。这会让「滚动→停下→hover 预览」完全失灵（滑不进去）。
+  // 在滚动反馈窗口结束时，用最后记录的指针位置做一次命中测试并补发 pointerover
+  // （React 的 onPointerEnter 经 pointerover/out 委托实现，补发后正常进入 hover 意图计时）。
+  // 仅滚轮/触摸驱动的滚动补发：键盘居中滚动时指针只是停在列表上，出卡是噪音。
+  const hadWheelGestureRef = useRef(false);
+  const reemitHoverAtLastPointer = useCallback(() => {
+    if (!hadWheelGestureRef.current) return;
+    hadWheelGestureRef.current = false;
+    const point = lastPointerRef.current;
+    const node = ref.current;
+    if (!point || !node || document.hidden) return;
+    const bounds = node.getBoundingClientRect();
+    if (point.x < bounds.left || point.x > bounds.right || point.y < bounds.top || point.y > bounds.bottom) return;
+    const target = document.elementFromPoint(point.x, point.y);
+    target?.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, clientX: point.x, clientY: point.y }));
+  }, []);
 
   const setFeedback = useCallback(
     (next: boolean) => {
+      // 滚动开始沿：广播列表滚动事件，打开的 hover 浮卡随之关闭（锚定行已移位）。
+      if (next && !isScrollFeedbackRef.current) {
+        document.dispatchEvent(new CustomEvent("clipforge:list-scroll-start"));
+      }
       if (isScrollFeedbackRef.current !== next) {
         isScrollFeedbackRef.current = next;
         setScrollFeedback(next);
@@ -61,10 +91,11 @@ export function VirtualList<T extends { id: string }>({
         scrollFeedbackTimerRef.current = window.setTimeout(() => {
           isScrollFeedbackRef.current = false;
           setScrollFeedback(false);
+          reemitHoverAtLastPointer();
         }, 420);
       }
     },
-    [],
+    [reemitHoverAtLastPointer],
   );
 
   useEffect(() => {
@@ -133,11 +164,37 @@ export function VirtualList<T extends { id: string }>({
   const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
   const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
   const visible = items.slice(start, start + visibleCount);
+  // 稳定引用：滚动反馈窗口内返回 true，行 tooltip 据此在滚动中抑制弹卡。
+  const isListScrolling = useCallback(() => isScrollFeedbackRef.current, []);
+  // 行渲染结果按窗口起点 memo：滚动每帧 setScrollTop 触发重渲染，但 start 不变时
+  // 窗口内容与 translateY 都不变，跳过全部行的 reconcile（滚动帧耗时的主要来源）。
+  // renderItem 在滚动期间引用稳定（App 不因滚动重渲染），App 状态变化时自然失效重渲。
+  const renderedRows = useMemo(
+    () =>
+      visible.map((item, index) => (
+        <div key={item.id}>{renderItem(item, start + index)}</div>
+      )),
+    // visible 由 items/start/visibleCount 派生，展开为基本依赖避免数组引用抖动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, start, visibleCount, renderItem],
+  );
   return (
     <div
       className={`${className} thin-scroll relative overflow-auto px-2`}
-      onTouchMove={onUserScroll}
-      onWheel={onUserScroll}
+      onTouchMove={() => {
+        hadWheelGestureRef.current = true;
+        onUserScroll?.();
+      }}
+      onWheel={() => {
+        hadWheelGestureRef.current = true;
+        onUserScroll?.();
+      }}
+      onPointerMove={(event) => {
+        lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      }}
+      onPointerLeave={() => {
+        lastPointerRef.current = null;
+      }}
       onScroll={(event) => {
         const node = event.currentTarget;
         const now = performance.now();
@@ -160,21 +217,19 @@ export function VirtualList<T extends { id: string }>({
       ref={ref}
     >
       <div className="relative" style={{ height: items.length * itemHeight }}>
-        <div
-          className="absolute left-0 right-0 top-0 will-change-transform"
-          style={{ transform: `translateY(${start * itemHeight}px)` }}
-        >
-          {visible.map((item, index) => (
-            <div key={item.id}>
-              {renderItem(item, start + index)}
-            </div>
-          ))}
-          {isLoadingMore ? (
-            <div className="flex h-10 items-center justify-center text-[11px] text-muted-foreground">
-              加载更多...
-            </div>
-          ) : null}
-        </div>
+        <ListScrollingContext.Provider value={isListScrolling}>
+          <div
+            className="absolute left-0 right-0 top-0 will-change-transform"
+            style={{ transform: `translateY(${start * itemHeight}px)` }}
+          >
+            {renderedRows}
+            {isLoadingMore ? (
+              <div className="flex h-10 items-center justify-center text-[11px] text-muted-foreground">
+                加载更多...
+              </div>
+            ) : null}
+          </div>
+        </ListScrollingContext.Provider>
       </div>
     </div>
   );

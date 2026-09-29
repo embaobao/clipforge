@@ -172,7 +172,17 @@
 - 内容区：行式表单（label 13px + desc 11.5px muted，控件居右）
 - 底部：版本号 + 恢复默认/导出数据
 
-### 7.3 其余视图
+### 7.3 行悬浮预览卡（hover tooltip）
+
+用途：指针停下 500ms 后预览该条全文（hover 意图，路过/滚动中不出）。
+
+- 触发：`pointerenter` 起计时 500ms（`OPEN_DELAY_MS`）；滚动中抑制，滚轮停下后自动对指针下的行恢复计时（WKWebView 由 VirtualList 补发 `pointerover`）。
+- 可交互：卡片打开后 `pointer-events: auto`，指针可滑进卡片滚动预览长内容/选中复制（行→卡有 160ms 搭桥窗口）；移出行且未进卡、列表滚动开始、窗口失焦即关；卡片内 `overscroll-behavior: contain` 不链滚列表。
+- 尺寸：**与行等宽**（左右对齐列表 `px-2` 内边距），高度随内容，垂直钳制在列表容器内（永不盖搜索栏/底栏）。
+- 视觉：10px 圆角、`hsl(var(--popover))` 底、发丝环 + `0 12px 32px -12px` 柔阴影；标题 12px/600 + meta 11px mono muted；正文 12.5px/1.55 `pre-wrap`，超长由底部 28px 渐变遮罩淡出（不内滚）。
+- 动效：进场 120ms `opacity` + `translateY(2px)`；关闭无动画直接卸载（移出/滚动/失焦路径）。
+
+### 7.4 其余视图
 
 复用同一套 token，不引入新颜色/圆角/阴影/组件样式。
 

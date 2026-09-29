@@ -1,8 +1,10 @@
 // 快速预览卡片：空格触发，悬浮于列表上方展示当前选中项完整内容。
+// 图片条目渲染真实图像（文件名无意义），元信息改为尺寸/体积。
 import { FileText, Image, Link2, Table2, Type } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import type { ClipItem } from "../../App";
+import { getClipImageSrc } from "../clipboard-domain";
 
 export interface QuickPreviewCardProps {
   item: ClipItem;
@@ -36,6 +38,14 @@ function formatTime(timestamp: number) {
 /** 快速预览卡片：符合 design.md 规格 2。 */
 export function QuickPreviewCard({ item, onPaste, onCopyPlain, onFavorite, onClose }: QuickPreviewCardProps) {
   const content = item.plainText || item.content || "";
+  const imageSrc = getClipImageSrc(item);
+  const dims = item.width && item.height ? `${item.width} × ${item.height}` : null;
+  const sizeKb = item.size ? `${Math.round(item.size / 1024)} KB` : null;
+  const meta = [
+    item.sourceApp?.name || item.source,
+    formatTime(item.createdAt),
+    ...(imageSrc ? [dims, sizeKb].filter(Boolean) : [`${content.length.toLocaleString()} 字符`]),
+  ].join(" · ");
   return (
     <div className="row-in mx-2 mt-2 rounded-[10px] bg-black/[0.03] p-3.5 dark:bg-white/[0.05]">
       <div className="flex items-start gap-3">
@@ -43,9 +53,20 @@ export function QuickPreviewCard({ item, onPaste, onCopyPlain, onFavorite, onClo
           <span className="text-muted-foreground">{kindIcon(item.payloadKind)}</span>
         </div>
         <div className="min-w-0 flex-1">
-          <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground">{content}</p>
+          {imageSrc ? (
+            <div className="flex max-h-56 items-center justify-center overflow-hidden rounded-[8px] bg-black/[0.03] dark:bg-white/[0.05]">
+              <img
+                alt={item.analysis.title || "Clipboard image"}
+                className="max-h-56 max-w-full object-contain"
+                draggable={false}
+                src={imageSrc}
+              />
+            </div>
+          ) : (
+            <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-foreground">{content}</p>
+          )}
           <p className="mono mt-1.5 text-[11px] text-muted-foreground/80">
-            {item.sourceApp?.name || item.source} · {formatTime(item.createdAt)} · {content.length.toLocaleString()} 字符
+            {meta}
           </p>
         </div>
       </div>

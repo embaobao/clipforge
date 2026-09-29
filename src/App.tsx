@@ -1023,10 +1023,10 @@ function ClipForgeApp() {
       data-surface="clipboard"
       // 宽度：设计基准 480px，但悬浮窗实际 420px（tauri.conf 默认）且最小 320px；
       // w-[min(480px,100%)] 保证小窗/浏览器窄窗口下收缩适配，不再裁掉右侧操作区。
-      // 高度同理：h-fit 但不超过视口（悬浮窗窗高即视口高，min 320）。
-      // 注意用 100vh 而非 100%：max-height 的百分比在 iframe/窗口径链下会被视为 indefinite，
-      // 实测不生效（main 溢出裁掉底部栏）；vh 在任何容器内都确定。
-      className={`relative mx-auto grid h-fit max-h-[min(640px,100vh)] w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow${isPanelEntering ? " panel-in" : ""}${isPanelClosing ? " pointer-events-none" : ""}`}
+      // 高度撑满窗口（h-screen）：悬浮窗是 transparent 窗口，面板 h-fit 时内容低于窗高
+      // 会在底部留一条透明带，macOS 合成器在该区域画出残留波浪状伪影（「背景透明/波浪线」）。
+      // 窗高由 Rust 按设置设定（300-1000），面板必须等于窗高，不再用 h-fit/max-h 截断。
+      className={`relative mx-auto grid h-screen w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow${isPanelEntering ? " panel-in" : ""}${isPanelClosing ? " panel-out pointer-events-none" : ""}`}
       ref={shellRef}
     >
       {workspaceRoute.name !== "detail" && (

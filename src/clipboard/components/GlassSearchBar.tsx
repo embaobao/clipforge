@@ -1,4 +1,4 @@
-/** 快速面板搜索栏：52px 玻璃搜索输入 + 激活过滤标签 + @/# 自动补全浮层（floating-ui portal）。 */
+/** 快速面板搜索栏：44px 玻璃搜索输入 + 激活过滤标签 + @/# 自动补全浮层（floating-ui portal）。 */
 import { Search, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { RefObject } from "react";
@@ -42,7 +42,7 @@ export function GlassSearchBar({
 }: GlassSearchBarProps) {
   return (
     <div className="flex w-full min-w-0 flex-col">
-      <div className="flex h-[52px] min-w-0 items-center gap-3 px-4">
+      <div className="flex h-11 min-w-0 items-center gap-3 px-3">
         <Search size={15} className="flex-shrink-0 text-muted-foreground" />
         <input
           aria-label={tr("main.search.aria")}
@@ -68,7 +68,7 @@ export function GlassSearchBar({
         ) : null}
       </div>
       {activeFilterLabels.length ? (
-        <div className="flex flex-wrap gap-1.5 px-4 pb-2" aria-label={tr("main.search.activeFilters")}>
+        <div className="flex flex-wrap gap-1.5 px-3 pb-2" aria-label={tr("main.search.activeFilters")}>
           {activeFilterLabels.map((label) => (
             <button
               aria-label={tr("main.search.removeFilter", { label })}

@@ -29,6 +29,21 @@ export function isCaptureClipPayload(payload: unknown): payload is CaptureClipPa
   return Boolean(item && typeof item === "object" && typeof (item as Partial<ClipItem>).content === "string");
 }
 
+/** 判断当前请求是否为「纯列表」（无搜索词/类型/标签/收藏过滤，且不在回收站）：
+ *  纯列表下新采集条目必然位于顶部，可以本地增量合并，无需全量刷新。 */
+function isPlainListRequest(request: Record<string, unknown>): boolean {
+  const bucket = typeof request.bucket === "string" ? request.bucket : "all";
+  if (bucket !== "all" && bucket !== "history") return false;
+  return (
+    !request.text &&
+    !request.favorite &&
+    !Array.isArray(request.kinds) &&
+    !Array.isArray(request.types) &&
+    !Array.isArray(request.tags) &&
+    !Array.isArray(request.fileExtensions)
+  );
+}
+
 export type ClipboardListOptions = {
   isSettingsWindow: boolean;
   setClips: React.Dispatch<React.SetStateAction<ClipItem[]>>;
@@ -123,11 +138,30 @@ export function useClipboardList({
   const syncCapturedClipboardPayload = async (payload: CaptureClipPayload) => {
     if (!isCaptureClipPayload(payload)) throw new Error("Invalid capture payload");
     const nextClip = normalizeClip(payload.item, settingsRef.current) ?? createClip(payload.item.content, settingsRef.current);
+    // 纯列表视图：本地增量合并（新条目必在顶部，按 id 去重提升）。
+    // 原因：① 每次复制都全量刷新 200 行 ≈ Rust 70ms + 2MB IPC + 全列表重渲染，是复制卡顿尖峰；
+    // ② 全量刷新 limit=200 会把用户已分页加载的列表截断回 200 条（「丢数据」根因）。
+    if (isPlainListRequest(searchRequestRef.current)) {
+      const current = clipsRef.current.filter((item) => item.id !== nextClip.id);
+      const next = [nextClip, ...current].slice(0, settingsRef.current.maxStoredItems);
+      clipsRef.current = next;
+      setClips(next);
+      logAppError("info", "clipboard-promote: local merge", {
+        promotedId: nextClip.id,
+        status: payload.status,
+        itemCount: next.length,
+      });
+      setSelectedId(nextClip.id);
+      setActiveView("history");
+      return payload.status;
+    }
     try {
       const result = await invoke<QueryClipPayload>("search_clip_records", {
         input: {
-          bucket: "all",
-          limit: 200,
+          ...searchRequestRef.current,
+          // 保留用户已分页加载的条数，刷新不截断列表（丢数据回归防护）。
+          limit: Math.max(200, clipsRef.current.length),
+          cursor: null,
         },
       });
       if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
@@ -201,10 +235,38 @@ export function useClipboardList({
         const payload = event.payload;
         console.log("[CLIPBOARD] frontend received change:", payload);
         if (!payload.hasChange) return;
-        // 后端已入库，前端直接从数据库刷新列表
+        const request = searchRequestRef.current;
+        // 纯列表视图：只取最新 1 条做增量合并（置顶/按 id 去重），不全量刷新 200 行。
+        // 解决「每次复制一次 70ms+2MB IPC 的卡顿尖峰」和「分页后列表被截断回 200 条」。
+        if (isPlainListRequest(request)) {
+          try {
+            const result = await invoke<QueryClipPayload>("search_clip_records", {
+              input: { bucket: typeof request.bucket === "string" ? request.bucket : "all", limit: 1 },
+            });
+            if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
+            const topClip = result.items
+              .map((item) => normalizeClip(item, settingsRef.current))
+              .find((item): item is ClipItem => Boolean(item));
+            if (!topClip) return;
+            const current = clipsRef.current.filter((item) => item.id !== topClip.id);
+            const next = [topClip, ...current].slice(0, settingsRef.current.maxStoredItems);
+            clipsRef.current = next;
+            setClips(next);
+            setSelectedId(topClip.id);
+            setActiveView("history");
+            if (payload.preview) {
+              lastSeenClipboard.current = payload.preview.trim();
+            }
+            setNativeStatus(tr("main.status.clipboardCapturedNew"));
+          } catch (error) {
+            console.error("[CLIPBOARD] incremental refresh failed:", error);
+          }
+          return;
+        }
+        // 搜索/过滤/回收站视图：后端已入库，按当前请求全量刷新（保留已加载条数，不截断）。
         try {
           const result = await invoke<QueryClipPayload>("search_clip_records", {
-            input: searchRequestRef.current,
+            input: { ...request, limit: Math.max(200, clipsRef.current.length), cursor: null },
           });
           if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
           const items = result.items
