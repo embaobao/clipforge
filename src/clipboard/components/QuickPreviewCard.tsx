@@ -73,7 +73,7 @@ export function QuickPreviewCard({ item, onPaste, onCopyPlain, onFavorite, onClo
       <Separator className="mt-3 bg-black/[0.05] dark:bg-white/[0.07]" />
       <div className="mt-2.5 flex items-center gap-1.5">
         <Button
-          className="h-6 rounded-md px-2 text-[11.5px]"
+          className="h-6 rounded-md px-2 text-[11.5px] transition-[color,background-color,border-color,transform] active:scale-95"
           size="sm"
           onClick={() => {
             onPaste(item, "preview");
@@ -83,7 +83,7 @@ export function QuickPreviewCard({ item, onPaste, onCopyPlain, onFavorite, onClo
           粘贴 <span className="mono ml-1 opacity-60">⏎</span>
         </Button>
         <Button
-          className="h-6 rounded-md px-2 text-[11.5px] text-muted-foreground"
+          className="h-6 rounded-md px-2 text-[11.5px] text-muted-foreground transition-[color,background-color,border-color,transform] active:scale-95"
           size="sm"
           variant="ghost"
           onClick={() => {
@@ -94,7 +94,7 @@ export function QuickPreviewCard({ item, onPaste, onCopyPlain, onFavorite, onClo
           纯文本 <span className="mono ml-1 opacity-60">⇧⏎</span>
         </Button>
         <Button
-          className="h-6 rounded-md px-2 text-[11.5px] text-muted-foreground"
+          className="h-6 rounded-md px-2 text-[11.5px] text-muted-foreground transition-[color,background-color,border-color,transform] active:scale-95"
           size="sm"
           variant="ghost"
           onClick={() => {

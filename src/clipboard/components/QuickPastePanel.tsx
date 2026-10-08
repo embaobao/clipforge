@@ -14,6 +14,9 @@ import { ClipboardRow } from "./ClipboardRow";
 import { QuickPreviewCard } from "./QuickPreviewCard";
 import { VirtualList } from "./VirtualList";
 
+/** 行「固定到顶部」占位：模块级保证引用稳定（ClipboardRow memo 依赖 props 引用比较）。 */
+const pinPlaceholder = () => toast.info("固定到顶部功能开发中");
+
 export type QuickPastePanelProps = {
   activeId: string | null;
   autoScroll: boolean;
@@ -157,7 +160,7 @@ export function QuickPastePanel({
               onOpen={onOpen}
               onOpenContextMenu={openContextMenu}
               onPaste={onPaste}
-              onPin={() => toast.info("固定到顶部功能开发中")}
+              onPin={pinPlaceholder}
               onSelect={onSelect}
               onStartMultiSelect={onStartMultiSelect}
               onToggleSelected={onToggleSelected}

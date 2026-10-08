@@ -17,8 +17,8 @@ export type MultiAggregateWorkspaceProps = {
   onOpenItem: (clip: ClipItem) => void;
 };
 
-const actionStripButtonClass = "inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] transition-colors hover:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
-const crumbIconButtonClass = "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.05] hover:text-foreground disabled:opacity-40 dark:hover:bg-white/[0.08]";
+const actionStripButtonClass = "inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
+const crumbIconButtonClass = "relative inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-40 dark:hover:bg-white/[0.08] before:absolute before:-inset-0.5 before:content-['']";
 
 /** 多条目聚合视图：全量预览 + 逐条目列表（链接/Markdown 渲染），导出与复制动作在顶部工具条。 */
 export function MultiAggregateWorkspace({

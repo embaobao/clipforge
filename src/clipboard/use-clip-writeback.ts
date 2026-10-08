@@ -1,5 +1,6 @@
 /** 剪贴板写回域 hook · 首批（从 App.tsx 切出）：已复制标记、条目字段更新、选中项导出文本文件。
  *  边界：完整写回链（copyClip/copyText/pasteClip/updateClipContent 等）仍在主体，后续批次按域迁入。 */
+import { useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, ClipItem } from "../App";
 import { isCaptureClipPayload, type CaptureClipPayload } from "./use-clipboard-list";
@@ -56,8 +57,9 @@ export function useClipWriteback({
   openPath,
   openUrl,
 }: ClipWritebackOptions) {
-  /** 复制成功后的乐观 UI：置最新复制 id、选中、copyCount+1，1.4s 后清除高亮。 */
-  function markClipCopied(item: ClipItem, status: string) {
+  /** 复制成功后的乐观 UI：置最新复制 id、选中、copyCount+1，1.4s 后清除高亮。
+   *  useCallback：依赖全为 setter/ref（pasteClip 与 ClipboardRow memo 依赖引用稳定）。 */
+  const markClipCopied = useCallback(function markClipCopied(item: ClipItem, status: string) {
     const now = Date.now();
     setLastCopiedId(item.id);
     setNativeStatus(status);
@@ -77,10 +79,11 @@ export function useClipWriteback({
       return next;
     });
     window.setTimeout(() => setLastCopiedId(null), 1400);
-  }
+  }, [setLastCopiedId, setNativeStatus, setSelectedId, setClips, clipsRef, settingsRef]);
 
-  /** 条目字段更新（bucket/favorite）：写库（失败仅记日志）+ 本地乐观同步。 */
-  function updateClip(id: string, next: Partial<ClipItem>) {
+  /** 条目字段更新（bucket/favorite）：写库（失败仅记日志）+ 本地乐观同步。
+   *  useCallback：依赖全为 setter/ref（调用方 ClipboardRow memo 依赖此引用稳定）。 */
+  const updateClip = useCallback(function updateClip(id: string, next: Partial<ClipItem>) {
     const updatedAt = Date.now();
     invoke("update_clip_record", {
       input: {
@@ -96,7 +99,7 @@ export function useClipWriteback({
       clipsRef.current = updated;
       return updated;
     });
-  }
+  }, [setClips, clipsRef, settingsRef]);
 
   /** 把选中条目导出为文本文件（Rust 侧写盘，返回目录与文件清单）。 */
   async function exportSelectedTextFiles(items: ClipItem[]) {
@@ -280,6 +283,73 @@ export function useClipWriteback({
   }
 
 
+  // pasteClip 的日志用到 selectedId；经 ref 读取（与 clipsRef 同惯例）使回调依赖
+  // 全部为 setter/ref/tr——引用稳定是 App 行回调与 ClipboardRow memo 的前提。
+  // 位置约束：hook 的 return 在函数体中部，const 必须先于 return（function 声明才有提升）。
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const pasteClip = useCallback(async function pasteClip(item: ClipItem, source = "unknown") {
+    const finishPastePerf = startPerfSpan("quick.paste", { source });
+    let perfStatus = "ok";
+    setIsPanelEntering(false);
+    lastSeenClipboard.current = item.content.trim();
+    markClipCopied(item, tr("main.status.pastingToApp"));
+    const releaseWaitMs = await waitForPasteTriggerRelease(source);
+    if (releaseWaitMs > 0) {
+      logAppError("info", "paste-ui: shortcut release settled", {
+        id: item.id,
+        source,
+        releaseWaitMs,
+      });
+    }
+    logAppError("info", "paste-ui: invoke start", {
+      id: item.id,
+      source,
+      kind: item.kind,
+      chars: item.content.length,
+      selectedId: selectedIdRef.current,
+    });
+    try {
+      const payload = await pasteClipboard<ClipItem>({ id: item.id, pasteMode: "rich", source });
+      const normalized = normalizeClip(payload, settingsRef.current);
+      // 粘贴后面板已被 Rust 隐藏（hide_panel_before_paste 不发 hide-quick-panel），
+      // 这里显式复位 is-entering，否则下次唤起不会淡入。
+      setIsPanelEntering(false);
+      if (normalized) {
+        setClips((current) => {
+          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+          clipsRef.current = next;
+          return next;
+        });
+      }
+      setNativeStatus(tr("main.status.pastedToApp"));
+      logAppError("info", "paste-ui: invoke success", { id: item.id, source });
+    } catch (error) {
+      perfStatus = "fallback-copy";
+      logAppError("warn", "Paste clip failed", String(error));
+      try {
+        const payload = await writeClipboard<ClipItem>({
+          id: item.id,
+          pasteMode: "rich",
+          source: `${source}:fallback-copy`,
+        });
+        const normalized = normalizeClip(payload, settingsRef.current);
+        if (normalized) {
+          setClips((current) => {
+            const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+            clipsRef.current = next;
+            return next;
+          });
+        }
+      } catch {
+        await navigator.clipboard.writeText(item.content);
+      }
+      setNativeStatus(formatNativeError(error));
+    } finally {
+      finishPastePerf({ status: perfStatus });
+    }
+  }, [setIsPanelEntering, lastSeenClipboard, markClipCopied, tr, setClips, clipsRef, settingsRef, setNativeStatus, formatNativeError]);
+
   return {
     markClipCopied,
     captureStandardTextClip,
@@ -387,71 +457,6 @@ export function useClipWriteback({
       finishCopyPerf({ status: perfStatus });
     }
   }
-
-
-  async function pasteClip(item: ClipItem, source = "unknown") {
-    const finishPastePerf = startPerfSpan("quick.paste", { source });
-    let perfStatus = "ok";
-    setIsPanelEntering(false);
-    lastSeenClipboard.current = item.content.trim();
-    markClipCopied(item, tr("main.status.pastingToApp"));
-    const releaseWaitMs = await waitForPasteTriggerRelease(source);
-    if (releaseWaitMs > 0) {
-      logAppError("info", "paste-ui: shortcut release settled", {
-        id: item.id,
-        source,
-        releaseWaitMs,
-      });
-    }
-    logAppError("info", "paste-ui: invoke start", {
-      id: item.id,
-      source,
-      kind: item.kind,
-      chars: item.content.length,
-      selectedId,
-    });
-    try {
-      const payload = await pasteClipboard<ClipItem>({ id: item.id, pasteMode: "rich", source });
-      const normalized = normalizeClip(payload, settingsRef.current);
-      // 粘贴后面板已被 Rust 隐藏（hide_panel_before_paste 不发 hide-quick-panel），
-      // 这里显式复位 is-entering，否则下次唤起不会淡入。
-      setIsPanelEntering(false);
-      if (normalized) {
-        setClips((current) => {
-          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-          clipsRef.current = next;
-          return next;
-        });
-      }
-      setNativeStatus(tr("main.status.pastedToApp"));
-      logAppError("info", "paste-ui: invoke success", { id: item.id, source });
-    } catch (error) {
-      perfStatus = "fallback-copy";
-      logAppError("warn", "Paste clip failed", String(error));
-      try {
-        const payload = await writeClipboard<ClipItem>({
-          id: item.id,
-          pasteMode: "rich",
-          source: `${source}:fallback-copy`,
-        });
-        const normalized = normalizeClip(payload, settingsRef.current);
-        if (normalized) {
-          setClips((current) => {
-            const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-            clipsRef.current = next;
-            return next;
-          });
-        }
-      } catch {
-        await navigator.clipboard.writeText(item.content);
-      }
-      setNativeStatus(formatNativeError(error));
-    } finally {
-      finishPastePerf({ status: perfStatus });
-    }
-  }
-
-
 
 }
 

@@ -15,8 +15,8 @@ import {
   type OnboardingWizardProps,
 } from "./onboarding-wizard-shared";
 
-const primaryButtonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-foreground px-3.5 text-[12px] font-medium text-background transition-colors hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-40";
-const secondaryButtonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border/60 px-3.5 text-[12px] transition-colors hover:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
+const primaryButtonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-foreground px-3.5 text-[12px] font-medium text-background transition-[color,background-color,border-color,transform] hover:bg-foreground/90 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40";
+const secondaryButtonClass = "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border/60 px-3.5 text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
 const settingRowClass = "flex flex-wrap items-center justify-between gap-3 text-[12px]";
 
 /** 五步设置引导：权限、采集范围、快捷键和功能速览都在引导窗口内闭环。
@@ -225,7 +225,7 @@ export function OnboardingWizard({
           <button
             aria-label={`${index + 1}. ${tr(item.titleKey)}`}
             aria-current={index === stepIndex ? "step" : undefined}
-            className={`flex h-7 w-7 items-center justify-center rounded-full border text-[11px] transition-colors ${index === stepIndex ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"}`}
+            className={`relative flex h-7 w-7 items-center justify-center rounded-full border text-[11px] transition-[color,background-color,border-color,transform] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 before:absolute before:-inset-0.5 before:content-[''] ${index === stepIndex ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"}`}
             data-dev-probe={`onboarding-step:${item.key}`}
             key={item.key}
             onClick={() => setStepIndex(index)}

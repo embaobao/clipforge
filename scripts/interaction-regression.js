@@ -316,20 +316,32 @@ const wheelScrolled = await page.evaluate(() => {
 // 滚动抑制断言：光标停在列表上边滚边等 800ms（> 意图延时 500ms），滚动中不应弹出浮卡
 for (let i = 0; i < 8; i++) { await page.mouse.wheel(0, 120); await page.waitForTimeout(100); }
 const scrollSuppressed = await page.evaluate(() => !document.getElementById("panel").contentDocument.querySelector(".quick-panel-tooltip-card"));
-await page.evaluate(() => {
-  const doc = document.getElementById("panel").contentDocument;
-  const scroller = doc.querySelector(".thin-scroll");
-  if (scroller) scroller.scrollTop = scroller.scrollHeight;
-});
-await page.waitForTimeout(400);
+// 少量滚轮验证滚轮链路可用；直达底部用 scrollTop（滚轮到底后会链式滚动外层预览页，干扰后续坐标）。
+// 直达用轮询而非固定等待：高负载下初始加载分批到位，一次性直达会停在中间高度（曾表现为 deepRowVisible 假阴）。
+// 「到底」与「底部行已渲染」必须在同一轮询内满足：直达后立即读 article 会撞上 VirtualList
+// onScroll→setState 异步重渲的旧窗口（滚动反馈窗口 + React 批处理），曾表现为轮询绿但 deepRowVisible 假阴。
+await page.waitForFunction(
+  () => {
+    const doc = document.getElementById("panel").contentDocument;
+    const scroller = doc?.querySelector(".thin-scroll");
+    if (!scroller) return false;
+    scroller.scrollTop = scroller.scrollHeight;
+    const texts = [...doc.querySelectorAll("article")].map((a) => a.textContent ?? "");
+    return (
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2 &&
+      texts.some((t) => t.includes("回归批量条目 0"))
+    );
+  },
+  undefined,
+  { timeout: 3000, polling: 120 },
+);
 const scrollState = await page.evaluate(() => {
   const doc = document.getElementById("panel").contentDocument;
   const scroller = doc.querySelector(".thin-scroll");
-  const texts = [...doc.querySelectorAll("article")].map((a) => a.textContent ?? "");
   return {
     scrollable: scroller ? scroller.scrollHeight > scroller.clientHeight : false,
     scrollTop: Math.round(scroller?.scrollTop ?? -1),
-    deepRowVisible: texts.some((t) => t.includes("回归批量条目 0")),
+    deepRowVisible: [...doc.querySelectorAll("article")].some((a) => (a.textContent ?? "").includes("回归批量条目 0")),
   };
 });
 report("T15 多行列表可滚动且虚拟窗口更新", scrollState.scrollable && wheelScrolled > 100 && scrollState.scrollTop > 400 && scrollState.deepRowVisible && scrollSuppressed, JSON.stringify({ wheelScrolled, scrollSuppressed, ...scrollState }));
@@ -444,10 +456,39 @@ const cardPt = await page.evaluate(() => {
 });
 let t18 = { opened: Boolean(cardPt), bridged: false, cardScrolled: 0, listMoved: false, closedAfterLeave: false };
 if (cardPt) {
+  // 记录列表滚动开始事件：若卡死后滚轮链到列表，此处会出现（定位中途关卡诱因）。
+  await page.evaluate(() => {
+    const doc = document.getElementById("panel").contentDocument;
+    const win = doc.defaultView;
+    win.__t18evs = [];
+    doc.addEventListener("clipforge:list-scroll-start", () => win.__t18evs.push(`list-scroll@${Date.now() % 100000}`));
+  });
   await page.mouse.move(cardPt.x, cardPt.y); // 滑进卡片（跨过 6px 间隙）
   await page.waitForTimeout(350);
   t18.bridged = await page.evaluate(() => Boolean(document.getElementById("panel").contentDocument.querySelector(".quick-panel-tooltip-card")));
   for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, 160); await page.waitForTimeout(60); }
+  // 滚轮喂入与卡内 scrollTop 落地是两条异步链：高负载/rAF 节流下固定 4 次滚轮只累积
+  // 几 px，会伪判「卡内不能滚」。继续喂滚轮直至实际滚过 100px（上限 12 轮），
+  // 断言本体不变：卡内能滚到长内容且列表不动（T15/T19/T22 同型断言层修正）。
+  // 卡中途消失立即停喂：后续滚轮会落到列表（listMoved 被污染，非契约违反本体）。
+  // 记录死亡时刻与 list-scroll-start 事件，用于定位中途关卡诱因。
+  for (let round = 0; round < 12; round++) {
+    const s = await page.evaluate(() => {
+      const doc = document.getElementById("panel").contentDocument;
+      const card = doc.querySelector(".quick-panel-tooltip-card");
+      const win = doc.defaultView;
+      const ev = (win.__t18evs ?? []).splice(0).join(",");
+      return { top: Math.round(card?.scrollTop ?? -1), ev };
+    });
+    if (s.top < 0) {
+      t18.diedAtRound = round;
+      t18.diedEvents = s.ev;
+      break;
+    }
+    if (s.top > 100) break;
+    await page.mouse.wheel(0, 160);
+    await page.waitForTimeout(90);
+  }
   await page.waitForTimeout(250);
   const scrollProbe = await page.evaluate(() => {
     const doc = document.getElementById("panel").contentDocument;
@@ -483,7 +524,21 @@ await page.evaluate(() => {
   const scroller = doc.querySelector(".thin-scroll");
   if (scroller) scroller.scrollTop = scroller.scrollHeight;
 });
-await page.waitForTimeout(900);
+// loadMore 是异步链（onEndReached → invoke → 追加），高负载下固定 900ms 会撞在
+// 追加落地前（before 伪判 200）。改为轮询等 spacer 长到 250 行（公共几何行为）。
+await page.waitForFunction(
+  () => {
+    const doc = document.getElementById("panel").contentDocument;
+    const scroller = doc?.querySelector(".thin-scroll");
+    if (!scroller) return false;
+    const row = doc.querySelector("article");
+    const rowH = row?.getBoundingClientRect().height || 40;
+    return scroller.scrollHeight / rowH >= 250;
+  },
+  undefined,
+  { timeout: 3000, polling: 120 },
+).catch(() => {}); // 超时不中断:让 report 读到失败实况
+await page.waitForTimeout(200);
 const t19Before = await page.evaluate(() => {
   const doc = document.getElementById("panel").contentDocument;
   const scroller = doc.querySelector(".thin-scroll");
@@ -506,22 +561,123 @@ const t19After = await page.evaluate(() => {
   const rowH = row?.getBoundingClientRect().height || 40;
   return { loadedRows: Math.round((scroller?.scrollHeight ?? 0) / rowH) };
 });
-// 选中项自动居中会把新条目滚到视口中央；直接读列表数据层断言（滚动窗口只渲染部分行）
+// 选中项自动居中会把新条目滚到视口中央，虚拟窗口只渲染视口附近行——直接读 DOM 会伪判「没置顶」。
+// 公共行为层断言：滚回列表顶部后，首行必须就是新复制条目（数据层置顶的用户可见表达）。
+// 等待用轮询而非固定 600ms：窗口重渲走 onScroll→rAF 批处理，无头环境 rAF 节流下固定等待
+// 会撞上旧窗口（T15 同型竞态）；「已到顶」与「首行=新条目」必须在同一轮询内满足。
+await page.waitForFunction(
+  () => {
+    const doc = document.getElementById("panel").contentDocument;
+    const scroller = doc?.querySelector(".thin-scroll");
+    if (!scroller) return false;
+    if (scroller.scrollTop > 2) scroller.scrollTop = 0;
+    const first = doc.querySelector("article");
+    return scroller.scrollTop <= 2 && (first?.textContent ?? "").includes("复制新增条目 XYZ");
+  },
+  undefined,
+  { timeout: 3000, polling: 120 },
+).catch(() => {}); // 超时不中断:让下方 t19Top/report 读到失败实况
 const t19Top = await page.evaluate(() => {
   const doc = document.getElementById("panel").contentDocument;
-  return [...doc.querySelectorAll("article")].map((a) => a.textContent ?? "").join("|");
+  const first = doc.querySelector("article");
+  return first?.textContent ?? "";
 });
 const t19Ms = Date.now() - t19t0;
 const t19Pass =
-  t19Before.loadedRows === 250 &&
-  t19After.loadedRows === 251 &&
+  t19Before.loadedRows >= 250 &&
+  t19After.loadedRows === t19Before.loadedRows + 1 &&
   t19Top.includes("复制新增条目 XYZ") &&
-  t19Top.includes("分页条目 249") === false; // 249 是次新，新条目已置顶
+  t19Top.includes("分页条目 249") === false; // 置顶成功则首行不会是旧种子
 report(
   "T19 分页 >200 后复制不截断列表（250→251，新条目置顶）",
   t19Pass,
   JSON.stringify({ before: t19Before.loadedRows, after: t19After.loadedRows, topHasNew: t19Top.includes("复制新增条目 XYZ"), applyMs: t19Ms }),
 );
+
+// ---------- T22 行入场动画契约：滚动回填不重放 row-in，数据变化保留 stagger ----------
+// 回归「快速滚动全程逐行闪现」：row-in 是挂载动画，虚拟窗口回填的新行曾无条件重放
+// 0.18s stagger。契约：items 引用不变（纯滚动）时回填行不带 row-in / animationDelay；
+// 数据集变化（首屏/粘贴/筛选）时挂载行保留 stagger（M1/M2 验收断言）。
+await page.evaluate(() => {
+  const win = document.getElementById("panel").contentWindow;
+  win.__clipforgeMock.resetDb();
+  for (let i = 0; i < 60; i++) win.__clipforgeMock.seedText(`滚动回填条目 ${String(i).padStart(2, "0")}`);
+});
+await page.reload();
+await page.waitForLoadState("load");
+await page.waitForTimeout(2200);
+await setPanel(420, 400);
+await page.waitForTimeout(400);
+// 首屏行（数据变化帧挂载）：必须带 row-in
+const firstScreenHasAnim = await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const row = doc.querySelector("article");
+  return row ? row.className.includes("row-in") : false;
+});
+// 滚到底部触发窗口回填，等滚动帧提交后断言末尾行静默。
+// 滚动前先轮询等初始加载落定（spacer 高度=60 行）：高负载下初始加载分批到位，
+// 尾批 items 变化若落在滚动帧之后，尾行会在「数据变化帧」合法挂载 row-in（M2 行为），
+// 与「滚动回填静默」（M1）不可区分，曾伪判 hasRowIn:true。
+await page.waitForFunction(
+  () => {
+    const doc = document.getElementById("panel").contentDocument;
+    const scroller = doc?.querySelector(".thin-scroll");
+    if (!scroller) return false;
+    const row = doc.querySelector("article");
+    const rowH = row?.getBoundingClientRect().height || 40;
+    return scroller.scrollHeight / rowH >= 60 - 0.5;
+  },
+  undefined,
+  { timeout: 3000, polling: 120 },
+).catch(() => {}); // 超时不中断:继续滚动断言,由主轮询给出失败实况
+await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const scroller = doc.querySelector(".thin-scroll");
+  if (scroller) scroller.scrollTop = scroller.scrollHeight;
+});
+// 窗口重渲走 onScroll→rAF 批处理，rAF 饥饿时 scrollTop 已设而窗口未动，
+// 固定等待会把「顶窗口尾行」（数据帧挂载、合法带 row-in）误读为回填行。
+// 轮询至「落底 + 窗口已移动 + 尾行静默」同帧满足；若 epoch 回归，尾行 row-in
+// 永久存在 → 超时诚实报红，不会假绿（T15/T19 同型断言层修正）。
+await page.waitForFunction(
+  () => {
+    const doc = document.getElementById("panel").contentDocument;
+    const scroller = doc?.querySelector(".thin-scroll");
+    const rows = [...(doc?.querySelectorAll("article") ?? [])];
+    if (!scroller || rows.length === 0) return false;
+    const tail = rows[rows.length - 1];
+    const atBottom = scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 4;
+    const windowMoved = !(rows[0]?.textContent ?? "").includes("滚动回填条目 59");
+    return (
+      atBottom &&
+      windowMoved &&
+      !tail.className.includes("row-in") &&
+      !tail.style.animationDelay
+    );
+  },
+  undefined,
+  { timeout: 4000, polling: 150 },
+).catch(() => {}); // 超时不中断:让下方 report 读到失败实况并继续跑后续用例
+const tailSilent = await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const rows = [...doc.querySelectorAll("article")];
+  const tail = rows[rows.length - 1];
+  if (!tail) return { ok: false, reason: "no-rows" };
+  const hasRowIn = tail.className.includes("row-in");
+  const hasDelay = Boolean(tail.style.animationDelay);
+  return { ok: !hasRowIn && !hasDelay, hasRowIn, hasDelay };
+});
+report(
+  "T22 滚动回填行静默（无 row-in 重放）+ 首屏行保留 stagger",
+  firstScreenHasAnim && tailSilent.ok,
+  JSON.stringify({ firstScreenHasAnim, ...tailSilent }),
+);
+await page.evaluate(() => {
+  const doc = document.getElementById("panel").contentDocument;
+  const scroller = doc.querySelector(".thin-scroll");
+  if (scroller) scroller.scrollTop = 0;
+});
+await page.waitForTimeout(300);
 
 // ---------- T20 显隐动画契约：panel-in 不含 opacity、panel-out 存在、材质不透明度足够 ----------
 // 回归「触发白屏/闪烁」：后台 WKWebView 冻结动画时间轴时，from 帧含 opacity:0 会让面板

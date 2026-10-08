@@ -26,7 +26,7 @@ export function ClipboardEmptyState({ variant, emptySummary, onCreateSnippet, tr
   const body = emptySummary ?? tr(isTrash ? "main.empty.trashBody" : "main.empty.noClipboardBody");
 
   return (
-    <div className="flex flex-col items-center justify-center gap-2.5 py-12 text-center">
+    <div className="flex flex-col items-center justify-center gap-2.5 py-12 text-center animate-in fade-in-0 duration-fast ease-enter">
       <div className="grid h-10 w-10 place-items-center rounded-full bg-black/[0.04] text-muted-foreground dark:bg-white/[0.07]">
         <SearchX className="h-4 w-4" strokeWidth={1.8} />
       </div>

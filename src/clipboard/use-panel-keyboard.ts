@@ -396,6 +396,7 @@ export function usePanelKeyboard({
     toast,
     switchClipboardView,
     togglePanelPinned,
+    quickPreviewOpen,
     workspaceRoute.clipId,
     workspaceRoute.name,
   ]);

@@ -73,8 +73,10 @@ export function TrashRow({
   return (
     <article
       className={cn(
-        "group grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_80px] items-center gap-3 rounded-lg px-2 transition-colors duration-100 active:scale-[0.99]",
+        "group grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_80px] items-center gap-3 rounded-lg px-2 transition-[color,background-color,border-color,transform] duration-instant active:scale-[0.99]",
         heightClass,
+        // 轻悬停底色仅作用于未选中行：与历史行一致，选中语义底色优先于 hover。
+        !isSelected && !selectedIds.has(item.id) && "hover:bg-accent/50",
         isSelected && "bg-black/[0.045] dark:bg-white/[0.07]",
         selectedIds.has(item.id) && "bg-black/[0.03] dark:bg-white/[0.05]",
       )}

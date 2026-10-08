@@ -25,7 +25,7 @@ export interface ClipboardRowActionsProps {
 }
 
 const actionButton =
-  "grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-all duration-100 hover:bg-black/[0.06] hover:text-foreground active:scale-90 dark:hover:bg-white/[0.1]";
+  "grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-[transform,background-color,border-color] duration-instant hover:bg-black/[0.06] hover:text-foreground active:scale-90 dark:hover:bg-white/[0.1]";
 
 /** 历史行右侧动作区。 */
 export function ClipboardRowActions({
@@ -52,10 +52,10 @@ export function ClipboardRowActions({
         </span>
       ) : (
         <>
-          <span className="mono text-[11px] text-muted-foreground/50 group-hover:hidden">
+          <span className="mono text-[11px] text-muted-foreground/50 transition-opacity duration-instant group-hover:opacity-0">
             {isSelected ? "⏎" : showIndex ? indexLabel : null}
           </span>
-          <span className="hidden items-center gap-0.5 group-hover:flex">
+          <span className="absolute inset-y-0 right-0 flex items-center gap-0.5 invisible opacity-0 transition-opacity duration-instant group-hover:visible group-hover:opacity-100">
             <button
               aria-label={item.favorite ? tr("main.list.unfavorite") : tr("main.list.favorite")}
               className={cn(actionButton, item.favorite && "fill-current text-foreground")}

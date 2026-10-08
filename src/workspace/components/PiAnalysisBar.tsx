@@ -45,7 +45,7 @@ export function PiAnalysisBar({ clip, agentProviders, onSearchTag }: PiAnalysisB
       <button
         aria-busy={analyzing}
         aria-label="AI 分析"
-        className="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]"
+        className="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] text-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]"
         data-pi-action="detail"
         disabled={disabled}
         onClick={() => void runAnalysis()}
@@ -70,7 +70,7 @@ export function PiAnalysisBar({ clip, agentProviders, onSearchTag }: PiAnalysisB
             <div className="mt-2 flex flex-wrap gap-1">
               {analysis.tags.map((tag) => (
                 <button
-                  className="rounded bg-black/[0.05] px-1.5 py-0.5 text-[11px] hover:bg-black/[0.09] dark:bg-white/[0.09] dark:hover:bg-white/[0.15]"
+                  className="rounded bg-black/[0.05] px-1.5 py-0.5 text-[11px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.09] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-white/[0.09] dark:hover:bg-white/[0.15]"
                   key={tag}
                   onClick={() => onSearchTag(tag)}
                   type="button"

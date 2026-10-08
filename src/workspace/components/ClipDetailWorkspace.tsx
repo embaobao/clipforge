@@ -243,7 +243,7 @@ export function ClipDetailWorkspace({
   const menuActions = quickActions.filter((action) => action.id !== "open-target" && action.id !== "copy");
   const hasImageActions = clip.payloadKind === "image";
   // 头部操作钮统一 28px ghost 圆角方形，与主面板工具栏同一命中语言（设计规范 §3）。
-  const toolButtonClass = "inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.05] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
+  const toolButtonClass = "relative inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08] before:absolute before:-inset-0.5 before:content-['']";
   const accordionTriggerClass = "gap-2 rounded-md px-1 py-2.5 text-[12px] font-normal hover:no-underline [&>em]:text-[11px] [&>em]:font-normal [&>em]:not-italic [&>em]:text-muted-foreground [&>svg:first-child]:shrink-0 [&>span]:truncate";
 
   return (

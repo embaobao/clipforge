@@ -147,7 +147,7 @@ function SearchAutocomplete({
     <FloatingPortal>
       <div
         ref={refs.setFloating}
-        className="z-[60] w-56 rounded-xl border border-black/5 bg-popover p-1 shadow-lg dark:border-white/[0.07]"
+        className="z-[60]"
         role="listbox"
         aria-label={tr("main.search.suggestions")}
         style={{
@@ -158,7 +158,10 @@ function SearchAutocomplete({
           transform: `translate3d(${x ?? 0}px, ${y ?? 0}px, 0)`,
         }}
       >
-        <div className="max-h-60 overflow-auto py-0.5" ref={listRef}>
+        {/* 入场动画挂内层包装节点：外层内联 transform 承载 floating-ui 定位，动画覆盖会闪到左上角。
+            退出不做动画，高频输入直接卸载（proposal 已记录偏差）。 */}
+        <div className="animate-in fade-in-0 slide-in-from-top-1 duration-fast ease-enter w-56 rounded-xl border border-black/5 bg-popover p-1 shadow-lg dark:border-white/[0.07]">
+          <div className="max-h-60 overflow-auto py-0.5" ref={listRef}>
           {suggestions.map((suggestion, index) => {
             const token = getSearchSuggestionToken(suggestion);
             const isActive =
@@ -167,7 +170,7 @@ function SearchAutocomplete({
               (suggestion.kind === "saved" && parsedSearchCommand.tag === suggestion.tag);
             return (
               <button
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] outline-none transition-colors${index === activeIndex ? " bg-black/[0.045] dark:bg-white/[0.07]" : ""}${isActive ? " text-foreground" : " text-muted-foreground"}`}
+                className={`flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] outline-none transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring${index === activeIndex ? " bg-black/[0.045] dark:bg-white/[0.07]" : ""}${isActive ? " text-foreground" : " text-muted-foreground"}`}
                 data-idx={index}
                 key={suggestion.id}
                 onMouseDown={(event) => event.preventDefault()}
@@ -185,6 +188,7 @@ function SearchAutocomplete({
               </button>
             );
           })}
+          </div>
         </div>
       </div>
     </FloatingPortal>

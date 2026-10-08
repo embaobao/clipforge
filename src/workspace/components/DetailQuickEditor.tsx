@@ -82,7 +82,7 @@ export function DetailQuickEditor({
       onApplySuggestion(next.content, next.tags);
     }
   };
-  const toolButtonClass = "inline-flex h-7 items-center gap-1 rounded-md border border-border/60 px-2 text-[12px] transition-colors hover:bg-black/[0.05] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
+  const toolButtonClass = "inline-flex h-7 items-center gap-1 rounded-md border border-border/60 px-2 text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -110,15 +110,15 @@ export function DetailQuickEditor({
             <FileJson size={11} />
             {tr("main.detail.variables")}
           </button>
-          <button className={toolButtonClass} disabled={!hasChanges || isSaving || !content.trim()} onClick={onSave} type="button">
+          <button className={toolButtonClass} data-editor-action="save" disabled={!hasChanges || isSaving || !content.trim()} onClick={onSave} type="button">
             <Save size={11} />
             {isSaving ? tr("main.detail.saving") : tr("agent.action.save")}
           </button>
-          <button className={toolButtonClass} disabled={!hasChanges || isSaving || !content.trim()} onClick={onSaveAndCopy} type="button">
+          <button className={toolButtonClass} data-editor-action="save-and-copy" disabled={!hasChanges || isSaving || !content.trim()} onClick={onSaveAndCopy} type="button">
             <Copy size={11} />
             {tr("main.detail.saveAndCopy")}
           </button>
-          <button className={toolButtonClass} disabled={!hasChanges || isSaving || !content.trim()} onClick={onSaveAndPaste} type="button">
+          <button className={toolButtonClass} data-editor-action="save-and-paste" disabled={!hasChanges || isSaving || !content.trim()} onClick={onSaveAndPaste} type="button">
             <Clipboard size={11} />
             {tr("main.detail.saveAndPaste")}
           </button>
@@ -129,7 +129,7 @@ export function DetailQuickEditor({
           {tags.map((tag) => (
             <button
               aria-label={tr("main.detail.removeTag", { tag })}
-              className="inline-flex items-center gap-1 rounded-full bg-black/[0.05] py-0.5 pl-2 pr-1.5 text-[11px] hover:bg-black/[0.09] dark:bg-white/[0.09] dark:hover:bg-white/[0.15]"
+              className="inline-flex items-center gap-1 rounded-full bg-black/[0.05] py-0.5 pl-2 pr-1.5 text-[11px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.09] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-white/[0.09] dark:hover:bg-white/[0.15]"
               key={tag}
               onClick={() => onTagsChange(tags.filter((item) => item !== tag))}
               type="button"
@@ -155,7 +155,7 @@ export function DetailQuickEditor({
         {suggestedTags.length ? (
           <div className="flex flex-wrap gap-1">
             {suggestedTags.map((tag) => (
-              <button className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-black/[0.04] dark:hover:bg-white/[0.07]" key={tag} onClick={() => addTag(tag)} type="button">
+              <button className="rounded-full border border-dashed border-border px-2 py-0.5 text-[11px] text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.04] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.07]" key={tag} onClick={() => addTag(tag)} type="button">
                 #{tag}
               </button>
             ))}

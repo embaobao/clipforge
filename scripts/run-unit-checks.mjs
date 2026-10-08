@@ -32,6 +32,7 @@ try {
       "src/editor/suggestions.ts",
       "src/editor/actions.ts",
       "src/editor/sensitive.ts",
+      "src/clipboard/row-animation.ts",
     ],
     { cwd: root, stdio: "inherit" },
   );
@@ -196,7 +197,25 @@ try {
   );
   assert.deepEqual(editorSensitive.detectSensitiveEditorFields("normal note"), []);
 
-  console.log("[unit] search-query, smart-format, plugin-action, editor-suggestion, editor-action, and sensitive checks passed");
+  // ---------- 行入场动画 epoch 判定（滚动回填静默化，Phase 1 / M1-M2 验收） ----------
+  const rowAnim = await import(pathToFileURL(join(outDir, "clipboard/row-animation.js")).href);
+  {
+    const items = [1, 2, 3];
+    const first = rowAnim.advanceRowAnimEpoch(rowAnim.initialRowAnimEpoch, items);
+    assert.equal(first.animate, true, "首帧挂载的行播放入场（首屏 stagger 保留）");
+    const scrolled = rowAnim.advanceRowAnimEpoch(first.state, items);
+    assert.equal(scrolled.animate, false, "items 引用不变（纯滚动回填）静默");
+    assert.equal(scrolled.state.epoch, first.state.epoch, "epoch 不因滚动递增");
+    const pasted = rowAnim.advanceRowAnimEpoch(scrolled.state, [0, ...items]);
+    assert.equal(pasted.animate, true, "数据集变化恢复入场（粘贴/筛选保留 stagger）");
+    assert.equal(pasted.state.epoch, scrolled.state.epoch + 1, "epoch 随数据变化递增");
+    const cleared = rowAnim.advanceRowAnimEpoch(pasted.state, []);
+    assert.equal(cleared.animate, true, "清空列表也是数据集变化");
+    const refilled = rowAnim.advanceRowAnimEpoch(cleared.state, [9]);
+    assert.equal(refilled.animate, true, "空→非空恢复入场");
+  }
+
+  console.log("[unit] search-query, smart-format, plugin-action, editor-suggestion, editor-action, sensitive, row-animation checks passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

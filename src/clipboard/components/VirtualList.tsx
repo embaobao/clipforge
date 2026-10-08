@@ -1,13 +1,19 @@
 /** 快速面板虚拟列表：固定行高窗口化渲染 + 选中项自动居中 + 分组滚动命令 + 滚动性能埋点。 */
-import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { recordNextFramePerf } from "../../performance-smoke";
+import { advanceRowAnimEpoch, initialRowAnimEpoch } from "../row-animation";
 
 /** 列表默认行高（density 之外的兜底值）。 */
 export const ROW_HEIGHT = 40;
 /** 虚拟渲染上下多渲染的行数，滚动时避免白边。
  *  8 行 ≈ 320px 缓冲：图片行挂载即解码，overscan 太小会在快速滚动时露白（「滚动白屏」）。 */
 export const OVERSCAN = 8;
+
+/** 行入场动画意图：本 render 是否数据集变化帧（true=新挂载的行播 row-in stagger）。
+ *  滚动回填帧为 false——挂载动画只表达「新数据到来」，不表达「虚拟窗口回填」。
+ *  行侧用 useState 在挂载帧定格，已挂载行不受后续帧变化影响。 */
+export const RowAnimationContext = createContext(false);
 
 /**
  * 滚动中判定（供行 tooltip 的 hover 意图抑制用）：滚动反馈窗口（约 420ms）内返回 true。
@@ -164,6 +170,14 @@ export function VirtualList<T extends { id: string }>({
   const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
   const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
   const visible = items.slice(start, start + visibleCount);
+  // 滚动回填静默：row-in 挂载动画只在数据集变化帧播放（items 引用比较，见 row-animation.ts）。
+  // render 期只读 ref 比较（double render 结果一致），commit 后 layout effect 同步写回，
+  // 消除 StrictMode 重放与滚动 render 交错时的竞态窗口。
+  const rowAnimRef = useRef(initialRowAnimEpoch);
+  const animateRows = advanceRowAnimEpoch(rowAnimRef.current, items).animate;
+  useLayoutEffect(() => {
+    rowAnimRef.current = advanceRowAnimEpoch(rowAnimRef.current, items).state;
+  });
   // 稳定引用：滚动反馈窗口内返回 true，行 tooltip 据此在滚动中抑制弹卡。
   const isListScrolling = useCallback(() => isScrollFeedbackRef.current, []);
   // 行渲染结果按窗口起点 memo：滚动每帧 setScrollTop 触发重渲染，但 start 不变时
@@ -216,21 +230,23 @@ export function VirtualList<T extends { id: string }>({
       }}
       ref={ref}
     >
-      <div className="relative" style={{ height: items.length * itemHeight }}>
-        <ListScrollingContext.Provider value={isListScrolling}>
-          <div
-            className="absolute left-0 right-0 top-0 will-change-transform"
-            style={{ transform: `translateY(${start * itemHeight}px)` }}
-          >
-            {renderedRows}
-            {isLoadingMore ? (
-              <div className="flex h-10 items-center justify-center text-[11px] text-muted-foreground">
-                加载更多...
+        <div className="relative" style={{ height: items.length * itemHeight }}>
+          <ListScrollingContext.Provider value={isListScrolling}>
+            <RowAnimationContext.Provider value={animateRows}>
+              <div
+                className="absolute left-0 right-0 top-0 will-change-transform"
+                style={{ transform: `translateY(${start * itemHeight}px)` }}
+              >
+                {renderedRows}
+                {isLoadingMore ? (
+                  <div className="flex h-10 items-center justify-center text-[11px] text-muted-foreground">
+                    加载更多...
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-          </div>
-        </ListScrollingContext.Provider>
-      </div>
+            </RowAnimationContext.Provider>
+          </ListScrollingContext.Provider>
+        </div>
     </div>
   );
 }

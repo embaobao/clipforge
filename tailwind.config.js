@@ -109,51 +109,22 @@ module.exports = {
   				to: {
   					height: '0'
   				}
-  			},
-  			'caret-blink': {
-  				'0%,70%,100%': {
-  					opacity: '1'
-  				},
-  				'20%,50%': {
-  					opacity: '0'
-  				}
-  			},
-  			'panel-in': {
-  				from: {
-  					opacity: '0',
-  					transform: 'translateY(12px) scale(0.965)'
-  				}
-  			},
-  			'row-in': {
-  				from: {
-  					opacity: '0'
-  				}
-  			},
-  			'accordion-down': {
-  				from: {
-  					height: '0'
-  				},
-  				to: {
-  					height: 'var(--radix-accordion-content-height)'
-  				}
-  			},
-  			'accordion-up': {
-  				from: {
-  					height: 'var(--radix-accordion-content-height)'
-  				},
-  				to: {
-  					height: '0'
-  				}
   			}
   		},
-  		animation: {
-  			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out',
-  			'caret-blink': 'caret-blink 1.25s ease-out infinite',
-  			'panel-in': 'panel-in 0.45s cubic-bezier(0.32, 0.72, 0, 1) both',
-  			'row-in': 'row-in 0.18s ease-out both',
-  			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out'
+		animation: {
+			'accordion-down': 'accordion-down 0.2s ease-out',
+			'accordion-up': 'accordion-up 0.2s ease-out'
+		},
+  		transitionDuration: {
+  			instant: 'var(--motion-instant)',
+  			fast: 'var(--motion-fast)',
+  			surface: 'var(--motion-surface)',
+  			'panel-in': 'var(--motion-panel-in)',
+  			'panel-out': 'var(--motion-panel-out)'
+  		},
+  		transitionTimingFunction: {
+  			enter: 'var(--ease-enter)',
+  			exit: 'var(--ease-exit)'
   		}
   	}
   },

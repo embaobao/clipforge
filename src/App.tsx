@@ -4,6 +4,7 @@ import { TopToolbar } from "./clipboard/components/TopToolbar";
 import { checkAnimFreeze } from "./clipboard/anim-freeze-guard";
 import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
 import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
+import { SurfaceFade } from "./components/surface-fade";
 import {
   getShortcutModLabel,
 } from "./clipboard/clipboard-domain";
@@ -395,8 +396,8 @@ function ClipForgeApp() {
       // 唤起时复检动画冻结：用户激活 app 后时间轴可能已解冻，摘守卫恢复动效；仍冻结则继续压制。
       checkAnimFreeze();
       // 动画退出保险：后台 app 的 WKWebView 可能冻结 CSS 动画时间轴（面板停在 from{opacity:0}）。
-      // 500ms 后无条件摘掉 panel-in，让面板回到天然可见态——时间轴正常时动画已播完（450ms），
-      // 冻结时也能保证面板可见；隐藏路径已会复位 entering，不影响下次唤起重播。
+      // 500ms 后无条件摘掉 panel-in，让面板回到天然可见态——时间轴正常时动画已播完
+      // （时长见 --motion-panel-in），冻结时也能保证面板可见；隐藏路径已会复位 entering，不影响下次唤起重播。
       window.setTimeout(() => setIsPanelEntering(false), 500);
       // 非激活面板不能依赖第一下普通字符来“唤醒”搜索；打开后立即渲染并聚焦输入框。
       [0, 80, 180].forEach((delay) => {
@@ -454,10 +455,18 @@ function ClipForgeApp() {
   );
 
   const effectiveQuery = parsedSearchCommand.handled ? parsedSearchCommand.queryText : debouncedQuery;
-  const effectiveTypeFilters =
-    activeTypeFilter !== "all" ? [activeTypeFilter] : parsedSearchCommand.ast.types;
+  // 必须稳定引用：filteredClips 的 memo 依赖它们，而 row-animation epoch 按 items 引用
+  // 判定「数据变化帧」。裸新建数组会让每次 App 重渲都换 items 引用，虚拟窗口回填行
+  // 被误判为数据帧而重放 row-in（T22 暴露的闪烁回归）。
+  const effectiveTypeFilters = useMemo(
+    () => (activeTypeFilter !== "all" ? [activeTypeFilter] : parsedSearchCommand.ast.types),
+    [activeTypeFilter, parsedSearchCommand.ast],
+  );
   const effectiveFilterFavorite = filterFavorite || parsedSearchCommand.filterFavorite;
-  const effectiveActiveTags = normalizeTagList([...(activeTag ? [activeTag] : []), ...parsedSearchCommand.ast.tags]);
+  const effectiveActiveTags = useMemo(
+    () => normalizeTagList([...(activeTag ? [activeTag] : []), ...parsedSearchCommand.ast.tags]),
+    [activeTag, parsedSearchCommand.ast],
+  );
   const searchRequest = useMemo(
     () =>
       buildSearchClipsRequest({
@@ -764,6 +773,27 @@ function ClipForgeApp() {
       logAppError("warn", "Toggle panel pin failed", String(error)),
     );
   }, []);
+
+  // 快速面板行级回调：引用稳定是 ClipboardRow memo（行重渲染跳过）的前提，
+  // 依赖只允许 setter/useClipWriteback 的 useCallback 产物与模块级函数。
+  const handleRowSelect = useCallback((item: ClipItem) => setSelectedId(item.id), []);
+  const handleRowStartMultiSelect = useCallback((id: string) => {
+    setMultiSelectMode(true);
+    setMultiPreviewOpen(false);
+    setSelectedIds(new Set([id]));
+  }, []);
+  const handleRowToggleSelected = useCallback((id: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const handleRowFavorite = useCallback(
+    (item: ClipItem) => updateClip(item.id, { favorite: !item.favorite }),
+    [updateClip],
+  );
 
   usePanelKeyboard({
     activeView,
@@ -1073,6 +1103,7 @@ function ClipForgeApp() {
           copy={errorBoundaryCopy}
           resetKey={`workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}
         >
+          <SurfaceFade routeKey={workspaceRoute.name}>
           <WorkspaceRouterProvider
             fallbackCopy={{
               routeTitle: tr("main.workspace.routeErrorTitle"),
@@ -1137,7 +1168,7 @@ function ClipForgeApp() {
                   density={settings.panelDensity}
                   onCreateSnippet={() => toast.info("新建片段功能开发中")}
                   onPaste={pasteClip}
-                  onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
+                  onFavorite={handleRowFavorite}
                   onFavoriteSelected={() => {
                     void favoriteSelectedClips(selectedInList);
                   }}
@@ -1163,22 +1194,9 @@ function ClipForgeApp() {
                   onDeleteSelected={() => {
                     void deleteClips(selectedInList.map((item) => item.id));
                   }}
-                  onSelect={(item) => {
-                    setSelectedId(item.id);
-                  }}
-                  onStartMultiSelect={(id) => {
-                    setMultiSelectMode(true);
-                    setMultiPreviewOpen(false);
-                    setSelectedIds(new Set([id]));
-                  }}
-                  onToggleSelected={(id) =>
-                    setSelectedIds((current) => {
-                      const next = new Set(current);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    })
-                  }
+                  onSelect={handleRowSelect}
+                  onStartMultiSelect={handleRowStartMultiSelect}
+                  onToggleSelected={handleRowToggleSelected}
                   onClearSelection={() => {
                     setSelectedIds(new Set());
                     setMultiSelectMode(false);
@@ -1288,46 +1306,51 @@ function ClipForgeApp() {
               />
             )}
           />
+          </SurfaceFade>
         </PanelContentBoundary>
       </section>
 
       {workspaceRoute.name === "list" ? (
-        multiSelectMode ? (
+        <>
+          {/* 多选底栏常驻渲染（visible 控制显隐/过渡），退出多选时与
+              PanelStatusFeedback 短暂并存（约 100ms 淡出），可接受。 */}
           <MultiSelectBottomBar
             count={selectedInList.length}
             tr={tr}
             variant={activeView === "trash" ? "trash" : "default"}
+            visible={multiSelectMode}
           />
-        ) : (
-          <PanelStatusFeedback
-            commandMenu={
-              <QuickCommandMenu
-                mod={modLabel}
-                onCopyMode={(item, mode) => {
-                  void copyClip(item, mode);
-                }}
-                onDelete={(item) => {
-                  void deleteClips([item.id]);
-                }}
-                onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
-                onCreateSnippet={() => toast.info("新建片段功能开发中")}
-                onTogglePanelPinned={togglePanelPinned}
-                selectedItem={selectedClip}
-              >
-                <button
-                  className="mono flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
-                  type="button"
+          {!multiSelectMode ? (
+            <PanelStatusFeedback
+              commandMenu={
+                <QuickCommandMenu
+                  mod={modLabel}
+                  onCopyMode={(item, mode) => {
+                    void copyClip(item, mode);
+                  }}
+                  onDelete={(item) => {
+                    void deleteClips([item.id]);
+                  }}
+                  onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
+                  onCreateSnippet={() => toast.info("新建片段功能开发中")}
+                  onTogglePanelPinned={togglePanelPinned}
+                  selectedItem={selectedClip}
                 >
-                  <span>{filteredClips.length} 条</span>
-                  <span>·</span>
-                  <span>⌘K 全部操作</span>
-                </button>
-              </QuickCommandMenu>
-            }
-            status={nativeStatus}
-            tr={tr}
-          />
-        )
+                  <button
+                    className="mono flex cursor-pointer items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
+                    type="button"
+                  >
+                    <span>{filteredClips.length} 条</span>
+                    <span>·</span>
+                    <span>⌘K 全部操作</span>
+                  </button>
+                </QuickCommandMenu>
+              }
+              status={nativeStatus}
+              tr={tr}
+            />
+          ) : null}
+        </>
       ) : null}
     </main>
   );

@@ -23,8 +23,8 @@ function listFiles(dir, exts, out) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      // 跳过 node_modules / target / 生成目录 / vendored 第三方原语（animate-ui 是从动画库本地复制的原语，不计入还债）
-      if (["node_modules", "target", "dist", ".codegraph", "animate-ui"].includes(entry.name)) continue;
+      // 跳过 node_modules / target / 生成目录（animate-ui vendored 目录已在 interaction-animation-polish 4.1 删除）
+      if (["node_modules", "target", "dist", ".codegraph"].includes(entry.name)) continue;
       listFiles(full, exts, out);
     } else if (exts.includes(path.extname(entry.name))) {
       out.push(full);

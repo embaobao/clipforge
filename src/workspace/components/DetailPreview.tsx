@@ -134,7 +134,7 @@ export function MarkdownPreview({
                 <span>{block.language || "code"}</span>
                 <span className="flex items-center gap-1">
                   <button
-                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
                     onClick={() => onPasteCode(block.text, source, context)}
                     type="button"
                   >
@@ -142,7 +142,7 @@ export function MarkdownPreview({
                     粘贴代码
                   </button>
                   <button
-                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+                    className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
                     onClick={() => onCopyCode(block.text, source, context)}
                     type="button"
                   >
@@ -187,14 +187,14 @@ export function LinkPreview({ clip, links, onOpen, tr }: { clip: ClipItem; links
             <span className="block truncate text-[11px] text-muted-foreground">{primaryUrl}</span>
           </div>
           <button
-            className="h-7 shrink-0 rounded-md border border-border/60 px-2.5 text-[12px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+            className="h-7 shrink-0 rounded-md border border-border/60 px-2.5 text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
             onClick={() => onOpen(clip)}
             type="button"
           >
             {tr("main.detail.open")}
           </button>
           <button
-            className="h-7 shrink-0 rounded-md border border-border/60 px-2.5 text-[12px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+            className="h-7 shrink-0 rounded-md border border-border/60 px-2.5 text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
             onClick={() => navigator.clipboard.writeText(primaryUrl)}
             type="button"
           >
@@ -220,7 +220,7 @@ export function TruncatedPre({ clip, className }: { clip: ClipItem; className?: 
       <pre className={`whitespace-pre-wrap break-words rounded-lg bg-black/[0.03] p-3 text-[12px] leading-relaxed dark:bg-white/[0.05] ${className ?? ""}`}>{shown}</pre>
       {truncated ? (
         <button
-          className="w-full rounded-md border border-dashed border-border px-3 py-1.5 text-[11px] text-muted-foreground hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
+          className="w-full rounded-md border border-dashed border-border px-3 py-1.5 text-[11px] text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.03] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.05]"
           onClick={() => setExpanded(true)}
           type="button"
         >
@@ -253,7 +253,7 @@ export function JsonPreview({
           <em className="not-italic opacity-70">{preview.root}</em>
         </span>
         <button
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
           onClick={() =>
             onCopyText(preview.formatted, `json-preview:${clip.id}`, {
               businessChain: "quick-panel -> workspace-router -> detail-route -> json-preview -> copy-formatted",
@@ -310,7 +310,7 @@ export function HtmlPreview({ clip, content, onCopy, tr }: { clip: ClipItem; con
           {tr("main.detail.htmlPreview")}
         </span>
         <button
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
           onClick={() => onCopy(clip)}
           type="button"
         >
@@ -357,7 +357,7 @@ export function SmartFormatPanel({
             {analysis.error ? <em className="text-[11px] text-destructive">{analysis.error}</em> : null}
             {!analysis.error ? (
               <button
-                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
+                className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[11px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
                 onClick={() =>
                   onCopyText(analysis.output, `smart-format:${analysis.kind}:${clip.id}`, {
                     businessChain: "detail -> smart-format -> copy-result",
@@ -415,7 +415,7 @@ export function ImageFilePreview({
     <div className="space-y-2">
       <div className={`flex min-h-32 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-black/[0.02] p-2 dark:bg-white/[0.04] ${actualSize ? "items-start" : ""}`}>
         {src ? (
-          <button className="max-h-64 cursor-zoom-in" onClick={onOpenPreview} title={tr("main.detail.imagePreview")} type="button">
+          <button className="max-h-64 cursor-zoom-in transition-[color,background-color,border-color,transform] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50" onClick={onOpenPreview} title={tr("main.detail.imagePreview")} type="button">
             <img alt={clip.analysis.title || name || "Clipboard image"} className={actualSize ? "max-w-none" : "max-h-64 max-w-full rounded object-contain"} src={src} />
           </button>
         ) : (
@@ -433,7 +433,7 @@ export function ImageFilePreview({
         <div aria-label={tr("main.detail.imagePreview")} aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-8" role="dialog">
           <button
             aria-label={tr("main.detail.close")}
-            className="absolute right-4 top-4 rounded-md p-2 text-white/80 hover:bg-white/10"
+            className="absolute right-4 top-4 rounded-md p-2 text-white/80 transition-[color,background-color,border-color,transform] hover:bg-white/10 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
             onClick={onClosePreview}
             type="button"
           >
@@ -471,7 +471,7 @@ export function FileListPreview({
           const missing = filePathStatuses[path]?.exists === false;
           return (
             <button
-              className={`flex items-center gap-1.5 truncate rounded-md px-2 py-1 text-left text-[12px] hover:bg-black/[0.04] dark:hover:bg-white/[0.07] ${missing ? "text-destructive/70 hover:bg-transparent dark:hover:bg-transparent" : ""}`}
+              className={`flex items-center gap-1.5 truncate rounded-md px-2 py-1 text-left text-[12px] transition-[color,background-color,border-color,transform] hover:bg-black/[0.04] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.07] ${missing ? "text-destructive/70 hover:bg-transparent dark:hover:bg-transparent" : ""}`}
               disabled={missing || !onOpenPath}
               key={path}
               onClick={() => onOpenPath?.(path)}
