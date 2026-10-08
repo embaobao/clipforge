@@ -29,7 +29,6 @@ export type McpAgentSectionProps = {
   mcpAgentCodeTabs: SettingsCodeTab[];
   copyMcpAgentCodeTab: (tab: SettingsCodeTab) => void;
   getConfiguredAgentProviderCount: () => number;
-  refreshMcpStatus: () => Promise<void> | void;
   renderTabs: (panels: Partial<Record<SettingsTabId, ReactNode>>) => ReactNode;
 };
 
@@ -40,34 +39,27 @@ export function McpAgentSection({
   mcpAgentCodeTabs,
   copyMcpAgentCodeTab,
   getConfiguredAgentProviderCount,
-  refreshMcpStatus,
   renderTabs,
 }: McpAgentSectionProps) {
   return renderTabs({
     status: (
       <>
         <SettingGroup title={tr("settings.tab.status")}>
-          <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-            <div className="flex items-center justify-between gap-2">
-              <span>{tr("settings.integration.mcp.title")}</span>
-              <strong>
-                {state.mcp?.running ? tr("settings.integration.mcp.running") : tr("settings.integration.mcp.unknown")} ·{" "}
-                {state.mcp?.transport ?? "stdio"}
-              </strong>
-            </div>
-            <p>{tr("settings.integration.mcp.description")}</p>
-            <p className="mt-1 text-[12px] text-muted-foreground">
-              {tr("settings.integration.mcp.toolCount", { count: state.mcp?.tools.length ?? 0 })}
-            </p>
-            <div className="flex gap-2">
-              <button className="flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={() => void refreshMcpStatus()} type="button">
-                <RefreshCw size={13} />
-                {tr("settings.diagnostics.refresh")}
-              </button>
-            </div>
+          {/* MCP 状态：常驻服务由 Rust 托管、不会中途变化，只读展示即可，不放刷新入口。 */}
+          <div className="flex items-center gap-1.5 text-[12.5px]">
+            <span
+              aria-hidden="true"
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${state.mcp?.running ? "bg-emerald-500" : "bg-zinc-400"}`}
+            />
+            <span className="font-medium">{tr("settings.integration.mcp.title")}</span>
+            <span className="text-muted-foreground">
+              {state.mcp?.running ? tr("settings.integration.mcp.running") : tr("settings.integration.mcp.unknown")} ·{" "}
+              {state.mcp?.transport ?? "stdio"} · {tr("settings.integration.mcp.toolCount", { count: state.mcp?.tools.length ?? 0 })}
+            </span>
           </div>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">{tr("settings.integration.mcp.description")}</p>
           {/* 工具目录：静态分组（与 Rust 端 MCP_TOOLS 同步维护），让 Agent 接入前能先看懂每个工具做什么。 */}
-          <div className="grid gap-3">
+          <div className="mt-3 grid gap-3">
             {MCP_TOOL_CATALOG.map((group) => (
               <div className="grid gap-1.5" key={group.titleKey}>
                 <span className="text-[12px] font-medium">{tr(group.titleKey)}</span>
@@ -86,11 +78,9 @@ export function McpAgentSection({
           </div>
         </SettingGroup>
         <SettingGroup title={tr("settings.integration.provider.title")}>
-          <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-            <span>{tr("settings.integration.provider.title")}</span>
-            <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
-            <p>{tr("settings.integration.provider.description")}</p>
-          </div>
+          <p className="text-[12px] text-muted-foreground">
+            {tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}
+          </p>
         </SettingGroup>
       </>
     ),

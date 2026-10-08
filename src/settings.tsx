@@ -548,15 +548,6 @@ export function SettingsApp() {
     }
   }
 
-  async function refreshMcpStatus() {
-    try {
-      const mcp = await invoke<McpStatusPayload>("get_mcp_status");
-      setState((prev) => ({ ...prev, mcp, status: mcp.message }));
-    } catch (error) {
-      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
-    }
-  }
-
   async function checkUpdateNow() {
     setState((prev) => ({
       ...prev,
@@ -776,7 +767,6 @@ export function SettingsApp() {
               copyMcpAgentCodeTab={copyMcpAgentCodeTab}
               getConfiguredAgentProviderCount={getConfiguredAgentProviderCount}
               mcpAgentCodeTabs={mcpAgentCodeTabs}
-              refreshMcpStatus={refreshMcpStatus}
               renderTabs={renderSectionTabs}
               state={state}
               tr={tr}
