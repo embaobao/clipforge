@@ -1,5 +1,7 @@
 # 提案：项目功能演示动图生成流水线
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 状态
 
 - 优先级：P3（工程/文档资产类，不阻塞功能提案）。

@@ -15,11 +15,13 @@
 
 ## 当前项目配置
 
+> 2026-09 视觉重构时从 Tailwind v4 **主动降级**到 v3.4（shadcn/ui + tailwindcss-animate + PostCSS 的 v3 生态位；动效 token 门禁建在 `tailwind.config.js` 映射上）。下表为当前实际配置：
+
 ```text
 framework: Vite
 typescript: true
 rsc: false
-tailwindVersion: v4
+tailwindVersion: v3
 style: new-york
 base: radix
 iconLibrary: lucide
@@ -27,7 +29,7 @@ importAlias: @
 ui alias: @/components/ui
 components path: src/components
 ui path: src/components/ui
-global css: src/App.css
+global css: src/index.css
 registries:
   @shadcn: https://ui.shadcn.com/r/styles/{style}/{name}.json
   @animate-ui: https://animate-ui.com/r/{name}.json

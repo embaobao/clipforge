@@ -1,5 +1,7 @@
 # 提案：外部 Hook 插件运行时与受控内容回写（精简版）
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 状态
 
 - 优先级：P3，排在剪贴板核心、多格式回写、详情编辑和基础 Agent 能力之后。

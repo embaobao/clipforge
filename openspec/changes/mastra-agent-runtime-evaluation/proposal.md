@@ -1,5 +1,7 @@
 # 提案：Mastra Agent Runtime 评估
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 状态
 
 - 优先级：P4.x（AI/Agent 后置候选，不进入剪贴板热路径）。

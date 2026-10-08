@@ -1,5 +1,7 @@
 # 提案：ClipForge 全面迁移 Tailwind CSS v3 + shadcn/ui 视觉重构
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 优先级
 
 P1。产品主线回归「打造好一个剪贴板」后，视觉层是从「能用」到「好用、好看、愿意日常用」的关键一步。本提案已完成主体实现（2026-09-07 夜间批次 1–5），当前处于收尾验收阶段。

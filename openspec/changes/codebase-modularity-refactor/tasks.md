@@ -12,9 +12,9 @@
 
 ## Phase 2：verify 脚本升级（拆分前置）
 
-- [ ] `verify-agent-panel.mjs`：把依赖源码子串的断言迁移到 `data-*` marker / 导出符号（先升级会被当前拆分触碰的部分）
+- [x] `verify-agent-panel.mjs`：把依赖源码子串的断言迁移到 `data-*` marker / 导出符号（先升级会被当前拆分触碰的部分）--过时收账:该脚本随旧 Agent 面板在 18afb94 删除,`package.json` 的 `test:agent` 死引用已移除;后继门禁 `verify-editor-agent-bridge.mjs`(test:unit 成员)已完成同等迁移:动作按钮挂 `data-editor-action` 标记,接线断言改 DetailQuickEditor JSX 块级正则,守卫改 token 级检查,快捷键改 handler 内结构正则;i18n 键、saveDraftContent/preview_patch 行为切片与反向断言保留(文件无关,附脆弱性注释)
 - [x] 保留必要的反向断言（「某 class 不应存在」），但每条加注释说明为何脆弱
-- [ ] 升级前后对同一份代码各跑一次，确认「等价或更强」
+- [x] 升级前后对同一份代码各跑一次，确认「等价或更强」--迁移前基线 passed;迁移后同码 passed;负向证明注入五类破坏全部命中:删标记/外壳接线互换 copy-paste/削弱守卫去 isSaving/快捷键分支互换/preview_patch 注入 save_editor_draft(真 dispatch 臂,注意 lib.rs 有三处 preview_patch 字符串,lastIndexOf 切真臂)
 
 ## Phase 3：lib.rs settings 模块拆分（服务 settings-service B3）
 

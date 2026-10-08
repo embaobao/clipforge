@@ -1,5 +1,7 @@
 # 提案：pi sdk 作为 ClipForge Agent 能力基础
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 优先级
 
 P1。盟哥 2026-09-11 拍板：pi sdk 确立为 ClipForge 的 Agent 能力基础，DSH（DeepSeek Harness）全链废弃删除。本提案接管原 DSH 系提案的产品意图（条目分析/智能标签/AI 助手），以 pi 的可编程 SDK 重新实现。

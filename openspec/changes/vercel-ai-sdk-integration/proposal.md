@@ -1,5 +1,7 @@
 # 提案：引入 Vercel AI SDK + 智能摘要与推荐
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 优先级
 
 P4.1。该提案是 AI 能力产品化之后的实现候选切片，必须排在基础剪贴板、设置服务、设置页、主面板减负、多格式剪贴板和 Agent 面板收尾之后。当前只保留方向性方案与边界定义，Context7 文档恢复前不进入 SDK 实装。

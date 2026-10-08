@@ -1,5 +1,7 @@
 # 提案：剪贴板多格式复制与回写保真
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 优先级
 
 P1。该提案属于“格式支持”的保真验收层，应紧跟 `file-image-clipboard-support` 推进。`ClipboardRepresentation`、`representations_json`、`primaryFormat`、`plainText` 等基础模型已前移到 `file-image-clipboard-support`，本提案不再另起数据模型，只负责把多 representation 的写回策略、降级路径、动作可用性和跨应用验证矩阵补齐。

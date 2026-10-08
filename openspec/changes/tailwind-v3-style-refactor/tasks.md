@@ -41,7 +41,7 @@
 - [x] `pnpm build:web` / `pnpm test:unit` / `pnpm test:boundaries` 全绿（每批次复验）
 - [x] `cargo check` 通过（15 个存量 dead_code 警告非阻塞）
 - [x] `pnpm tauri dev` 后台冒烟：编译 + 启动 + 运行 70 秒无 error/panic（批次 5，dev 实例已清理）
-- [ ] **盟哥人工视觉走查**：详情页 / 聚合页 / onboarding 三个 surface（重写样式的实际视觉效果）+ DSH 面板 iframe 细节
+- [ ] **盟哥人工视觉走查**：详情页 / 聚合页 / onboarding 三个 surface（重写样式的实际视觉效果）--DSH 面板 iframe 细节项作废:DSH 已全链删除（批次 36-38 前端 -528 行 + Rust -553 行，`a020068` 拍板 pi 接管），AI 面交互区域由 pi-sdk 线的 PiAnalysisBar 承接，走查随其交付面另行安排
 - [ ] 走查问题清单修复（如有，逐项验证后提交）
 
 ## Phase 6：收尾 🟡

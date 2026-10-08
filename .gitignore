@@ -45,5 +45,14 @@ src-tauri/icons/candidates/
 # WorkBuddy 项目记忆/数据（不入库）
 .workbuddy/
 
+# AI 工具本地状态目录（各家 agent 运行时产物，不入库）
+.aider-desk/
+.codebuddy/
+.hermes/
+.pi/
+.trae/
+.zcode/
+artifacts/
+
 # 临时文件（命令残留）
 _tmp_*

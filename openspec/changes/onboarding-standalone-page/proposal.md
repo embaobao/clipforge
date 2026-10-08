@@ -1,5 +1,7 @@
 # 提案：引导页面独立化（Eco 模式）与设置页配套优化
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 状态
 
 - 优先级：P1.x（首次体验链路 + 设置页信息架构打磨）。

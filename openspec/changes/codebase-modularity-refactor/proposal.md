@@ -1,5 +1,7 @@
 # 提案：代码可维护性地基重构
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 优先级
 
 后置治理（不抢占功能开发优先级）。已有文件大小门禁和中文注释规则继续作为开发约束生效；后续校验脚本升级、模块化拆分和豁免清理，随 [settings-service-unified-protocol](../settings-service-unified-protocol/proposal.md)、[settings-interface-redesign](../settings-interface-redesign/proposal.md) 等功能任务触碰相关文件时顺手推进，不作为近期多 Agent 功能开发主线。

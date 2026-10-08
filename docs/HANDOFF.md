@@ -124,11 +124,11 @@
 
 ## 待办事项（按优先级，批次 5 后更新）
 
-**夜间任务的可自动化待办已清零**。剩余事项全部需要盟哥人工参与：
+**夜间任务的可自动化待办已清零**。剩余事项全部需要盟哥人工参与（2026-10-01 按总纲波次对账修订）：
 
-1. **真机走查**（仍缺人眼）：浏览器自动化基线（批次 51-55）已覆盖 14 交互 + 13 视觉断言，但 `pnpm tauri dev` 实机过一遍详情页/聚合页/onboarding 三个 surface 仍待盟哥执行；可用 `CLIPFORGE_DATA_DIR=$(mktemp -d) pnpm tauri dev` 隔离数据并行验证
-2. **7 场景实机验收矩阵**：`file-image-clipboard-support` + `clipboard-multi-format-fidelity` 剩余项（复制/粘贴/显示/清理证据），完成后两提案可归档
-3. **DSH 基座取舍决策**（盟哥拍板项）：pi 等候选评估结论出来前，DSH 后置项不推进
+1. **真机走查**（仍缺人眼，W1）：浏览器自动化基线（批次 51-55）已覆盖 14 交互 + 13 视觉断言，但 `pnpm tauri dev` 实机过一遍详情页/聚合页/onboarding 三个 surface 仍待盟哥执行；可用 `CLIPFORGE_DATA_DIR=$(mktemp -d) pnpm tauri dev` 隔离数据并行验证。走查后随 `tailwind-v3-style-refactor` Phase 5/6 收口（DSH iframe 细节项已作废——DSH 全链删除，AI 面由 PiAnalysisBar 承接）
+2. **7 场景实机验收矩阵**（W1）：`file-image-clipboard-support` + `clipboard-multi-format-fidelity` 剩余项（复制/粘贴/显示/清理证据），完成后两提案可归档
+3. ~~DSH 基座取舍决策~~ **已裁决**（2026-09-11 `a020068`）：pi sdk 确立为 Agent 基座，DSH 全链删除完成；pi-sdk 剩余项见其 tasks.md（21/26）
 4. **grilling 会话 Q1–Q4**：产品方向问题待回答
 
 夜间任务至此进入「无事可做秒退」状态：工作区干净、可自动化验证全绿、可推进提案项清零。后续夜晚的触发若仍无新待办（盟哥白天未新增），会话将直接退出。若确认不再需要，可删除定时任务 automation-7b5269b1。

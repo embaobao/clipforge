@@ -1,6 +1,6 @@
 # OpenSpec 提案路线图与交接计划
 
-更新时间：2026-09-07
+更新时间:2026-10-01(波次化重构,单一事实源移交 [product-iteration-master-plan](../openspec/changes/product-iteration-master-plan/proposal.md);本文件转为文档视图 + 历史决策记录)。
 
 2026-09-11 重大方向决策（盟哥拍板）：
 
@@ -90,47 +90,31 @@
 
 ## 当前 active change
 
-以下 14 个 change 来自 2026-09-02 的 live `openspec list`；已归档 change 不再计入当前执行队列：
+> 2026-10-01 对账(数据源 `openspec list` 实数);推进顺序由 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次表单点解释,本表是其文档视图。
 
-| 优先级 | Change | 当前进度 | 下一验收点 |
+| 波次 | Change | 当前进度 | 下一验收点 |
 | --- | --- | --- | --- |
-| P0 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、首次缺少 Accessibility 权限时仅打开一次引导、完成/跳过、托盘与全局快捷键不阻塞 |
-| P0 | `frontend-surface-architecture-refactor` | 36/84 | 验证虚线选中态、滚动跟随首个可见快捷分组、复制/粘贴即时反馈；采样 `quick.scroll/select/copy/paste` P95 <= 300ms |
-| P1 | `file-image-clipboard-support` | 75/83 | 完成文本、HTML、图片、文件的复制、展示、粘贴与磁盘清理实机矩阵 |
-| P1 | `clipboard-multi-format-fidelity` | 22/26 | 完成系统剪贴板多 representation 写回与监听去重实机矩阵 |
-| P2 | `external-hook-plugin-runtime` | 0/67 | 只评审并推进 Block A 读取侧；Block B 写入侧继续冻结 |
-| P3 | `project-demo-gif-pipeline` | 0/30 | 核心交互和 onboarding 稳定后再录制真实功能素材 |
-| P4 | `ai-model-plugin-productization` | 65/76 | 先复审产品 scope，不进入 quick panel 热路径 |
-| P4.1 | `vercel-ai-sdk-integration` | 30/38 | 等 SDK 文档与真实 provider 边界确认后再决定是否接入 |
-| P4.x | `mastra-agent-runtime-evaluation` | 11/25 | 完成可旁路 sidecar/workbench POC 设计和基线测量，不安装到产品主路径 |
-| P4.x | `local-model-quick-integration` | 4/16 | 与 AI 产品化、Vercel AI SDK、Mastra 三案统一做取舍，不单独开工 |
-| P4.x | `deepseek-harness-embedding` | 22/31 | DSH 面板保留 iframe 实验形态；剩余项（/chat API、快速唤起、i18n、实机验收）全部后置，待基座（pi 等）取舍后再启动 |
-| P4.x | `dsh-file-context-conversation` | 1/22 | 随 DSH 链后置；恢复排期前硬依赖 `deepseek-harness-embedding` 的 `/chat` 会话 API 决策 |
-| P5 | `dsh-system-context-menu` | 0/14 | 重原生、冻结中，不在 v1 悬浮 DSH 主线 |
-| P4.5 | `codebase-modularity-refactor` | 6/26 | 只在功能开发触碰对应文件时同步推进 |
+| W1 | `interaction-animation-polish` | 25/25 ✓ | 走归档流程(specs delta 已随交付合入) |
+| W1 | `file-image-clipboard-support` | 75/83 | 文本/HTML/图片/文件 复制、展示、粘贴与磁盘清理实机矩阵 |
+| W1 | `clipboard-multi-format-fidelity` | 22/26 | 系统剪贴板多 representation 写回与监听去重实机矩阵 |
+| W1 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、Accessibility 引导只弹一次、完成/跳过、托盘与全局快捷键不阻塞 |
+| W1 | `tailwind-v3-style-refactor` | 21/25 | 盟哥三 surface(详情/聚合/onboarding)人工走查 + 走查修复 |
+| W2 | (未开工,见总纲) | — | 基于 `clip_semantic_index`(local-keyword 已建)的语义检索,先服务 pi/MCP 工具面 |
+| W3 | `pi-sdk-agent-foundation` | 21/26 | API Key redaction/keyRef、provider 极简 UI、智能标签建议、Phase 4 验收 |
+| W3 | `ai-model-plugin-productization` | 65/76 | scope 复审后按 L1/L2 归位并入 pi 线,不并行开工 |
+| W4 | `vercel-ai-sdk-integration` | 30/38 | 与 mastra/local-model 三案统一取舍,结论前不动 |
+| W4 | `mastra-agent-runtime-evaluation` | 11/25 | 同上 |
+| W4 | `local-model-quick-integration` | 4/16 | 同上 |
+| W4 | `external-hook-plugin-runtime` | 0/67 | 只推进 Block A 读取侧;Block B 写入侧维持冻结 |
+| W5 | `codebase-modularity-refactor` | 11/26 | 随功能触碰渐进,豁免清单只减不增 |
+| W5 | `framer-motion-adoption-eval` | dormant | 按其提案信号表触发,当前四信号均未出现 |
+| W5 | `project-demo-gif-pipeline` | 0/30 | W1 稳定后录制 |
+
+已归档:DSH 三提案(2026-09-11,`a020068` 拍板废弃,pi 接管)、`settings-service-unified-protocol` 等见上表「已归档」节。
 
 ## 后续开发计划
 
-1. **迭代 A：桌面体验验收与小修**
-   - 联合推进 `onboarding-standalone-page` 和 `frontend-surface-architecture-refactor`。
-   - 使用正式 bundle 身份验证开机启动、权限引导只弹一次、托盘/快捷键可用，以及快速面板选中、滚动、复制、粘贴交互。
-   - 记录 `window.__clipforgePerf.summary()` 的 `quick.scroll/select/copy/paste` P95；不满足 300ms 再做定向优化。
-
-2. **迭代 B：剪贴板格式闭环**
-   - 串行收尾 `file-image-clipboard-support` 与 `clipboard-multi-format-fidelity`，共用一套文本、HTML、图片、文件验收矩阵。
-   - 优先解决丢 representation、重复采集和磁盘残留，不扩展 AI 能力。
-
-3. **迭代 C：前端架构继续拆分**
-   - 在迭代 A 的交互基线固定后迁移 `clipboard-row.css`、选择/键盘 hooks 和剩余 surface 样式。
-   - 每个拆分步骤都复跑热路径边界和正式应用交互，避免结构重构引入体感回归。
-
-4. **迭代 D：运行时扩展决策**
-   - `external-hook-plugin-runtime` 只推进 Block A。
-   - `ai-model-plugin-productization`、`vercel-ai-sdk-integration`、`local-model-quick-integration`、`mastra-agent-runtime-evaluation` 先合并评估口径，再形成一份 runtime 取舍结论；结论前不新增重型依赖。
-
-5. **迭代 E：演示资产与治理**
-   - 核心体验稳定后推进 `project-demo-gif-pipeline`。
-   - `codebase-modularity-refactor` 继续随功能改动渐进执行，不单独阻塞产品交付。
+> 已并入 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次(W1 核心收口 → W2 搜索语义 → W3 Agent 补全 → W4 运行时决策 → W5 治理演示),以该提案为单一事实源。下方原迭代 A-E(2026-09-07)保留作历史语境,与波次表的映射:A≈W1(onboarding/交互基线),B≈W1(格式闭环),C≈W5(架构拆分随触),D≈W4(runtime 取舍),E≈W5(演示资产)。原 C 提到的 `frontend-surface-architecture-refactor`(36/84)已归档口径移出 active 队列,其剩余样式拆分任务随 W1/W5 功能触碰渐进执行。
 
 ## 2026-07-16 active 快照（已失效）
 

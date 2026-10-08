@@ -1,5 +1,7 @@
 # 提案：模型配置、AI 能力增强与插件标品化
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 背景
 
 ClipForge 当前已经有三条相关规划：

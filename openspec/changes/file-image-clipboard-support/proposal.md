@@ -1,5 +1,7 @@
 # 提案：文件与图片剪贴板支持
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 优先级
 
 P3 收尾。格式采集、存储与写回的基础层已落地；剩余工作是以真实系统剪贴板完成图片、文件、HTML/RTF 的显示、写回、监听去重和清理验收，不再阻塞主面板交互迭代。

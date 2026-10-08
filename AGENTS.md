@@ -81,3 +81,11 @@ pnpm tauri dev
 - 新组件样式一律用 Tailwind 语义类（`bg-background`/`text-muted-foreground` 等，映射 hsl(var(--token))），不再新建组件级 CSS 文件。
 - 全局 token 在 `index.css` 的 `:root` 定义，组件只消费不重定义；视觉契约见 `docs/DESIGN_SYSTEM.md`。
 - 界面按域拆组件文件（如 `src/workspace/components/`、`src/onboarding/components/`），样式随组件用 Tailwind 类表达。
+
+### 业务索引与快速定位
+
+- 开发或排查前先查 [docs/BUSINESS_INDEX.md](docs/BUSINESS_INDEX.md)：「窗口/Surface → 业务域 → 入口文件」映射，以及验证速查和常见排查入口。
+- 符号级定位用 `pnpm locate <关键词>`（`scripts/locate.mjs`，零依赖）：扫文件路径、TS/Rust 导出符号、`#[tauri::command]` 命令名、中文注释；支持多关键词 OR（如 `pnpm locate 写回 writeback`）。无命中时先换词再查索引表。
+- 索引维护义务：新增/移动/重命名模块、Surface、Tauri command、校验脚本时，必须同步更新 `docs/BUSINESS_INDEX.md` 对应行；索引以「域」为行，不逐文件罗列，一个域多文件时入口写最常改的文件、其余写目录。
+- 索引防腐：`pnpm locate --check-index` 校验索引反引号内引用的路径真实存在，已挂入 `pnpm test:unit` 末尾，索引引用失效会导致门禁失败。
+- 上文「必须有中文注释」规范是 locate 的数据源：新公共能力文件头缺一句中文文档注释，定位能力即对该文件失效。

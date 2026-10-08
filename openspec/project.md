@@ -31,22 +31,26 @@
 
 ## 活跃提案
 
-| 提案 | 状态 | 说明 |
-|------|------|------|
-| [frontend-surface-architecture-refactor](./changes/frontend-surface-architecture-refactor/proposal.md) | P1，36/84 | 前端 Surface 架构、路由拆分、业务功能区、主要页面布局、交互契约、主题样式分层和历史提案收口基线。3 个历史提案已归档；下一步先完成快速面板虚线选中态、滚动跟随、复制/粘贴反馈和 P95 实机验收，再继续样式迁移与组件拆分 |
-| [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | P3 收尾，75/83 | 格式支持基础层：图片、文件、HTML/RTF 富文本剪贴板历史；`parses_png_dimensions`、`clipboard::write` 和 OpenSpec 校验已复跑通过，剩余真实复制/展示/粘贴和清理验证 |
-| [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) | P3 收尾，22/26 | 格式支持保真层：补齐 HTML/RTF/图片/文件的多 representation、纯文本降级和回写验证矩阵；`clipboard::write` 和 OpenSpec 校验已复跑通过，剩余系统剪贴板写回与监听去重实机验证 |
-| [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) | P4 讨论中，65/76 | Phase 0 scope 已复审，Phase 2-8 文档级定义已完成：模型 provider/profile/policy、AIOutput、Tiptap 增强边界、Manifest V2、Agent capability、MCP 工具面、设置页映射和产品 capability gate 已收敛；Context7 恢复前不进入 SDK/Tiptap 实现，Phase 9 仅保留边界/运行验证记录，不代表真实 SDK/provider/Tiptap 已接入 |
-| [vercel-ai-sdk-integration](./changes/vercel-ai-sdk-integration/proposal.md) | P4.1 后置进行中，30/38 | 已收敛为 AI 产品化后的候选切片，未确认版本/API 假设已降级为待 Context7 确认；摘要/embedding/job/provenance、非全量自动摘要、推荐候选范围和无 embedding store 降级策略已定义。已新增详情页 AI 摘要区和 `ai-summary` 服务边界，支持 `VITE_CLIPFORGE_AI_MOCK=1` 本地 mock 摘要、pending/ready/failed 状态、重新生成和当前详情上下文内的本地相似推荐；摘要区现在还展示 key points、category、provider/model provenance 和 generatedAt。列表行已显示 `metadata.aiSummary` 状态图标，右键菜单已提供“生成 AI 摘要”入口并写回 metadata；AI 摘要日志已收敛为 metadata-only helper，不记录 prompt/output/正文/URL/API key。Context7 quota 恢复前仍不能确认真实 SDK API、版本或安装命令，真实 OpenAI-compatible provider 调用和 Tauri dev 验证尚未实现 |
-| [codebase-modularity-refactor](./changes/codebase-modularity-refactor/proposal.md) | P4.5 后置治理，6/26 | 约束单文件规模、中文注释和按域拆分；`test:unit` / file-size guard 已复跑通过，Agent 入口和 overlay 已补 `data-agent-*` 稳定 marker，verifier 已优先验证这些 marker，但完整 verifier 结构化迁移和模块拆分仍后置，近期多 Agent 资源优先投向功能开发 |
-| [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) | P1.x 首期 A 实现收尾，25/52 | 已新增独立 `onboarding` 窗口、设置页轻入口、启动时后台权限缺失检查、`onboardingShownAt` 一次性展示记录、开机启动设置和固定窗口滚动回归门禁；仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界。sidebar 全量常驻、兜底四态和标准化日志仍为后续 phase |
-| [mastra-agent-runtime-evaluation](./changes/mastra-agent-runtime-evaluation/proposal.md) | P4.x 评估提案，11/25 | Mastra 只作为 Agent runtime 候选评估，不直接安装依赖，不进 quick panel 热路径；如果进入 POC，只允许可关闭、可旁路的 sidecar/workbench runtime，并先证明 quick panel P95、内存、打包签名、离线启动、tool allowlist 与 Settings Service redaction 边界 |
-| [external-hook-plugin-runtime](./changes/external-hook-plugin-runtime/proposal.md) | P3 后置方案评审，0/67 | 外部 Hook 插件运行时精简为 Block A/B：Block A 只收敛读取侧 collector 到 Hook manifest、4 态生命周期、洋葱 priority、沙盒、节流、熔断、延迟补写和单个 `clipboard.hook.run`；Block B 写入侧（Proposal/Apply/content.write）冻结，等真实用户故事再解冻 |
-| [dsh-file-context-conversation](./changes/dsh-file-context-conversation/proposal.md) | P4.x 后置，1/22 | 文件（文件夹）上下文的 DSH 对话集成：右键「复制地址」（验收既有项）+「在此文件开始对话」（文件内容感知分析、文件夹列项、多轮由常驻守护进程原生支持）。依赖 `deepseek-harness-embedding` 与 `file-image-clipboard-support`；2026-09-02 起随 DSH 链后置，恢复排期前硬依赖 `/chat` 会话 API 决策；系统级文件管理器右键见 `dsh-system-context-menu` |
-| [deepseek-harness-embedding](./changes/deepseek-harness-embedding/proposal.md) | P4.x 后置实验，22/31 | DSH 内嵌为 AI 运行时底座。Phase 0–5 一次性 sidecar 链路端到端跑通；2026-08-17 提前落地 Phase 6 守护进程骨架（`DshDaemonState`、常驻 web carrier、健康探活、localhost-only、env 注入、退出清理）与 Phase 7 悬浮窗 iframe 集成（`src/dsh/dsh-panel.tsx` 嵌官方 Web UI）。2026-09-02 定位调整为**实验性 iframe 面板**：自研对话 UI、`/chat` 会话 API、快速唤起、i18n 全部后置，运行时基座可能切换 pi 等候选，基座取舍前不深投 |
-| [dsh-system-context-menu](./changes/dsh-system-context-menu/proposal.md) | P5 冻结，0/14 | 系统级文件管理器右键（Finder Sync / Explorer Shell 扩展）：复制地址 + 用 ClipForge 分析，经 `clipforge://` URL Scheme 复用应用内能力。重原生、冻结，不在 v1 悬浮 DSH 主线 |
-| [project-demo-gif-pipeline](./changes/project-demo-gif-pipeline/proposal.md) | P3 文档/资产方案，0/30 | 建立真实录屏转 gif 为主、Remotion 为辅的演示素材流水线，资产放 `docs/demos/`，不改变产品功能，不阻塞 onboarding 或剪贴板核心交付；已补 specs delta |
-| [local-model-quick-integration](./changes/local-model-quick-integration/proposal.md) | P4.x AI/Agent 后置候选，4/16 | 本地模型、第三方 API Key 导入和 AI 对话面板重构候选；已补 tasks/spec delta，方向约束为 OpenAI-compatible provider、显式导入、Settings Service redaction 和不阻塞 quick panel。需先评估与 `ai-model-plugin-productization` / `vercel-ai-sdk-integration` / `mastra-agent-runtime-evaluation` 的关系 |
+> 2026-10-01:推进顺序与波次归位由 [product-iteration-master-plan](./changes/product-iteration-master-plan/proposal.md) 单点解释;下表状态列为摘要,进度以 `openspec list` 实数为准。DSH 三提案已归档,不再列入。
+
+| 提案 | 波次 | 状态 | 说明 |
+|------|------|------|------|
+| [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | W1 | P3 收尾，75/83 | 格式支持基础层：图片、文件、HTML/RTF 富文本剪贴板历史；剩余真实复制/展示/粘贴和磁盘清理实机验证 |
+| [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) | W1 | P3 收尾，22/26 | 格式保真层：多 representation、纯文本降级和回写验证矩阵；剩余系统剪贴板写回与监听去重实机验证 |
+| [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) | W1 | P1.x 收尾，25/52 | 独立引导窗口、权限检查、开机启动已落地;仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界 |
+| [tailwind-v3-style-refactor](./changes/tailwind-v3-style-refactor/proposal.md) | W1 | 收尾，21/25 | v3 视觉重构;剩盟哥三 surface 人工走查 + 走查修复(DSH iframe 细节项已作废) |
+| (W2 未开工,见总纲) | W2 | — | 基于 `clip_semantic_index`(SQLite local-keyword 已建)的语义检索,本地索引优先,先服务 pi/MCP 工具面 |
+| [pi-sdk-agent-foundation](./changes/pi-sdk-agent-foundation/proposal.md) | W3 | P1 主体，21/26 | pi sdk Agent 基座:DSH 删除完成、L1 分析/历史/工具面落地;剩 API Key redaction/keyRef、provider 极简 UI、智能标签建议、Phase 4 验收 |
+| [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) | W3 | P4 复审中，65/76 | scope 复审后按 L1/L2 归位并入 pi 线;Context7 恢复前不进 SDK/Tiptap 实现 |
+| [vercel-ai-sdk-integration](./changes/vercel-ai-sdk-integration/proposal.md) | W4 | P4.1 后置，30/38 | AI 产品化后候选切片,与 mastra/local-model 三案统一取舍,结论前不动 |
+| [mastra-agent-runtime-evaluation](./changes/mastra-agent-runtime-evaluation/proposal.md) | W4 | P4.x 评估，11/25 | runtime 候选评估,不装依赖不进热路径;随 W4 统一取舍 |
+| [local-model-quick-integration](./changes/local-model-quick-integration/proposal.md) | W4 | P4.x 候选，4/16 | 本地模型/Key 导入候选;随 W4 统一取舍 |
+| [external-hook-plugin-runtime](./changes/external-hook-plugin-runtime/proposal.md) | W4 | P3 评审，0/67 | Block A 读取侧可推进;Block B 写入侧冻结 |
+| [codebase-modularity-refactor](./changes/codebase-modularity-refactor/proposal.md) | W5 | P4.5 治理，11/26 | 随功能触碰渐进;file-size 门禁与豁免清单只减不增 |
+| [framer-motion-adoption-eval](./changes/framer-motion-adoption-eval/proposal.md) | W5 | dormant | 按信号表触发(退出动画组件变多/共享元素/手势/复杂编排),当前均未出现 |
+| [project-demo-gif-pipeline](./changes/project-demo-gif-pipeline/proposal.md) | W5 | P3 方案，0/30 | W1 稳定后录制;录屏转 gif 为主、Remotion 为辅 |
+
+已完成待归档:`interaction-animation-polish`(25/25,走归档流程)。其余已归档提案见 [PROPOSAL_ROADMAP](../docs/PROPOSAL_ROADMAP.md)「已归档」节与 `openspec/changes/archive/`。
 
 ## 已归档提案
 

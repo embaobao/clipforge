@@ -1,5 +1,7 @@
 # 提案：本地模型快速接入、第三方 API Key 导入与 AI 对话面板重构
 
+> 所属波次:见 [product-iteration-master-plan](../product-iteration-master-plan/proposal.md)。
+
 ## 状态
 
 - 优先级：P3.5，介于剪贴板核心功能收尾与 `ai-model-plugin-productization`（P4）之间。
