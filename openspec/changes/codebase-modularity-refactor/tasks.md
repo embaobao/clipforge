@@ -26,6 +26,14 @@
 - [ ] lib.rs 只保留模块声明 + 命令注册，移除 settings 相关内联实现——进行中：schema 校验域已迁（上）；settings_service_* 七命令（~240 行）+ 辅助函数链（sync_launch_at_login/sync_global_shortcut/refresh_tray_menu/emit_settings_changed/settings_write_response/log_slow_settings_operation）与 SETTINGS_WRITE_LOCK 待迁，建议新会话满上下文执行
 - [ ] `cargo check` + `cargo fmt` + verify 脚本通过
 
+### Phase 3 评审修订项(2026-10-08 多模型论证,见 [agent-extension-seams/evaluation.md](../agent-extension-seams/evaluation.md) §4)
+
+- [ ] 门面单入口:写路径唯一入口 = mod.rs 门面,commands.rs/mcp.rs 禁止自行取 SETTINGS_WRITE_LOCK
+- [ ] 锁内规则:持锁期间不 emit、不跨 await、无网络/子进程 I/O;emit 一律在锁释放后
+- [ ] poisoned 语义:SETTINGS_LOCK_POISONED + 进程级 degraded(写禁用读可用,需重启),不自动重建
+- [ ] 锁层级表:持锁期间仅允许再取 DB 写连接,禁嵌套其他锁
+- [ ] MCP dispatch 与错误路径 golden 用例先行(迁移前后错误码/返回结构逐字节比对)
+
 ## Phase 4：lib.rs agent / mcp 模块拆分
 
 - [ ] 抽 `agent/`：provider 解析 + run 状态机 + agent_* command
