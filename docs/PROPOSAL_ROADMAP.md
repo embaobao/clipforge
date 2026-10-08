@@ -87,14 +87,15 @@
 | `settings-sidebar-component-library-recovery` | `openspec/changes/archive/2026-08-05-settings-sidebar-component-library-recovery/` | 设置页 Sidebar 组件库恢复任务 14/14 完成，delta 已合入 `openspec/specs/settings-interface/spec.md` |
 | `main-panel-functional-layout-plan` | `openspec/changes/archive/2026-08-05-main-panel-functional-layout-plan/` | 以 11/37 归档；布局契约和未完成拆分任务由 `frontend-surface-architecture-refactor` 接管，未合并旧 spec |
 | `quick-panel-visual-regression-recovery` | `openspec/changes/archive/2026-08-05-quick-panel-visual-regression-recovery/` | 以 22/30 归档；交互与性能验收转入统一前端架构提案，未合并旧 spec |
+| `interaction-animation-polish` | `openspec/changes/archive/2026-10-08-interaction-animation-polish/` | 25/25 完成；motion token/交互契约已随交付落地，verification.md 随归档保留，无 spec delta(`--skip-specs`) |
+| `frontend-surface-architecture-refactor` | `openspec/changes/archive/2026-10-08-frontend-surface-architecture-refactor/` | 以 36/84 归档(2026-10-01 已裁决移出 active 队列)；剩余样式拆分任务随 W1/W5 功能触碰渐进执行，未合并旧 spec，组件知识库附件见 `docs/COMPONENT_REFERENCE.md` |
 
 ## 当前 active change
 
-> 2026-10-01 对账(数据源 `openspec list` 实数);推进顺序由 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次表单点解释,本表是其文档视图。
+> 2026-10-08 对账(数据源 `openspec list` 实数);推进顺序由 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次表单点解释,本表是其文档视图。
 
 | 波次 | Change | 当前进度 | 下一验收点 |
 | --- | --- | --- | --- |
-| W1 | `interaction-animation-polish` | 25/25 ✓ | 走归档流程(specs delta 已随交付合入) |
 | W1 | `file-image-clipboard-support` | 75/83 | 文本/HTML/图片/文件 复制、展示、粘贴与磁盘清理实机矩阵 |
 | W1 | `clipboard-multi-format-fidelity` | 22/26 | 系统剪贴板多 representation 写回与监听去重实机矩阵 |
 | W1 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、Accessibility 引导只弹一次、完成/跳过、托盘与全局快捷键不阻塞 |
@@ -115,7 +116,7 @@
 
 ## 后续开发计划
 
-> 已并入 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次(W1 核心收口 → W2 搜索语义 → W3 Agent 补全 → W4 运行时决策 → W5 治理演示),以该提案为单一事实源。下方原迭代 A-E(2026-09-07)保留作历史语境,与波次表的映射:A≈W1(onboarding/交互基线),B≈W1(格式闭环),C≈W5(架构拆分随触),D≈W4(runtime 取舍),E≈W5(演示资产)。原 C 提到的 `frontend-surface-architecture-refactor`(36/84)已归档口径移出 active 队列,其剩余样式拆分任务随 W1/W5 功能触碰渐进执行。
+> 已并入 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次(W1 核心收口 → W2 搜索语义 → W3 Agent 补全 → W4 运行时决策 → W5 治理演示),以该提案为单一事实源。下方原迭代 A-E(2026-09-07)保留作历史语境,与波次表的映射:A≈W1(onboarding/交互基线),B≈W1(格式闭环),C≈W5(架构拆分随触),D≈W4(runtime 取舍),E≈W5(演示资产)。原 C 提到的 `frontend-surface-architecture-refactor`(36/84)已于 2026-10-08 归档(见上节),其剩余样式拆分任务随 W1/W5 功能触碰渐进执行。
 
 ## 2026-07-16 active 快照（已失效）
 
