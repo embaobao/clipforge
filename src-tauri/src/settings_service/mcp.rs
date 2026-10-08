@@ -12,7 +12,8 @@ use super::{
     commit_settings_patch, commit_settings_replace, commit_settings_reset, public_settings_payload,
     validate_settings_patch,
 };
-use crate::{agent_check_provider, agent_list_provider_models, log_to_file};
+use crate::agent::{agent_check_provider, agent_list_provider_models};
+use crate::log_to_file;
 
 /// 门面错误的 MCP 错误码分类：revision 冲突 / scope 非法 / schema 校验失败属调用方问题
 /// （-32602），读盘、写盘、锁 poisoned/degraded 属服务端问题（-32000）。

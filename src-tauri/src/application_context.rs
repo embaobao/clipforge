@@ -173,8 +173,10 @@ fn capture_macos(include_application_context: bool) -> Option<CapturedApplicatio
         if let Some((name, bundle_id)) = crate::frontmost_app_identity_including_self() {
             // icon/executablePath 快速路径不取（入库 badge 非必需，省文件 IO）。
             let source_app = SourceAppInfo {
-                icon_base64: None, executable_path: String::new(),
-                name: name.clone(), bundle_id,
+                icon_base64: None,
+                executable_path: String::new(),
+                name: name.clone(),
+                bundle_id,
             };
             let kind = classify_application(&source_app.bundle_id, &name);
             // 字段与下方 osascript 完整路径同构；AX 项置空（来源 macos.workspace）。

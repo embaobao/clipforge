@@ -49,7 +49,9 @@
 
 | 域 | 文件 | 说明 |
 | --- | --- | --- |
-| command 主体 | `src-tauri/src/lib.rs` | `#[tauri::command]` 大本营 + 托盘 + 窗口管理；设置/快捷键命令已下沉 `settings_service/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
+| command 主体 | `src-tauri/src/lib.rs` | 剪贴板/面板命令 + 托盘 + 窗口管理；设置命令下沉 `settings_service/`、Agent 命令下沉 `agent/`、MCP 命令下沉 `mcp/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
+| Agent 域 | `src-tauri/src/agent/` | `agent_*` 十一命令与 provider 探测/健康检查/模型清单：`mod.rs` 门面（payload 结构体 + 命令薄壳）、`provider.rs` 探测/预览（redaction/keyRef）、`check.rs` 健康检查、`context.rs` 上下文/prompt 组装、`events.rs` 事件/输出流、`run.rs` run 状态机、`runs.rs` run 存储 + 私有写锁 |
+| MCP 运行时 | `src-tauri/src/mcp/` | `--mcp` stdio JSON-RPC 与 40 工具：`mod.rs` 运行时门面（run_mcp_stdio + 状态命令）、`specs.rs` 工具规格表、`dispatch.rs` 路由壳、`dispatch_write.rs` 写库臂、`dispatch_agent_editor.rs` skill/plugin/agent/editor 臂、`context.rs` 上下文快照、`envelope.rs` 响应封装 |
 | 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听、`ingest.rs` 入库、`read.rs` 读取、`write.rs` 写回、`storage.rs` 存储、`detect.rs` 检测、`payload.rs` 载荷 |
 | 设置服务 | `src-tauri/src/settings_service/` | `settings_service_*` 统一协议（唯一服务入口，供设置窗口 / MCP 复用）：`mod.rs` 门面（写事务/校验/redact）、`write.rs` 原子写 + 写锁、`commands.rs` 命令 + 快捷键/托盘同步、`mcp.rs` MCP 分发 |
 | 上下文采集 | `src-tauri/src/context_collectors.rs`、`src-tauri/src/context_collectors/`、`src-tauri/src/context_collector_runtime.rs`、`src-tauri/src/context_collector_system.rs` | Agent 上下文收集器 |

@@ -6,10 +6,13 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+use crate::agent::{
+    agent_check_provider, agent_list_provider_models, AgentProviderModelsPayload,
+    AgentProviderReadiness,
+};
 use crate::{
-    agent_check_provider, agent_list_provider_models, append_app_log, build_tray_menu, log_to_file,
-    now_millis, set_launch_at_login_native, toggle_quick_panel, AgentProviderModelsPayload,
-    AgentProviderReadiness, TRAY_ID,
+    append_app_log, build_tray_menu, log_to_file, now_millis, set_launch_at_login_native,
+    toggle_quick_panel, TRAY_ID,
 };
 
 use super::{
@@ -223,7 +226,7 @@ pub fn settings_service_agent_providers() -> Result<Value, String> {
 
 // ---- settings_service_agent_providers_payload ----
 pub fn settings_service_agent_providers_payload() -> Result<Value, String> {
-    let config = crate::settings_service_resolve_agent_config()?;
+    let config = crate::agent::settings_service_resolve_agent_config()?;
     Ok(json!({
         "activeProviderId": config.active_provider_id,
         "providers": config.providers,

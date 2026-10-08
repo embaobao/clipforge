@@ -1,21 +1,30 @@
-// MCP dispatch 完整性 guard（settings-service-unified-protocol B3）
-// 断言 mcp_tool_specs 声明的每个 clipf.* / clipboard.* 工具，在 call_mcp_tool 都有对应 match arm。
+// MCP dispatch 完整性 guard（settings-service-unified-protocol B3；modularity Phase 4 起源文件迁至 mcp/）
+// 断言 mcp_tool_specs 声明的每个 clipf.* / clipboard.* 工具，在 call_mcp_tool 路由都有对应 match arm。
 // 防止「tools/list 声明但 tools/call 返回 -32602 unknown tool」的幽灵工具回归。
 import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
-const librs = fs.readFileSync(path.join(root, "src-tauri/src/lib.rs"), "utf8");
+const specs = fs.readFileSync(path.join(root, "src-tauri/src/mcp/specs.rs"), "utf8");
 
 // 声明的工具名：McpToolSpec.name 字面量（形如 name: "clipf.settings.get"）
-const declared = [
-  ...librs.matchAll(/name:\s*"((?:clipf|clipboard)\.[^"]+)"/g),
-].map((match) => match[1]);
+const declared = [...specs.matchAll(/name:\s*"((?:clipf|clipboard)\.[^"]+)"/g)].map(
+  (match) => match[1],
+);
 const unique = [...new Set(declared)];
 
-// dispatch arm 判定：工具名作为 match 模式出现（独立 "X" => 或链式 "X" | "Y" =>）。
+// dispatch arm 判定：工具名作为 match 模式出现在 mcp/ 任一 .rs
+//（独立 "X" => 或链式 "X" | "Y" =>；路由壳在 dispatch.rs，写库/agent/editor 臂在 dispatch_*.rs）。
+const dispatchSources = fs
+  .readdirSync(path.join(root, "src-tauri/src/mcp"))
+  .filter((file) => file.endsWith(".rs"))
+  .map((file) =>
+    fs.readFileSync(path.join(root, "src-tauri/src/mcp", file), "utf8"),
+  );
 function hasDispatchArm(name) {
-  return librs.includes(`"${name}" =>`) || librs.includes(`"${name}" |`);
+  return dispatchSources.some(
+    (source) => source.includes(`"${name}" =>`) || source.includes(`"${name}" |`),
+  );
 }
 
 const missing = unique.filter((name) => !hasDispatchArm(name));

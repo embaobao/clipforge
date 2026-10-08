@@ -11,7 +11,8 @@ const root = process.cwd();
 // saveDraftContent/handleCancelEdit/编辑布线在 ClipDetailWorkspace.tsx，编辑器 UI 语义在 DetailQuickEditor.tsx。
 const workspacePath = path.join(root, "src/workspace/components/ClipDetailWorkspace.tsx");
 const quickEditorPath = path.join(root, "src/workspace/components/DetailQuickEditor.tsx");
-const rustPath = path.join(root, "src-tauri/src/lib.rs");
+// modularity Phase 4：Rust 侧 editor 臂从 lib.rs 迁至 mcp/dispatch_agent_editor.rs。
+const rustPath = path.join(root, "src-tauri/src/mcp/dispatch_agent_editor.rs");
 
 function read(file) {
   return fs.readFileSync(file, "utf8");
@@ -117,8 +118,8 @@ assert(!suggestionRequest.includes("onApplySuggestionAndSave("), "suggestion req
 // ---------- Rust preview_patch：只读预览，不落库不进剪贴板（行为切片，command 名即 API 契约） ----------
 const previewPatch = sliceBetweenLast(
   rust,
-  '"clipboard.editor.preview_patch" => {',
-  '"clipboard.editor.apply_patch" | "clipboard.editor.save" => {',
+  "pub(super) fn dispatch_editor_preview_patch",
+  "pub(super) fn dispatch_editor_apply_patch",
 );
 assert(previewPatch.includes('"writesDatabase": false'), "preview_patch response does not declare writesDatabase=false");
 assert(previewPatch.includes("load_clip(&conn, id)"), "preview_patch does not load the current item for a before/after preview");

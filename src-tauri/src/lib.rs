@@ -5,11 +5,10 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 #[cfg(debug_assertions)]
 use std::sync::mpsc;
@@ -34,15 +33,14 @@ mod context_collectors;
 mod mcp;
 mod settings_service;
 
-pub use mcp::run_mcp_stdio;
 use agent::{
     agent_cancel_run, agent_check_provider, agent_detect, agent_get_config, agent_get_run,
     agent_get_transcript, agent_list_provider_models, agent_list_providers, agent_prepare_run,
     agent_restore_session, agent_start_run, cleanup_agent_children,
 };
+pub use mcp::run_mcp_stdio;
 use mcp::{
-    get_mcp_status, mcp_tool_names, start_mcp_server, start_mcp_server_with_reason,
-    stop_mcp_server,
+    get_mcp_status, mcp_tool_names, start_mcp_server, start_mcp_server_with_reason, stop_mcp_server,
 };
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
@@ -130,8 +128,10 @@ extern "C" {
         value: *mut *mut std::os::raw::c_void,
     ) -> i32;
     fn AXUIElementGetPid(element: *mut std::os::raw::c_void, pid: *mut i32) -> i32;
-    fn AXValueCreate(the_type: usize, value_ptr: *const std::os::raw::c_void)
-    -> *mut std::os::raw::c_void;
+    fn AXValueCreate(
+        the_type: usize,
+        value_ptr: *const std::os::raw::c_void,
+    ) -> *mut std::os::raw::c_void;
     fn AXValueGetValue(
         value: *mut std::os::raw::c_void,
         the_type: usize,
@@ -271,7 +271,6 @@ fn dev_quick_probe_target_bundle_cache() -> Arc<Mutex<String>> {
         .get_or_init(|| Arc::new(Mutex::new(String::new())))
         .clone()
 }
-
 
 fn panel_last_position() -> Arc<Mutex<Option<NormalizedPosition>>> {
     PANEL_LAST_POSITION
@@ -588,7 +587,6 @@ struct PanelTriggerPayload {
     message: String,
 }
 
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AnalyzeClipPayload {
@@ -597,7 +595,6 @@ struct AnalyzeClipPayload {
     analysis: ClipAnalysisPayload,
     tags: Vec<String>,
 }
-
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -873,7 +870,7 @@ fn paste_clipboard_item<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub(crate) fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, String> {
+fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, String> {
     let metadata = json!({
         "editor": {
             "sessionId": input.session_id,
@@ -1002,7 +999,6 @@ fn set_launch_at_login<R: tauri::Runtime>(
 ) -> Result<LaunchAtLoginPayload, String> {
     set_launch_at_login_native(&app, enabled)
 }
-
 
 #[tauri::command]
 fn init_clip_database() -> Result<DbInitPayload, String> {
@@ -1224,7 +1220,7 @@ fn persist_update_state(state: &UpdateCheckState) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) fn capture_clip_record(
+fn capture_clip_record(
     content: String,
     source_label: Option<String>,
     observed_at: i64,
@@ -1241,7 +1237,7 @@ pub(crate) fn capture_clip_record(
 }
 
 #[tauri::command]
-pub(crate) fn capture_current_clipboard(
+fn capture_current_clipboard(
     source_label: Option<String>,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
@@ -1577,7 +1573,7 @@ fn apply_capture_settings(
     }
 }
 
-pub(crate) fn log_to_file(level: &str, module: &str, message: &str) {
+fn log_to_file(level: &str, module: &str, message: &str) {
     // 非阻塞：只把格式化好的日志行投递给后台写线程，绝不在调用线程（往往是 IPC / 粘贴 /
     // 唤起热路径）上做 fs::OpenOptions + write_all。show/hide/copy/paste 每次都产生若干条
     // 日志，同步落盘是整体「停顿感」的主要来源之一。
@@ -2008,7 +2004,7 @@ fn get_log_stats() -> Result<LogStatsPayload, String> {
 }
 
 #[tauri::command]
-pub(crate) fn query_clip_records(
+fn query_clip_records(
     text: Option<String>,
     bucket: Option<String>,
     limit: Option<i64>,
@@ -2134,7 +2130,7 @@ pub(crate) fn query_clip_records(
 }
 
 #[tauri::command]
-pub(crate) fn search_clip_records(input: SearchClipsRequest) -> Result<QueryClipPayload, String> {
+fn search_clip_records(input: SearchClipsRequest) -> Result<QueryClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let limit = input.limit.unwrap_or(50).clamp(1, 200);
@@ -2253,7 +2249,7 @@ fn push_in_clause(
 }
 
 #[tauri::command]
-pub(crate) fn soft_delete_clip_records(ids: Vec<String>) -> Result<DeleteClipPayload, String> {
+fn soft_delete_clip_records(ids: Vec<String>) -> Result<DeleteClipPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_DELETE_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_DELETE_FAILED", error))?;
@@ -2345,7 +2341,7 @@ fn hard_delete_clip_records(ids: Vec<String>) -> Result<HardDeleteClipPayload, S
 }
 
 #[tauri::command]
-pub(crate) fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String> {
+fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
@@ -2521,7 +2517,7 @@ pub(crate) fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPaylo
 }
 
 #[tauri::command]
-pub(crate) fn export_clip_records(include_deleted: Option<bool>) -> Result<ExportClipPayload, String> {
+fn export_clip_records(include_deleted: Option<bool>) -> Result<ExportClipPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?;
@@ -2594,7 +2590,7 @@ fn export_clip_text_files<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub(crate) fn import_clip_records(items: Vec<ImportClipInput>) -> Result<ImportClipPayload, String> {
+fn import_clip_records(items: Vec<ImportClipInput>) -> Result<ImportClipPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))?;
@@ -3472,7 +3468,6 @@ fn get_accessibility_diagnostics() -> Result<AccessibilityDiagnosticsPayload, St
 fn reset_accessibility_permission() -> Result<AccessibilityPermissionPayload, String> {
     reset_accessibility_permission_platform()
 }
-
 
 #[cfg(target_os = "macos")]
 fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> {
@@ -4603,7 +4598,7 @@ fn image_storage_path() -> Result<PathBuf, String> {
         .join("clipboard-images"))
 }
 
-pub(crate) fn open_clip_db() -> Result<Connection, String> {
+fn open_clip_db() -> Result<Connection, String> {
     let path = database_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -4620,7 +4615,7 @@ pub(crate) fn open_clip_db() -> Result<Connection, String> {
     Ok(conn)
 }
 
-pub(crate) fn init_schema(conn: &Connection) -> Result<(), String> {
+fn init_schema(conn: &Connection) -> Result<(), String> {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
@@ -4865,14 +4860,14 @@ fn detect_payload_kind(content: &str) -> String {
     clipboard::detect_text(content).payload_kind
 }
 
-pub(crate) fn now_millis() -> Result<i64, String> {
+fn now_millis() -> Result<i64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_millis() as i64)
 }
 
-pub(crate) fn analyze_clip(content: &str, source_label: &str) -> ClipAnalysisPayload {
+fn analyze_clip(content: &str, source_label: &str) -> ClipAnalysisPayload {
     let trimmed = content.trim();
     let first_url = trimmed
         .split_whitespace()
@@ -4898,7 +4893,7 @@ pub(crate) fn analyze_clip(content: &str, source_label: &str) -> ClipAnalysisPay
     }
 }
 
-pub(crate) fn analysis_kind(analysis: &ClipAnalysisPayload) -> String {
+fn analysis_kind(analysis: &ClipAnalysisPayload) -> String {
     if analysis.url.is_some() {
         "link"
     } else if analysis.is_markdown {
@@ -4919,7 +4914,7 @@ fn analysis_kind_from_payload(payload_kind: &str) -> String {
     .to_string()
 }
 
-pub(crate) fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
+fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
     let mut tags = Vec::new();
     if analysis.url.is_some() {
         tags.push("链接".to_string());
@@ -4965,7 +4960,7 @@ fn upsert_fts(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
+fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
     conn.query_row(
         "SELECT id, content, content_hash, primary_format, available_formats, representations_json,
                 plain_text, search_text, sub_kind, width, height, size, file_types, thumbnail_path,
@@ -5236,7 +5231,7 @@ fn read_command(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-pub(crate) fn suppress_writeback_for(duration: Duration) {
+fn suppress_writeback_for(duration: Duration) {
     WRITEBACK_SUPPRESS.store(true, Ordering::SeqCst);
     thread::spawn(move || {
         thread::sleep(duration);
@@ -8087,7 +8082,7 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
 }
 
 /// 面板「固定」状态：true 时失焦/外部点击不自动隐藏（参考 EcoPaste CLIPBOARD_WINDOW_PINNED）。
-pub(crate) static PANEL_PINNED: AtomicBool = AtomicBool::new(false);
+static PANEL_PINNED: AtomicBool = AtomicBool::new(false);
 
 fn is_panel_pinned() -> bool {
     PANEL_PINNED.load(Ordering::Relaxed)
@@ -9082,488 +9077,3 @@ fn get_strategy_for_source(source: &str) -> PanelPositionStrategy {
         _ => PanelPositionStrategy::FollowCursor,
     }
 }
-
-fn mcp_tool_specs() -> Vec<McpToolSpec> {
-    vec![
-        McpToolSpec {
-            name: "clipboard.context.get",
-            description: "Get a safe redacted ClipboardContextSnapshot by id.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "includeContent": { "type": "boolean" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.context.compose",
-            description: "Compose an AgentContextSet from ids, favorites, search-result, all, or current scope.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "mode": { "type": "string", "enum": ["current", "selected", "favorites", "search-result", "all"] },
-                    "ids": { "type": "array", "items": { "type": "string" } },
-                    "text": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "types": { "type": "array", "items": { "type": "string" } },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.context.live",
-            description: "Capture a live, metadata-only snapshot of the current frontmost application. External collectors require explicit includeExternal=true and the enableExternalContextCollectors setting.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "collectorId": { "type": "string", "description": "Optional external collector id to run." },
-                    "includeExternal": { "type": "boolean", "description": "Run matching user-installed read-only collectors." }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.context.collectors.list",
-            description: "List built-in and user-installed application context collectors plus their diagnostics.",
-            input_schema: || json!({ "type": "object", "properties": {} }),
-        },
-        McpToolSpec {
-            name: "clipboard.context.collector.contract",
-            description: "Return the application context collector v1 contract, safety rules, and Chrome adapter example.",
-            input_schema: || json!({ "type": "object", "properties": {} }),
-        },
-        McpToolSpec {
-            name: "clipboard.context.collector.debug",
-            description: "Run one matching external collector against the current frontmost application and return its input, output, timing, and redaction diagnostics.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "collectorId": { "type": "string" },
-                    "fixture": { "type": "object", "description": "Optional synthetic collector input for development without opening the target app." }
-                },
-                "required": ["collectorId"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.content.parse",
-            description: "Parse URL, file path, JSON, command, code block, error log, and Markdown candidates without executing them.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "content": { "type": "string" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.capture",
-            description: "Capture content as a standardized ClipForge item.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "content": { "type": "string" },
-                    "sourceLabel": { "type": "string" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.update",
-            description: "Update a clipboard item through the unified write interface.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "content": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "favorite": { "type": "boolean" },
-                    "pinned": { "type": "boolean" },
-                    "bucket": { "type": "string" },
-                    "metadata": { "type": "object" },
-                    "agentContext": { "type": "object" }
-                },
-                "required": ["id"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.copy",
-            description: "Copy a standardized ClipForge item by id.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "text": { "type": "string" },
-                    "pasteMode": { "type": "string", "enum": ["rich", "plain", "filesAsPaths"] }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.search",
-            description: "Search ClipForge clipboard history with text, tags, type, kind, bucket, favorite, and file extension filters.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "text": { "type": "string" },
-                    "bucket": { "type": "string" },
-                    "types": { "type": "array", "items": { "type": "string" } },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "favorite": { "type": "boolean" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.settings.get",
-            description: "Read redacted ClipForge settings, schema, writePolicy, redaction rules, and revision.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "includeSchema": { "type": "boolean" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.settings.patch",
-            description: "Patch ClipForge settings through the unified Settings Service. Prefer this over replace.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "patch": { "type": "object" },
-                    "actor": { "type": "string" },
-                    "reason": { "type": "string" },
-                    "expectedRevision": { "type": "string" },
-                    "includeSchema": { "type": "boolean" }
-                },
-                "required": ["patch"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.settings.replace",
-            description: "Replace the full ClipForge settings document. Requires confirmed=true.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "settings": { "type": "object" },
-                    "actor": { "type": "string" },
-                    "reason": { "type": "string" },
-                    "expectedRevision": { "type": "string" },
-                    "confirmed": { "type": "boolean" },
-                    "includeSchema": { "type": "boolean" }
-                },
-                "required": ["settings", "confirmed"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.settings.reset",
-            description: "Reset a ClipForge settings scope. Requires scope and confirmed=true.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "scope": { "type": "string", "enum": ["all", "agent", "shortcuts", "display", "capture", "storage", "logs", "tags"] },
-                    "actor": { "type": "string" },
-                    "reason": { "type": "string" },
-                    "expectedRevision": { "type": "string" },
-                    "confirmed": { "type": "boolean" },
-                    "includeSchema": { "type": "boolean" }
-                },
-                "required": ["scope", "confirmed"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.agent.providers",
-            description: "List redacted Agent providers resolved from Settings Service.",
-            input_schema: || json!({ "type": "object", "properties": {} }),
-        },
-        McpToolSpec {
-            name: "clipf.agent.check",
-            description: "Check readiness for the default or selected Agent provider without blocking the quick panel.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "providerId": { "type": "string" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.agent.models",
-            description: "List available models for the default or selected OpenAI-compatible Agent provider.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "providerId": { "type": "string" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.skill.list",
-            description: "List private clipboard skill summaries. Frontend local drafts are not exposed as secrets.",
-            input_schema: || json!({ "type": "object", "properties": {} }),
-        },
-        McpToolSpec {
-            name: "clipboard.skill.save_draft",
-            description: "Return a confirm-write skill draft envelope; actual enablement remains user-confirmed.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" },
-                    "description": { "type": "string" },
-                    "promptTemplate": { "type": "string" }
-                },
-                "required": ["name", "promptTemplate"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.skill.run",
-            description: "Prepare a private skill run with explicit context scope and permission trimming.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "skillId": { "type": "string" },
-                    "contextSet": { "type": "object" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.plugin.list",
-            description: "List built-in ClipForge plugin manifests and capability boundaries.",
-            input_schema: || json!({ "type": "object", "properties": {} }),
-        },
-        McpToolSpec {
-            name: "clipboard.plugin.call",
-            description: "Resolve a plugin action into a preview/action envelope. Built-in calls do not execute unsafe actions.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "pluginId": { "type": "string" },
-                    "actionId": { "type": "string" },
-                    "id": { "type": "string" },
-                    "content": { "type": "string" },
-                    "target": { "type": "string" }
-                },
-                "required": ["pluginId"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.agent.run",
-            description: "Prepare an Agent run from prompt and contextSet. Execution requires explicit confirmation outside MCP.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "providerId": { "type": "string" },
-                    "prompt": { "type": "string" },
-                    "contextSet": { "type": "object" },
-                    "allowFullContent": { "type": "boolean" }
-                },
-                "required": ["prompt"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.editor.context",
-            description: "Build a safe EditorContextSnapshot for a clipboard item and optional draft.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "sessionId": { "type": "string" },
-                    "draftVersion": { "type": "integer" },
-                    "content": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } }
-                },
-                "required": ["id"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.editor.preview_patch",
-            description: "Preview editor content/tag changes. Does not write to database.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "sessionId": { "type": "string" },
-                    "draftVersion": { "type": "integer" },
-                    "replacement": { "type": "string" },
-                    "tagPatch": { "type": "object" }
-                },
-                "required": ["id"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.editor.apply_patch",
-            description: "Apply a user-confirmed editor patch through save_editor_draft.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "sessionId": { "type": "string" },
-                    "draftVersion": { "type": "integer" },
-                    "replacement": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "confirmed": { "type": "boolean" }
-                },
-                "required": ["id", "replacement", "confirmed"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.editor.save",
-            description: "Save an editor draft through the unified native editor command.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "sessionId": { "type": "string" },
-                    "draftVersion": { "type": "integer" },
-                    "content": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } }
-                },
-                "required": ["id", "content"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.editor.render_template",
-            description: "Render a simple editor template against safe variables.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "template": { "type": "string" },
-                    "variables": { "type": "object" }
-                },
-                "required": ["template"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipboard.editor.suggest_update",
-            description: "Return a local EditorSuggestionResult with content/tag patch preview only.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "sessionId": { "type": "string" },
-                    "draftVersion": { "type": "integer" },
-                    "content": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } }
-                },
-                "required": ["id"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.capture",
-            description: "Capture current text into ClipForge history.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "content": { "type": "string" },
-                    "sourceLabel": { "type": "string" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.get",
-            description: "Get a ClipForge item by id. Agent instruction example: use clipf.get id=clip_xxx",
-            input_schema: || json!({
-                "type": "object",
-                "properties": { "id": { "type": "string" } },
-                "required": ["id"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.list",
-            description: "List recent ClipForge clipboard history. Agent instruction example: use clipf.list limit=9",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "bucket": { "type": "string", "enum": ["all", "history", "archive", "snippet", "trash"] },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
-                    "cursor": { "type": "string" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.search",
-            description: "Search ClipForge clipboard history with text, tags, type, kind, bucket, favorite, and file extension filters.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "text": { "type": "string" },
-                    "bucket": { "type": "string", "enum": ["all", "history", "archive", "snippet", "trash"] },
-                    "types": { "type": "array", "items": { "type": "string" } },
-                    "type": { "type": "string" },
-                    "kinds": { "type": "array", "items": { "type": "string" } },
-                    "kind": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "tag": { "type": "string" },
-                    "fileExtensions": { "type": "array", "items": { "type": "string" } },
-                    "fileExtension": { "type": "string" },
-                    "favorite": { "type": "boolean" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
-                    "cursor": { "type": "string" }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.analyze",
-            description: "Analyze text with ClipForge content detection without writing it to history.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "content": { "type": "string" },
-                    "sourceLabel": { "type": "string" }
-                },
-                "required": ["content"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.copy",
-            description: "Copy a standardized ClipForge item by id, or capture text first and then copy the generated item. Agent instruction example: use clipf.copy id=clip_xxx",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "text": { "type": "string" },
-                    "pasteMode": { "type": "string", "enum": ["rich", "plain", "filesAsPaths"] }
-                }
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.update",
-            description: "Update a clipboard item content, favorite, pinned, note, or bucket.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string" },
-                    "content": { "type": "string" },
-                    "tags": { "type": "array", "items": { "type": "string" } },
-                    "favorite": { "type": "boolean" },
-                    "pinned": { "type": "boolean" },
-                    "note": { "type": "string" },
-                    "metadata": { "type": "object" },
-                    "agentContext": { "type": "object" },
-                    "bucket": { "type": "string" }
-                },
-                "required": ["id"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.delete",
-            description: "Move clipboard items to trash.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": { "ids": { "type": "array", "items": { "type": "string" } } },
-                "required": ["ids"]
-            }),
-        },
-        McpToolSpec {
-            name: "clipf.export",
-            description: "Export ClipForge history as JSON.",
-            input_schema: || json!({ "type": "object", "properties": { "includeDeleted": { "type": "boolean" } } }),
-        },
-        McpToolSpec {
-            name: "clipf.import",
-            description: "Import ClipForge history from JSON items.",
-            input_schema: || json!({
-                "type": "object",
-                "properties": { "items": { "type": "array", "items": { "type": "object" } } },
-                "required": ["items"]
-            }),
-        },
-    ]
-}
-
