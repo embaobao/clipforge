@@ -19,11 +19,11 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 
-/** 设置分组容器：标题 + 内容体 */
-export function SettingGroup({ children, title }: { children: ReactNode; title: string }) {
+/** 设置分组容器：标题可选（tab 名已表意时不重复传），内容体按行分隔。 */
+export function SettingGroup({ children, title }: { children: ReactNode; title?: string }) {
   return (
     <div className="mb-6 last:mb-0">
-      <h3 className="mb-2 text-[11px] font-medium text-muted-foreground">{title}</h3>
+      {title ? <h3 className="mb-2 text-[11px] font-medium text-muted-foreground">{title}</h3> : null}
       <div className="divide-y divide-black/[0.04] rounded-lg dark:divide-white/[0.06]">{children}</div>
     </div>
   );

@@ -44,7 +44,7 @@ export function McpAgentSection({
   return renderTabs({
     status: (
       <>
-        <SettingGroup title={tr("settings.tab.status")}>
+        <SettingGroup>
           {/* MCP 状态：常驻服务由 Rust 托管、不会中途变化，只读展示即可，不放刷新入口。 */}
           <div className="flex items-center gap-1.5 text-[12.5px]">
             <span
@@ -54,7 +54,7 @@ export function McpAgentSection({
             <span className="font-medium">{tr("settings.integration.mcp.title")}</span>
             <span className="text-muted-foreground">
               {state.mcp?.running ? tr("settings.integration.mcp.running") : tr("settings.integration.mcp.unknown")} ·{" "}
-              {state.mcp?.transport ?? "stdio"} · {tr("settings.integration.mcp.toolCount", { count: state.mcp?.tools.length ?? 0 })}
+              {state.mcp?.transport ?? "stdio"} · {tr("settings.integration.mcp.toolCount", { count: state.mcp?.tools?.length ?? 0 })}
             </span>
           </div>
           <p className="mt-0.5 text-[12px] text-muted-foreground">{tr("settings.integration.mcp.description")}</p>
@@ -85,7 +85,7 @@ export function McpAgentSection({
       </>
     ),
     install: (
-      <SettingGroup title={tr("settings.tab.install")}>
+      <SettingGroup>
         <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
           <span>{tr("settings.manual.agentQuickStart")}</span>
           <strong>{tr("settings.manual.agentSummary")}</strong>
@@ -101,7 +101,7 @@ export function McpAgentSection({
       </SettingGroup>
     ),
     "json-rpc": (
-      <SettingGroup title={tr("settings.tab.jsonRpc")}>
+      <SettingGroup>
         <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
           <span>{tr("settings.integration.examples.title")}</span>
           <strong>{tr("settings.integration.examples.summary")}</strong>
@@ -114,7 +114,7 @@ export function McpAgentSection({
       </SettingGroup>
     ),
     provider: (
-      <SettingGroup title={tr("settings.tab.provider")}>
+      <SettingGroup>
         <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
           <span>{tr("settings.integration.provider.title")}</span>
           <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
@@ -156,7 +156,7 @@ export function UpdateDistributionSection({
 }: UpdateDistributionSectionProps) {
   return renderTabs({
     version: (
-      <SettingGroup title={tr("settings.tab.version")}>
+      <SettingGroup>
         <SettingsStatusPanel
           description={updateStatusCopy}
           items={[
@@ -218,7 +218,7 @@ export function UpdateDistributionSection({
       </SettingGroup>
     ),
     "update-flow": (
-      <SettingGroup title={tr("settings.tab.updateFlow")}>
+      <SettingGroup>
         <SettingsStatusPanel
           actions={[
             {
@@ -265,7 +265,7 @@ export function UpdateDistributionSection({
       </SettingGroup>
     ),
     build: (
-      <SettingGroup title={tr("settings.tab.build")}>
+      <SettingGroup>
         <SettingsStatusPanel
           items={[
             {
@@ -320,24 +320,23 @@ export function TagRulesSection({
 }: TagRulesSectionProps) {
   return renderTabs({
     "tag-mode": (
-      <SettingGroup title={tr("settings.tab.tagMode")}>
-        <div className="flex items-center justify-between gap-8 py-3">
-          <span>{tr("settings.tags.generation")}</span>
-          <SegmentSetting
-            label={tr("settings.tags.generation")}
-            options={(["similar", "rules", "off"] as AppSettings["tagMode"][]).map((v) => ({
-              value: v,
-              label: tagModeLabels[v],
-            }))}
-            selected={settings.tagMode}
-            onChange={(tagMode) => updateSettings({ tagMode })}
-          />
-        </div>
+      <SettingGroup>
+        <SegmentSetting
+          label={tr("settings.tags.generation")}
+          options={(["similar", "rules", "off"] as AppSettings["tagMode"][]).map((v) => ({
+            value: v,
+            label: tagModeLabels[v],
+          }))}
+          probeId="settings-control:tagMode"
+          selected={settings.tagMode}
+          onChange={(tagMode) => updateSettings({ tagMode })}
+        />
       </SettingGroup>
     ),
     rules: (
-      <SettingGroup title={tr("settings.tab.rules")}>
-        {settings.tagRules.length === 0 ? (
+      <SettingGroup>
+        {/* tagRules 运行时可能缺省（后端旧结构/mock），兜底空数组避免白屏 */}
+        {(settings.tagRules ?? []).length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-black/[0.08] py-10 text-center dark:border-white/[0.1]">
             <Tags className="h-5 w-5 text-muted-foreground/60" />
             <p className="text-[12.5px] text-muted-foreground">{tr("settings.tags.empty")}</p>
@@ -354,7 +353,7 @@ export function TagRulesSection({
         ) : (
           <>
             <div className="space-y-3">
-              {settings.tagRules.map((rule) => (
+              {(settings.tagRules ?? []).map((rule) => (
                 <div className="flex items-center gap-2" key={rule.id}>
                   <label className="flex-1" htmlFor={`tag-rule-${rule.id}-label`}>
                     <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.name")}</span>

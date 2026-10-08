@@ -21,7 +21,7 @@ export type CaptureContentSectionProps = {
 export function CaptureContentSection({ settings, tr, updateSettings, renderTabs }: CaptureContentSectionProps) {
   return renderTabs({
     search: (
-      <SettingGroup title={tr("settings.tab.search")}>
+      <SettingGroup>
         <ToggleSetting
           checked={settings.fuzzySearchEnabled}
           label={tr("settings.content.fuzzySearch")}
@@ -47,7 +47,7 @@ export function CaptureContentSection({ settings, tr, updateSettings, renderTabs
       </SettingGroup>
     ),
     preview: (
-      <SettingGroup title={tr("settings.tab.preview")}>
+      <SettingGroup>
         <ToggleSetting
           checked={settings.enableMarkdownPreview}
           label={tr("settings.content.markdownPreview")}
@@ -68,7 +68,7 @@ export function CaptureContentSection({ settings, tr, updateSettings, renderTabs
       </SettingGroup>
     ),
     "capture-types": (
-      <SettingGroup title={tr("settings.tab.captureTypes")}>
+      <SettingGroup>
         <SettingsFieldRow
           section="capture-content"
           tab="capture-types"
@@ -86,7 +86,7 @@ export function CaptureContentSection({ settings, tr, updateSettings, renderTabs
       </SettingGroup>
     ),
     limits: (
-      <SettingGroup title={tr("settings.tab.limits")}>
+      <SettingGroup>
         <NumberSetting
           label={tr("settings.capture.imageMaxSize")}
           max={1024}
@@ -242,7 +242,7 @@ export function StorageLogsSection({
       </SettingGroup>
     ),
     cleanup: (
-      <SettingGroup title={tr("settings.tab.cleanup")}>
+      <SettingGroup>
         <ToggleSetting
           checked={settings.cleanupEnabled}
           label={tr("settings.storage.cleanupEnabled")}

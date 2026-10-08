@@ -35,32 +35,26 @@ export function DisplayPanelSection({
 }: DisplayPanelSectionProps) {
   return renderTabs({
     density: (
-      <SettingGroup title={tr("settings.tab.density")}>
-        <div className="flex items-center justify-between gap-8 py-3">
-          <span>{tr("settings.display.density")}</span>
-          <SegmentSetting
-            label={tr("settings.display.density")}
-            options={(["dense", "normal", "comfortable"] as AppSettings["panelDensity"][]).map((v) => ({
-              value: v,
-              label: densityCopy[v],
-            }))}
-            probeId="settings-control:panelDensity"
-            selected={settings.panelDensity}
-            onChange={(panelDensity) => updateSettings({ panelDensity })}
-          />
-        </div>
-        <div className="flex items-center justify-between gap-8 py-3">
-          <span>{tr("settings.display.contentMode")}</span>
-          <SegmentSetting
-            label={tr("settings.display.contentMode")}
-            options={(["summary", "middle", "raw"] as AppSettings["contentDisplayMode"][]).map((v) => ({
-              value: v,
-              label: displayModeCopy[v],
-            }))}
-            selected={settings.contentDisplayMode}
-            onChange={(contentDisplayMode) => updateSettings({ contentDisplayMode })}
-          />
-        </div>
+      <SettingGroup>
+        <SegmentSetting
+          label={tr("settings.display.density")}
+          options={(["dense", "normal", "comfortable"] as AppSettings["panelDensity"][]).map((v) => ({
+            value: v,
+            label: densityCopy[v],
+          }))}
+          probeId="settings-control:panelDensity"
+          selected={settings.panelDensity}
+          onChange={(panelDensity) => updateSettings({ panelDensity })}
+        />
+        <SegmentSetting
+          label={tr("settings.display.contentMode")}
+          options={(["summary", "middle", "raw"] as AppSettings["contentDisplayMode"][]).map((v) => ({
+            value: v,
+            label: displayModeCopy[v],
+          }))}
+          selected={settings.contentDisplayMode}
+          onChange={(contentDisplayMode) => updateSettings({ contentDisplayMode })}
+        />
         <NumberSetting
           label={tr("settings.display.quickItemLimit")}
           value={settings.quickItemLimit}
@@ -72,7 +66,7 @@ export function DisplayPanelSection({
       </SettingGroup>
     ),
     size: (
-      <SettingGroup title={tr("settings.tab.size")}>
+      <SettingGroup>
         <NumberSetting
           label={tr("settings.display.panelWidth")}
           value={settings.panelWidth}
@@ -100,7 +94,7 @@ export function DisplayPanelSection({
       </SettingGroup>
     ),
     position: (
-      <SettingGroup title={tr("settings.tab.position")}>
+      <SettingGroup>
         <div className="flex items-center justify-between gap-8 py-3">
           <span>{tr("settings.display.positionStrategy")}</span>
           <SegmentSetting
@@ -116,7 +110,7 @@ export function DisplayPanelSection({
       </SettingGroup>
     ),
     test: (
-      <SettingGroup title={tr("settings.tab.test")}>
+      <SettingGroup>
         <ToggleSetting
           label={tr("settings.display.autoHideDock")}
           checked={settings.enableScrollCollapse}

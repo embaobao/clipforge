@@ -42,6 +42,23 @@ await page.cdp("Emulation.setDeviceMetricsOverride", ${JSON.stringify(VIEWPORT)}
 await page.goto("${DEV_URL}");
 await page.waitForSelector('[data-surface="settings"]', { state: "visible", timeout: 15_000 });
 
+// profile 的 localStorage 跨跑持久化：清掉导航收起标记，回归产品默认（收起）。
+await page.evaluate(() => localStorage.removeItem("clipforge.settings.navCollapsed"));
+await page.reload();
+await page.waitForSelector('[data-surface="settings"]', { state: "visible", timeout: 15_000 });
+await page.waitForTimeout(400);
+
+// 点击辅助：ego text= 模糊匹配会撞同名文案（侧栏「快捷键与语言」vs tab「快捷键」），
+// 统一 DOM 精确查找 + 合成点击。
+const clickNavByLabel = (l) => page.evaluate((lbl) => {
+  const btn = [...document.querySelectorAll("aside button")].find((b) => (b.getAttribute("aria-label") ?? "") === lbl);
+  btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}, l);
+const clickTabByExactText = (n) => page.evaluate((name) => {
+  const btn = [...document.querySelectorAll('[data-dev-probe="settings-section-tabs-list"] button')].find((b) => b.textContent?.trim() === name);
+  btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}, n);
+
 // 中文界面下不允许出现的后端英文串泄漏（本地化映射应兜住）。
 const LEAK_PATTERNS = ["MCP server running", "Could not fetch", "accessibility status unavailable", "Launch at login"];
 
@@ -75,7 +92,7 @@ const navButtons = await page.evaluate(() =>
   [...document.querySelectorAll("aside button")].slice(1).map((b) => b.getAttribute("aria-label")),
 );
 for (const label of navButtons) {
-  await page.click(\`loc=css:aside button[aria-label="\${label}"]\`);
+  await clickNavByLabel(label);
   await page.waitForTimeout(350); // 宽度过渡 + 首帧渲染
   const sectionState = await collectState();
   assert(sectionState.hOverflow <= 1, \`\${label}: 水平溢出 \${sectionState.hOverflow}px\`);
@@ -88,7 +105,7 @@ for (const label of navButtons) {
     [...document.querySelectorAll('[data-dev-probe="settings-section-tabs-list"] button')].map((b) => b.textContent?.trim()),
   );
   for (const tab of tabLabels) {
-    await page.click(\`text=\${tab}\`);
+    await clickTabByExactText(tab);
     await page.waitForTimeout(250);
     const tabState = await collectState();
     assert(tabState.hOverflow <= 1, \`\${label}/\${tab}: 水平溢出 \${tabState.hOverflow}px\`);
@@ -103,7 +120,9 @@ for (const label of navButtons) {
 }
 
 // 展开态回归：点开展开后侧栏宽度恢复、label 可见。
-await page.click('loc=css:aside button[aria-label*="侧栏"], loc=css:aside button[aria-label*="sidebar"]');
+await page.evaluate(() => {
+  [...document.querySelectorAll("aside button")][0]?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+});
 await page.waitForTimeout(350);
 const expanded = await collectState();
 assert(expanded.sidebarWidth > 120, \`展开态侧栏宽度应 >120px，实际 \${expanded.sidebarWidth}\`);

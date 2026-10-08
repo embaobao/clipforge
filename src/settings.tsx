@@ -200,7 +200,7 @@ export function SettingsApp() {
       .subscribe((event) => {
         if (!active) return;
         if (lastSettingsRevision.current === event.revision) return;
-        recordNextFramePerf("settings.changed", { changedPaths: event.changedPaths.length });
+        recordNextFramePerf("settings.changed", { changedPaths: event.changedPaths?.length ?? 0 });
         lastSettingsRevision.current = event.revision;
         settingsService
           .get(false)
@@ -765,6 +765,13 @@ export function SettingsApp() {
           setSection(typedSection);
         }}
         version={`ClipForge v${state.update?.currentVersion ?? "0.1.0"}`}
+        statusBar={
+          <SettingsStickyStatusBar
+            primary={stickyStatusPrimary}
+            secondary={stickyStatusSecondary}
+            state={state.saveFeedback.state}
+          />
+        }
       >
 
           {section === "shortcut-language" && (
@@ -874,12 +881,6 @@ export function SettingsApp() {
               revealDataFolder={revealDataFolder}
             />
           )}
-
-          <SettingsStickyStatusBar
-            primary={stickyStatusPrimary}
-            secondary={stickyStatusSecondary}
-            state={state.saveFeedback.state}
-          />
       </SettingsShell>
     </TooltipProvider>
   );

@@ -20,7 +20,7 @@ export function SettingsStickyStatusBar({
   return (
     <div
       className={cn(
-        "sticky bottom-[-16px] z-10 mt-auto flex min-h-8 items-center justify-between gap-3 rounded-md bg-card/95 px-1 pt-3 text-xs leading-4 text-muted-foreground backdrop-blur-sm",
+        "flex min-h-8 items-center justify-between gap-3 rounded-md px-1 pt-3 text-xs leading-4 text-muted-foreground",
         state === "pending" && "text-foreground",
         state === "saved" && "text-emerald-700 dark:text-emerald-400",
         state === "error" && "text-destructive",

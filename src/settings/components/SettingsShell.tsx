@@ -26,6 +26,8 @@ export interface SettingsShellProps {
   version: string;
   /** 内容区子节点。 */
   children: ReactNode;
+  /** 固定在滚动区外的底部状态条（保存反馈/后台状态），内容短也贴底。 */
+  statusBar?: ReactNode;
   /** 恢复默认按钮回调（可选）。 */
   onReset?: () => void;
   /** 导出数据按钮回调（可选）。 */
@@ -50,6 +52,7 @@ export function SettingsShell({
   onToggleCollapsed,
   version,
   children,
+  statusBar,
   onReset,
   onExport,
   resetLabel,
@@ -77,16 +80,12 @@ export function SettingsShell({
         >
           <button
             aria-label={collapsed ? expandLabel : collapseLabel}
-            className={cn(
-              "mb-1 flex h-8 w-full items-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/[0.06]",
-              collapsed ? "justify-center" : "justify-start px-2.5 gap-2",
-            )}
+            className="mb-1 flex h-8 w-full items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/[0.06]"
             onClick={onToggleCollapsed}
             title={collapsed ? expandLabel : collapseLabel}
             type="button"
           >
             {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
-            {!collapsed ? <span className="truncate text-[12px]">导航</span> : null}
           </button>
           {items.map(({ id, label, icon: Icon }) => {
             const active = id === activeId;
@@ -115,6 +114,8 @@ export function SettingsShell({
         {/* 内容 */}
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-auto px-6 py-4">{children}</div>
+          {/* 状态条固定在滚动区外，内容再短也贴底 */}
+          {statusBar}
 
           {/* 底部：留白分隔，不画分割线 */}
           <div className="flex items-center justify-between gap-3 px-6 pb-2.5 pt-1">
