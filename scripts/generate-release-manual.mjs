@@ -110,11 +110,18 @@ const html = `<!doctype html>
           <section class="panel"><h2>默认快捷键</h2><p>${shortcutLine()}</p></section>
           <section class="panel full"><h2>功能目录</h2><div class="grid">${featureTiles()}</div></section>
           <section class="panel full"><h2>MCP 当前能力状态</h2><div class="status-list">${mcpRows()}</div></section>
-          <section class="panel full"><h2>外部快速接入</h2><p>外部 MCP Client 使用下面命令作为 stdio server。应用启动后会自动托管 MCP 服务状态，Agent 可直接使用 clipf.* 工具名。</p><pre><code>/Applications/ClipForge.app/Contents/MacOS/clipforge --mcp
+          <section class="panel full"><h2>外部快速接入</h2><p>把下面的 mcpServers 配置加入支持 MCP 的 Agent（Claude Desktop、Cursor 等）即可接入；也可以用命令行直接把应用作为 stdio server 启动。应用启动后会自动托管 MCP 服务状态，Agent 可直接调用 clipf.* 工具。</p><pre><code>{
+  "mcpServers": {
+    "clipforge": {
+      "command": "/Applications/ClipForge.app/Contents/MacOS/clipforge",
+      "args": ["--mcp"]
+    }
+  }
+}
 
-use clipf.list limit=9
-use clipf.get id=clip_xxx
-use clipf.copy id=clip_xxx</code></pre></section>
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"clipf.list","arguments":{"limit":9}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"clipf.get","arguments":{"id":"clip_xxx"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"clipf.copy","arguments":{"id":"clip_xxx"}}}</code></pre></section>
           <section class="panel full"><h2>内测检查重点</h2><ul><li>复制内容后，历史是否稳定出现，不漏记、不重复、不把应用自身写回污染为新记录。</li><li>快捷键唤起、数字选择、Control+J、Control+P、Control+F 是否符合预期。</li><li>悬浮窗是否能在全屏、多个显示器、不同输入框位置保持正确显示。</li><li>删除、恢复、清空垃圾箱、收藏保护和自动清理是否符合预期。</li><li>MCP 外部工具调用是否能读取列表、写入历史、写回剪贴板、分析内容和导出数据。</li></ul></section>
           <section class="panel full danger"><h2>不要这样做</h2><p>不建议使用下面的命令全局关闭 macOS 安全机制：</p><pre><code>sudo spctl --master-disable</code></pre><p>请优先使用右键打开，或者只对 <strong>/Applications/ClipForge.app</strong> 移除隔离属性。</p></section>
         </div>

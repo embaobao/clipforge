@@ -1,11 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { settingsService } from "./services/settings";
 import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import {
-  Plus,
-  Trash2,
-} from "lucide-react";
 import { getFrontendEnvironmentSnapshot } from "./frontend-diagnostics";
 import { recordNextFramePerf } from "./performance-smoke";
 import {
@@ -15,10 +12,6 @@ import {
   setDocumentLocale,
   t,
 } from "./i18n";
-import {
-  SettingGroup,
-  SegmentSetting,
-} from "./settings/controls";
 import { McpAgentSection, TagRulesSection, UpdateDistributionSection } from "./settings/sections/AgentUpdateTagSections";
 import { ShortcutLanguageSection } from "./settings/sections/ShortcutLanguageSection";
 import { CaptureContentSection, StorageLogsSection } from "./settings/sections/CaptureStorageSections";
@@ -29,19 +22,13 @@ import { type SettingsCodeTab } from "./settings/components/SettingsCodeTabs";
 import { type SettingsStatusPanelState } from "./settings/components/SettingsStatusPanel";
 import { SettingsStickyStatusBar } from "./settings/components/SettingsStickyStatusBar";
 import { type SettingsTabId } from "./settings/settings-field-catalog";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
 import {
   DEFAULT_SETTINGS,
   DiagnosticsExportPayload,
@@ -61,6 +48,7 @@ import {
   type AccessibilityPermissionPayload,
   type AppSettings,
   type BuildInfoPayload,
+  type DataStatsPayload,
 } from "./settings/settings-model";
 
 interface UpdateCheckState {
@@ -96,8 +84,12 @@ export function SettingsApp() {
   const initialNavigation = useRef(getInitialNavigationFromUrl());
   const [section, setSection] = useState<SectionKey>(() => initialNavigation.current.section);
   const [recording, setRecording] = useState(false);
-  const [dangerConfirmation, setDangerConfirmation] = useState<"cleanupLogs" | "resetAccessibility" | null>(null);
+  const [dangerConfirmation, setDangerConfirmation] = useState<"cleanupLogs" | "cleanupData" | "resetAccessibility" | null>(null);
   const [logActionStatus, setLogActionStatus] = useState<{ message: string; state: SettingsStatusPanelState }>({
+    message: "",
+    state: "neutral",
+  });
+  const [dataActionStatus, setDataActionStatus] = useState<{ message: string; state: SettingsStatusPanelState }>({
     message: "",
     state: "neutral",
   });
@@ -115,6 +107,7 @@ export function SettingsApp() {
     saveFeedback: { state: "idle", message: "", requestId: 0 },
     status: "",
     logStats: null,
+    dataStats: null,
     update: null,
     buildInfo: null,
   });
@@ -125,7 +118,7 @@ export function SettingsApp() {
   useEffect(() => {
     void (async () => {
       try {
-        const [settingsDocument, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, launchAtLogin, mcp, logStats, buildInfo] = await Promise.all([
+        const [settingsDocument, configPath, databasePath, accessibility, accessibilityDiagnostics, panel, launchAtLogin, mcp, logStats, dataStats, buildInfo] = await Promise.all([
           settingsService.get(true),
           invoke<string>("get_clipforge_config_path"),
           invoke<string>("get_clipforge_database_path"),
@@ -135,6 +128,7 @@ export function SettingsApp() {
           invoke<LaunchAtLoginPayload>("get_launch_at_login"),
           invoke<McpStatusPayload>("get_mcp_status"),
           invoke<LogStatsPayload>("get_log_stats"),
+          invoke<DataStatsPayload>("get_clipforge_data_stats"),
           invoke<BuildInfoPayload>("get_build_info"),
         ]);
         lastSettingsRevision.current = settingsDocument.revision;
@@ -155,6 +149,7 @@ export function SettingsApp() {
           settings: mergedSettings,
           saveFeedback: { state: "idle", message: "", requestId: 0 },
           logStats,
+          dataStats,
           update: null,
           buildInfo,
           status: "",
@@ -285,6 +280,52 @@ export function SettingsApp() {
       const message = formatSettingsError(error);
       setLogActionStatus({ message, state: "danger" });
       setState((prev) => ({ ...prev, status: message }));
+    }
+  }
+
+  // ===== 数据存储统计/清理/打开（data tab）=====
+  /** 重新统计数据占用；轻量只读 command，失败在面板内提示。 */
+  async function refreshDataStats() {
+    try {
+      const stats = await invoke<DataStatsPayload>("get_clipforge_data_stats");
+      setState((prev) => ({ ...prev, dataStats: stats }));
+      setDataActionStatus({ message: tr("settings.data.statsRefreshed"), state: "good" });
+    } catch (error) {
+      setDataActionStatus({ message: formatSettingsError(error), state: "danger" });
+    }
+  }
+
+  /** 立即执行一次清理：清空过期回收站并按「保留条数上限」截断历史，完成后刷新统计。 */
+  async function cleanupDataNow() {
+    setDangerConfirmation(null);
+    setDataActionStatus({ message: tr("settings.data.cleaning"), state: "pending" });
+    setState((prev) => ({ ...prev, status: tr("settings.data.cleaning") }));
+    try {
+      const result = await invoke<{ hardDeleted: number; retentionHardDeleted: number; overflowHardDeleted: number }>(
+        "cleanup_clip_records",
+        { retentionDays: state.settings.softDeletedRetentionDays, maxActiveItems: state.settings.maxStoredItems },
+      );
+      await refreshDataStats();
+      const message = tr("settings.data.cleaned", {
+        count: result.hardDeleted,
+        retention: result.retentionHardDeleted,
+        overflow: result.overflowHardDeleted,
+      });
+      setDataActionStatus({ message, state: "good" });
+      setState((prev) => ({ ...prev, status: message }));
+    } catch (error) {
+      const message = formatSettingsError(error);
+      setDataActionStatus({ message, state: "danger" });
+      setState((prev) => ({ ...prev, status: message }));
+    }
+  }
+
+  /** 在系统文件管理器中显示数据库文件（macOS=Finder 中的 ClipForge 数据目录）。 */
+  async function revealDataFolder() {
+    try {
+      await revealItemInDir(state.databasePath);
+    } catch (error) {
+      setDataActionStatus({ message: formatSettingsError(error), state: "danger" });
     }
   }
 
@@ -601,20 +642,22 @@ export function SettingsApp() {
   };
   const mcpCommand = getMcpCommand();
   const agentInstallPrompt = getAgentInstallPrompt();
-  const jsonRpcExample =
-    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"clipf.copy","arguments":{"id":"clip_xxx","client":"agent","requestId":"req_001"}}}';
-  const toolExamples = [
-    "use clipf.list limit=9",
-    "use clipf.get id=clip_xxx",
-    "use clipf.copy id=clip_xxx",
-    'use clipf.search text="github" limit=20',
-    'use clipf.analyze content="https://github.com/embaobao/clipforge"',
+  // 标准 mcpServers 接入配置：复制后粘进支持 MCP 的 Agent（Claude Desktop/Cursor 等）配置即可接入。
+  const mcpServerConfigJson = JSON.stringify(
+    { mcpServers: { clipforge: { command: mcpCommand.replace(/\s*--mcp\s*$/, ""), args: ["--mcp"] } } },
+    null,
+    2,
+  );
+  // 真实 JSON-RPC 示例：与 MCP stdio 协议一致（tools/call），供调试参考。
+  const jsonRpcExamples = [
+    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"clipf.list","arguments":{"limit":9}}}',
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"clipf.search","arguments":{"text":"github","limit":20}}}',
   ].join("\n");
   const mcpAgentCodeTabs: SettingsCodeTab[] = [
+    { value: "mcp-servers", label: tr("settings.mcp.serverConfig"), language: "json", content: mcpServerConfigJson },
     { value: "install", label: tr("settings.mcp.agentInstallPrompt"), language: "text", content: agentInstallPrompt },
     { value: "command", label: tr("settings.mcp.command"), language: "bash", content: mcpCommand },
-    { value: "tools", label: tr("settings.mcp.toolExamples"), language: "text", content: toolExamples },
-    { value: "json-rpc", label: tr("settings.mcp.jsonRpc"), language: "json", content: jsonRpcExample },
+    { value: "json-rpc", label: tr("settings.mcp.jsonRpc"), language: "json", content: jsonRpcExamples },
     { value: "provider", label: tr("settings.agent.providerTemplate"), language: "json", content: getAgentProviderTemplateText() },
   ];
   function copyMcpAgentCodeTab(tab: SettingsCodeTab) {
@@ -689,7 +732,6 @@ export function SettingsApp() {
           setDangerConfirmation(null);
           setSection(typedSection);
         }}
-        title={tr("window.settings.title")}
         version={`ClipForge v${state.update?.currentVersion ?? "0.1.0"}`}
       >
 
@@ -788,79 +830,20 @@ export function SettingsApp() {
               logStats={state.logStats}
               refreshLogStats={refreshLogStats}
               renderTabs={renderSectionTabs}
-              setDangerConfirmation={(v) => setDangerConfirmation(v as "cleanupLogs" | null)}
+              setDangerConfirmation={(v) => setDangerConfirmation(v as "cleanupLogs" | "cleanupData" | null)}
               settings={state.settings}
               tr={tr}
               updateSettings={updateSettings}
               cleanupLogsNow={cleanupLogsNow}
               exportDiagnosticsBundle={exportDiagnosticsBundle}
+              dataStats={state.dataStats}
+              dataActionStatus={dataActionStatus}
+              refreshDataStats={refreshDataStats}
+              cleanupDataNow={cleanupDataNow}
+              revealDataFolder={revealDataFolder}
             />
           )}
 
-          {section === "tag-rules" &&
-            renderSectionTabs({
-              "tag-mode": (
-                <SettingGroup title={tr("settings.tab.tagMode")}>
-                  <div className="flex items-center justify-between gap-8 py-3">
-                    <span>{tr("settings.tags.generation")}</span>
-                    <SegmentSetting
-                      label={tr("settings.tags.generation")}
-                      options={(["similar", "rules", "off"] as AppSettings["tagMode"][]).map((v) => ({
-                        value: v,
-                        label: tagModeLabels[v],
-                      }))}
-                      selected={state.settings.tagMode}
-                      onChange={(tagMode) => updateSettings({ tagMode })}
-                    />
-                  </div>
-                </SettingGroup>
-              ),
-              rules: (
-                <SettingGroup title={tr("settings.tab.rules")}>
-                  <div className="space-y-2">
-                    {state.settings.tagRules.map((rule) => (
-                      <div className="flex items-center gap-2" key={rule.id}>
-                        <label className="flex-1" htmlFor={`tag-rule-${rule.id}-label`}>
-                          <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.name")}</span>
-                          <Input
-                            className="h-7 rounded-md text-[13px]"
-                            id={`tag-rule-${rule.id}-label`}
-                            onChange={(event) => updateTagRule(rule.id, { label: event.currentTarget.value })}
-                            value={rule.label}
-                          />
-                        </label>
-                        <label className="flex-[2]" htmlFor={`tag-rule-${rule.id}-query`}>
-                          <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.keyword")}</span>
-                          <Input
-                            className="h-7 rounded-md text-[13px]"
-                            id={`tag-rule-${rule.id}-query`}
-                            onChange={(event) => updateTagRule(rule.id, { query: event.currentTarget.value })}
-                            value={rule.query}
-                          />
-                        </label>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              aria-label={tr("settings.tags.deleteRule")}
-                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10"
-                              onClick={() => deleteTagRule(rule.id)}
-                              type="button"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" sideOffset={8}>{tr("settings.tags.deleteRule")}</TooltipContent>
-                        </Tooltip>
-                      </div>
-                    ))}
-                  </div>
-                  <button className="mt-2 flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={addTagRule} type="button">
-                    <Plus size={14} />
-                    {tr("settings.tags.addRule")}
-                  </button>
-                </SettingGroup>
-              ),
-            })}
           <SettingsStickyStatusBar
             primary={stickyStatusPrimary}
             secondary={stickyStatusSecondary}

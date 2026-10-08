@@ -14,7 +14,6 @@ const files = {
   settingsShell: "src/settings/components/SettingsShell.tsx",
   codeTabs: "src/settings/components/SettingsCodeTabs.tsx",
   statusPanel: "src/settings/components/SettingsStatusPanel.tsx",
-  animateTooltip: "src/components/animate-ui/primitives/animate/tooltip.tsx",
 };
 
 function read(relativePath) {
@@ -72,7 +71,6 @@ const controls = read(files.controls);
 const settingsShell = read(files.settingsShell);
 const codeTabs = read(files.codeTabs);
 const statusPanel = read(files.statusPanel);
-const animateTooltip = read(files.animateTooltip);
 
 // Onboarding surface: 只验证可重复的源代码语义，不碰真实系统权限或剪贴板回写。
 // 向导已拆分至 src/onboarding/components/：类型与常量在 onboarding-wizard-shared，交互在 OnboardingWizard。
@@ -146,8 +144,8 @@ include(storageSection, 'tooltip: tr("settings.diagnostics.refreshLogStats")', "
 include(storageSection, 'onClick: () => void exportDiagnosticsBundle()', "diagnostics export should remain wired");
 include(storageSection, 'onClick: () => { if (dangerConfirmation === "cleanupLogs") { void cleanupLogsNow(); return; }', "cleanup confirmation should remain two-step");
 include(storageSection, 'onClick: () => void refreshLogStats()', "diagnostics refresh should remain wired");
-include(mcpAgentSection, 'tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "install" || tab.value === "command")}', "MCP code tabs should still include install/command");
-include(mcpAgentSection, 'tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "tools" || tab.value === "json-rpc")}', "MCP code tabs should still include tools/json-rpc");
+include(mcpAgentSection, 'tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "mcp-servers" || tab.value === "install" || tab.value === "command")}', "MCP install tab should keep mcp-servers/install/command");
+include(mcpAgentSection, 'tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "json-rpc")}', "MCP json-rpc tab should show real JSON-RPC examples only");
 include(mcpAgentSection, 'tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "provider")}', "MCP code tabs should still include provider");
 
 // Settings controls and helpers: save behavior and keyboard/tooltip accessibility surfaces.
@@ -166,7 +164,6 @@ include(codeTabs, 'data-dev-probe="settings-code-tabs"', "settings code tabs sho
 include(statusPanel, "SettingsStatusPanel", "status panel should remain the diagnostic wrapper");
 include(statusPanel, "aria-label={title}", "status panel should stay accessible");
 include(statusPanel, "tooltip ? (", "status panel actions should stay tooltip-aware");
-include(animateTooltip, 'if (e.key === \'Escape\') hideImmediate();', "tooltips should still close on Escape");
 
 if (!process.exitCode) {
   console.log("Settings surface verification passed");

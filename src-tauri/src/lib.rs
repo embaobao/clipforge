@@ -5080,6 +5080,79 @@ fn get_image_storage_path() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// 设置页「数据」分类的存储统计：文件大小 + 记录数，供占用展示与清理决策参考。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DataStatsPayload {
+    /// SQLite 数据库主文件字节数（不含 -wal/-shm 临时文件）。
+    db_bytes: i64,
+    /// json5 用户设置文件字节数。
+    settings_bytes: i64,
+    /// 图片缓存目录递归总字节数（目录缺失按 0）。
+    images_bytes: i64,
+    /// 活动剪贴板记录数（未进回收站）。
+    clip_count: i64,
+    /// 回收站记录数。
+    trash_count: i64,
+}
+
+/// 递归统计目录字节数。纯只读：目录不存在或条目不可读时按 0 计，不因缓存缺失让统计失败。
+fn dir_size_bytes(path: &std::path::Path) -> i64 {
+    let Ok(entries) = fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0i64;
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else { continue };
+        if file_type.is_dir() {
+            total += dir_size_bytes(&entry.path());
+        } else {
+            total += entry.metadata().map(|meta| meta.len() as i64).unwrap_or(0);
+        }
+    }
+    total
+}
+
+/// 读取数据存储统计：数据库/设置文件/图片缓存大小与活动、回收站记录数。
+/// 边界：不创建缺失目录、不初始化数据库 schema；clips 表尚未建时记录数按 0 返回。
+#[tauri::command]
+fn get_clipforge_data_stats() -> Result<DataStatsPayload, String> {
+    let db_path = database_path()?;
+    let settings_file = settings_path()?;
+    let images_dir = image_storage_path()?;
+    let file_size = |path: &std::path::Path| -> i64 {
+        std::fs::metadata(path).map(|meta| meta.len() as i64).unwrap_or(0)
+    };
+    let conn = open_clip_db()?;
+    let has_clips_table: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'clips'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let (clip_count, trash_count) = if has_clips_table > 0 {
+        conn.query_row(
+            "SELECT
+                COALESCE(SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END), 0)
+             FROM clips",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(|error| error.to_string())?
+    } else {
+        (0, 0)
+    };
+    Ok(DataStatsPayload {
+        db_bytes: file_size(&db_path),
+        settings_bytes: file_size(&settings_file),
+        images_bytes: dir_size_bytes(&images_dir),
+        clip_count,
+        trash_count,
+    })
+}
+
 #[tauri::command]
 fn update_clipforge_settings<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -10013,6 +10086,7 @@ pub fn run() {
             settings_service_agent_models,
             get_clipforge_config_path,
             get_clipforge_database_path,
+            get_clipforge_data_stats,
             get_image_storage_path,
             update_clipforge_settings,
             append_app_log,
@@ -10465,7 +10539,7 @@ fn show_panel_window<R: tauri::Runtime>(
 }
 
 /// 通用浮窗显示：把指定 label 的窗口设为 NSPanel status-level 浮动面板并置于最前。
-/// DSH 复用与剪贴板完全相同的「悬浮于其他应用之上」能力（label="dsh"）。
+/// 剪贴板主面板等浮窗共用同一「悬浮于其他应用之上」能力，按 label 泛化。
 #[cfg(target_os = "macos")]
 fn show_floating_window_by_label<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,

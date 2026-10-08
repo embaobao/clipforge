@@ -17,6 +17,7 @@ import type { AppSettings, UpdateCheckState } from "../settings-model";
 import type { BuildInfoPayload } from "../settings-model";
 import type { SettingsTabId } from "../settings-field-catalog";
 import type { SettingsCodeTab } from "../components/SettingsCodeTabs";
+import { MCP_TOOL_CATALOG } from "../mcp-tool-catalog";
 
 type McpState = {
   mcp: { enabled: boolean; running: boolean; transport: string; command: string; tools: string[]; message: string } | null;
@@ -44,29 +45,54 @@ export function McpAgentSection({
 }: McpAgentSectionProps) {
   return renderTabs({
     status: (
-      <SettingGroup title={tr("settings.tab.status")}>
-        <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-          <span>{tr("settings.integration.mcp.title")}</span>
-          <strong>{state.mcp?.running ? tr("settings.integration.mcp.running") : tr("settings.integration.mcp.unknown")} · {state.mcp?.transport ?? "stdio"}</strong>
-          <p>{tr("settings.integration.mcp.description")}</p>
-          <p className="mono mt-2 text-[11px] text-muted-foreground">{state.mcp?.tools.join(" / ") || tr("settings.integration.mcp.emptyTools")}</p>
-          <div className="flex gap-2">
-            <button className="flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={() => void refreshMcpStatus()} type="button">
-              <RefreshCw size={13} />
-              {tr("settings.diagnostics.refresh")}
-            </button>
+      <>
+        <SettingGroup title={tr("settings.tab.status")}>
+          <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
+            <div className="flex items-center justify-between gap-2">
+              <span>{tr("settings.integration.mcp.title")}</span>
+              <strong>
+                {state.mcp?.running ? tr("settings.integration.mcp.running") : tr("settings.integration.mcp.unknown")} ·{" "}
+                {state.mcp?.transport ?? "stdio"}
+              </strong>
+            </div>
+            <p>{tr("settings.integration.mcp.description")}</p>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              {tr("settings.integration.mcp.toolCount", { count: state.mcp?.tools.length ?? 0 })}
+            </p>
+            <div className="flex gap-2">
+              <button className="flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={() => void refreshMcpStatus()} type="button">
+                <RefreshCw size={13} />
+                {tr("settings.diagnostics.refresh")}
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-          <span>{tr("settings.integration.provider.title")}</span>
-          <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
-          <p>{tr("settings.integration.provider.description")}</p>
-        </div>
-        <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-          <span>{tr("settings.manual.currentTools")}</span>
-          <p>{state.mcp?.tools.join(" / ") || tr("settings.status.loading")}</p>
-        </div>
-      </SettingGroup>
+          {/* 工具目录：静态分组（与 Rust 端 MCP_TOOLS 同步维护），让 Agent 接入前能先看懂每个工具做什么。 */}
+          <div className="grid gap-3">
+            {MCP_TOOL_CATALOG.map((group) => (
+              <div className="grid gap-1.5" key={group.titleKey}>
+                <span className="text-[12px] font-medium">{tr(group.titleKey)}</span>
+                <ul className="grid gap-1">
+                  {group.tools.map((entry) => (
+                    <li className="flex items-baseline gap-2" key={entry.tool}>
+                      <code className="mono shrink-0 rounded bg-black/[0.05] px-1.5 py-0.5 text-[11px] dark:bg-white/[0.08]">
+                        {entry.tool}
+                      </code>
+                      <span className="min-w-0 text-[12px] text-muted-foreground">{tr(entry.descKey)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </SettingGroup>
+        <SettingGroup title={tr("settings.integration.provider.title")}>
+          <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
+            <span>{tr("settings.integration.provider.title")}</span>
+            <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
+            <p>{tr("settings.integration.provider.description")}</p>
+          </div>
+        </SettingGroup>
+      </>
     ),
     install: (
       <SettingGroup title={tr("settings.tab.install")}>
@@ -76,7 +102,7 @@ export function McpAgentSection({
           <p>{tr("settings.manual.agentDescription")}</p>
           <SettingsCodeTabs
             copyLabel={tr("settings.action.copy")}
-            tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "install" || tab.value === "command")}
+            tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "mcp-servers" || tab.value === "install" || tab.value === "command")}
             onCopy={copyMcpAgentCodeTab}
           />
           <p>{tr("settings.manual.successContract")}</p>
@@ -91,7 +117,7 @@ export function McpAgentSection({
           <strong>{tr("settings.integration.examples.summary")}</strong>
           <SettingsCodeTabs
             copyLabel={tr("settings.action.copy")}
-            tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "tools" || tab.value === "json-rpc")}
+            tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "json-rpc")}
             onCopy={copyMcpAgentCodeTab}
           />
         </div>

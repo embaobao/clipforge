@@ -336,6 +336,11 @@ async function mockInvoke(cmd: string, args: Record<string, unknown> = {}): Prom
     case "get_clipforge_config_path":
     case "get_clipforge_database_path":
       return "web-mock://clipforge.sqlite";
+    case "get_clipforge_data_stats":
+      // web 预览无真实数据库，返回全零占位，保持数据 tab 布局可渲染。
+      return { dbBytes: 0, settingsBytes: 0, imagesBytes: 0, clipCount: 0, trashCount: 0 };
+    case "reveal_item_in_dir":
+      return null;
     case "cleanup_app_logs":
       return "ok";
     case "settings_service_get": {

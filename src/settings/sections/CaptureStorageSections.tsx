@@ -1,13 +1,13 @@
 /** 设置窗口「采集与内容」「存储与日志」两个 section（从 settings.tsx 切出的展示组件）。
  *  边界：状态与动作经 props 注入；diagnostics 的 tooltip/两步确认探针受 verify 断言锁定。 */
-import { Eye, ExternalLink, FileCode, FileDown, RefreshCw, Terminal, Trash2 } from "lucide-react";
+import { Eye, ExternalLink, FileCode, FileDown, FolderOpen, RefreshCw, Terminal, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { TranslationKey } from "../../i18n";
 import { CheckItem, NumberSetting, ReadonlyField, SettingGroup, ToggleSetting } from "../controls";
 import { SettingsFieldRow } from "../components/SettingsFieldRow";
 import { SettingsStatusPanel } from "../components/SettingsStatusPanel";
 import type { SettingsStatusPanelState } from "../components/SettingsStatusPanel";
-import type { AppSettings, LogStatsPayload } from "../settings-model";
+import type { AppSettings, DataStatsPayload, LogStatsPayload } from "../settings-model";
 import type { SettingsTabId } from "../settings-field-catalog";
 
 export type CaptureContentSectionProps = {
@@ -120,8 +120,15 @@ export type StorageLogsSectionProps = {
   exportDiagnosticsBundle: () => Promise<void> | void;
   cleanupLogsNow: () => Promise<void> | void;
   refreshLogStats: () => Promise<void> | void;
-  setDangerConfirmation: (v: "cleanupLogs" | null) => void;
+  setDangerConfirmation: (v: "cleanupLogs" | "cleanupData" | null) => void;
   renderTabs: (panels: Partial<Record<SettingsTabId, ReactNode>>) => ReactNode;
+  /** 数据存储统计（数据库/设置/图片缓存大小与记录数）。 */
+  dataStats: DataStatsPayload | null;
+  /** 数据 tab 动作反馈状态。 */
+  dataActionStatus: { message: string; state: SettingsStatusPanelState };
+  refreshDataStats: () => Promise<void> | void;
+  cleanupDataNow: () => Promise<void> | void;
+  revealDataFolder: () => Promise<void> | void;
 };
 
 /** 存储与日志 section（data/cleanup/logs/diagnostics 四个 tab）；清理确认保持两步式。 */
@@ -141,10 +148,71 @@ export function StorageLogsSection({
   refreshLogStats,
   setDangerConfirmation,
   renderTabs,
+  dataStats,
+  dataActionStatus,
+  refreshDataStats,
+  cleanupDataNow,
+  revealDataFolder,
 }: StorageLogsSectionProps) {
   return renderTabs({
     data: (
       <SettingGroup title={tr("settings.storage.data.title")}>
+        <SettingsStatusPanel
+          actions={[
+            {
+              label: tr("settings.diagnostics.refresh"),
+              onClick: () => void refreshDataStats(),
+              icon: RefreshCw,
+              variant: "secondary",
+              tooltip: tr("settings.data.refreshTooltip"),
+              probeId: "settings-action:data.refresh",
+            },
+            {
+              label: tr("settings.data.reveal"),
+              onClick: () => void revealDataFolder(),
+              icon: FolderOpen,
+              variant: "diagnostic",
+              tooltip: tr("settings.data.revealTooltip"),
+              probeId: "settings-action:data.reveal",
+            },
+            {
+              label:
+                dangerConfirmation === "cleanupData"
+                  ? tr("settings.diagnostics.confirmAgain")
+                  : tr("settings.data.cleanupNow"),
+              onClick: () => {
+                if (dangerConfirmation === "cleanupData") {
+                  void cleanupDataNow();
+                  return;
+                }
+                setDangerConfirmation("cleanupData");
+              },
+              icon: Trash2,
+              variant: "destructive",
+              tooltip: tr("settings.data.cleanupTooltip"),
+              probeId: "settings-action:data.cleanup",
+              ariaLabel:
+                dangerConfirmation === "cleanupData"
+                  ? tr("settings.data.confirmCleanup")
+                  : tr("settings.data.cleanupTooltip"),
+            },
+          ]}
+          description={
+            dataStats
+              ? tr("settings.data.summary", {
+                  db: formatBytes(dataStats.dbBytes),
+                  settings: formatBytes(dataStats.settingsBytes),
+                  images: formatBytes(dataStats.imagesBytes),
+                  count: dataStats.clipCount,
+                  trash: dataStats.trashCount,
+                })
+              : tr("settings.status.loading")
+          }
+          state={dataActionStatus.state}
+          status={dataActionStatus.message || tr("settings.data.statusIdle")}
+          title={tr("settings.data.title")}
+          probeId="settings-status:data"
+        />
         <ReadonlyField
           copyLabel={tr("settings.action.copy")}
           label={tr("settings.storage.configPath")}

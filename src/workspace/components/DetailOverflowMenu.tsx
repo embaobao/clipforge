@@ -25,6 +25,9 @@ export type DetailOverflowMenuProps = {
   onOpenImagePreview: () => void;
 };
 
+/** 与 ClipContextMenu 一致的菜单项统一样式：圆角、字号、焦点态，保证全局菜单视觉统一。 */
+const menuItem =
+  "flex cursor-default select-none items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px] outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50";
 /** 详情页溢出菜单：MCP 命令复制、打开内容、图片动作组与插件注入动作组。
  *  边界：插件动作执行包 try/catch，失败只记日志不中断菜单（verify-runtime-boundaries 锁定该行为）。 */
 export function DetailOverflowMenu({
@@ -56,15 +59,25 @@ export function DetailOverflowMenu({
         <DropdownMenuLabel>{tr("main.detail.quickActions")}</DropdownMenuLabel>
         <DropdownMenuGroup>
           <DropdownMenuItem
+            className={menuItem}
             onSelect={() =>
-              onCopyText(`use clipf.get id=${clip.id}`, "detail:copy-mcp-command", { clipId: clip.id })
+              onCopyText(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/call",
+                  params: { name: "clipf.get", arguments: { id: clip.id } },
+                }),
+                "detail:copy-mcp-command",
+                { clipId: clip.id },
+              )
             }
           >
             <Clipboard size={13} />
             <span>{tr("main.detail.copyMcp")}</span>
           </DropdownMenuItem>
           {clip.analysis.url || clip.analysis.attachment ? (
-            <DropdownMenuItem onSelect={() => onOpen(clip)}>
+            <DropdownMenuItem className={menuItem} onSelect={() => onOpen(clip)}>
               <ExternalLink size={13} />
               <span>{tr("main.detail.openContent")}</span>
             </DropdownMenuItem>
@@ -73,16 +86,16 @@ export function DetailOverflowMenu({
         {hasImageActions || menuActions.length ? <DropdownMenuSeparator /> : null}
         {hasImageActions ? (
           <DropdownMenuGroup>
-            <DropdownMenuItem disabled={!clipImageSrc(clip)} onSelect={onOpenImagePreview}>
+            <DropdownMenuItem className={menuItem} disabled={!clipImageSrc(clip)} onSelect={onOpenImagePreview}>
               <Image size={13} />
               <span>{tr("main.detail.imagePreview")}</span>
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={!clipImageSrc(clip)} onSelect={onToggleImageActualSize}>
+            <DropdownMenuItem className={menuItem} disabled={!clipImageSrc(clip)} onSelect={onToggleImageActualSize}>
               <Image size={13} />
               <span>{imageActualSize ? tr("main.detail.imageFit") : tr("main.detail.imageActual")}</span>
             </DropdownMenuItem>
             {imageOpenPath && onOpenPath ? (
-              <DropdownMenuItem onSelect={() => onOpenPath(imageOpenPath)}>
+              <DropdownMenuItem className={menuItem} onSelect={() => onOpenPath(imageOpenPath)}>
                 <ExternalLink size={13} />
                 <span>{tr("main.detail.openSystem")}</span>
               </DropdownMenuItem>
@@ -94,6 +107,7 @@ export function DetailOverflowMenu({
           <DropdownMenuGroup>
             {menuActions.map((action) => (
               <DropdownMenuItem
+                className={menuItem}
                 disabled={action.disabled}
                 key={action.id}
                 onSelect={() => {
