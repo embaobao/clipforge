@@ -28,7 +28,16 @@ function sliceBetween(source, start, end) {
 const i18n = read("src/i18n/index.ts");
 const app = read("src/App.tsx");
 const settings = read("src/settings.tsx");
-const rust = read("src-tauri/src/lib.rs");
+// Phase 3 起 settings 域实现（current_native_locale / update_clipforge_settings /
+// settings_service_* / refresh_tray_menu_after_settings_write 等）迁入 settings_service/
+// 子模块，Rust 断言源 = lib.rs + settings_service/*.rs 拼接。
+const rust = [
+  "src-tauri/src/lib.rs",
+  "src-tauri/src/settings_service/mod.rs",
+  "src-tauri/src/settings_service/write.rs",
+  "src-tauri/src/settings_service/commands.rs",
+  "src-tauri/src/settings_service/mcp.rs",
+].map(read).join("\n");
 const zh = readJson("src/i18n/locales/zh-CN.json");
 const en = readJson("src/i18n/locales/en-US.json");
 
@@ -81,7 +90,7 @@ assert(appSettingsEffect.includes('window.document.title = t(locale, "window.mai
 assert(appSettingsEffect.includes('getCurrentWindow().setTitle(t(locale, "window.main.title"))'), "main settings effect does not update localized window title");
 assert(appSettingsEffect.includes('invoke<void>("write_user_settings", { settings })'), "main settings effect does not persist language/settings changes");
 
-const currentNativeLocale = sliceBetween(rust, "fn current_native_locale()", "fn native_tr");
+const currentNativeLocale = sliceBetween(rust, "fn current_native_locale()", "pub fn run_settings_write");
 assert(currentNativeLocale.includes('.get("language")'), "native locale resolver does not read language from settings");
 assert(currentNativeLocale.includes('"zh-CN" => "zh-CN"'), "native locale resolver does not honor zh-CN");
 assert(currentNativeLocale.includes('"en-US" => "en-US"'), "native locale resolver does not honor en-US");
@@ -117,10 +126,13 @@ assert(trayMenu.includes('native_tr("tray.resumeListening")'), "tray resume labe
 assert(trayMenu.includes('native_tr("tray.pauseListening")'), "tray pause label is not localized");
 assert(trayMenu.includes('native_tr("tray.quit")'), "tray quit label is not localized");
 
-const legacySettingsUpdate = sliceBetween(rust, "fn update_clipforge_settings", "#[tauri::command]\nfn write_user_settings");
-assert(legacySettingsUpdate.includes("build_tray_menu(&app)"), "legacy settings update does not rebuild tray menu after language changes");
-assert(legacySettingsUpdate.includes("tray.set_menu(Some(menu))"), "legacy settings update does not apply rebuilt tray menu");
+const legacySettingsUpdate = sliceBetween(rust, "fn update_clipforge_settings", "fn refresh_tray_menu_after_settings_write");
+assert(legacySettingsUpdate.includes('refresh_tray_menu_after_settings_write(&app, "legacy-settings-patch")'), "legacy settings update does not rebuild tray menu after language changes");
 assert(legacySettingsUpdate.includes("emit_settings_changed("), "legacy settings update does not emit settings_changed after language changes");
+
+const trayRefreshHelper = sliceBetween(rust, "fn refresh_tray_menu_after_settings_write", "fn registered_global_shortcuts");
+assert(trayRefreshHelper.includes("build_tray_menu(app)"), "settings tray refresh helper does not rebuild tray menu");
+assert(trayRefreshHelper.includes("tray.set_menu(Some(menu))"), "settings tray refresh helper does not apply rebuilt tray menu");
 
 assert(rust.includes("fn refresh_tray_menu_after_settings_write"), "Settings Service tray refresh helper is missing");
 assert(rust.includes('log_dev_i18n_window_snapshot(app.clone(), "initial")'), "i18n dev probe does not record initial startup locale snapshot");

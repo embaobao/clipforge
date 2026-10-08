@@ -23,37 +23,24 @@ use tauri::{
 };
 #[cfg(desktop)]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_updater::UpdaterExt;
 
 mod application_context;
 mod clipboard;
 mod context_collector_runtime;
-mod context_collectors;
 mod context_collector_system;
+mod context_collectors;
 mod settings_service;
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
 use settings_service::{
-
-
-    merge_settings_patch, prepare_patch as prepare_settings_patch,
-    prepare_replace as prepare_settings_replace, prepare_reset as prepare_settings_reset,
-    settings_changed_paths, settings_revision,
-    settings_json_schema,
-    validate_settings_patch,
-    settings_service_get,
-    settings_service_patch,
-    settings_service_replace,
-    settings_service_reset,
-    settings_service_agent_providers,
-    settings_service_agent_providers_payload,
-    settings_service_agent_check,
-    settings_service_agent_models,
-    sync_launch_at_login_from_settings,
-    emit_settings_changed,
-    log_slow_settings_operation,
-    settings_write_response,
+    current_global_shortcut_value, current_native_locale, desired_launch_at_login,
+    get_clipforge_config_path, get_clipforge_settings, read_user_settings, settings_get_public,
+    settings_patch_public, settings_replace_public, settings_reset_public,
+    settings_service_agent_check, settings_service_agent_models, settings_service_agent_providers,
+    settings_service_get, settings_service_patch, settings_service_replace, settings_service_reset,
+    sync_global_shortcut_registration, sync_launch_at_login_from_settings,
+    update_clipforge_settings, write_user_settings,
 };
 
 fn command_error(code: &str, detail: impl AsRef<str>) -> String {
@@ -267,12 +254,6 @@ fn panel_last_position() -> Arc<Mutex<Option<NormalizedPosition>>> {
     PANEL_LAST_POSITION
         .get_or_init(|| Arc::new(Mutex::new(None)))
         .clone()
-}
-
-#[derive(Serialize)]
-struct UserSettingsPayload {
-    path: String,
-    settings: Value,
 }
 
 #[derive(Serialize)]
@@ -2347,10 +2328,6 @@ fn agent_list_provider_models(
     Ok(check_openai_compatible_models(&candidate))
 }
 
-/// 设置写入互斥锁（B2b）：保护 read-modify-write 全段，避免设置窗 + MCP/主面板并发写入导致 lost-update。
-/// 只在编排函数（settings_service_*、update_clipforge_settings）里持有；底层 read/write 不加锁，避免重入死锁。
-pub(crate) static SETTINGS_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// 记录一次设置操作的耗时，超 300ms 写 app log（B6：300ms 性能预算可观测）。
 fn log_panel_open_step(reason: &str, step: &str, started: Instant, last: &mut Instant) {
     let now = Instant::now();
@@ -2376,47 +2353,6 @@ fn log_panel_open_step(reason: &str, step: &str, started: Instant, last: &mut In
         );
     }
     *last = now;
-}
-
-fn redact_settings_value(value: &Value) -> Value {
-    let mut redacted = value.clone();
-    // 抹掉明文 apiKey（B7）：schema 同时接受新结构 agent.providers[] 和 legacy 顶层 agentProviders[]，
-    // 两条路径都要 redact，否则 settings_service_get 会泄漏 legacy provider 的 key。
-    if let Some(providers) = redacted
-        .get_mut("agentProviders")
-        .and_then(Value::as_array_mut)
-    {
-        for provider in providers {
-            redact_provider_api_key(provider);
-        }
-    }
-    if let Some(agent) = redacted.get_mut("agent") {
-        if let Some(providers) = agent.get_mut("providers").and_then(Value::as_array_mut) {
-            for provider in providers {
-                redact_provider_api_key(provider);
-            }
-        }
-    }
-    redacted
-}
-
-/// 抹掉单个 provider 配置里的明文 apiKey，统一返回 redacted 占位符。
-fn redact_provider_api_key(provider: &mut Value) {
-    if let Some(object) = provider.as_object_mut() {
-        if object.contains_key("apiKey") {
-            object.insert(
-                "apiKey".to_string(),
-                Value::String("[redacted]".to_string()),
-            );
-        }
-    }
-}
-
-pub(crate) fn desired_launch_at_login(settings: &Value) -> bool {
-    settings
-        .get("launchAtLogin")
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
 }
 
 #[cfg(desktop)]
@@ -2495,117 +2431,6 @@ fn set_launch_at_login<R: tauri::Runtime>(
     enabled: bool,
 ) -> Result<LaunchAtLoginPayload, String> {
     set_launch_at_login_native(&app, enabled)
-}
-
-
-fn public_settings_payload(include_schema: bool) -> Result<Value, String> {
-    let payload = read_user_settings()?;
-    let settings = payload.settings;
-    let revision = settings_revision(&settings);
-    let updated_at = now_millis()?;
-    Ok(json!({
-        "settings": redact_settings_value(&settings),
-        "schema": if include_schema { settings_json_schema() } else { Value::Null },
-        "revision": revision,
-        "updatedAt": updated_at,
-        "source": "tauri",
-        "writePolicy": {
-            "recommendedMode": "patch",
-            "replaceRequiresConfirmation": true,
-            "resetRequiresConfirmation": true,
-            "arrayMerge": "replace"
-        },
-        "warnings": [
-            "Prefer settings patch updates. Full replacement is available only with confirmed=true.",
-            "Arrays are replaced as complete values, including agent.providers and tagRules.",
-            "Prefer agent.providers[].apiKeyEnv over persistent inline apiKey."
-        ],
-        "redaction": {
-            "agent.providers[].apiKey": "write-only in UI and MCP responses should not depend on reading it back from provider list",
-            "agent.providers[].apiKeyEnv": "preferred for persistent config"
-        }
-    }))
-}
-
-#[tauri::command]
-fn settings_get_public() -> Result<Value, String> {
-    public_settings_payload(true)
-}
-
-#[tauri::command]
-fn settings_patch_public(input: Value) -> Result<Value, String> {
-    validate_settings_patch(&input)?;
-    let mut current = read_user_settings()?.settings;
-    merge_settings_patch(&mut current, &input);
-    write_user_settings(current)?;
-    public_settings_payload(true)
-}
-
-#[tauri::command]
-fn settings_replace_public(input: Value, confirmed: Option<bool>) -> Result<Value, String> {
-    if confirmed != Some(true) {
-        return Err("SETTINGS_REPLACE_REQUIRES_CONFIRMATION: use partial patch unless you intend to replace the full settings object".to_string());
-    }
-    validate_settings_patch(&input)?;
-    write_user_settings(input)?;
-    public_settings_payload(true)
-}
-
-#[tauri::command]
-fn settings_reset_public(scope: Option<String>, confirmed: Option<bool>) -> Result<Value, String> {
-    if confirmed != Some(true) {
-        return Err("SETTINGS_RESET_REQUIRES_CONFIRMATION".to_string());
-    }
-    let scope = scope.unwrap_or_else(|| "all".to_string());
-    let mut current = read_user_settings()?.settings;
-    match scope.as_str() {
-        "all" => current = json!({}),
-        "agent" => {
-            if let Some(object) = current.as_object_mut() {
-                object.remove("agent");
-                object.remove("agentProviders");
-            }
-        }
-        key => {
-            if let Some(object) = current.as_object_mut() {
-                object.remove(key);
-            } else {
-                current = json!({});
-            }
-        }
-    }
-    write_user_settings(current)?;
-    public_settings_payload(true)
-}
-
-fn refresh_tray_menu_after_settings_write<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    reason: &str,
-) {
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        match build_tray_menu(app) {
-            Ok(menu) => {
-                if let Err(error) = tray.set_menu(Some(menu)) {
-                    log_to_file(
-                        "warn",
-                        "tray",
-                        &format!("set_menu after settings write failed reason={reason}: {error}"),
-                    );
-                } else {
-                    log_to_file(
-                        "info",
-                        "tray",
-                        &format!("rebuilt menu after settings write reason={reason}"),
-                    );
-                }
-            }
-            Err(error) => log_to_file(
-                "warn",
-                "tray",
-                &format!("rebuild menu after settings write failed reason={reason}: {error}"),
-            ),
-        }
-    }
 }
 
 #[tauri::command]
@@ -3334,7 +3159,10 @@ fn capture_live_application_context(
     collector_id: Option<String>,
     include_external: Option<bool>,
 ) -> Result<Value, String> {
-    context_collectors::capture_live_context(collector_id.as_deref(), include_external.unwrap_or(false))
+    context_collectors::capture_live_context(
+        collector_id.as_deref(),
+        include_external.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
@@ -3777,7 +3605,12 @@ fn debug_logs_enabled_cached() -> bool {
     }
     let enabled = read_user_settings()
         .ok()
-        .and_then(|settings| settings.settings.get("debugLogsEnabled").and_then(Value::as_bool))
+        .and_then(|settings| {
+            settings
+                .settings
+                .get("debugLogsEnabled")
+                .and_then(Value::as_bool)
+        })
         .unwrap_or(false);
     *cached = Some((now, enabled));
     enabled
@@ -4875,17 +4708,21 @@ fn open_onboarding_window_internal<R: tauri::Runtime>(
     }
 
     set_regular_activation_policy(&app)?;
-    let window = WebviewWindowBuilder::new(&app, "onboarding", WebviewUrl::App("onboarding.html".into()))
-        .title(native_tr("window.onboarding.title"))
-        .inner_size(640.0, 560.0)
-        .min_inner_size(640.0, 560.0)
-        .resizable(false)
-        .decorations(true)
-        .transparent(false)
-        .always_on_top(false)
-        .visible_on_all_workspaces(false)
-        .build()
-        .map_err(|error| command_error("ONBOARDING_WINDOW_BUILD_FAILED", error.to_string()))?;
+    let window = WebviewWindowBuilder::new(
+        &app,
+        "onboarding",
+        WebviewUrl::App("onboarding.html".into()),
+    )
+    .title(native_tr("window.onboarding.title"))
+    .inner_size(640.0, 560.0)
+    .min_inner_size(640.0, 560.0)
+    .resizable(false)
+    .decorations(true)
+    .transparent(false)
+    .always_on_top(false)
+    .visible_on_all_workspaces(false)
+    .build()
+    .map_err(|error| command_error("ONBOARDING_WINDOW_BUILD_FAILED", error.to_string()))?;
     if let Err(error) = window.center() {
         log_to_file(
             "warn",
@@ -4917,65 +4754,56 @@ fn open_onboarding_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result
 fn maybe_open_onboarding_on_startup<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(700));
-        let _write_guard = match SETTINGS_WRITE_LOCK.lock() {
-            Ok(guard) => guard,
-            Err(error) => {
-                log_to_file(
-                    "warn",
-                    "onboarding-window",
-                    &format!("startup check lock failed: {error}"),
-                );
-                return;
-            }
-        };
-        let mut settings = match read_user_settings() {
-            Ok(payload) => payload.settings,
-            Err(error) => {
-                log_to_file(
-                    "warn",
-                    "onboarding-window",
-                    &format!("startup read settings failed: {error}"),
-                );
-                return;
-            }
-        };
-        let onboarding_completed = settings
-            .get("onboardingCompleted")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let already_shown = settings.get("onboardingShownAt").and_then(Value::as_i64).is_some();
+        // 可达性检查不依赖设置，放到锁外（铁律 2：锁内只做读-改-写）。
         let accessibility_missing = check_accessibility_permission_platform()
             .map(|payload| payload.status != "granted")
             .unwrap_or(false);
-        if onboarding_completed || already_shown || !accessibility_missing {
-            log_to_file(
-                "debug",
-                "onboarding-window",
-                &format!(
-                    "startup guide skipped completed={} shown={} accessibilityMissing={}",
-                    onboarding_completed, already_shown, accessibility_missing
-                ),
-            );
-            return;
-        }
-        let shown_at = now_millis().unwrap_or_default();
-        if let Some(object) = settings.as_object_mut() {
-            object.insert("onboardingShownAt".to_string(), json!(shown_at));
-        }
-        if let Err(error) = write_user_settings(settings) {
-            log_to_file(
+        // 写路径统一走 settings_service 门面：锁内读-改-原子写，锁释放后才开窗。
+        // 任一步失败都不开窗：onboardingShownAt 未落盘时下次启动会重试，避免双重引导。
+        let outcome = settings_service::run_settings_write(|settings| {
+            let onboarding_completed = settings
+                .get("onboardingCompleted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let already_shown = settings
+                .get("onboardingShownAt")
+                .and_then(Value::as_i64)
+                .is_some();
+            if onboarding_completed || already_shown || !accessibility_missing {
+                log_to_file(
+                    "debug",
+                    "onboarding-window",
+                    &format!(
+                        "startup guide skipped completed={} shown={} accessibilityMissing={}",
+                        onboarding_completed, already_shown, accessibility_missing
+                    ),
+                );
+                return Ok((None, false));
+            }
+            let shown_at = now_millis().unwrap_or_default();
+            let mut next = settings.clone();
+            if let Some(object) = next.as_object_mut() {
+                object.insert("onboardingShownAt".to_string(), json!(shown_at));
+            }
+            Ok((Some(next), true))
+        });
+        match outcome {
+            Ok(true) => {
+                if let Err(error) = open_onboarding_window_internal(app, "startup-permission-check")
+                {
+                    log_to_file(
+                        "warn",
+                        "onboarding-window",
+                        &format!("startup open onboarding failed: {error}"),
+                    );
+                }
+            }
+            Ok(false) => {}
+            Err(error) => log_to_file(
                 "warn",
                 "onboarding-window",
-                &format!("startup write onboardingShownAt failed: {error}"),
-            );
-        }
-        drop(_write_guard);
-        if let Err(error) = open_onboarding_window_internal(app, "startup-permission-check") {
-            log_to_file(
-                "warn",
-                "onboarding-window",
-                &format!("startup open onboarding failed: {error}"),
-            );
+                &format!("startup onboarding settings write failed: {error}"),
+            ),
         }
     });
 }
@@ -5041,34 +4869,6 @@ fn cleanup_clip_records(
 }
 
 #[tauri::command]
-fn read_user_settings() -> Result<UserSettingsPayload, String> {
-    let path = settings_path()?;
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::write(&path, "{}\n").map_err(|error| error.to_string())?;
-    }
-
-    let raw = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let settings = parse_json5_like(&raw).unwrap_or(Value::Object(Default::default()));
-    Ok(UserSettingsPayload {
-        path: path.to_string_lossy().to_string(),
-        settings,
-    })
-}
-
-#[tauri::command]
-fn get_clipforge_settings() -> Result<Value, String> {
-    read_user_settings().map(|payload| payload.settings)
-}
-
-#[tauri::command]
-fn get_clipforge_config_path() -> Result<String, String> {
-    Ok(settings_path()?.to_string_lossy().to_string())
-}
-
-#[tauri::command]
 fn get_clipforge_database_path() -> Result<String, String> {
     Ok(database_path()?.to_string_lossy().to_string())
 }
@@ -5103,7 +4903,9 @@ fn dir_size_bytes(path: &std::path::Path) -> i64 {
     };
     let mut total = 0i64;
     for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         if file_type.is_dir() {
             total += dir_size_bytes(&entry.path());
         } else {
@@ -5121,7 +4923,9 @@ fn get_clipforge_data_stats() -> Result<DataStatsPayload, String> {
     let settings_file = settings_path()?;
     let images_dir = image_storage_path()?;
     let file_size = |path: &std::path::Path| -> i64 {
-        std::fs::metadata(path).map(|meta| meta.len() as i64).unwrap_or(0)
+        std::fs::metadata(path)
+            .map(|meta| meta.len() as i64)
+            .unwrap_or(0)
     };
     let conn = open_clip_db()?;
     let has_clips_table: i64 = conn
@@ -5151,110 +4955,6 @@ fn get_clipforge_data_stats() -> Result<DataStatsPayload, String> {
         clip_count,
         trash_count,
     })
-}
-
-#[tauri::command]
-fn update_clipforge_settings<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    input: Value,
-) -> Result<Value, String> {
-    // legacy 写路径也加锁 + 接入 settings_changed 事件总线（B2b + B5），消除多窗口漂移根因。
-    let _write_guard = SETTINGS_WRITE_LOCK
-        .lock()
-        .map_err(|error| format!("SETTINGS_LOCK_POISONED: {error}"))?;
-    let previous = read_user_settings()?.settings;
-    let previous_revision = settings_revision(&previous);
-    let mut current = previous.clone();
-    merge_json_object(&mut current, input);
-    let changed_paths = settings_changed_paths(&previous, &current);
-    write_user_settings(current.clone())?;
-    if changed_paths.iter().any(|path| path == "$.launchAtLogin") {
-        sync_launch_at_login_from_settings(&app, &current, "legacy-settings-patch");
-    }
-    sync_global_shortcut_registration(&app);
-    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        match build_tray_menu(&app) {
-            Ok(menu) => {
-                if let Err(error) = tray.set_menu(Some(menu)) {
-                    log_to_file(
-                        "warn",
-                        "tray",
-                        &format!("set_menu after settings update failed: {}", error),
-                    );
-                }
-            }
-            Err(error) => log_to_file(
-                "warn",
-                "tray",
-                &format!("rebuild menu after settings update failed: {}", error),
-            ),
-        }
-    }
-    let updated_at = now_millis()?;
-    let revision = settings_revision(&current);
-    emit_settings_changed(
-        &app,
-        previous_revision,
-        revision,
-        changed_paths,
-        "settings-window",
-        "patch",
-        updated_at,
-    );
-    Ok(current)
-}
-
-#[tauri::command]
-fn write_user_settings(settings: Value) -> Result<(), String> {
-    write_settings_atomic(&settings)
-}
-
-/// 原子写入用户设置（B2）：先写临时文件并 fsync，再 rename 覆盖目标文件。
-///
-/// 所有写路径（settings_service_*、update_clipforge_settings、legacy 命令）都经过这里。
-/// 裸 `fs::write` 在崩溃/断电时会截断或清空 settings.json5，导致丢失全部用户配置；
-/// temp + sync_all + rename 保证目标文件要么是旧内容、要么是完整新内容，不会出现半写状态。
-fn write_settings_atomic(settings: &Value) -> Result<(), String> {
-    let path = settings_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let body = format!(
-        "// ClipForge user settings. JSON5-style comments are allowed.\n{}\n",
-        serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?
-    );
-    // 临时文件必须与目标在同一目录、同一文件系统，rename 才原子。
-    let temp_path = match path.file_name().and_then(|name| name.to_str()) {
-        Some(name) => path.with_file_name(format!("{name}.tmp")),
-        None => return Err("SETTINGS_PATH_INVALID: cannot resolve settings file name".to_string()),
-    };
-    use std::io::Write;
-    {
-        let mut file = fs::File::create(&temp_path).map_err(|error| error.to_string())?;
-        file.write_all(body.as_bytes())
-            .map_err(|error| error.to_string())?;
-        // fsync 确保数据落盘后再 rename，否则断电仍可能丢数据。
-        file.sync_all().map_err(|error| error.to_string())?;
-    }
-    fs::rename(&temp_path, &path).map_err(|error| format!("SETTINGS_ATOMIC_RENAME_FAILED: {error}"))
-}
-
-fn current_native_locale() -> &'static str {
-    let preference = read_user_settings()
-        .ok()
-        .and_then(|settings| {
-            settings
-                .settings
-                .get("language")
-                .and_then(Value::as_str)
-                .map(|value| value.to_string())
-        })
-        .unwrap_or_else(|| "system".to_string());
-    match preference.as_str() {
-        "zh-CN" => "zh-CN",
-        "en-US" => "en-US",
-        _ => system_native_locale(),
-    }
 }
 
 fn system_native_locale() -> &'static str {
@@ -6761,20 +6461,6 @@ fn parse_json5_like(raw: &str) -> Result<Value, String> {
     }
 }
 
-fn merge_json_object(base: &mut Value, patch: Value) {
-    if !base.is_object() {
-        *base = Value::Object(Default::default());
-    }
-    let Some(base_object) = base.as_object_mut() else {
-        return;
-    };
-    if let Some(patch_object) = patch.as_object() {
-        for (key, value) in patch_object {
-            base_object.insert(key.clone(), value.clone());
-        }
-    }
-}
-
 fn database_path() -> Result<PathBuf, String> {
     Ok(settings_path()?
         .parent()
@@ -7867,93 +7553,6 @@ fn simulate_platform_paste() -> Result<String, String> {
 /// 托盘菜单 id（用于切换监听状态后通过 app.tray_by_id 重建菜单刷新文案）。
 const TRAY_ID: &str = "main-tray";
 
-const DEFAULT_GLOBAL_SHORTCUT: &str = "Control+V";
-const LEGACY_DEFAULT_GLOBAL_SHORTCUT: &str = "CommandOrControl+Shift+V";
-const FALLBACK_GLOBAL_SHORTCUT: &str = "Control+V";
-
-fn normalize_global_shortcut_value(raw: Option<&str>) -> String {
-    let shortcut = raw.unwrap_or_default().trim();
-    if shortcut.is_empty() || shortcut.eq_ignore_ascii_case(LEGACY_DEFAULT_GLOBAL_SHORTCUT) {
-        DEFAULT_GLOBAL_SHORTCUT.to_string()
-    } else {
-        shortcut.to_string()
-    }
-}
-
-fn current_global_shortcut_value() -> String {
-    read_user_settings()
-        .ok()
-        .and_then(|settings| {
-            settings
-                .settings
-                .get("globalShortcut")
-                .and_then(Value::as_str)
-                .map(|value| value.to_string())
-        })
-        .map(|value| normalize_global_shortcut_value(Some(&value)))
-        .unwrap_or_else(|| DEFAULT_GLOBAL_SHORTCUT.to_string())
-}
-
-fn registered_global_shortcuts() -> Vec<String> {
-    let configured = read_user_settings()
-        .ok()
-        .and_then(|settings| {
-            settings
-                .settings
-                .get("globalShortcut")
-                .and_then(Value::as_str)
-                .map(|value| value.trim().to_string())
-        })
-        .unwrap_or_default();
-    let primary = normalize_global_shortcut_value(Some(&configured));
-    let mut shortcuts = vec![
-        primary,
-        DEFAULT_GLOBAL_SHORTCUT.to_string(),
-        FALLBACK_GLOBAL_SHORTCUT.to_string(),
-    ];
-
-    shortcuts.sort();
-    shortcuts.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
-    shortcuts
-}
-
-fn sync_global_shortcut_registration<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    let shortcuts = registered_global_shortcuts();
-    if let Err(error) = app.global_shortcut().unregister_all() {
-        let _ = append_app_log(
-            "warn".to_string(),
-            "Unregister global shortcuts failed".to_string(),
-            Some(error.to_string()),
-        );
-    }
-
-    for shortcut in &shortcuts {
-        let shortcut_label = shortcut.clone();
-        let pressed_label = shortcut.clone();
-        if let Err(error) =
-            app.global_shortcut()
-                .on_shortcut(shortcut.as_str(), move |app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        log_to_file("debug", "shortcut", &format!("pressed {}", pressed_label));
-                        toggle_quick_panel(app, "shortcut");
-                    }
-                })
-        {
-            let _ = append_app_log(
-                "warn".to_string(),
-                "Register global shortcut failed".to_string(),
-                Some(format!("{}: {}", shortcut_label, error)),
-            );
-        }
-    }
-
-    log_to_file(
-        "info",
-        "shortcut",
-        &format!("registered shortcuts: {}", shortcuts.join(", ")),
-    );
-}
-
 #[cfg(target_os = "macos")]
 fn log_runtime_identity() {
     match get_accessibility_diagnostics_platform() {
@@ -8139,7 +7738,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // 启动后台剪贴板监听：脱离 WebView，隐藏时也能工作。
     // 监听、去重、设置过滤和入库统一收敛在 clipboard::watcher，避免保留第二条采集路径。
     clipboard::watcher::init(app.handle().clone());
-
 
     #[cfg(debug_assertions)]
     schedule_dev_window_trigger(app.handle().clone());
@@ -8446,40 +8044,41 @@ fn prepare_dev_clipforge_quick_probe_target<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
-    app.clone().run_on_main_thread(move || {
-        let result = (|| -> Result<(), String> {
-            set_regular_activation_policy(&app)?;
-            let window = if let Some(window) = app.get_webview_window("dev-paste-target") {
+    app.clone()
+        .run_on_main_thread(move || {
+            let result = (|| -> Result<(), String> {
+                set_regular_activation_policy(&app)?;
+                let window = if let Some(window) = app.get_webview_window("dev-paste-target") {
+                    window
+                } else {
+                    WebviewWindowBuilder::new(
+                        &app,
+                        "dev-paste-target",
+                        WebviewUrl::App("dev-paste-target.html".into()),
+                    )
+                    .title("ClipForge Dev Paste Target")
+                    .inner_size(760.0, 420.0)
+                    .min_inner_size(420.0, 260.0)
+                    .resizable(true)
+                    .decorations(true)
+                    .transparent(false)
+                    .always_on_top(true)
+                    .visible_on_all_workspaces(false)
+                    .build()
+                    .map_err(|error| format!("dev paste target build failed: {error}"))?
+                };
                 window
-            } else {
-                WebviewWindowBuilder::new(
-                    &app,
-                    "dev-paste-target",
-                    WebviewUrl::App("dev-paste-target.html".into()),
-                )
-                .title("ClipForge Dev Paste Target")
-                .inner_size(760.0, 420.0)
-                .min_inner_size(420.0, 260.0)
-                .resizable(true)
-                .decorations(true)
-                .transparent(false)
-                .always_on_top(true)
-                .visible_on_all_workspaces(false)
-                .build()
-                .map_err(|error| format!("dev paste target build failed: {error}"))?
-            };
-            window
-                .show()
-                .map_err(|error| format!("dev paste target show failed: {error}"))?;
-            let _ = window.set_always_on_top(true);
-            let _ = window.center();
-            activate_settings_app();
-            focus_settings_window_native(&window);
-            window
-                .set_focus()
-                .map_err(|error| format!("dev paste target focus failed: {error}"))?;
-            let _ = window.eval(
-                r#"
+                    .show()
+                    .map_err(|error| format!("dev paste target show failed: {error}"))?;
+                let _ = window.set_always_on_top(true);
+                let _ = window.center();
+                activate_settings_app();
+                focus_settings_window_native(&window);
+                window
+                    .set_focus()
+                    .map_err(|error| format!("dev paste target focus failed: {error}"))?;
+                let _ = window.eval(
+                    r#"
 (() => {
   const target = document.getElementById("clipforge-dev-paste-target");
   if (!target) return;
@@ -8488,12 +8087,12 @@ fn prepare_dev_clipforge_quick_probe_target<R: tauri::Runtime>(
   target.selectionEnd = target.value.length;
 })()
 "#,
-            );
-            Ok(())
-        })();
-        let _ = tx.send(result);
-    })
-    .map_err(|error| format!("dev paste target dispatch failed: {error}"))?;
+                );
+                Ok(())
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|error| format!("dev paste target dispatch failed: {error}"))?;
     rx.recv_timeout(Duration::from_secs(5))
         .map_err(|error| format!("dev paste target result timeout: {error}"))??;
 
@@ -9640,7 +9239,10 @@ fn run_dev_settings_dom_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>, targe
                 log_to_file(
                     "info",
                     "dev-open",
-                    &format!("CLIPFORGE_DEV_OPEN={} settings_dom_probe settings {}", finish_target, payload),
+                    &format!(
+                        "CLIPFORGE_DEV_OPEN={} settings_dom_probe settings {}",
+                        finish_target, payload
+                    ),
                 );
             }) {
                 log_to_file(
@@ -10139,10 +9741,20 @@ fn open_panel<R: tauri::Runtime>(
     let mut panel_last_step = panel_started;
     if let Some(window) = app.get_webview_window("main") {
         maybe_prompt_accessibility_on_first_panel(app, reason);
-        log_panel_open_step(reason, "first-permission-dispatch", panel_started, &mut panel_last_step);
+        log_panel_open_step(
+            reason,
+            "first-permission-dispatch",
+            panel_started,
+            &mut panel_last_step,
+        );
         let strategy = get_strategy_for_source(reason);
         let strategy_clone = strategy.clone();
-        log_panel_open_step(reason, "resolve-strategy", panel_started, &mut panel_last_step);
+        log_panel_open_step(
+            reason,
+            "resolve-strategy",
+            panel_started,
+            &mut panel_last_step,
+        );
 
         // 入口诊断：来源 -> 策略，以及【逻辑点】光标与其所在屏。配合下游各 position_* 的结果日志，
         // 可完整复现一次唤起的定位决策链（用于排查「出现在错误的屏/位置」）。
@@ -10150,11 +9762,21 @@ fn open_panel<R: tauri::Runtime>(
         let cursor_monitor = monitor_for_logical_point(&window, cx, cy)
             .map(|m| get_monitor_id(&m))
             .unwrap_or_default();
-        log_panel_open_step(reason, "cursor-monitor", panel_started, &mut panel_last_step);
+        log_panel_open_step(
+            reason,
+            "cursor-monitor",
+            panel_started,
+            &mut panel_last_step,
+        );
         let acc = check_accessibility_permission_platform()
             .map(|a| a.status)
             .unwrap_or_default();
-        log_panel_open_step(reason, "accessibility-status", panel_started, &mut panel_last_step);
+        log_panel_open_step(
+            reason,
+            "accessibility-status",
+            panel_started,
+            &mut panel_last_step,
+        );
         log_to_file(
             "debug",
             "panel-position",
@@ -10185,7 +9807,12 @@ fn open_panel<R: tauri::Runtime>(
             .map(|(_, _, h)| h)
             .unwrap_or(panel_h);
         let _ = window.set_size(LogicalSize::new(panel_width, panel_height));
-        log_panel_open_step(reason, "size-and-height", panel_started, &mut panel_last_step);
+        log_panel_open_step(
+            reason,
+            "size-and-height",
+            panel_started,
+            &mut panel_last_step,
+        );
 
         // 2. 同步应用定位策略（单次定位，不重复）
         let position_source: String =
@@ -12528,123 +12155,6 @@ fn extract_hash_tags(content: &str) -> Vec<String> {
     tags
 }
 
-// ===== MCP 设置/Agent 工具实现（B3：让 clipf.settings.*/clipf.agent.* 真正可调用）=====
-// MCP stdio 子进程没有 AppHandle，因此 patch/replace/reset 复用底层服务函数，
-// 但无法 emit settings_changed（需要主进程代发桥，见 settings-service-unified-protocol design §4），
-// 也无法同步全局快捷键 / 重建托盘菜单（依赖 AppHandle）。
-// SETTINGS_WRITE_LOCK 仍然获取，避免与设置窗并发写入导致 lost-update。
-
-/// MCP 设置局部更新：校验 → 读 → 合并 → 原子写 → 返回 write response。
-fn mcp_settings_patch(
-    patch: Value,
-    reason: Option<&str>,
-    expected_revision: Option<&str>,
-) -> Result<Value, (i64, String)> {
-    let started = std::time::Instant::now();
-    let _guard = SETTINGS_WRITE_LOCK
-        .lock()
-        .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
-    validate_settings_patch(&patch).map_err(|error| (-32602, error))?;
-    let previous = read_user_settings()
-        .map_err(|error| (-32000, error))?
-        .settings;
-    let draft = prepare_settings_patch(&previous, &patch, expected_revision)
-        .map_err(|error| (-32602, error))?;
-    let previous_revision = draft.previous_revision;
-    let changed_paths = draft.changed_paths;
-    let next = draft.next;
-    write_settings_atomic(&next).map_err(|error| (-32000, error))?;
-    log_to_file(
-        "info",
-        "settings-service",
-        &format!(
-            "mcp patch reason={} changed={}",
-            reason.unwrap_or(""),
-            changed_paths.join(",")
-        ),
-    );
-    let mut response = settings_write_response(next, previous_revision, changed_paths, true)
-        .map_err(|error| (-32000, error))?;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    response["durationMs"] = json!(duration_ms);
-    log_slow_settings_operation("mcp.patch", duration_ms);
-    Ok(response)
-}
-
-/// MCP 设置全量替换（调用方必须先 confirmed=true）。
-fn mcp_settings_replace(
-    settings: Value,
-    reason: Option<&str>,
-    expected_revision: Option<&str>,
-) -> Result<Value, (i64, String)> {
-    let started = std::time::Instant::now();
-    let _guard = SETTINGS_WRITE_LOCK
-        .lock()
-        .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
-    validate_settings_patch(&settings).map_err(|error| (-32602, error))?;
-    let previous = read_user_settings()
-        .map_err(|error| (-32000, error))?
-        .settings;
-    let draft = prepare_settings_replace(&previous, settings, expected_revision)
-        .map_err(|error| (-32602, error))?;
-    let previous_revision = draft.previous_revision;
-    let changed_paths = draft.changed_paths;
-    let next = draft.next;
-    write_settings_atomic(&next).map_err(|error| (-32000, error))?;
-    log_to_file(
-        "warn",
-        "settings-service",
-        &format!(
-            "mcp replace reason={} changed={}",
-            reason.unwrap_or(""),
-            changed_paths.join(",")
-        ),
-    );
-    let mut response = settings_write_response(next, previous_revision, changed_paths, true)
-        .map_err(|error| (-32000, error))?;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    response["durationMs"] = json!(duration_ms);
-    log_slow_settings_operation("mcp.replace", duration_ms);
-    Ok(response)
-}
-
-/// MCP 设置按 scope 重置（调用方必须先 confirmed=true）。
-fn mcp_settings_reset(
-    scope: String,
-    reason: Option<&str>,
-    expected_revision: Option<&str>,
-) -> Result<Value, (i64, String)> {
-    let started = std::time::Instant::now();
-    let _guard = SETTINGS_WRITE_LOCK
-        .lock()
-        .map_err(|error| (-32000, format!("SETTINGS_LOCK_POISONED: {error}")))?;
-    let previous = read_user_settings()
-        .map_err(|error| (-32000, error))?
-        .settings;
-    let draft = prepare_settings_reset(&previous, &scope, expected_revision)
-        .map_err(|error| (-32602, error))?;
-    let previous_revision = draft.previous_revision;
-    let changed_paths = draft.changed_paths;
-    let next = draft.next;
-    write_settings_atomic(&next).map_err(|error| (-32000, error))?;
-    log_to_file(
-        "warn",
-        "settings-service",
-        &format!(
-            "mcp reset scope={} reason={} changed={}",
-            scope,
-            reason.unwrap_or(""),
-            changed_paths.join(",")
-        ),
-    );
-    let mut response = settings_write_response(next, previous_revision, changed_paths, true)
-        .map_err(|error| (-32000, error))?;
-    let duration_ms = started.elapsed().as_millis() as i64;
-    response["durationMs"] = json!(duration_ms);
-    log_slow_settings_operation("mcp.reset", duration_ms);
-    Ok(response)
-}
-
 fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
     let name = params
         .get("name")
@@ -12720,15 +12230,17 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
         "clipboard.context.collectors.list" => context_collectors::list_collectors(),
         "clipboard.context.collector.contract" => context_collectors::collector_catalog(),
         "clipboard.context.collector.debug" => {
-            let collector_id = args
-                .get("collectorId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipboard.context.collector.debug requires collectorId".to_string()))?;
-            context_collectors::debug_collector(
-                collector_id,
-                args.get("fixture").cloned(),
-            )
-            .map_err(|error| (-32000, error))?
+            let collector_id =
+                args.get("collectorId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        (
+                            -32602,
+                            "clipboard.context.collector.debug requires collectorId".to_string(),
+                        )
+                    })?;
+            context_collectors::debug_collector(collector_id, args.get("fixture").cloned())
+                .map_err(|error| (-32000, error))?
         }
         "clipboard.context.compose" => {
             let conn = open_clip_db().map_err(|error| (-32000, error))?;
@@ -13312,86 +12824,14 @@ fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
             serde_json::to_value(import_clip_records(items).map_err(|error| (-32000, error))?)
                 .map_err(|error| (-32000, error.to_string()))?
         }
-        // ===== B3：MCP 设置/Agent 工具分发（复用统一 SettingsService 底层函数）=====
-        "clipf.settings.get" => {
-            let started = std::time::Instant::now();
-            let include_schema = args
-                .get("includeSchema")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            let mut payload =
-                public_settings_payload(include_schema).map_err(|error| (-32000, error))?;
-            let duration_ms = started.elapsed().as_millis() as i64;
-            payload["durationMs"] = json!(duration_ms);
-            log_slow_settings_operation("mcp.get", duration_ms);
-            payload
-        }
-        "clipf.settings.patch" => mcp_settings_patch(
-            args.get("patch").cloned().unwrap_or_else(|| json!({})),
-            args.get("reason").and_then(Value::as_str),
-            args.get("expectedRevision").and_then(Value::as_str),
-        )?,
-        "clipf.settings.replace" => {
-            if args.get("confirmed").and_then(Value::as_bool) != Some(true) {
-                return Err((
-                    -32602,
-                    "SETTINGS_REPLACE_REQUIRES_CONFIRMATION: retry with confirmed=true".to_string(),
-                ));
-            }
-            let settings = args.get("settings").cloned().ok_or_else(|| {
-                (
-                    -32602,
-                    "clipf.settings.replace requires settings".to_string(),
-                )
-            })?;
-            mcp_settings_replace(
-                settings,
-                args.get("reason").and_then(Value::as_str),
-                args.get("expectedRevision").and_then(Value::as_str),
-            )?
-        }
-        "clipf.settings.reset" => {
-            if args.get("confirmed").and_then(Value::as_bool) != Some(true) {
-                return Err((
-                    -32602,
-                    "SETTINGS_RESET_REQUIRES_CONFIRMATION: retry with scope and confirmed=true"
-                        .to_string(),
-                ));
-            }
-            let scope = args
-                .get("scope")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipf.settings.reset requires scope".to_string()))?
-                .to_string();
-            mcp_settings_reset(
-                scope,
-                args.get("reason").and_then(Value::as_str),
-                args.get("expectedRevision").and_then(Value::as_str),
-            )?
-        }
-        "clipf.agent.providers" => {
-            settings_service_agent_providers_payload().map_err(|error| (-32000, error))?
-        }
-        "clipf.agent.check" => {
-            let provider_id = args
-                .get("providerId")
-                .and_then(Value::as_str)
-                .map(ToString::to_string);
-            serde_json::to_value(
-                agent_check_provider(provider_id).map_err(|error| (-32000, error))?,
-            )
-            .map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipf.agent.models" => {
-            let provider_id = args
-                .get("providerId")
-                .and_then(Value::as_str)
-                .map(ToString::to_string);
-            serde_json::to_value(
-                agent_list_provider_models(provider_id).map_err(|error| (-32000, error))?,
-            )
-            .map_err(|error| (-32000, error.to_string()))?
-        }
+        // ===== B3：MCP 设置/Agent 工具分发（复用统一 SettingsService 底层函数；实现见 settings_service/mcp.rs）=====
+        "clipf.settings.get" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
+        "clipf.settings.patch" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
+        "clipf.settings.replace" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
+        "clipf.settings.reset" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
+        "clipf.agent.providers" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
+        "clipf.agent.check" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
+        "clipf.agent.models" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
         _ => return Err((-32602, format!("unknown tool: {name}"))),
     };
     log_to_file(

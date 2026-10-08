@@ -49,9 +49,9 @@
 
 | 域 | 文件 | 说明 |
 | --- | --- | --- |
-| command 主体 | `src-tauri/src/lib.rs` | `#[tauri::command]` 大本营 + 托盘 + 全局快捷键 + 窗口管理；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
+| command 主体 | `src-tauri/src/lib.rs` | `#[tauri::command]` 大本营 + 托盘 + 窗口管理；设置/快捷键命令已下沉 `settings_service/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
 | 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听、`ingest.rs` 入库、`read.rs` 读取、`write.rs` 写回、`storage.rs` 存储、`detect.rs` 检测、`payload.rs` 载荷 |
-| 设置服务 | `src-tauri/src/settings_service/commands.rs` | `settings_service_*` 统一协议（唯一服务入口，供设置窗口 / MCP 复用） |
+| 设置服务 | `src-tauri/src/settings_service/` | `settings_service_*` 统一协议（唯一服务入口，供设置窗口 / MCP 复用）：`mod.rs` 门面（写事务/校验/redact）、`write.rs` 原子写 + 写锁、`commands.rs` 命令 + 快捷键/托盘同步、`mcp.rs` MCP 分发 |
 | 上下文采集 | `src-tauri/src/context_collectors.rs`、`src-tauri/src/context_collectors/`、`src-tauri/src/context_collector_runtime.rs`、`src-tauri/src/context_collector_system.rs` | Agent 上下文收集器 |
 | 应用上下文 | `src-tauri/src/application_context.rs` | 应用级上下文聚合 |
 
@@ -74,7 +74,7 @@
 | --- | --- |
 | 窗口 chrome 异常（双标题栏 / 无法拖拽 / 圆角错） | `src-tauri/tauri.conf.json` 窗口块 + 对应 Shell 根类名；页面内禁止绘制假红绿灯（见 DESIGN_SYSTEM 7.2） |
 | 内容重复渲染 | 搜索同条件的两个渲染点（如旧内联块与新 section 组件并存） |
-| 快捷键无响应 | `src-tauri/src/lib.rs` 快捷键注册 + `src/clipboard/use-panel-keyboard.ts` effect deps |
+| 快捷键无响应 | `src-tauri/src/settings_service/commands.rs` 快捷键注册 + `src/clipboard/use-panel-keyboard.ts` effect deps |
 | 设置不保存 / 不刷新 | `src-tauri/src/settings_service/commands.rs` 写入链 + `src/settings.tsx` `updateSettings` + `settings_changed` 事件 |
 | 列表跳动 / 动画异常 | `src/clipboard/row-animation.ts`、`src/clipboard/anim-freeze-guard.ts`、`src/clipboard/components/VirtualList.tsx` |
 | 粘贴后出现重复条目 | `src/clipboard/use-clip-writeback.ts` 写回抑制窗口 |
