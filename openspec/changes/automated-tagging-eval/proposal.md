@@ -1,6 +1,6 @@
 # 提案:自动打标机制调研(automated-tagging-eval)
 
-> 关联:[pi-sdk-agent-foundation](../pi-sdk-agent-foundation/proposal.md)(L3 smart-tag 接线是其剩余项)。
+> 关联:[pi-sdk-agent-foundation](../pi-sdk-agent-foundation/proposal.md)(L3 smart-tag 接线是其剩余项)、[product-iteration-master-plan](../product-iteration-master-plan/proposal.md)(写回安全治理)。
 
 ## 状态
 
@@ -12,11 +12,17 @@
 
 | 来源 | 位置 | 现状 |
 |------|------|------|
-| Rust 启发式规则 | `src-tauri/src/lib.rs` `default_tags()` | 采集时同步执行:URL→链接、Markdown→Markdown、多行→多行、`#tag` 提取 |
+| Rust 启发式规则 | `src-tauri/src/lib.rs` `default_tags()` | 采集路径内**同步**执行:URL→链接、Markdown→Markdown、多行→多行、`#tag` 提取 |
 | pi LLM 标签建议 | `src/agent/pi/analysis.ts`(对应 `clipboard_analyze` 命令) | 摘要+标签建议已产出;**建议未自动写回**,由用户在分析面板看结果 |
-| 人工打标 | `update_clip_record(tags)` 命令 + 主面板/详情编辑 | 已有;人工值是权威值 |
+| 人工打标 | `update_clip_record(tags)` 命令 + 主面板/详情编辑 | 已有;人工值是权威值;**现写回对 tags 为整体替换** |
 
 用户侧诉求(本轮提出):自定义 tag 函数/钩子、经 MCP 打标签。即:规则可配置化、外部 agent 可写 tag。
+
+### 现状缺口(实施前置,2026-10-08 codex 评审确认)
+
+- `normalize_tags`(`lib.rs:6940`)是清洗而非白名单:去 `#`/`tag:` 前缀、截 32 字符、大小写去重、上限 12;不校验字符集。
+- tags 以逗号拼接存储,读取与导出(`export_items`)均 `split(',')`:含逗号的 tag 存取不一致(读取即裂开)。
+- `clipf.update` MCP 工具(`lib.rs:11899`)可直接写 `tags` 数组,无确认门禁——与总纲「写回安全」(preview/confirm 通道)冲突的外部旁路。
 
 ## 调研问题
 
@@ -31,30 +37,35 @@
 
 ### 2. 触发时机
 
-- A(规则):采集后异步执行,不阻塞采集热路径(现状已是)。
+- A(规则):**现状**为采集事务内同步执行(`lib.rs:3455`,O(内容长度) 成本极小);**实施目标**为移出采集事务异步执行,消除批量捕获与低配机下的 P95 尾部。
 - B(LLM):仅用户显式动作(单条「AI 打标」/设置页批量回填),复用分析面板降级路径。
-- C(MCP):外部调用即触发,写回走 `update_clip_record`。
+- C(MCP):外部调用即触发;写回必须经与总纲「写回安全」一致的 **preview/confirm 通道**——含现有 `clipf.update(tags)` 直写旁路的收口,不静默直写。
 
 ### 3. 冲突与权威性
 
-- 人工 tag 为权威:自动来源(SHOULD)只追加到独立字段(`auto_tags`)或合并去重,**禁止静默覆盖人工值**。
-- 合并展示:主面板 tag 徽标 = 人工 ∪ 自动;详情区分来源(后续 UI 决策)。
+- 人工 tag 为权威:自动来源只追加到独立字段(`auto_tags`)或合并去重,**禁止静默覆盖人工值**。
+- 合并语义须原子(单事务):人工值全保留 → 自动值按来源时间填充剩余容量(合并后总上限仍为 `normalize_tags` 的 12)→ 超出时截断**只作用于自动值**;禁止「先整体截断后合并」。
+- 检索与导出契约:tags 现进入 FTS(`clip_fts.tags`)与 `clipf.export` 载荷;若自动 tag 走独立字段,SHALL 同步扩 FTS 索引列与 export/import 载荷,否则自动 tag 搜不到、跨机迁移即丢。
+- 合并写入时携带来源标记(人工/规则/LLM/MCP),详情可区分来源(实施期验收项)。
 
 ### 4. MCP 边界
 
-- `set_clip_tags` 按 MCP 标准工具 schema 暴露:`{ id, tags, mode: "replace" | "append" }`,`replace` 限人工确认链路(或仅允许 `append`),复用 `normalize_tags` 白名单清洗。
+- `set_clip_tags` 按 MCP 标准工具 schema 暴露:`{ id, tags, mode: "replace" | "append" }`;**append 与 replace 均走 preview/confirm**:响应返回清洗后的 preview tag 集合与确认载荷,二次确认才落库(对齐 product-iteration-governance「写回安全」Scenario)。
+- 现有 `clipf.update` 的 `tags` 参数收口为同一门禁(或移除该参数,统一走 `set_clip_tags`)。
+- 复用 `normalize_tags` 清洗,并前置修复其非白名单与逗号裂开问题(见「现状缺口」)。
 - 不新增 MCP 配置面板;沿用现有 mcpServers 接入。
 
-## 评估判据(何时从调研转实施)
+## 评估判据(何时从调研转实施;三项均为可客观核验)
 
-1. pi-sdk L3 smart-tag 接线完成(建议产出已稳定)。
-2. 出现真实的批量回填诉求(用户手动打了 ≥N 条同类 tag,规则可表达)。
-3. 出现外部 agent 写 tag 的真实集成方(MCP 使用者)。
+1. **pi-sdk L3 完成口径**:`pi-sdk-agent-foundation/tasks.md` 中 L3 smart-tag 应用接线任务勾完(非仅「建议产出稳定」)。
+2. **批量回填诉求量化**:设置页 tag 使用记录显示用户对 ≥20 条同类条目手动打了规则可表达的同类 tag。
+3. **真实 MCP 集成方**:应用日志(`query_app_logs`)存在非本仓库开发调试来源的外部 `clipf.update`/`set_clip_tags` 写调用记录。
 
 三项全满足前本提案保持 dormant;满足后按 A → C → B 顺序实施,B 最后(成本最高)。
 
 ## 试点红线(实施时)
 
-- 采集热路径 P50 不回退(`panel.open` perf span 与 capture 耗时为基线)。
-- 规则执行在后台线程,失败静默降级为无自动 tag,不弹错。
-- 自动 tag 总数上限(防正则爆炸),复用 `normalize_tags` 去重上限。
+- 采集热路径 P95 不回退(P50 同步观察):以 capture 耗时为基线,空载与 ≥10k 条历史负载各测一轮,容差 ±5%(`panel.open` perf span 照常采集)。
+- 规则执行移出采集事务后在后台线程执行,失败静默降级为无自动 tag,不弹错。
+- 删除后晚到的异步打标结果不得写入已删条目(保持 `deleted_at IS NULL` 约束);回收站恢复不回溯补标;未来语义向量索引须把 tag 变更纳入失效联动。
+- 合并后 tag 总上限仍为 12;实施前先修 `normalize_tags` 逗号问题(清洗阶段过滤或替换逗号),避免存取不一致。
