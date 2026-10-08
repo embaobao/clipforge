@@ -15,7 +15,7 @@ ClipForge SHALL keep `src/index.css` as the only global stylesheet, holding all 
 - **GIVEN** the repository is checked out
 - **WHEN** a developer searches for component-level CSS files (`*.css` outside `src/index.css`, including `*.module.css`)
 - **THEN** none exist
-- **AND** no component imports a deleted legacy stylesheet (`App.css`, `settings.css`, `theme/tokens.css`, `clipboard-panel.css`, `detail-page.css`, `dsh-panel.css`, `onboarding.css`)
+- **AND** no component imports a deleted legacy stylesheet (`App.css`, `settings.css`, `theme/tokens.css`, `clipboard-panel.css`, `detail-page.css`, the deleted legacy AI panel stylesheet, `onboarding.css`)
 
 #### Scenario: Tokens are consumed, not redefined
 
@@ -26,7 +26,7 @@ ClipForge SHALL keep `src/index.css` as the only global stylesheet, holding all 
 
 ### Requirement: Surface identity markers
 
-ClipForge SHALL keep a stable `data-surface` marker on every window surface root (clipboard / settings / workspace / dsh / onboarding) regardless of component refactoring.
+ClipForge SHALL keep a stable `data-surface` marker on every window surface root (clipboard / settings / workspace / onboarding) regardless of component refactoring.
 
 #### Scenario: Surface survives component split
 

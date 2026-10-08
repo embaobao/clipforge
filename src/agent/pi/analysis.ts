@@ -1,4 +1,4 @@
-/** pi 底层的条目分析能力（替代原 DSH clipboard_analyze）：摘要 + 标签建议。
+/** pi 底层的条目分析能力：摘要 + 标签建议（对应 Rust clipboard_analyze 命令）。
  *  边界：provider 配置从设置服务异步解析；无配置/调用失败抛错，由调用方降级展示。 */
 import type { ClipItem } from "../../App";
 import { settingsService } from "../../services/settings";

@@ -19,7 +19,7 @@ P1。产品主线回归「打造好一个剪贴板」后，视觉层是从「能
 ## 目标
 
 1. 全局样式收敛为唯一的 `src/index.css`（语义 token + 少量工具类），删除全部组件级 CSS 文件，禁止恢复。
-2. 所有 surface（主面板 / 设置 / 详情 / 聚合 / onboarding / DSH）使用 Tailwind 语义类（`bg-background` / `text-muted-foreground` 等映射 `hsl(var(--token))`）。
+2. 所有 surface（主面板 / 设置 / 详情 / 聚合 / onboarding）使用 Tailwind 语义类（`bg-background` / `text-muted-foreground` 等映射 `hsl(var(--token))`）。
 3. 界面按域拆组件：单文件 ≤500 行，公共能力中文注释，`data-surface` marker 保持不变。
 4. 行为零回归：键盘导航、复制/粘贴链路、探针（`data-dev-probe`）、verify 脚本断言语义全部保留。
 

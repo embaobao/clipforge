@@ -174,7 +174,6 @@ export function ClipContextMenu({
             >
               <ScanSearch size={14} />
               <span>AI 分析</span>
-              <DropdownMenuShortcut className={menuShortcut}>DSH</DropdownMenuShortcut>
             </DropdownMenuItem>
             <DropdownMenuItem className={menuItem} onSelect={() => run(onOpenDetail)}>
               <FileJson size={14} />

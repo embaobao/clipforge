@@ -8,7 +8,7 @@
 - 阶段：评估提案；不直接引入依赖、不改运行时。
 - 变更标识：`mastra-agent-runtime-evaluation`。
 - 前置依赖：`frontend-surface-architecture-refactor`（热路径边界）、`ai-model-plugin-productization`、`vercel-ai-sdk-integration`、`local-model-quick-integration`。
-- **结论（2026-08-17）：归档 / no / 后置**。采用 DeepSeek Harness（dsh）作为 AI 底座（见 `deepseek-harness-embedding`），不引入 Mastra。理由：Mastra 是独立 Agent 框架，sidecar/离线启动有体积与成本，与「快速剪贴板工具」定位冲突；dsh 模型无关、MIT、headless 一次性模式更贴合只读分析，且已落地可用。
+- **结论（2026-08-17）：归档 / no / 后置**。采用 DeepSeek Harness 作为 AI 底座（见 `deepseek-harness-embedding`），不引入 Mastra。理由：Mastra 是独立 Agent 框架，sidecar/离线启动有体积与成本，与「快速剪贴板工具」定位冲突；该底座模型无关、MIT、headless 一次性模式更贴合只读分析，且已落地可用。
 
 ## Why
 

@@ -1,6 +1,0 @@
-# @clipforge/dsh-plugin 的 bundle patch：把自己的 Cordis 入口插入插件树。
-# profile 的 cordis.yml 为空根，bundles 的 patch 层（dsh-base 的 base + 本层）依次叠加。
-- insert:
-  - id: clipforge-dsh
-    name: '@clipforge/dsh-plugin'
-    inject: [agents, agentDefaultModel, sessions, tools]

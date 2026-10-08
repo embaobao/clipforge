@@ -11,6 +11,6 @@
 
 ## Phase 2:对齐与验证
 
-- [x] `docs/PROPOSAL_ROADMAP.md` 重写「当前 active change」表与「后续开发计划」,与波次表一致,清除 DSH 三行与已失效快照引用--同步重写 `openspec/project.md` 活跃提案表;`frontend-surface-architecture-refactor` 按归档口径移出 active 队列
+- [x] `docs/PROPOSAL_ROADMAP.md` 重写「当前 active change」表与「后续开发计划」, 与波次表一致,清除旧 AI 侧车三行与已失效快照引用--同步重写 `openspec/project.md` 活跃提案表;`frontend-surface-architecture-refactor` 按归档口径移出 active 队列
 - [x] `openspec validate product-iteration-master-plan --strict` 通过;全量 `--all --strict` 下 framer-motion(补评估判据 delta)同步转绿,interaction-animation-polish 存量缺 delta 属 skip-specs 归档情形、按归档流程处理
 - [x] 波次归位标注:13 个活跃 change 提案头部加「所属波次」标注行(仅注释性一行,不动验收标准)

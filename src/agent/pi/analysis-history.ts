@@ -1,4 +1,4 @@
-/** pi 分析历史（从 DSH 的 recordDshHistory/getDshHistory 模式迁移）：本地持久化最近的分析结果。
+/** pi 分析历史：本地持久化最近的分析结果（record/get 惯例模式）。
  *  边界：localStorage 存储（上限 20 条裁剪）；不联网、不进剪贴板数据库。 */
 
 export type PiHistoryEntry = {

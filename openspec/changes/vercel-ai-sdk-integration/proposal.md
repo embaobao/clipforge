@@ -10,7 +10,7 @@ P4.1。该提案是 AI 能力产品化之后的实现候选切片，必须排在
 
 本轮已按项目规则尝试用 Context7 拉取当前文档，但命中月额度超限，暂时不能把具体 API 签名、安装命令或版本号写成已确认事实。这个提案当前只保留方向性方案，进入实现前必须补拉文档并校准依赖版本。
 
-- **状态（2026-08-17）：superseded**。`deepseek-harness-embedding` 已落地，DSH 取代 Vercel AI SDK 作为 AI 运行时底座；本提案方向性方案（语义摘要/推荐）由 DSH 的只读分析 profile 承接。
+- **状态（2026-08-17）：superseded**。`deepseek-harness-embedding` 已落地，取代 Vercel AI SDK 作为 AI 运行时底座；本提案方向性方案（语义摘要/推荐）由其只读分析 profile 承接。
 
 ## 背景
 

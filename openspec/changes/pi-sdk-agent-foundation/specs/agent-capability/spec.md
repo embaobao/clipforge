@@ -24,13 +24,13 @@ ClipForge SHALL keep LLM provider configuration and API keys in the settings lay
 - **THEN** no LLM/provider/network symbols appear in the hot path
 - **AND** agent invocations originate only from explicit user actions
 
-### Requirement: DSH chain removal
+### Requirement: Legacy AI sidecar chain removal
 
-ClipForge SHALL remove the DSH runtime chain (daemon, sidecar bridge, iframe panel, analysis service) after the pi-based implementation replaces its user-facing capabilities.
+ClipForge SHALL remove the legacy AI sidecar runtime chain (daemon, sidecar bridge, iframe panel, analysis service) after the pi-based implementation replaces its user-facing capabilities.
 
-#### Scenario: No DSH residue
+#### Scenario: No legacy sidecar residue
 
-- **GIVEN** the DSH deletion batches are complete
-- **WHEN** the repository is searched for DSH symbols (`dsh.rs`, `spawn_dsh_daemon`, `DSH_WEB_URL`, `dsh-main`, `dsh-panel`)
+- **GIVEN** the legacy AI sidecar deletion batches are complete
+- **WHEN** the repository is searched for legacy sidecar symbols (daemon module, panel entry, web URL constant, panel component)
 - **THEN** no source references remain (archived proposals and decision records excepted)
 - **AND** the full verification suite passes

@@ -31,16 +31,16 @@
 
 ## 活跃提案
 
-> 2026-10-01:推进顺序与波次归位由 [product-iteration-master-plan](./changes/product-iteration-master-plan/proposal.md) 单点解释;下表状态列为摘要,进度以 `openspec list` 实数为准。DSH 三提案已归档,不再列入。
+> 2026-10-01:推进顺序与波次归位由 [product-iteration-master-plan](./changes/product-iteration-master-plan/proposal.md) 单点解释;下表状态列为摘要,进度以 `openspec list` 实数为准。旧 AI 侧车三提案已归档,不再列入。
 
 | 提案 | 波次 | 状态 | 说明 |
 |------|------|------|------|
 | [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) | W1 | P3 收尾，75/83 | 格式支持基础层：图片、文件、HTML/RTF 富文本剪贴板历史；剩余真实复制/展示/粘贴和磁盘清理实机验证 |
 | [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) | W1 | P3 收尾，22/26 | 格式保真层：多 representation、纯文本降级和回写验证矩阵；剩余系统剪贴板写回与监听去重实机验证 |
 | [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) | W1 | P1.x 收尾，25/52 | 独立引导窗口、权限检查、开机启动已落地;仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界 |
-| [tailwind-v3-style-refactor](./changes/tailwind-v3-style-refactor/proposal.md) | W1 | 收尾，21/25 | v3 视觉重构;剩盟哥三 surface 人工走查 + 走查修复(DSH iframe 细节项已作废) |
+| [tailwind-v3-style-refactor](./changes/tailwind-v3-style-refactor/proposal.md) | W1 | 收尾，21/25 | v3 视觉重构;剩盟哥三 surface 人工走查 + 走查修复(旧 AI 面板 iframe 细节项已作废) |
 | (W2 未开工,见总纲) | W2 | — | 基于 `clip_semantic_index`(SQLite local-keyword 已建)的语义检索,本地索引优先,先服务 pi/MCP 工具面 |
-| [pi-sdk-agent-foundation](./changes/pi-sdk-agent-foundation/proposal.md) | W3 | P1 主体，21/26 | pi sdk Agent 基座:DSH 删除完成、L1 分析/历史/工具面落地;剩 API Key redaction/keyRef、provider 极简 UI、智能标签建议、Phase 4 验收 |
+| [pi-sdk-agent-foundation](./changes/pi-sdk-agent-foundation/proposal.md) | W3 | P1 主体，21/26 | pi sdk Agent 基座:旧 AI 侧车删除完成、L1 分析/历史/工具面落地;剩 API Key redaction/keyRef、provider 极简 UI、智能标签建议、Phase 4 验收 |
 | [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) | W3 | P4 复审中，65/76 | scope 复审后按 L1/L2 归位并入 pi 线;Context7 恢复前不进 SDK/Tiptap 实现 |
 | [vercel-ai-sdk-integration](./changes/vercel-ai-sdk-integration/proposal.md) | W4 | P4.1 后置，30/38 | AI 产品化后候选切片,与 mastra/local-model 三案统一取舍,结论前不动 |
 | [mastra-agent-runtime-evaluation](./changes/mastra-agent-runtime-evaluation/proposal.md) | W4 | P4.x 评估，11/25 | runtime 候选评估,不装依赖不进热路径;随 W4 统一取舍 |
@@ -76,7 +76,7 @@
 
 ## 建议推进顺序
 
-> 2026-09-02 方向调整：产品主线回归「打造好一个剪贴板」。近期只推进剪贴板核心体验（格式闭环实机验收、归档）、首次引导和实机验收；DSH 仅保留 iframe 实验面板、全链后置；AI/Agent 运行时四案维持统一评估，不直接进入产品热路径，取舍结论前不新增依赖。
+> 2026-09-02 方向调整：产品主线回归「打造好一个剪贴板」。近期只推进剪贴板核心体验（格式闭环实机验收、归档）、首次引导和实机验收；旧 AI 面板仅保留 iframe 实验形态、全链后置；AI/Agent 运行时四案维持统一评估，不直接进入产品热路径，取舍结论前不新增依赖。
 
 1. P0：联合收尾 [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) 与 [frontend-surface-architecture-refactor](./changes/frontend-surface-architecture-refactor/proposal.md)，验证正式应用的开机启动、权限引导、虚线选中态、滚动跟随和复制/粘贴 P95。
 2. P1：完成 [file-image-clipboard-support](./changes/file-image-clipboard-support/proposal.md) 与 [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) 的文本、HTML、图片、文件实机矩阵。

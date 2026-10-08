@@ -5,8 +5,8 @@
 2026-09-11 重大方向决策（盟哥拍板）：
 
 1. **pi sdk 确立为 Agent 能力基础**：选定 github.com/earendil-works/pi（TS Agent 工具箱 + 可编程 SDK，npm @mariozechner/pi-coding-agent），新建 [pi-sdk-agent-foundation](../openspec/changes/pi-sdk-agent-foundation/proposal.md) 提案承接全部 Agent 能力（条目分析/智能标签/未来助手面板），validate --strict ✓。
-2. **DSH 全链废弃删除**：deepseek-harness-embedding / dsh-file-context-conversation / dsh-system-context-menu 三提案已标记废弃（头部声明 + 指向 pi 提案），代码删除为 pi-sdk-agent-foundation Phase 1（夜间任务首个大战役），删除完成后三提案 --skip-specs 归档。基座取舍决策就此关闭。
-2. **DSH 三提案已归档（2026-09-11）**：`2026-09-11-deepseek-harness-embedding` / `2026-09-11-dsh-file-context-conversation` / `2026-09-11-dsh-system-context-menu`；DSH 代码全链删除完成（前端 -528 行 + Rust -553 行 + 配置），前端零残留。
+2. **旧 AI 侧车全链废弃删除**：deepseek-harness-embedding 及两份衍生提案已标记废弃（头部声明 + 指向 pi 提案），代码删除为 pi-sdk-agent-foundation Phase 1（夜间任务首个大战役），删除完成后三提案 --skip-specs 归档。基座取舍决策就此关闭。
+2. **旧 AI 侧车三提案已归档（2026-09-11）**：deepseek-harness-embedding 与两份衍生提案归入 archive/2026-09-11-*；旧 AI 侧车代码全链删除完成（前端 -528 行 + Rust -553 行 + 配置），前端零残留。
 3. 顺带决策记录：CLIPFORGE_DISABLE_CAPTURE=1 双实例隔离开关已落地（2026-09-10 双实例污染事故的防再发）。
 
 2026-09-07 进展（夜间批次 1–4，Tailwind v3 视觉重构收尾）：
@@ -19,11 +19,11 @@
 
 2026-09-02 清账与方向调整：**产品主线回归「打造好一个剪贴板」**。决策记录：
 
-1. `deepseek-harness-embedding` 整体后置：DSH 悬浮面板仅保留 **iframe 嵌官方 Web UI 实验形态**（2026-08-17 落地：守护进程骨架 `DshDaemonState`/`spawn/kill`/localhost-only/env 注入/退出清理 + `src/dsh/dsh-panel.tsx` iframe 面板），自研对话 UI、`POST /chat` 会话 API、快速唤起、i18n 全部后置，「后面看看需不需要自研」。tasks.md 已按实际代码对账（13/31 → 22/31）。
-2. 运行时基座存在切换候选（pi 等），基座取舍结论前不向 DSH runtime 深投；`clipboard_analyze` 一次性链路（Phase 0–5）保持可用。剪贴板打通场景由 `dsh-file-context-conversation` 承接、同步后置。
+1. `deepseek-harness-embedding` 整体后置：旧 AI 悬浮面板仅保留 **iframe 嵌官方 Web UI 实验形态**（2026-08-17 落地：守护进程骨架状态/启停/localhost-only/env 注入/退出清理 + iframe 面板），自研对话 UI、`POST /chat` 会话 API、快速唤起、i18n 全部后置，「后面看看需不需要自研」。tasks.md 已按实际代码对账（13/31 → 22/31）。
+2. 运行时基座存在切换候选（pi 等），基座取舍结论前不向旧 AI 侧车 runtime 深投；`clipboard_analyze` 一次性链路（Phase 0–5）保持可用。剪贴板打通场景由「文件上下文对话」提案承接、同步后置。
 3. 清账动作：`file-size-exemptions.json` 移除 2 个失效条目（`src/agent-panel.tsx`、`src/agent-chat-page.tsx` 已随旧 Agent 面板删除，7 → 5），门禁复跑通过；`cargo check` 复跑通过。
 4. 待办：`file-image-clipboard-support`（8 项）与 `clipboard-multi-format-fidelity`（4 项）剩余任务为同一张实机验收矩阵（7 个场景，见两提案 tasks.md），完成后归档两提案。
-5. AI 四案（`ai-model-plugin-productization` / `vercel-ai-sdk-integration` / `local-model-quick-integration` / `mastra-agent-runtime-evaluation`）维持后置，取舍结论不阻塞剪贴板主线；在 DSH 实验结论与 pi 评估出来前不合并、不废弃、不新增依赖。
+5. AI 四案（`ai-model-plugin-productization` / `vercel-ai-sdk-integration` / `local-model-quick-integration` / `mastra-agent-runtime-evaluation`）维持后置，取舍结论不阻塞剪贴板主线；在旧 AI 侧车实验结论与 pi 评估出来前不合并、不废弃、不新增依赖。
 
 2026-08-05 归档 `settings-sidebar-component-library-recovery`：任务 14/14 已完成，delta 已合入 `openspec/specs/settings-interface/spec.md`，归档路径为 `openspec/changes/archive/2026-08-05-settings-sidebar-component-library-recovery/`。
 
@@ -110,7 +110,7 @@
 | W5 | `framer-motion-adoption-eval` | dormant | 按其提案信号表触发,当前四信号均未出现 |
 | W5 | `project-demo-gif-pipeline` | 0/30 | W1 稳定后录制 |
 
-已归档:DSH 三提案(2026-09-11,`a020068` 拍板废弃,pi 接管)、`settings-service-unified-protocol` 等见上表「已归档」节。
+已归档:旧 AI 侧车三提案(2026-09-11,`a020068` 拍板废弃,pi 接管)、`settings-service-unified-protocol` 等见上表「已归档」节。
 
 ## 后续开发计划
 

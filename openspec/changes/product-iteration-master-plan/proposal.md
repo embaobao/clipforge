@@ -8,7 +8,7 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 
 现状:15 个活跃 change 各自携带 tasks 推进,缺乏统一叙事——「下一批做什么」散落在 ROADMAP 的迭代 A-E(2026-09-07 写就,部分前提已过时)与各提案的依赖声明里。三条新事实要求重排:
 
-1. **DSH 全链删除完成,pi-sdk 确立为 Agent 基座**(`a020068` 拍板,Phase 1 删除手术 21/26 收口,Phase 2 最小集成大半落地:src/agent/pi/ 五模块 + clipboard_search/clipboard_read_latest 工具 + PiAnalysisBar 详情页入口)。Agent 能力从此有了确定范式,不再有「DSH vs pi vs Vercel AI SDK vs Mastra」并行的叙事负担。
+1. **旧 AI 侧车全链删除完成,pi-sdk 确立为 Agent 基座**(`a020068` 拍板,Phase 1 删除手术 21/26 收口,Phase 2 最小集成大半落地:src/agent/pi/ 五模块 + clipboard_search/clipboard_read_latest 工具 + PiAnalysisBar 详情页入口)。Agent 能力从此有了确定范式,不再有「旧 AI 侧车 vs pi vs Vercel AI SDK vs Mastra」并行的叙事负担。
 2. **基建提前在位**:SQLite 已建 `clips/folders/snippets/clip_semantic_index` 表(lib.rs,user_version=2,semantic_index 含 model='local-keyword' + vector BLOB + keywords 列);MCP 已有 `run_mcp_stdio` + 33 个 `clipf.*` 工具(context.get/compose/live、capture/update/copy/search、settings.get/patch/replace/reset、agent.providers/check 等)。AGENTS.md 里「规划持久化:SQLite + 小型向量索引」「后续 MCP 标准工具接口」两项已具骨架,功能规划应基于这些真实地基,而非假设从零开始。
 3. **核心闭环接近收口**:file-image-clipboard-support 75/83、clipboard-multi-format-fidelity 22/26、interaction-animation-polish 25/25(待归档)、tailwind-v3-style-refactor 21/25(剩人工走查)。剩余项高度集中在「实机验收矩阵」,这是 W1 的自然边界。
 
@@ -93,5 +93,5 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 
 ## 依赖关系
 
-- 上游裁决:`a020068`(pi 确立/DSH 废弃,2026-09-11)。
+- 上游裁决:`a020068`(pi 确立/旧 AI 侧车废弃,2026-09-11)。
 - 下游消费:全部活跃 change 的排期;docs/PROPOSAL_ROADMAP.md 为其文档视图。

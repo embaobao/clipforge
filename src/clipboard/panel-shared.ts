@@ -1,4 +1,4 @@
-/** 快速面板共享桥接：模块级日志与 DSH 分析入口（主体与子组件共用，不挂在组件作用域内）。 */
+/** 快速面板共享桥接：模块级日志与 AI 分析入口（主体与子组件共用，不挂在组件作用域内）。 */
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useState } from "react";

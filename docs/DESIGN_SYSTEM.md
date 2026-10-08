@@ -236,7 +236,7 @@ pnpm test:boundaries
 - `src/theme/tokens.css`（已删除）
 - `src/clipboard/styles/clipboard-panel.css`（已删除）
 - `src/workspace/styles/detail-page.css`（已删除）
-- `src/dsh/dsh-panel.css`（已删除）
+- 旧 AI 面板样式文件（已删除）
 - `src/onboarding/onboarding.css`（已删除）
 - `src/clipboard/components/ClipboardRow.module.css`（已删除）
 
@@ -246,4 +246,4 @@ pnpm test:boundaries
 - `.detail-pane`, `.detail-editor`, `.detail-tag-*`, `.detail-suggestion-*`
 - `.setting-row`, `.setting-card`, `.settings-action-button`, `.kbd-row`
 - `.onboarding-standalone-shell`, `.onboarding-loading`
-- `.dsh-panel-*`
+- 旧 AI 面板残留类名前缀（发现即替换）

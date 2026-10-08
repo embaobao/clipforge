@@ -23,7 +23,7 @@
 
 ## Phase 3：workspace / onboarding 拆分 ✅（批次 2、3）
 
-- [x] 详情页：`workspace-panels.tsx`（1831 行）→ `ClipDetailWorkspace.tsx`（498 行外壳）+ workspace-detail-shared / DetailPreview / DetailQuickEditor / DetailDshPanel / DetailMeta / DetailOverflowMenu（全部 ≤500 行）
+- [x] 详情页：`workspace-panels.tsx`（1831 行）→ `ClipDetailWorkspace.tsx`（498 行外壳）+ workspace-detail-shared / DetailPreview / DetailQuickEditor / 旧 AI 分析面板 / DetailMeta / DetailOverflowMenu（全部 ≤500 行）
 - [x] 聚合页：`MultiAggregateWorkspace.tsx`（118 行）+ `AggregateItem.tsx`（63 行），`workspace-panels.tsx` 缩为纯 re-export
 - [x] onboarding：`settings/onboarding-wizard.tsx`（422 行旧类）→ `src/onboarding/components/` 下 shared（153 行）+ OnboardingWizard（268 行）+ OnboardingStep / OnboardingFeatureCard；键盘导航、快捷键录制、探针、写入路径行为不变
 - [x] 4 个 verify 脚本读取路径随拆分同步更新，断言语义不变（saveDraftContent 契约 / 插件动作失败边界 / surface marker / 五步流程 / 六个采集开关）
@@ -31,7 +31,7 @@
 
 ## Phase 4：旧样式清理 + 文档对账 ✅（批次 1、4）
 
-- [x] 删除 8 个旧 CSS 文件：App.css / settings.css / theme/tokens.css / clipboard-panel.css / ClipboardRow.module.css / detail-page.css / dsh-panel.css / onboarding.css
+- [x] 删除 8 个旧 CSS 文件：App.css / settings.css / theme/tokens.css / clipboard-panel.css / ClipboardRow.module.css / detail-page.css / 旧 AI 面板样式文件 / onboarding.css
 - [x] 全仓清除 `detail-*` / `aggregate-*` / `onboarding-*` 等无主样式类，新样式全部 Tailwind 语义类
 - [x] `AGENTS.md` 技术栈与「样式按功能拆分」章节对齐 Tailwind v3 现实
 - [x] `deepseek-harness-embedding/tasks.md` 对账核验（与样式无关但属同批文档治理）
@@ -41,7 +41,7 @@
 - [x] `pnpm build:web` / `pnpm test:unit` / `pnpm test:boundaries` 全绿（每批次复验）
 - [x] `cargo check` 通过（15 个存量 dead_code 警告非阻塞）
 - [x] `pnpm tauri dev` 后台冒烟：编译 + 启动 + 运行 70 秒无 error/panic（批次 5，dev 实例已清理）
-- [ ] **盟哥人工视觉走查**：详情页 / 聚合页 / onboarding 三个 surface（重写样式的实际视觉效果）--DSH 面板 iframe 细节项作废:DSH 已全链删除（批次 36-38 前端 -528 行 + Rust -553 行，`a020068` 拍板 pi 接管），AI 面交互区域由 pi-sdk 线的 PiAnalysisBar 承接，走查随其交付面另行安排
+- [ ] **盟哥人工视觉走查**：详情页 / 聚合页 / onboarding 三个 surface（重写样式的实际视觉效果）--旧 AI 面板 iframe 细节项作废:旧 AI 侧车已全链删除（批次 36-38 前端 -528 行 + Rust -553 行，`a020068` 拍板 pi 接管），AI 面交互区域由 pi-sdk 线的 PiAnalysisBar 承接，走查随其交付面另行安排
 - [ ] 走查问题清单修复（如有，逐项验证后提交）
 
 ## Phase 6：收尾 🟡
@@ -52,5 +52,5 @@
 ## 注意事项
 
 - 不恢复任何已删除的 CSS 文件；新样式只用 `hsl(var(--token))` 或 Tailwind 语义类。
-- 保持 `data-surface="clipboard"/"settings"/"workspace"/"dsh"/"onboarding"` marker 与 `data-dev-probe` 探针。
+- 保持 `data-surface="clipboard"/"settings"/"workspace"/"onboarding"` marker 与 `data-dev-probe` 探针。
 - 再拆任何文件时先检查 4 个 verify 脚本的读取路径与切片断言。
