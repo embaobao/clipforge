@@ -89,3 +89,27 @@ pnpm tauri dev
 - 索引维护义务：新增/移动/重命名模块、Surface、Tauri command、校验脚本时，必须同步更新 `docs/BUSINESS_INDEX.md` 对应行；索引以「域」为行，不逐文件罗列，一个域多文件时入口写最常改的文件、其余写目录。
 - 索引防腐：`pnpm locate --check-index` 校验索引反引号内引用的路径真实存在，已挂入 `pnpm test:unit` 末尾，索引引用失效会导致门禁失败。
 - 上文「必须有中文注释」规范是 locate 的数据源：新公共能力文件头缺一句中文文档注释，定位能力即对该文件失效。
+
+<!-- BACKLOG.MD GUIDELINES START -->
+<!-- backlog.md-instructions-version: 1.52.0 -->
+<CRITICAL_INSTRUCTION>
+
+## Backlog.md Workflow
+
+This project uses Backlog.md for task and project management.
+
+**At the beginning of each conversation in this project, run `backlog instructions overview` before answering or taking action. Re-read it only if you have not read it yet in the current conversation.**
+
+Use the overview to decide whether to search, read, create, or update Backlog tasks.
+
+Before task lifecycle actions, read the matching detailed guide:
+- `backlog instructions task-creation` before creating or splitting tasks
+- `backlog instructions task-execution` before planning, changing status or assignee, adding a plan or implementation notes, or implementing task work
+- `backlog instructions task-finalization` before checking acceptance criteria, writing final summaries, or moving tasks to terminal statuses
+
+Use `backlog <command> --help` before running unfamiliar commands. Help shows options, fields, and examples.
+
+Do not edit Backlog task, draft, document, decision, or milestone markdown files directly. Use the `backlog` CLI so metadata, relationships, and history stay consistent.
+
+</CRITICAL_INSTRUCTION>
+<!-- BACKLOG.MD GUIDELINES END -->
