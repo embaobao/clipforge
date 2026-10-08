@@ -36,9 +36,9 @@
 
 ## Phase 4：lib.rs agent / mcp 模块拆分
 
-- [ ] 抽 `agent/`：provider 解析 + run 状态机 + agent_* command
-- [ ] 抽 `mcp/`：run_mcp_stdio + call_mcp_tool + mcp_tool_specs
-- [ ] lib.rs 继续收敛
+- [x] 抽 `agent/`：provider 解析 + run 状态机 + agent_* command（2026-10-08，8 文件 362/465/242/223/376/456/57+context，run 存储锁私有化+poisoned→AGENT_RUNS_LOCK_POISONED+degraded）
+- [x] 抽 `mcp/`：run_mcp_stdio + call_mcp_tool + mcp_tool_specs（2026-10-08，8 文件，specs 40 条 golden 冻结；settings_service 依赖解耦走 crate::agent::）
+- [x] lib.rs 继续收敛——13004→9079（净减 3925）；cargo test --lib 30/30，test:unit 10 项全绿，pnpm build 通过（2026-10-08）
 
 ## Phase 5：前端组件拆分
 
