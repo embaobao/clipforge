@@ -108,6 +108,7 @@
 | W4 | `external-hook-plugin-runtime` | 0/67 | 只推进 Block A 读取侧;Block B 写入侧维持冻结 |
 | W5 | `codebase-modularity-refactor` | 11/26 | 随功能触碰渐进,豁免清单只减不增 |
 | W5 | `framer-motion-adoption-eval` | dormant | 按其提案信号表触发,当前四信号均未出现 |
+| W3 后置 | `automated-tagging-eval` | dormant | 自动打标调研:规则/MCP/LLM 三层边界已裁决,待 pi-sdk L3 smart-tag 完成 + 真实批量回填诉求 + MCP 集成方三判据齐后转实施 |
 | W5 | `project-demo-gif-pipeline` | 0/30 | W1 稳定后录制 |
 
 已归档:旧 AI 侧车三提案(2026-09-11,`a020068` 拍板废弃,pi 接管)、`settings-service-unified-protocol` 等见上表「已归档」节。
