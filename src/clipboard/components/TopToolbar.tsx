@@ -1,6 +1,12 @@
 // 主面板顶部工具栏（design-spec 视觉层重构）
 // 搜索槽 + 视图范围按钮（History/Favorites/片段/更多），保持业务 handler 不变。
-import type { KeyboardEvent, PointerEvent, ReactNode } from "react";
+import type {
+  ButtonHTMLAttributes,
+  KeyboardEvent,
+  PointerEvent,
+  ReactNode,
+} from "react";
+import { forwardRef } from "react";
 import { Clock, MoreHorizontal, Scissors, Settings2, Star, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -35,11 +41,38 @@ export interface TopToolbarProps {
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
-const scopeBase =
-  "flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors active:scale-90";
-const scopeInactive = "hover:bg-black/5 hover:text-foreground dark:hover:bg-white/[0.07]";
-const scopeActive = "bg-black/[0.08] text-foreground dark:bg-white/[0.12]";
-const scopeDisabled = "opacity-40 cursor-not-allowed";
+// 顶栏圆形图标按钮：交互效果——hover 时灰色底从图标中心「长出来」（scale 0→100），
+// 配合图标提亮；按下时图标即时缩到 90% 给触达反馈；当前视图按钮底色常驻以示选中。
+// 底色用独立图层做 transform 动画（GPU 合成、可中断回弹），图标颜色用颜色过渡，
+// 两者时长一致但曲线独立：底 150ms ease-out 浮现，图标按下 100ms 即时缩放。
+const iconButtonBase =
+  "group relative flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 ease-out hover:text-foreground";
+
+/** 顶栏图标按钮：hover 底色从中心浮现、按下图标缩小、选中视图底色常驻。 */
+const ToolbarIconButton = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { /** 是否为当前选中视图（底色常驻）。 */ active?: boolean }
+>(function ToolbarIconButton({ active, children, className, type, ...rest }, ref) {
+  return (
+    <button
+      className={cn(iconButtonBase, className)}
+      ref={ref}
+      type={type ?? "button"}
+      {...rest}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 rounded-full bg-black/[0.07] transition-transform duration-150 ease-out dark:bg-white/[0.12]",
+          active ? "scale-100" : "scale-0 group-hover:scale-100",
+        )}
+      />
+      <span className="relative flex items-center justify-center transition-transform duration-100 ease-out group-active:scale-90">
+        {children}
+      </span>
+    </button>
+  );
+});
 
 /** 主面板顶部工具栏：搜索槽、范围按钮、更多菜单。 */
 export function TopToolbar({
@@ -88,21 +121,20 @@ export function TopToolbar({
       </div>
 
       <div
-        className="flex cursor-default items-center gap-1"
+        className="flex cursor-default items-center gap-1.5"
         data-dev-probe="top-action-slot"
         onPointerDown={(event) => event.stopPropagation()}
       >
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
+            <ToolbarIconButton
+              active={activeView === "history"}
               aria-label={tr("main.dock.history")}
-              className={cn(scopeBase, activeView === "history" ? scopeActive : scopeInactive)}
               data-dev-probe="top-scope-history"
               onClick={() => onViewChange("history")}
-              type="button"
             >
-              <Clock size={15} />
-            </button>
+              <Clock size={16} />
+            </ToolbarIconButton>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
             <span>{tr("main.dock.history")}</span>
@@ -111,15 +143,14 @@ export function TopToolbar({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
+            <ToolbarIconButton
+              active={activeView === "favorites"}
               aria-label={tr("main.dock.favorites")}
-              className={cn(scopeBase, activeView === "favorites" ? scopeActive : scopeInactive)}
               data-dev-probe="top-scope-favorites"
               onClick={() => onViewChange("favorites")}
-              type="button"
             >
-              <Star size={15} />
-            </button>
+              <Star size={16} />
+            </ToolbarIconButton>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
             <span>{tr("main.dock.favorites")}</span>
@@ -128,15 +159,14 @@ export function TopToolbar({
 
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
+            <ToolbarIconButton
               aria-label={tr("main.dock.snippets")}
-              className={cn(scopeBase, scopeDisabled)}
+              className="cursor-not-allowed opacity-40"
               data-dev-probe="top-scope-snippets"
               disabled
-              type="button"
             >
-              <Scissors size={15} />
-            </button>
+              <Scissors size={16} />
+            </ToolbarIconButton>
           </TooltipTrigger>
           <TooltipContent side="bottom" sideOffset={4}>
             <span>{tr("main.dock.snippets")}</span>
@@ -145,14 +175,13 @@ export function TopToolbar({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button
+            <ToolbarIconButton
               aria-label={tr("main.dock.menu")}
-              className={cn(scopeBase, scopeInactive)}
+              className="ml-0.5"
               data-dev-probe="top-menu-trigger"
-              type="button"
             >
-              <MoreHorizontal size={15} />
-            </button>
+              <MoreHorizontal size={16} />
+            </ToolbarIconButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="w-52 rounded-xl border-black/5 p-1 dark:border-white/[0.07]"
