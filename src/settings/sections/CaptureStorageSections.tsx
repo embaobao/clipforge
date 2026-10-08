@@ -4,6 +4,7 @@ import { Eye, ExternalLink, FileCode, FileDown, FolderOpen, RefreshCw, Terminal,
 import type { ReactNode } from "react";
 import type { TranslationKey } from "../../i18n";
 import { CheckItem, NumberSetting, ReadonlyField, SettingGroup, ToggleSetting } from "../controls";
+import { LogsDataTables } from "../components/LogsDataTables";
 import { SettingsFieldRow } from "../components/SettingsFieldRow";
 import { SettingsStatusPanel } from "../components/SettingsStatusPanel";
 import type { SettingsStatusPanelState } from "../components/SettingsStatusPanel";
@@ -326,6 +327,11 @@ export function StorageLogsSection({
           label={tr("settings.logs.debugLogs")}
           onChange={(debugLogsEnabled) => updateSettings({ debugLogsEnabled })}
         />
+        {/* 数据查看双表：应用日志 + 采集历史（只读、动态加载，见 LogsDataTables）。 */}
+        <div className="mt-2 border-t border-border/50 pt-3">
+          <p className="mb-2 text-[12px] font-medium text-foreground">{tr("settings.logs.dataTitle")}</p>
+          <LogsDataTables tr={tr} />
+        </div>
       </SettingGroup>
     ),
     diagnostics: (

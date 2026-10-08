@@ -64,6 +64,13 @@ export const mockStore = {
   callbackSeq: 0,
 };
 
+/** 演示种子 tag：与 DEMO_CLIP_SOURCES 按下标对应，让采集历史表的 Tag 列在预览里可见。 */
+const SEED_TAGS: string[][] = [
+  ["演示", "文本"],
+  ["代码", "片段"],
+  ["链接"],
+];
+
 /** 首次初始化：用演示源数据播种（deletedAt 的记录进回收站）。 */
 export function seedDb(): void {
   if (mockStore.records.length > 0) return;
@@ -80,7 +87,7 @@ export function seedDb(): void {
       deletedAt: source.deletedAt ? now - 60_000 : null,
       bucket: "all",
       source: source.sourceLabel ?? "mock",
-      tags: [],
+      tags: SEED_TAGS[index] ?? [],
       kind: "text",
       payloadKind: "text",
       primaryFormat: "text/plain",

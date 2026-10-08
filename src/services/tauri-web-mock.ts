@@ -27,6 +27,8 @@ async function mockInvoke(cmd: string, args: Record<string, unknown> = {}): Prom
     }
     case "search_clip_records": {
       const input = (args.input ?? {}) as Record<string, unknown>;
+      // 预览兜底：settings 等 surface 不经过 init_clip_database，查询前惰性播种（幂等）。
+      seedDb();
       // 返回全部记录（含已删），过滤逻辑由前端按 activeView 完成，与 Rust 行为一致。
       const { items, nextCursor } = filterRecords(input);
       return {
@@ -152,6 +154,26 @@ async function mockInvoke(cmd: string, args: Record<string, unknown> = {}): Prom
     case "append_app_log":
       console.debug("[web-mock:log]", args.level, args.message);
       return null;
+    case "query_app_logs": {
+      // 浏览器预览：返回固定样例行，让日志表格的样式与空态之外的渲染路径可验证。
+      const now = Date.now();
+      const entries = [
+        { tsMs: now - 90_000, level: "info", message: "clipboard-monitor: captured text (32 chars)", context: "capture" },
+        { tsMs: now - 45_000, level: "warn", message: "image decode fallback to png", context: "clipboard-image" },
+        { tsMs: now - 10_000, level: "error", message: "provider 请求失败：401 unauthorized", context: "pi-provider" },
+      ];
+      const level = String(args.level ?? "").toLowerCase();
+      const text = String(args.text ?? "").toLowerCase();
+      return {
+        path: "web-mock://logs/clipforge.jsonl",
+        limit: Number(args.limit ?? 300),
+        items: entries.filter(
+          (entry) =>
+            (!level || entry.level === level) &&
+            (!text || `${entry.level} ${entry.message} ${entry.context}`.toLowerCase().includes(text)),
+        ),
+      };
+    }
     case "export_clip_text_files": {
       // 浏览器等价物：拼接文本触发下载，验证导出交互路径。
       const items = (args.items ?? []) as Array<{ name?: string; text?: string }>;
