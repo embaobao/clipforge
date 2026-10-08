@@ -230,6 +230,9 @@ async function mockInvoke(cmd: string, args: Record<string, unknown> = {}): Prom
       return { models: [] };
     case "settings_service_agent_check":
       return { ready: false, reason: "web mock" };
+    case "agent_resolve_pi_provider":
+      // web 预览无 Rust 侧 key 解析：返回 null，AI 分析按钮与「未配置 provider」态一致。
+      return null;
     case "plugin:event|listen": {
       const id = ++mockStore.listenerSeq;
       const callbackId = args.handler as number;

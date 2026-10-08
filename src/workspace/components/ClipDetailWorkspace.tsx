@@ -64,6 +64,8 @@ type ClipDetailWorkspaceProps = {
   quickActions?: DetailQuickAction[];
   /** Agent provider 配置（settings.agentProviders），用于 pi 底层 AI 分析；空数组时分析按钮禁用。 */
   agentProviders?: Array<Record<string, unknown>>;
+  /** 应用 AI 建议标签（转发 update_clip_record 写回通道）；缺省时详情页不显示应用入口。 */
+  onApplyTags?: (clipId: string, tags: string[]) => void;
 };
 
 /** 详情页外壳：只读态（工具条 + 元信息 + 内容/链接/采集上下文折叠区）与编辑态（快捷编辑器）切换。
@@ -84,6 +86,7 @@ export function ClipDetailWorkspace({
   onNext,
   onSearchTag,
   onUpdateContent,
+  onApplyTags,
   quickActions = [],
   agentProviders = [],
 }: ClipDetailWorkspaceProps) {
@@ -299,7 +302,7 @@ export function ClipDetailWorkspace({
               onToggleImageActualSize={() => setImageActualSize((current) => !current)}
             />
           </WorkspaceCrumb>
-          <PiAnalysisBar agentProviders={agentProviders} clip={clip} onSearchTag={onSearchTag} />
+          <PiAnalysisBar agentProviders={agentProviders} clip={clip} onApplyTags={onApplyTags} onSearchTag={onSearchTag} tr={tr} />
           <DetailMeta
             applicationContextSummary={applicationContextSummary}
             clip={clip}

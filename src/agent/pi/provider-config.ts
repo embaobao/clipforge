@@ -16,7 +16,7 @@ export type AgentProviderConfig = {
   label?: string;
   /** 模型 id（pi-ai MODELS 表的 key；留空用 provider 默认模型）。 */
   modelId?: string;
-  /** API Key（调用时注入 env，不持久化到剪贴板数据）。 */
+  /** API Key（只在运行时经 agent_resolve_pi_provider 解析注入，前端设置态不出现明文）。 */
   apiKey?: string;
   /** 基础 baseURL（自建网关/代理时用）。 */
   baseUrl?: string;
@@ -36,17 +36,24 @@ export function availablePiProviders(): string[] {
   return getProviders() as string[];
 }
 
-/** 由 provider 标识与模型 id 取 pi-ai 模型对象；modelId 留空取该 provider 首个模型。 */
+/** 由 provider 标识与模型 id 取 pi-ai 模型对象；modelId 留空取该 provider 首个模型。
+ *  baseUrl 存在时覆盖模型默认 baseUrl（自建/兼容网关场景，compat 由 pi-ai 按 baseUrl 自动探测）。 */
 export function resolvePiModel(providerConfig: AgentProviderConfig) {
   const provider = providerConfig.provider as KnownProvider;
   const modelId = providerConfig.modelId;
-  return modelId ? getModel(provider, modelId as never) : getModel(provider, undefined as never);
+  const model = modelId
+    ? getModel(provider, modelId as never)
+    : getModel(provider, undefined as never);
+  return providerConfig.baseUrl ? { ...model, baseUrl: providerConfig.baseUrl } : model;
 }
 
-/** 最小补全调用：system + prompt → 助手消息（非流式，适合分析/标签等一次性任务）。 */
+/** 最小补全调用：system + prompt → 助手消息（非流式，适合分析/标签等一次性任务）。
+ *  apiKey 只取运行时解析结果（resolveDefaultPiProvider → agent_resolve_pi_provider），
+ *  缺省时 pi-ai 走自身 env 回退；前端设置态不持有明文 key。 */
 export async function piComplete(input: PiCompletionInput): Promise<AssistantMessage> {
   const config = input.providerConfig ?? { provider: "anthropic" as const };
   const model = resolvePiModel(config);
+  const apiKey = input.apiKey ?? config.apiKey;
   return completeSimple(
     model,
     {
@@ -55,6 +62,6 @@ export async function piComplete(input: PiCompletionInput): Promise<AssistantMes
         { role: "user", content: input.prompt, timestamp: Date.now() },
       ],
     },
-    input.apiKey ? { apiKey: input.apiKey } : undefined,
+    apiKey ? { apiKey } : undefined,
   );
 }

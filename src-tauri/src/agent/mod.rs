@@ -6,9 +6,12 @@
 pub mod check;
 pub mod context;
 pub mod events;
+pub mod pi;
 pub mod provider;
 pub mod run;
 mod runs;
+
+pub use pi::agent_resolve_pi_provider;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

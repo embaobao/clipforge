@@ -119,7 +119,7 @@ pub(crate) fn agent_path_env() -> String {
     }
 }
 
-fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
+pub(super) fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_str))
         .map(str::trim)
@@ -127,10 +127,9 @@ fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn value_bool(value: &Value, key: &str, default: bool) -> bool {
+pub(super) fn value_bool(value: &Value, key: &str, default: bool) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
-
 fn value_string_array(value: &Value, key: &str) -> Vec<String> {
     value
         .get(key)

@@ -36,6 +36,7 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
+import { toDetailAgentProviders } from "./workspace/components/workspace-detail-shared";
 import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
@@ -133,6 +134,9 @@ export type AppSettings = {
   captureApplicationContext: boolean;
   imageMaxSizeMb: number;
   textMaxSizeMb: number;
+  /** Agent provider 配置（legacy 顶层 agentProviders[] 与新结构 agent.providers[]；主窗只读展示用）。 */
+  agentProviders?: Array<Record<string, unknown>>;
+  agent?: { providers?: Array<Record<string, unknown>> };
 };
 
 type ErrorBoundaryCopy = {
@@ -1246,6 +1250,10 @@ function ClipForgeApp() {
                   onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
                   onSearchTag={searchByTag}
                   onUpdateContent={updateClipContent}
+                  onApplyTags={(clipId, tags) => updateClip(clipId, { tags })}
+                  agentProviders={toDetailAgentProviders(
+                    settings.agent?.providers ?? settings.agentProviders,
+                  )}
                   quickActions={[
                     ...(clip && canOpenClipTarget(clip)
                       ? [

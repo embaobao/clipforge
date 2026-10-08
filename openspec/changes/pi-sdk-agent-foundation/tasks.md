@@ -27,20 +27,20 @@
 - [x] 旧 AI 侧车三提案归档（deepseek-harness-embedding 与两份衍生提案，--skip-specs）+ ROADMAP 更新--`0c694e7`，archive/2026-09-11-*
 - [x] 收尾补刀（2026-09-30）：lib.rs `show_floating_window_by_label` 文档注释残留「旧 AI 面板复用…指定 label」已改为按 label 泛化表述（grep 兜底发现的最后一处文档残留）
 
-## Phase 2：pi sdk 最小集成 ✅（剩 API Key 边界与 provider UI 两项）
+## Phase 2：pi sdk 最小集成 ✅（4/4，含 Key 边界与 provider UI）
 
 - [x] 引入依赖并封装 `src/agent/pi/` 适配层（provider-config.ts：AgentProviderConfig 映射 + piComplete 最小补全封装；tsc 真实校验 pi-ai 类型兼容）--批次 39（`d36145b`）
 - [x] pi-ai API 对接补全：stream 流式调用--批次 45 尾项（`a9fa1ce`，src/agent/pi/stream.ts）
 - [x] 工具注册--批次 41（`085afa1`，src/agent/pi/tools.ts）：落地为 `clipboard_search`（只读检索历史）+ `clipboard_read_latest`（读最新一条，等价 search limit=1 快捷形态）；原计划的 clipboard.read(指定条目) 语义由 read_latest 覆盖首版，按 id 读取待后续工具面扩展
 - [x] 会话装配：createClipForgeAgent（`085afa1`，agent.ts，系统提示词声明剪贴板助手角色）
 - [x] 详情页「AI 分析」与右键菜单入口切换到 pi 底层（保持现有交互与状态栏文案结构）--PiAnalysisBar 自包含组件
-- [ ] API Key 走 settings 的 redaction/keyRef 机制，不落盘前端--待办：provider-config.ts 现无 keyRef/redact 路径，需对接 settings-service 既有 redaction 机制
-- [ ] provider 配置 UI：设置页 MCP/Agent 块的 provider 表单对接--待办：现仅 `getConfiguredAgentProviderCount` 计数摘要（AgentUpdateTagSections），无增删改表单；`cf4c121` 已确认现状
+- [x] API Key 走 settings 的 redaction/keyRef 机制，不落盘前端--已落地：settings 读路径 apiKey 恒为 "[redacted]" 占位（redaction），写路径支持 apiKeyEnv 环境变量引用 + write.rs preserve 逻辑（未改动时按 id 回填真实值）；真机走查：settings.json5 落盘仅含 `apiKeyEnv`，`clipf.agent.providers` 返回 `apiKey: "not-sent-to-react"`、`hasInlineApiKey: false`，明文 key 仅在 Rust 侧 agent_resolve_pi_provider 调用时解析
+- [x] provider 配置 UI：设置页 MCP/Agent 块的 provider 表单对接--已落地：AgentProviderManager.tsx（350 行，增删改表单 + openai-compatible/local-cli 双 kind + enabled 开关），「1 个自定义 provider」计数联动；真机走查：新建 provider → 落盘 → `clipf.agent.check` 返回 status=ready
 
-## Phase 3：产品功能点 🟡（1/3）
+## Phase 3：产品功能点 ✅（3/3）
 
 - [x] 条目 AI 分析与摘要（替代旧 AI 侧车 clipboard_analyze 能力）--PiAnalysisBar + analysis.ts，详情页入口恢复
-- [ ] 智能标签建议（分析结果 → 标签应用，沿用 onApplyTags/onApplyFolder 通道）--待办：PiAnalysisBar 现无 tagPatch→onApplyTags 接线
+- [x] 智能标签建议（分析结果 → 标签应用，沿用 onApplyTags/onApplyFolder 通道）--已落地：PiAnalysisBar 渲染建议标签 chip（点击即 onSearchTag 检索）+「应用标签」按钮（applyTags 合并去重已有标签后走 onApplyTags → update_clip_record 通道，appliedTags 防重复提交）
 - [x] 分析历史（本地持久化，替代旧 AI 侧车历史）--`32c1e9e`：analysis-history.ts（localStorage 上限 20 条裁剪、异常静默），PiAnalysisBar 成功后记录并展示最近 3 条
 
 ## Phase 4：验证与收尾 🟡

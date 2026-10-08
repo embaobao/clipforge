@@ -36,7 +36,7 @@ mod settings_service;
 use agent::{
     agent_cancel_run, agent_check_provider, agent_detect, agent_get_config, agent_get_run,
     agent_get_transcript, agent_list_provider_models, agent_list_providers, agent_prepare_run,
-    agent_restore_session, agent_start_run, cleanup_agent_children,
+    agent_resolve_pi_provider, agent_restore_session, agent_start_run, cleanup_agent_children,
 };
 pub use mcp::run_mcp_stdio;
 use mcp::{
@@ -7773,6 +7773,7 @@ pub fn run() {
             agent_check_provider,
             agent_detect,
             agent_prepare_run,
+            agent_resolve_pi_provider,
             agent_start_run,
             agent_cancel_run,
             agent_get_run,

@@ -99,6 +99,7 @@
    另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
 4b. **旧 AI 侧车全链删除（批次 36-38）✅**：前端 -528 行（`6275653`，删除旧 AI 面板前端入口、分析服务层、详情页面板组件及全部引用链，AI 分析入口暂缺位待 pi 恢复）+ Rust -553 行（`d7c7bd2`/`8fc1dcb`，删守护进程模块 484 行、lib.rs 命令注册/守护进程/退出清理、tauri 旧 AI 窗口 4→3）；旧 AI 侧车三提案归档至 archive/2026-09-11-*（`0c694e7`）。前端零残留（grep 复查）。**pi-sdk-agent-foundation 提案接管 Agent 能力**（Phase 1 删除 ✅ / Phase 2 集成 ✅，见 4c 条）。
 4c. **pi sdk Phase 2 完成 ✅ + Phase 3 首项 ✅（批次 39-40 + 44-50）**：依赖引入、适配层（provider-config/analysis/stream/history）、AI 分析入口恢复（PiAnalysisBar）、工具（clipboard_search/read_latest）、provider 配置 UI 确认已存在（catalog 驱动）；分析历史持久化 ✅（`32c1e9e`，localStorage）。Phase 3 待办：stream 流式接入 UI、provider 结构化表单（可选）。
+4c+. **pi sdk L2/L3 收官（2026-10-08，24/26）**：L2 Key redaction/keyRef ✅（settings 读路径恒 "[redacted]" 占位、写路径 apiKeyEnv 环境变量引用 + write.rs preserve 回填；真机走查 settings.json5 仅落 apiKeyEnv，`clipf.agent.providers` 返回 `apiKey:"not-sent-to-react"`）+ provider 表单 ✅（AgentProviderManager.tsx，增删改 + 双 kind + enabled 开关，真机新建 → `clipf.agent.check` status=ready）+ L3 智能标签 ✅（PiAnalysisBar 建议 chip 点击检索 + 「应用标签」合并去重走 onApplyTags 通道）。端到端链路验证：本地 new-api 网关（127.0.0.1:20140，glm-5.3-flash）chat/completions 200 且正常返回；`clipf.agent.check` ready。剩 Phase 4 两项：全量回归（test:unit/tsc/vite/cargo check 本轮已过，待盟哥真机视觉/功能验收）+ 本条文档收官。
 4d2. **lib.rs 拆分序②（SETTINGS_WRITE_LOCK 接管）侦察（批次 48）**：settings 写盘链分布——
    - **紧凑组**（命令层相邻，纯平移候选）：log_slow_settings_operation(2374)/sync_launch_at_login_from_settings(2511)/emit_settings_changed(2633)/settings_write_response(2655)/refresh_tray_menu_after_settings_write(2672)；SETTINGS_WRITE_LOCK(2362, 已 pub(crate))。
    - **分散组**：read_user_settings(5327, **主体 27 处引用**)/write_user_settings(5418, 7 处)/sync_global_shortcut_registration(8146, 快捷键域深处)。
@@ -128,7 +129,7 @@
 
 1. **真机走查**（仍缺人眼，W1）：浏览器自动化基线（批次 51-55）已覆盖 14 交互 + 13 视觉断言，但 `pnpm tauri dev` 实机过一遍详情页/聚合页/onboarding 三个 surface 仍待盟哥执行；可用 `CLIPFORGE_DATA_DIR=$(mktemp -d) pnpm tauri dev` 隔离数据并行验证。走查后随 `tailwind-v3-style-refactor` Phase 5/6 收口（旧 AI 面板 iframe 细节项已作废——旧 AI 侧车全链删除，AI 面由 PiAnalysisBar 承接）
 2. **7 场景实机验收矩阵**（W1）：`file-image-clipboard-support` + `clipboard-multi-format-fidelity` 剩余项（复制/粘贴/显示/清理证据），完成后两提案可归档
-3. ~~旧 AI 侧车基座取舍决策~~ **已裁决**（2026-09-11 `a020068`）：pi sdk 确立为 Agent 基座，旧 AI 侧车全链删除完成；pi-sdk 剩余项见其 tasks.md（21/26）
+3. ~~旧 AI 侧车基座取舍决策~~ **已裁决**（2026-09-11 `a020068`）：pi sdk 确立为 Agent 基座，旧 AI 侧车全链删除完成；pi-sdk 剩余项见其 tasks.md（24/26，仅剩 Phase 4 真机验收 + 收官归档）
 4. **grilling 会话 Q1–Q4**：产品方向问题待回答
 
 夜间任务至此进入「无事可做秒退」状态：工作区干净、可自动化验证全绿、可推进提案项清零。后续夜晚的触发若仍无新待办（盟哥白天未新增），会话将直接退出。若确认不再需要，可删除定时任务 automation-7b5269b1。

@@ -32,10 +32,10 @@
 | 面板根组件 | `src/clipboard/components/QuickPastePanel.tsx` | 快速面板主体 |
 | 设置模型 / 字段目录 | `src/settings/settings-model.ts`、`src/settings/settings-field-catalog.ts`、`src/settings/field-runtime-spec.ts` | 设置状态、字段目录、运行时规格 |
 | 设置控件 | `src/settings/controls.tsx` | Switch / Slider / ToggleGroup / Input 语义控件 |
-| 设置 sections | `src/settings/sections/` | 各分类内容（ShortcutLanguage、DisplayPanel、CaptureStorage、AgentUpdateTag） |
+| 设置 sections | `src/settings/sections/` | 各分类内容（ShortcutLanguage、DisplayPanel、CaptureStorage、AgentUpdateTag、AgentProviderManager：provider 增删改表单，key 只写不回显） |
 | 设置状态条 | `src/settings/components/SettingsStickyStatusBar.tsx` | 底部保存状态 |
-| 详情 / 聚合工作区 | `src/workspace/components/`、`src/workspace/workspace-panels.tsx` | 详情编辑、聚合视图 |
-| Agent / pi-sdk | `src/agent/pi/` | agent、analysis、tools、provider-config、stream |
+| 详情 / 聚合工作区 | `src/workspace/components/`、`src/workspace/workspace-panels.tsx` | 详情编辑、聚合视图、PiAnalysisBar（pi AI 分析/智能标签入口） |
+| Agent / pi-sdk | `src/agent/pi/` | agent、analysis、tools、provider-config、stream；默认 provider 经 `agent_resolve_pi_provider` 运行时解析（设置态无明文 key） |
 | 编辑器域 | `src/editor/` | 敏感信息、建议、动作 |
 | 智能格式 / 插件动作 | `src/smart-format.ts`、`src/plugin-actions.ts` | 内容智能格式化与动作解析 |
 | 服务契约 | `src/services/contracts.ts`、`src/services/contracts/` | 前后端契约类型 |
@@ -50,10 +50,10 @@
 | 域 | 文件 | 说明 |
 | --- | --- | --- |
 | command 主体 | `src-tauri/src/lib.rs` | 剪贴板/面板命令 + 托盘 + 窗口管理；设置命令下沉 `settings_service/`、Agent 命令下沉 `agent/`、MCP 命令下沉 `mcp/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
-| Agent 域 | `src-tauri/src/agent/` | `agent_*` 十一命令与 provider 探测/健康检查/模型清单：`mod.rs` 门面（payload 结构体 + 命令薄壳）、`provider.rs` 探测/预览（redaction/keyRef）、`check.rs` 健康检查、`context.rs` 上下文/prompt 组装、`events.rs` 事件/输出流、`run.rs` run 状态机、`runs.rs` run 存储 + 私有写锁 |
+| Agent 域 | `src-tauri/src/agent/` | `agent_*` 命令与 provider 探测/健康检查/模型清单：`mod.rs` 门面（payload 结构体 + 命令薄壳）、`provider.rs` 探测/预览（redaction/keyRef）、`pi.rs` pi 运行时 provider 解析（key 只在调用时解出）、`check.rs` 健康检查、`context.rs` 上下文/prompt 组装、`events.rs` 事件/输出流、`run.rs` run 状态机、`runs.rs` run 存储 + 私有写锁 |
 | MCP 运行时 | `src-tauri/src/mcp/` | `--mcp` stdio JSON-RPC 与 40 工具：`mod.rs` 运行时门面（run_mcp_stdio + 状态命令）、`specs.rs` 工具规格表、`dispatch.rs` 路由壳、`dispatch_write.rs` 写库臂、`dispatch_agent_editor.rs` skill/plugin/agent/editor 臂、`context.rs` 上下文快照、`envelope.rs` 响应封装 |
 | 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听、`ingest.rs` 入库、`read.rs` 读取、`write.rs` 写回、`storage.rs` 存储、`detect.rs` 检测、`payload.rs` 载荷 |
-| 设置服务 | `src-tauri/src/settings_service/` | `settings_service_*` 统一协议（唯一服务入口，供设置窗口 / MCP 复用）：`mod.rs` 门面（写事务/校验/redact）、`write.rs` 原子写 + 写锁、`commands.rs` 命令 + 快捷键/托盘同步、`mcp.rs` MCP 分发 |
+| 设置服务 | `src-tauri/src/settings_service/` | `settings_service_*` 统一协议（唯一服务入口，供设置窗口 / MCP 复用）：`mod.rs` 门面（写事务/校验/redact）、`write.rs` 原子写 + 写锁 + redacted 占位符按 id 回填、`commands.rs` 命令 + 快捷键/托盘同步、`mcp.rs` MCP 分发 |
 | 上下文采集 | `src-tauri/src/context_collectors.rs`、`src-tauri/src/context_collectors/`、`src-tauri/src/context_collector_runtime.rs`、`src-tauri/src/context_collector_system.rs` | Agent 上下文收集器 |
 | 应用上下文 | `src-tauri/src/application_context.rs` | 应用级上下文聚合 |
 

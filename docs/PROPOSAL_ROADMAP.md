@@ -101,7 +101,7 @@
 | W1 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、Accessibility 引导只弹一次、完成/跳过、托盘与全局快捷键不阻塞 |
 | W1 | `tailwind-v3-style-refactor` | 21/25 | 盟哥三 surface(详情/聚合/onboarding)人工走查 + 走查修复 |
 | W2 | (未开工,见总纲) | — | 基于 `clip_semantic_index`(local-keyword 已建)的语义检索,先服务 pi/MCP 工具面 |
-| W3 | `pi-sdk-agent-foundation` | 21/26 | API Key redaction/keyRef、provider 极简 UI、智能标签建议、Phase 4 验收 |
+| W3 | `pi-sdk-agent-foundation` | 24/26 | Phase 4 全量回归 + 真机冒烟(盟哥视觉/功能验收)后归档 |
 | W3 | `ai-model-plugin-productization` | 65/76 | scope 复审后按 L1/L2 归位并入 pi 线,不并行开工 |
 | W4 | `vercel-ai-sdk-integration` | 30/38 | 与 mastra/local-model 三案统一取舍,结论前不动 |
 | W4 | `mastra-agent-runtime-evaluation` | 11/25 | 同上 |
@@ -109,7 +109,7 @@
 | W4 | `external-hook-plugin-runtime` | 0/67 | 只推进 Block A 读取侧;Block B 写入侧维持冻结 |
 | W5 | `codebase-modularity-refactor` | 11/26 | 随功能触碰渐进,豁免清单只减不增 |
 | W5 | `framer-motion-adoption-eval` | dormant | 按其提案信号表触发,当前四信号均未出现 |
-| W3 后置 | `automated-tagging-eval` | dormant | 自动打标调研:规则/MCP/LLM 三层边界已裁决,待 pi-sdk L3 smart-tag 完成 + 真实批量回填诉求 + MCP 集成方三判据齐后转实施 |
+| W3 后置 | `automated-tagging-eval` | dormant | 自动打标调研:规则/MCP/LLM 三层边界已裁决,pi-sdk L3 smart-tag 已完成,待真实批量回填诉求 + MCP 集成方三判据齐后转实施 |
 | W5 | `project-demo-gif-pipeline` | 0/30 | W1 稳定后录制 |
 
 已归档:旧 AI 侧车三提案(2026-09-11,`a020068` 拍板废弃,pi 接管)、`settings-service-unified-protocol` 等见上表「已归档」节。

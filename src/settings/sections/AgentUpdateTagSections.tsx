@@ -1,9 +1,10 @@
 /** 设置窗口「MCP/Agent」「更新与分发」「标签规则」三个 section（从 settings.tsx 切出的展示组件）。
  *  边界：状态与动作经 props 注入；MCP code tabs 的三条过滤断言锚定本文件。 */
 import { FileDown, Plus, RefreshCw, Tags, Trash2, UploadCloud } from "lucide-react";
+import { SegmentSetting, SettingGroup } from "../controls";
+import { AgentProviderManager } from "./AgentProviderManager";
 import type { ReactNode } from "react";
 import type { TranslationKey } from "../../i18n";
-import { SegmentSetting, SettingGroup } from "../controls";
 import type { ChangeEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { SettingsCodeTabs } from "../components/SettingsCodeTabs";
@@ -29,6 +30,10 @@ export type McpAgentSectionProps = {
   mcpAgentCodeTabs: SettingsCodeTab[];
   copyMcpAgentCodeTab: (tab: SettingsCodeTab) => void;
   getConfiguredAgentProviderCount: () => number;
+  /** 脱敏后的 provider 列表（settings.agent.providers ?? settings.agentProviders）。 */
+  agentProviders: Array<Record<string, unknown>>;
+  /** 整表写回通道（setState → settings_service_patch），与设置页其余分组共用。 */
+  updateSettings: (next: Partial<AppSettings>) => void;
   renderTabs: (panels: Partial<Record<SettingsTabId, ReactNode>>) => ReactNode;
 };
 
@@ -39,6 +44,8 @@ export function McpAgentSection({
   mcpAgentCodeTabs,
   copyMcpAgentCodeTab,
   getConfiguredAgentProviderCount,
+  agentProviders,
+  updateSettings,
   renderTabs,
 }: McpAgentSectionProps) {
   return renderTabs({
@@ -114,18 +121,25 @@ export function McpAgentSection({
       </SettingGroup>
     ),
     provider: (
-      <SettingGroup>
-        <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-          <span>{tr("settings.integration.provider.title")}</span>
-          <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
-          <p>{tr("settings.integration.provider.description")}</p>
-          <SettingsCodeTabs
-            copyLabel={tr("settings.action.copy")}
-            tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "provider")}
-            onCopy={copyMcpAgentCodeTab}
-          />
-        </div>
-      </SettingGroup>
+      <>
+        <AgentProviderManager
+          providers={agentProviders}
+          tr={tr}
+          updateSettings={updateSettings}
+        />
+        <SettingGroup>
+          <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
+            <span>{tr("settings.integration.provider.title")}</span>
+            <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
+            <p>{tr("settings.integration.provider.description")}</p>
+            <SettingsCodeTabs
+              copyLabel={tr("settings.action.copy")}
+              tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "provider")}
+              onCopy={copyMcpAgentCodeTab}
+            />
+          </div>
+        </SettingGroup>
+      </>
     ),
   });
 }

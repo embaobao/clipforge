@@ -1,3 +1,6 @@
+mod classify;
+
+pub(crate) use classify::classify_application;
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -27,46 +30,6 @@ pub(crate) fn capture(include_application_context: bool) -> Option<CapturedAppli
     {
         let _ = include_application_context;
         None
-    }
-}
-
-/// 按 Bundle ID 和应用名归类，供 Agent 选择更准确的上下文解释器。
-pub(crate) fn classify_application(bundle_id: &str, name: &str) -> &'static str {
-    let bundle = bundle_id.to_lowercase();
-    let app_name = name.to_lowercase();
-    if is_browser_bundle(&bundle) {
-        "browser"
-    } else if bundle.contains("codex")
-        || bundle.contains("openai")
-        || app_name == "codex"
-        || app_name.contains("chatgpt")
-    {
-        // 只标识当前助手应用，不读取 prompt、transcript、token 或内部 session 内容。
-        "assistant"
-    } else if bundle.contains("vscode")
-        || bundle.contains("codium")
-        || bundle.contains("cursor")
-        || bundle.contains("todesktop")
-        || bundle.contains("code.oss")
-        || bundle.contains("jetbrains")
-        || bundle.contains("xcode")
-        || app_name.contains("visual studio code")
-        || app_name.contains("vscodium")
-        || app_name.contains("cursor")
-        || app_name == "code"
-    {
-        "editor"
-    } else if bundle.contains("terminal")
-        || bundle.contains("iterm")
-        || bundle.contains("warp")
-        || bundle.contains("wezterm")
-        || app_name.contains("terminal")
-    {
-        "terminal"
-    } else if bundle == "com.apple.finder" || app_name == "finder" {
-        "file-manager"
-    } else {
-        "generic"
     }
 }
 
@@ -130,25 +93,6 @@ pub(crate) fn parse_selection_paths(raw: &str) -> Vec<String> {
 fn non_empty(value: &str) -> Option<String> {
     let value = value.trim();
     (!value.is_empty()).then(|| value.to_string())
-}
-
-fn is_browser_bundle(bundle_id: &str) -> bool {
-    [
-        "com.google.chrome",
-        "com.google.chrome.canary",
-        "com.google.chrome.beta",
-        "com.google.chrome.dev",
-        "com.microsoft.edgemac",
-        "com.brave.browser",
-        "com.vivaldi.vivaldi",
-        "com.operasoftware.opera",
-        "company.thebrowser.browser",
-        "com.apple.safari",
-        "org.mozilla.firefox",
-        "com.kagi.kagimacOS",
-    ]
-    .iter()
-    .any(|candidate| candidate.eq_ignore_ascii_case(bundle_id))
 }
 
 fn extract_uri_or_path(command_line: &str, flags: &[&str]) -> Option<String> {

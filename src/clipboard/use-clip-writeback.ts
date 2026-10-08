@@ -81,8 +81,9 @@ export function useClipWriteback({
     window.setTimeout(() => setLastCopiedId(null), 1400);
   }, [setLastCopiedId, setNativeStatus, setSelectedId, setClips, clipsRef, settingsRef]);
 
-  /** 条目字段更新（bucket/favorite）：写库（失败仅记日志）+ 本地乐观同步。
-   *  useCallback：依赖全为 setter/ref（调用方 ClipboardRow memo 依赖此引用稳定）。 */
+  /** 条目字段更新（bucket/favorite/tags，tags 供 AI 建议标签应用）：写库（失败仅记日志）
+   *  + 本地乐观同步（setClips 按 id map，不重排列表）。useCallback：依赖全为 setter/ref
+   *  （调用方 ClipboardRow memo 依赖此引用稳定）。 */
   const updateClip = useCallback(function updateClip(id: string, next: Partial<ClipItem>) {
     const updatedAt = Date.now();
     invoke("update_clip_record", {
@@ -90,6 +91,7 @@ export function useClipWriteback({
         id,
         bucket: next.bucket,
         favorite: typeof next.favorite === "boolean" ? next.favorite : undefined,
+        tags: Array.isArray(next.tags) ? next.tags : undefined,
       },
     }).catch((error) => logAppError("warn", "Update clip failed", String(error)));
     setClips((current) => {

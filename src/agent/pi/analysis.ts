@@ -1,26 +1,32 @@
 /** pi 底层的条目分析能力：摘要 + 标签建议（对应 Rust clipboard_analyze 命令）。
  *  边界：provider 配置从设置服务异步解析；无配置/调用失败抛错，由调用方降级展示。 */
+import { invoke } from "@tauri-apps/api/core";
 import type { ClipItem } from "../../App";
-import { settingsService } from "../../services/settings";
 import type { AgentProviderConfig } from "./provider-config";
 import { piComplete } from "./provider-config";
 
-/** 从设置服务的 agentProviders 解析首个有效 provider 配置；无配置返回 null。 */
+/** agent_resolve_pi_provider 的返回形状（Rust 侧 agent/pi.rs 解析，camelCase）。 */
+type ResolvedRuntimePiProvider = {
+  provider?: string;
+  label?: string;
+  modelId?: string;
+  baseUrl?: string;
+  apiKey?: string;
+};
+
+/** 运行时解析默认 pi provider：settings 读路径的 apiKey 恒为 "[redacted]" 占位（redaction），
+ *  真实 key 只在调用时由 Rust 侧（agent_resolve_pi_provider）解析返回，前端设置态不出现明文。
+ *  无可用 provider 时返回 null。 */
 export async function resolveDefaultPiProvider(): Promise<AgentProviderConfig | null> {
-  const document = await settingsService.get(false);
-  const providers = (document.settings.agentProviders ?? []) as Array<Record<string, unknown>>;
-  for (const raw of providers) {
-    const provider = typeof raw.provider === "string" ? raw.provider : "";
-    if (!provider) continue;
-    return {
-      provider,
-      label: typeof raw.label === "string" ? raw.label : undefined,
-      modelId: typeof raw.modelId === "string" ? raw.modelId : undefined,
-      apiKey: typeof raw.apiKey === "string" ? raw.apiKey : undefined,
-      baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl : undefined,
-    };
-  }
-  return null;
+  const resolved = await invoke<ResolvedRuntimePiProvider | null>("agent_resolve_pi_provider");
+  if (!resolved || typeof resolved.provider !== "string" || !resolved.provider) return null;
+  return {
+    provider: resolved.provider,
+    label: typeof resolved.label === "string" ? resolved.label : undefined,
+    modelId: typeof resolved.modelId === "string" ? resolved.modelId : undefined,
+    baseUrl: typeof resolved.baseUrl === "string" ? resolved.baseUrl : undefined,
+    apiKey: typeof resolved.apiKey === "string" ? resolved.apiKey : undefined,
+  };
 }
 
 export type ClipPiAnalysis = {

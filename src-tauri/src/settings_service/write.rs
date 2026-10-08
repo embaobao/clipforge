@@ -52,6 +52,79 @@ mod golden_tests {
         // 仅报告真正变化的路径;removed 在两边未变,不出现
         assert_eq!(paths, vec!["$.added", "$.general.launchAtLogin"]);
     }
+
+    /// pi-sdk L2（keyRef/redact）：读路径把 apiKey 抹成 "[redacted]" 后，整表回写
+    /// 不改动的条目应按 id 回填磁盘真实 key；新 key 原样落库；无同 id 旧条目时移除占位字段。
+    #[test]
+    fn redacted_provider_api_key_placeholder_is_restored_on_write() {
+        let previous = json!({
+            "agent": {"providers": [
+                {"id": "a", "kind": "openai-compatible", "baseUrl": "https://x/v1", "modelId": "m", "apiKey": "sk-live-a"},
+                {"id": "b", "kind": "openai-compatible", "baseUrl": "https://y/v1", "modelId": "m", "apiKey": "sk-live-b"}
+            ]}
+        });
+        // 模拟设置页读到的脱敏形态：只改了 a 的 label，b 带 "[redacted]" 占位回写，c 是新条目带新 key。
+        let mut next = json!({
+            "agent": {"providers": [
+                {"id": "a", "kind": "openai-compatible", "label": "改名", "baseUrl": "https://x/v1", "modelId": "m"},
+                {"id": "b", "kind": "openai-compatible", "baseUrl": "https://y/v1", "modelId": "m", "apiKey": "[redacted]"},
+                {"id": "c", "kind": "openai-compatible", "baseUrl": "https://z/v1", "modelId": "m", "apiKey": "sk-new-c"}
+            ]}
+        });
+        super::preserve_redacted_provider_api_keys(&mut next, &previous);
+        let providers = next["agent"]["providers"].as_array().unwrap();
+        assert!(
+            providers[0].get("apiKey").is_none(),
+            "未带占位符的新条目不应凭空获得 key"
+        );
+        assert_eq!(
+            providers[1]["apiKey"].as_str(),
+            Some("sk-live-b"),
+            "占位符应回填磁盘真实 key"
+        );
+        assert_eq!(
+            providers[2]["apiKey"].as_str(),
+            Some("sk-new-c"),
+            "新 key 应原样落库"
+        );
+
+        // 无同 id 旧条目：占位符不允许被当作 key 存储。
+        let previous_empty = json!({});
+        let mut next_orphan = json!({
+            "agent": {"providers": [{"id": "d", "kind": "openai-compatible", "apiKey": "[redacted]"}]}
+        });
+        super::preserve_redacted_provider_api_keys(&mut next_orphan, &previous_empty);
+        assert!(
+            next_orphan["agent"]["providers"][0].get("apiKey").is_none(),
+            "无磁盘旧值的占位符应被移除"
+        );
+    }
+
+    /// pi-sdk L2（读路径证据）：redact_settings_value 对新结构 agent.providers[] 与
+    /// legacy 顶层 agentProviders[] 两条路径都把 apiKey 抹成 "[redacted]"，其余字段保留。
+    #[test]
+    fn read_path_redacts_agent_provider_api_keys_both_shapes() {
+        let settings = json!({
+            "agent": {"providers": [{"id": "a", "kind": "openai-compatible", "apiKey": "sk-live-a"}]},
+            "agentProviders": [{"provider": "anthropic", "apiKey": "sk-legacy"}]
+        });
+        let redacted = super::super::redact_settings_value(&settings);
+        assert_eq!(
+            redacted["agent"]["providers"][0]["apiKey"].as_str(),
+            Some("[redacted]"),
+            "agent.providers[].apiKey 必须脱敏"
+        );
+        assert_eq!(
+            redacted["agentProviders"][0]["apiKey"].as_str(),
+            Some("[redacted]"),
+            "legacy agentProviders[].apiKey 必须脱敏"
+        );
+        assert_eq!(
+            redacted["agent"]["providers"][0]["id"].as_str(),
+            Some("a"),
+            "非 key 字段保留"
+        );
+    }
 }
 
 /// 设置写入互斥锁（B2b）：保护 read-modify-write 全段，避免设置窗 + MCP/主面板并发写入导致 lost-update。
@@ -194,6 +267,52 @@ fn normalize_agent_provider_write(settings: &mut Value) {
     }
 }
 
+/// 读路径（redact_provider_api_key）把 agent.providers[].apiKey 统一抹成 "[redacted]" 占位，
+/// 设置页整表回写（数组按 patch 语义整表替换）时未改动的 key 字段仍是占位符；此处按 id
+/// 回填磁盘上的真实值，避免「只改了 label 却把 key 抹成占位符」的回归。新 key（非占位符）
+/// 原样落库；找不到同 id 旧条目时移除占位字段（不允许把占位符当 key 存储）。
+fn preserve_redacted_provider_api_keys(next: &mut Value, previous: &Value) {
+    let Some(next_providers) = next
+        .get_mut("agent")
+        .and_then(|agent| agent.get_mut("providers"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    let previous_providers = previous
+        .get("agent")
+        .and_then(|agent| agent.get("providers"))
+        .and_then(Value::as_array)
+        .or_else(|| previous.get("agentProviders").and_then(Value::as_array));
+    for entry in next_providers.iter_mut() {
+        let Some(object) = entry.as_object_mut() else {
+            continue;
+        };
+        if object.get("apiKey").and_then(Value::as_str) != Some("[redacted]") {
+            continue;
+        }
+        let Some(id) = object.get("id").and_then(Value::as_str).map(str::to_string) else {
+            object.remove("apiKey");
+            continue;
+        };
+        let stored_key = previous_providers
+            .and_then(|list| {
+                list.iter()
+                    .find(|entry| entry.get("id").and_then(Value::as_str) == Some(id.as_str()))
+            })
+            .and_then(|entry| entry.get("apiKey").and_then(Value::as_str))
+            .map(str::to_string);
+        match stored_key {
+            Some(key) => {
+                object.insert("apiKey".to_string(), Value::String(key));
+            }
+            None => {
+                object.remove("apiKey");
+            }
+        }
+    }
+}
+
 pub fn prepare_patch(
     previous: &Value,
     patch: &Value,
@@ -203,6 +322,7 @@ pub fn prepare_patch(
     let mut next = previous.clone();
     merge_settings_patch(&mut next, patch);
     normalize_agent_provider_write(&mut next);
+    preserve_redacted_provider_api_keys(&mut next, previous);
     let changed_paths = settings_changed_paths(previous, &next);
     Ok(SettingsWriteDraft {
         next,
@@ -219,6 +339,7 @@ pub fn prepare_replace(
     let previous_revision = ensure_expected_settings_revision(previous, expected_revision)?;
     let mut next = settings;
     normalize_agent_provider_write(&mut next);
+    preserve_redacted_provider_api_keys(&mut next, previous);
     let changed_paths = settings_changed_paths(previous, &next);
     Ok(SettingsWriteDraft {
         next,

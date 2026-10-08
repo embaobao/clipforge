@@ -812,9 +812,11 @@ export function SettingsApp() {
           )}
           {section === "mcp-agent" && (
             <McpAgentSection
+              agentProviders={state.settings.agent?.providers ?? state.settings.agentProviders ?? []}
               copyMcpAgentCodeTab={copyMcpAgentCodeTab}
               getConfiguredAgentProviderCount={getConfiguredAgentProviderCount}
               mcpAgentCodeTabs={mcpAgentCodeTabs}
+              updateSettings={updateSettings}
               renderTabs={renderSectionTabs}
               state={state}
               tr={tr}
