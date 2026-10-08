@@ -1,6 +1,6 @@
 /** 设置窗口「MCP/Agent」「更新与分发」「标签规则」三个 section（从 settings.tsx 切出的展示组件）。
  *  边界：状态与动作经 props 注入；MCP code tabs 的三条过滤断言锚定本文件。 */
-import { FileDown, Plus, RefreshCw, Trash2, UploadCloud } from "lucide-react";
+import { FileDown, Plus, RefreshCw, Tags, Trash2, UploadCloud } from "lucide-react";
 import type { ReactNode } from "react";
 import type { TranslationKey } from "../../i18n";
 import { SegmentSetting, SettingGroup } from "../controls";
@@ -176,6 +176,7 @@ export function UpdateDistributionSection({
                   {
                     label: tr("settings.update.releaseNotes"),
                     value: <span className="mono text-[11px] text-muted-foreground">{update.releaseNotes}</span>,
+                    wrap: true,
                   },
                 ]
               : []),
@@ -189,6 +190,7 @@ export function UpdateDistributionSection({
                         {update.errorMessage ? ` · ${update.errorMessage}` : ""}
                       </span>
                     ),
+                    wrap: true,
                   },
                 ]
               : []),
@@ -335,47 +337,69 @@ export function TagRulesSection({
     ),
     rules: (
       <SettingGroup title={tr("settings.tab.rules")}>
-        <div className="space-y-2">
-          {settings.tagRules.map((rule) => (
-            <div className="flex items-center gap-2" key={rule.id}>
-              <label className="flex-1" htmlFor={`tag-rule-${rule.id}-label`}>
-                <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.name")}</span>
-                <Input
-                  className="h-7 rounded-md text-[13px]"
-                  id={`tag-rule-${rule.id}-label`}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => updateTagRule(rule.id, { label: event.currentTarget.value })}
-                  value={rule.label}
-                />
-              </label>
-              <label className="flex-[2]" htmlFor={`tag-rule-${rule.id}-query`}>
-                <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.keyword")}</span>
-                <Input
-                  className="h-7 rounded-md text-[13px]"
-                  id={`tag-rule-${rule.id}-query`}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => updateTagRule(rule.id, { query: event.currentTarget.value })}
-                  value={rule.query}
-                />
-              </label>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    aria-label={tr("settings.tags.deleteRule")}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10"
-                    onClick={() => deleteTagRule(rule.id)}
-                    type="button"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={8}>{tr("settings.tags.deleteRule")}</TooltipContent>
-              </Tooltip>
+        {settings.tagRules.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-black/[0.08] py-10 text-center dark:border-white/[0.1]">
+            <Tags className="h-5 w-5 text-muted-foreground/60" />
+            <p className="text-[12.5px] text-muted-foreground">{tr("settings.tags.empty")}</p>
+            <p className="text-[11px] text-muted-foreground/70">{tr("settings.tags.emptyHint")}</p>
+            <button
+              className="mt-1 flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]"
+              onClick={addTagRule}
+              type="button"
+            >
+              <Plus size={14} />
+              {tr("settings.tags.addRule")}
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-3">
+              {settings.tagRules.map((rule) => (
+                <div className="flex items-center gap-2" key={rule.id}>
+                  <label className="flex-1" htmlFor={`tag-rule-${rule.id}-label`}>
+                    <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.name")}</span>
+                    <Input
+                      className="h-7 rounded-md text-[13px]"
+                      id={`tag-rule-${rule.id}-label`}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => updateTagRule(rule.id, { label: event.currentTarget.value })}
+                      value={rule.label}
+                    />
+                  </label>
+                  <label className="flex-[2]" htmlFor={`tag-rule-${rule.id}-query`}>
+                    <span className="mb-1 block text-[11px] text-muted-foreground">{tr("settings.tags.keyword")}</span>
+                    <Input
+                      className="h-7 rounded-md text-[13px]"
+                      id={`tag-rule-${rule.id}-query`}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => updateTagRule(rule.id, { query: event.currentTarget.value })}
+                      value={rule.query}
+                    />
+                  </label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        aria-label={tr("settings.tags.deleteRule")}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-destructive transition-colors hover:bg-destructive/10"
+                        onClick={() => deleteTagRule(rule.id)}
+                        type="button"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={8}>{tr("settings.tags.deleteRule")}</TooltipContent>
+                  </Tooltip>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <button className="mt-2 flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]" onClick={addTagRule} type="button">
-          <Plus size={14} />
-          {tr("settings.tags.addRule")}
-        </button>
+            <button
+              className="mt-2 flex h-7 items-center gap-1.5 rounded-md bg-black/[0.04] px-2.5 text-[12px] text-foreground transition-colors hover:bg-black/[0.06] dark:bg-white/[0.07] dark:hover:bg-white/[0.1]"
+              onClick={addTagRule}
+              type="button"
+            >
+              <Plus size={14} />
+              {tr("settings.tags.addRule")}
+            </button>
+          </>
+        )}
       </SettingGroup>
     ),
   });

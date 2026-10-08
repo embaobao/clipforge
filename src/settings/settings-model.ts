@@ -16,6 +16,37 @@ import {
   type SettingsTabId,
 } from "./settings-field-catalog";
 
+/**
+ * 后端固定英文状态串 → i18n key 映射表。
+ * Rust 侧返回的 message（MCP 服务状态、辅助功能、登录启动等）是英文固定串，
+ * 直接透传到状态条会破坏界面语言一致性；命中映射则本地化，未命中原样返回保留诊断价值。
+ */
+const BACKEND_MESSAGE_I18N: Array<{ pattern: RegExp; key: TranslationKey }> = [
+  { pattern: /^MCP server running$/, key: "settings.backend.mcpRunning" },
+  { pattern: /^MCP server stopped/, key: "settings.backend.mcpStopped" },
+  { pattern: /^MCP server (is already running|started)/, key: "settings.backend.mcpStarted" },
+  { pattern: /^accessibility status unavailable$/, key: "settings.backend.accessibilityUnavailable" },
+  { pattern: /^Launch at login status unavailable/, key: "settings.backend.launchAtLoginUnavailable" },
+  { pattern: /^Launch at login is only available on desktop builds$/, key: "settings.backend.launchAtLoginUnsupported" },
+];
+
+/**
+ * 将后端固定英文状态串映射为本地化文案。
+ * 边界：只映射上方枚举的固定串；动态错误详情（如 updater 的 errorMessage）不在前端翻译，
+ * 由调用方决定是否展示原文技术细节。
+ */
+export function localizeBackendMessage(
+  message: string,
+  tr: (key: TranslationKey, params?: Record<string, string | number>) => string,
+): string {
+  const trimmed = message.trim();
+  if (!trimmed) return "";
+  for (const entry of BACKEND_MESSAGE_I18N) {
+    if (entry.pattern.test(trimmed)) return tr(entry.key);
+  }
+  return message;
+}
+
 export interface AppSettings {
   language: AppLanguagePreference;
   globalShortcut: string;
@@ -158,6 +189,15 @@ export interface BuildInfoPayload {
   updaterEndpoint: string;
 }
 
+/** 数据存储统计（get_clipforge_data_stats 返回，data tab 展示与清理决策用）。 */
+export interface DataStatsPayload {
+  dbBytes: number;
+  settingsBytes: number;
+  imagesBytes: number;
+  clipCount: number;
+  trashCount: number;
+}
+
 /** 应用内更新检查状态机（settings.tsx 的 safeInvokeUpdateCheck 消费）。 */
 export interface UpdateCheckState {
   status: "idle" | "checking" | "available" | "latest" | "downloading" | "ready" | "failed";
@@ -185,6 +225,7 @@ export interface SettingsAppState {
   saveFeedback: SettingsSaveFeedback;
   status: string;
   logStats: LogStatsPayload | null;
+  dataStats: DataStatsPayload | null;
   update: UpdateCheckState | null;
   buildInfo: BuildInfoPayload | null;
 }

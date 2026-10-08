@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /** 设置状态面板的语义状态：只影响提示强度，不承载业务判断。 */
 export type SettingsStatusPanelState = "neutral" | "good" | "warning" | "danger" | "pending";
@@ -13,6 +14,8 @@ export type SettingsStatusPanelState = "neutral" | "good" | "warning" | "danger"
 export type SettingsStatusPanelItem = {
   label: string;
   value: ReactNode;
+  /** 长文本（错误详情、发布说明等）传 true：允许多行换行展示，不截断。 */
+  wrap?: boolean;
 };
 
 /** 设置状态面板动作：允许同步或异步执行，错误在面板内兜底展示。 */
@@ -85,7 +88,7 @@ export function SettingsStatusPanel({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 className="text-[13px] font-medium text-foreground">{title}</h3>
-          <p className="mono mt-0.5 text-[11px] text-muted-foreground">{status}</p>
+          <p className="mono mt-0.5 break-words text-[11px] text-muted-foreground">{status}</p>
           {description ? (
             <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">{description}</p>
           ) : null}
@@ -93,11 +96,18 @@ export function SettingsStatusPanel({
       </div>
 
       {items.length > 0 ? (
-        <dl className="mt-3 space-y-1.5 border-t border-black/[0.04] pt-3 dark:border-white/[0.06]">
+        <dl className="mt-3 space-y-2 border-t border-black/[0.04] pt-3 dark:border-white/[0.06]">
           {items.map((item) => (
-            <div className="flex items-center justify-between gap-4" key={item.label}>
-              <dt className="text-[12px] text-muted-foreground">{item.label}</dt>
-              <dd className="min-w-0 truncate text-right text-[12px]">{item.value}</dd>
+            <div className="flex items-start justify-between gap-4" key={item.label}>
+              <dt className="shrink-0 whitespace-nowrap pt-px text-[12px] text-muted-foreground">{item.label}</dt>
+              <dd
+                className={cn(
+                  "min-w-0 text-right text-[12px]",
+                  item.wrap ? "whitespace-pre-wrap break-words" : "truncate",
+                )}
+              >
+                {item.value}
+              </dd>
             </div>
           ))}
         </dl>

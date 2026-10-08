@@ -36,6 +36,7 @@ import {
   getInitialNavigationFromUrl,
   hasSettingsTab,
   LaunchAtLoginPayload,
+  localizeBackendMessage,
   LogStatsPayload,
   McpStatusPayload,
   normalizeAppSettings,
@@ -84,6 +85,25 @@ export function SettingsApp() {
   const initialNavigation = useRef(getInitialNavigationFromUrl());
   const [section, setSection] = useState<SectionKey>(() => initialNavigation.current.section);
   const [recording, setRecording] = useState(false);
+  // 侧栏收起状态：默认收起（仅显示 icon），持久化在 localStorage，跨会话保持。
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("clipforge.settings.navCollapsed") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleNavCollapsed = () => {
+    setNavCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("clipforge.settings.navCollapsed", next ? "1" : "0");
+      } catch {
+        /* localStorage 不可用时仅内存态生效 */
+      }
+      return next;
+    });
+  };
   const [dangerConfirmation, setDangerConfirmation] = useState<"cleanupLogs" | "cleanupData" | "resetAccessibility" | null>(null);
   const [logActionStatus, setLogActionStatus] = useState<{ message: string; state: SettingsStatusPanelState }>({
     message: "",
@@ -396,7 +416,7 @@ export function SettingsApp() {
         ...prev,
         accessibility,
         accessibilityDiagnostics,
-        status: accessibilityDiagnostics.message,
+        status: localizeBackendMessage(accessibilityDiagnostics.message, tr),
       }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
@@ -415,7 +435,7 @@ export function SettingsApp() {
         ...prev,
         accessibility,
         accessibilityDiagnostics,
-        status: accessibilityDiagnostics.message,
+        status: localizeBackendMessage(accessibilityDiagnostics.message, tr),
       }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
@@ -444,7 +464,7 @@ export function SettingsApp() {
       setState((prev) => ({
         ...prev,
         launchAtLogin,
-        status: launchAtLogin.message,
+        status: localizeBackendMessage(launchAtLogin.message, tr),
       }));
       updateSettings({ launchAtLogin: enabled });
     } catch (error) {
@@ -455,7 +475,7 @@ export function SettingsApp() {
   async function refreshPanelStatus() {
     try {
       const panel = await invoke<PanelTriggerPayload>("get_panel_trigger_status");
-      setState((prev) => ({ ...prev, panel, status: panel.message }));
+      setState((prev) => ({ ...prev, panel, status: localizeBackendMessage(panel.message, tr) }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
@@ -556,7 +576,11 @@ export function SettingsApp() {
     }));
     try {
       const update = await invoke<UpdateCheckState>("check_update");
-      setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.refreshed") }));
+      setState((prev) => ({
+        ...prev,
+        update,
+        status: update.status === "failed" ? tr("settings.update.status.failed") : tr("settings.update.status.refreshed"),
+      }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
@@ -570,7 +594,11 @@ export function SettingsApp() {
     }));
     try {
       const update = await invoke<UpdateCheckState>("download_update");
-      setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.ready") }));
+      setState((prev) => ({
+        ...prev,
+        update,
+        status: update.status === "failed" ? tr("settings.update.status.failed") : tr("settings.update.status.ready"),
+      }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
@@ -579,7 +607,11 @@ export function SettingsApp() {
   async function installUpdateNow() {
     try {
       const update = await invoke<UpdateCheckState>("install_update");
-      setState((prev) => ({ ...prev, update, status: update.errorMessage || tr("settings.update.status.installing") }));
+      setState((prev) => ({
+        ...prev,
+        update,
+        status: update.status === "failed" ? tr("settings.update.status.failed") : tr("settings.update.status.installing"),
+      }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
@@ -607,7 +639,9 @@ export function SettingsApp() {
             ? tr("settings.update.status.downloading")
             : state.update?.status === "ready"
               ? tr("settings.update.status.ready")
-              : state.update?.errorMessage || tr("settings.update.status.idle");
+              : state.update?.status === "failed"
+                ? tr("settings.update.status.failed")
+                : tr("settings.update.status.idle");
   const densityCopy: Record<AppSettings["panelDensity"], string> = {
     dense: tr("settings.display.density.dense"),
     normal: tr("settings.display.density.normal"),
@@ -665,10 +699,11 @@ export function SettingsApp() {
   const activeSection = SECTIONS.find((item) => item.key === section) ?? SECTIONS[0];
   const stickyStatusPrimary =
     state.status || state.saveFeedback.message || state.configStatus || tr(activeSection.labelKey);
+  // 次要位只展示与主位不同的保存反馈，避免左右两列渲染同一句状态。
   const stickyStatusSecondary =
-    state.saveFeedback.state !== "idle" && state.status
+    state.saveFeedback.state !== "idle" && state.saveFeedback.message !== stickyStatusPrimary
       ? state.saveFeedback.message
-      : state.configStatus;
+      : "";
   function renderSectionTabs(panels: Partial<Record<SettingsTabId, ReactNode>>) {
     const sectionTabs = [...activeSection.tabs] as SettingsTabId[];
     const tabs = sectionTabs.filter((tab) => panels[tab]);
@@ -678,7 +713,7 @@ export function SettingsApp() {
         : tabs[0];
     if (!defaultValue) return null;
     return (
-      <Tabs className="grid w-full max-w-[820px] content-start gap-3" data-dev-probe={`settings-section-tabs:${section}`} defaultValue={defaultValue} key={section}>
+      <Tabs className="grid w-full min-w-0 max-w-[820px] content-start gap-3" data-dev-probe={`settings-section-tabs:${section}`} defaultValue={defaultValue} key={section}>
         <TabsList className="inline-flex w-max max-w-full gap-1 overflow-x-auto rounded-lg bg-black/[0.04] p-0.5 text-muted-foreground dark:bg-white/[0.07]" data-dev-probe="settings-section-tabs-list">
           {tabs.map((tab) => (
             <TabsTrigger
@@ -692,7 +727,7 @@ export function SettingsApp() {
           ))}
         </TabsList>
         {tabs.map((tab) => (
-          <TabsContent className="outline-none" key={tab} value={tab}>
+          <TabsContent className="min-w-0 outline-none" key={tab} value={tab}>
             <SettingsErrorBoundary
               message={tr("settings.error.tabMessage")}
               resetKey={`${section}:${tab}:${locale}`}
@@ -712,11 +747,17 @@ export function SettingsApp() {
     <TooltipProvider delayDuration={300}>
       <SettingsShell
         activeId={section}
+        collapsed={navCollapsed}
+        collapseLabel={tr("settings.action.collapseSidebar")}
+        expandLabel={tr("settings.action.expandSidebar")}
+        exportLabel={tr("settings.action.exportData")}
         items={SECTIONS.map((item) => ({
           id: item.key,
           label: tr(item.labelKey),
           icon: item.icon,
         }))}
+        onToggleCollapsed={toggleNavCollapsed}
+        resetLabel={tr("settings.action.resetDefaults")}
         onSelect={(nextSection) => {
           const typedSection = nextSection as SectionKey;
           recordNextFramePerf("settings.section", { section: typedSection });

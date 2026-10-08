@@ -1,7 +1,8 @@
-// 设置窗口外壳：标题栏 + 172px 侧栏 + 内容区。
-// 按 design.md 规格 7 实现，仅负责布局，不承载业务状态。
+// 设置窗口外壳：系统原生标题栏 + 可收起侧栏 + 内容区 + 底部栏。
+// 仅负责布局，不承载业务状态；红绿灯、拖拽和窗口标题由原生标题栏（decorations: true）提供。
+// 视觉契约：内部不画竖向/底部分割线，侧栏与内容用背景色差分隔，底部用留白分隔。
 import type { ComponentType, ReactNode } from "react";
-import { Download, RotateCcw } from "lucide-react";
+import { Download, PanelLeftClose, PanelLeftOpen, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface SettingsNavItem {
@@ -17,8 +18,10 @@ export interface SettingsShellProps {
   items: SettingsNavItem[];
   /** 导航点击回调。 */
   onSelect: (id: string) => void;
-  /** 当前分类标题（显示在内容区顶部）。 */
-  title: string;
+  /** 侧栏是否收起（仅显示 icon）；状态由调用方持久化。 */
+  collapsed: boolean;
+  /** 切换侧栏收起状态。 */
+  onToggleCollapsed: () => void;
   /** 版本号字符串，显示在底部左侧。 */
   version: string;
   /** 内容区子节点。 */
@@ -27,49 +30,73 @@ export interface SettingsShellProps {
   onReset?: () => void;
   /** 导出数据按钮回调（可选）。 */
   onExport?: () => void;
+  /** 恢复默认按钮文案（i18n 由调用方注入，外壳不硬编码语言）。 */
+  resetLabel?: string;
+  /** 导出数据按钮文案。 */
+  exportLabel?: string;
+  /** 收起侧栏按钮的无障碍文案。 */
+  collapseLabel?: string;
+  /** 展开侧栏按钮的无障碍文案。 */
+  expandLabel?: string;
   className?: string;
 }
 
-/** 设置窗口外壳：符合 design.md 规格 7。 */
+/** 设置窗口外壳：原生标题栏 + 收起式侧栏 + 留白分隔的内容区。 */
 export function SettingsShell({
   activeId,
   items,
   onSelect,
-  title,
+  collapsed,
+  onToggleCollapsed,
   version,
   children,
   onReset,
   onExport,
+  resetLabel,
+  exportLabel,
+  collapseLabel = "收起侧栏",
+  expandLabel = "展开侧栏",
   className,
 }: SettingsShellProps) {
   return (
     <div
       className={cn(
-        "panel-in flex h-full w-full flex-col overflow-hidden rounded-[12px] bg-card window-shadow",
+        "flex h-full w-full flex-col overflow-hidden bg-card",
         className,
       )}
       data-surface="settings"
     >
-      {/* 标题栏 */}
-      <div className="relative flex h-11 items-center justify-center border-b border-black/[0.05] dark:border-white/[0.07]">
-        <div className="absolute left-4 flex items-center gap-2">
-          <span className="h-[11px] w-[11px] rounded-full bg-[#FF5F57]" />
-          <span className="h-[11px] w-[11px] rounded-full bg-[#FEBC2E]" />
-          <span className="h-[11px] w-[11px] rounded-full bg-[#28C840]" />
-        </div>
-        <span className="text-[13px] font-medium">{title}</span>
-      </div>
-
       <div className="flex min-h-0 flex-1">
-        {/* 侧栏 */}
-        <aside className="w-[200px] shrink-0 space-y-px border-r border-black/[0.05] bg-black/[0.02] p-2 dark:border-white/[0.07] dark:bg-white/[0.03]">
+        {/* 侧栏：收起时仅显示 icon，宽度过渡 200ms；与内容区用背景色差分隔，不画竖线 */}
+        <aside
+          className={cn(
+            "shrink-0 space-y-0.5 bg-black/[0.02] p-2 transition-[width] duration-200 ease-out dark:bg-white/[0.03]",
+            collapsed ? "w-[52px]" : "w-[172px]",
+          )}
+          data-sidebar-collapsed={collapsed || undefined}
+        >
+          <button
+            aria-label={collapsed ? expandLabel : collapseLabel}
+            className={cn(
+              "mb-1 flex h-8 w-full items-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/[0.06]",
+              collapsed ? "justify-center" : "justify-start px-2.5 gap-2",
+            )}
+            onClick={onToggleCollapsed}
+            title={collapsed ? expandLabel : collapseLabel}
+            type="button"
+          >
+            {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+            {!collapsed ? <span className="truncate text-[12px]">导航</span> : null}
+          </button>
           {items.map(({ id, label, icon: Icon }) => {
             const active = id === activeId;
             return (
               <button
                 key={id}
+                aria-label={label}
                 className={cn(
-                  "flex h-8 w-full items-center gap-2 whitespace-nowrap rounded-md px-2.5 text-[12.5px] transition-colors duration-100 active:scale-[0.98]",
+                  "flex h-8 w-full items-center whitespace-nowrap rounded-md transition-colors active:scale-[0.98]",
+                  collapsed ? "justify-center" : "gap-2 px-2.5 text-[12.5px]",
                   active
                     ? "bg-black/[0.06] font-medium text-foreground dark:bg-white/[0.1]"
                     : "text-muted-foreground hover:bg-black/[0.03] dark:hover:bg-white/[0.05]",
@@ -78,8 +105,8 @@ export function SettingsShell({
                 title={label}
                 type="button"
               >
-                {Icon ? <Icon className="h-[13px] w-[13px] flex-shrink-0" size={13} /> : null}
-                <span className="truncate">{label}</span>
+                {Icon ? <Icon className="h-[14px] w-[14px] flex-shrink-0" size={14} /> : null}
+                {!collapsed ? <span className="truncate">{label}</span> : null}
               </button>
             );
           })}
@@ -87,10 +114,10 @@ export function SettingsShell({
 
         {/* 内容 */}
         <main className="flex min-w-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-auto px-5 py-2">{children}</div>
+          <div className="min-h-0 flex-1 overflow-auto px-6 py-4">{children}</div>
 
-          {/* 底部 */}
-          <div className="flex items-center justify-between border-t border-black/[0.05] px-5 py-3 dark:border-white/[0.07]">
+          {/* 底部：留白分隔，不画分割线 */}
+          <div className="flex items-center justify-between gap-3 px-6 pb-2.5 pt-1">
             <span className="mono text-[10.5px] text-muted-foreground/70">{version}</span>
             <div className="flex gap-1">
               {onReset ? (
@@ -100,7 +127,7 @@ export function SettingsShell({
                   type="button"
                 >
                   <RotateCcw className="h-3 w-3" />
-                  恢复默认
+                  {resetLabel ?? "恢复默认"}
                 </button>
               ) : null}
               {onExport ? (
@@ -110,7 +137,7 @@ export function SettingsShell({
                   type="button"
                 >
                   <Download className="h-3 w-3" />
-                  导出数据…
+                  {exportLabel ?? "导出数据…"}
                 </button>
               ) : null}
             </div>
