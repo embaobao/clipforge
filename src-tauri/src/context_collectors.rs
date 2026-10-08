@@ -139,22 +139,28 @@ pub(crate) fn capture_live_context(
     let mut application_context = captured
         .as_ref()
         .map(|snapshot| snapshot.application_context.clone())
-        .unwrap_or_else(|| json!({
-            "schemaVersion": 1,
-            "kind": "unavailable",
-            "confidence": "low",
-            "application": null,
-            "window": null,
-            "signals": [],
-            "permissions": { "accessibility": "unavailable" }
-        }));
+        .unwrap_or_else(|| {
+            json!({
+                "schemaVersion": 1,
+                "kind": "unavailable",
+                "confidence": "low",
+                "application": null,
+                "window": null,
+                "signals": [],
+                "permissions": { "accessibility": "unavailable" }
+            })
+        });
     augment_process_context(&mut application_context);
     let base_context = application_context.clone();
     let (application_context, results, diagnostics) = if include_external {
         collect_external_contexts(base_context, collector_id)
     } else {
         let diagnostics = collector_id
-            .map(|id| vec![format!("{id} skipped: external execution was not requested")])
+            .map(|id| {
+                vec![format!(
+                    "{id} skipped: external execution was not requested"
+                )]
+            })
             .unwrap_or_default();
         (application_context, Vec::new(), diagnostics)
     };
@@ -178,20 +184,22 @@ pub(crate) fn capture_live_context(
 }
 
 /// 调试指定外部采集器，返回实际发送给脚本的输入和受限输出，便于 Agent 迭代适配器。
-pub(crate) fn debug_collector(
-    collector_id: &str,
-    fixture: Option<Value>,
-) -> Result<Value, String> {
+pub(crate) fn debug_collector(collector_id: &str, fixture: Option<Value>) -> Result<Value, String> {
     if collector_id.trim().is_empty() {
         return Err("collectorId is required".to_string());
     }
     let loaded = load_external_collectors()
         .into_iter()
-        .find_map(|item| item.ok().filter(|collector| collector.manifest.id == collector_id))
+        .find_map(|item| {
+            item.ok()
+                .filter(|collector| collector.manifest.id == collector_id)
+        })
         .ok_or_else(|| format!("external collector not found: {collector_id}"))?;
     let (input, match_context) = if let Some(fixture) = fixture {
         if !fixture.is_object() {
-            return Err("fixture must be an object following the collector input contract".to_string());
+            return Err(
+                "fixture must be an object following the collector input contract".to_string(),
+            );
         }
         (fixture.clone(), fixture)
     } else {
@@ -262,7 +270,8 @@ fn collect_external_contexts(
     let mut results = Vec::new();
     let mut diagnostics = Vec::new();
     if !external_collectors_enabled() {
-        diagnostics.push("external collectors skipped: enableExternalContextCollectors=false".to_string());
+        diagnostics
+            .push("external collectors skipped: enableExternalContextCollectors=false".to_string());
         return (application_context, results, diagnostics);
     }
 
@@ -360,13 +369,7 @@ pub(crate) fn schedule_delayed_collection(clip_id: String, mut application_conte
             } else {
                 "complete"
             };
-            persist_delayed_collection(
-                &clip_id,
-                application_context,
-                results,
-                diagnostics,
-                status,
-            );
+            persist_delayed_collection(&clip_id, application_context, results, diagnostics, status);
         });
 }
 
@@ -378,11 +381,19 @@ fn persist_delayed_collection(
     status: &str,
 ) {
     let Ok(conn) = crate::open_clip_db() else {
-        crate::log_to_file("warn", "context-collector-async", "database unavailable during delayed write");
+        crate::log_to_file(
+            "warn",
+            "context-collector-async",
+            "database unavailable during delayed write",
+        );
         return;
     };
     if crate::init_schema(&conn).is_err() {
-        crate::log_to_file("warn", "context-collector-async", "schema unavailable during delayed write");
+        crate::log_to_file(
+            "warn",
+            "context-collector-async",
+            "schema unavailable during delayed write",
+        );
         return;
     }
     let raw: Result<String, _> = conn.query_row(
@@ -391,7 +402,11 @@ fn persist_delayed_collection(
         |row| row.get(0),
     );
     let Ok(raw) = raw else {
-        crate::log_to_file("debug", "context-collector-async", &format!("clip missing before delayed write id={clip_id}"));
+        crate::log_to_file(
+            "debug",
+            "context-collector-async",
+            &format!("clip missing before delayed write id={clip_id}"),
+        );
         return;
     };
     let mut capture_context = serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!({}));
@@ -405,7 +420,11 @@ fn persist_delayed_collection(
     let serialized = match serde_json::to_string(&capture_context) {
         Ok(value) => value,
         Err(error) => {
-            crate::log_to_file("warn", "context-collector-async", &format!("serialize delayed context failed id={clip_id} error={error}"));
+            crate::log_to_file(
+                "warn",
+                "context-collector-async",
+                &format!("serialize delayed context failed id={clip_id} error={error}"),
+            );
             return;
         }
     };
@@ -447,7 +466,10 @@ fn collector_matches(matcher: &CollectorMatcher, context: &Value) -> bool {
 }
 
 fn now_millis() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_millis() as i64).unwrap_or_default()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis() as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

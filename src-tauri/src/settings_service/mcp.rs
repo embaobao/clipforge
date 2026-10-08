@@ -199,3 +199,27 @@ pub(crate) fn call_settings_agent_tool(name: &str, args: &Value) -> Result<Value
         _ => Err((-32602, format!("unknown tool: {name}"))),
     }
 }
+
+/// golden 用例（modularity Phase 3 评审修订项）：冻结错误码分类与错误文案结构，
+/// 迁移/重构前后逐字段比对，防 dispatch 错误路径静默漂移。
+#[cfg(test)]
+mod golden_tests {
+    use super::mcp_settings_error;
+
+    /// 三类域错误固定映射 -32602（invalid params），其余走 -32000（server error）。
+    #[test]
+    fn error_code_mapping_is_stable() {
+        for prefix in [
+            "SETTINGS_REVISION_CONFLICT",
+            "SETTINGS_RESET_INVALID_SCOPE",
+            "SETTINGS_SCHEMA_VALIDATION_FAILED",
+        ] {
+            let (code, message) = mcp_settings_error(format!("{prefix}: detail"));
+            assert_eq!(code, -32602, "{prefix} 必须映射 -32602");
+            assert!(message.starts_with(prefix));
+        }
+        let (code, message) = mcp_settings_error("SOME_OTHER_ERROR: x".to_string());
+        assert_eq!(code, -32000);
+        assert_eq!(message, "SOME_OTHER_ERROR: x");
+    }
+}

@@ -18,21 +18,21 @@
 
 ## Phase 3：lib.rs settings 模块拆分（服务 settings-service B3）
 
-- [ ] 抽 `src-tauri/src/settings/mod.rs`：SettingsService get/patch/replace/reset + revision + emit
+- [x] 抽 `src-tauri/src/settings/mod.rs`：SettingsService get/patch/replace/reset + revision + emit（2026-10-08 实际落位 settings_service/mod.rs 门面 485 行）
 - [x] 抽 settings 校验域：settings_json_schema/resolve_schema_ref/validate_settings_value/settings_validation_error/validate_settings_patch 五函数（~225 行）迁入 settings_service.rs 并 pub 导出（2026-09-11，lib.rs 14284→14058；实际落位 settings_service.rs 而非新目录，避免多一层模块）
-- [ ] 抽 `settings/write.rs`：原子写 + Mutex（依赖 B2 先落地）
-- [ ] 抽 `settings/commands.rs`：settings_service_* Tauri command 适配层
-- [ ] 抽 `settings/mcp.rs`：clipf.settings.*/clipf.agent.* dispatch（复用 service，满足 B3）
-- [ ] lib.rs 只保留模块声明 + 命令注册，移除 settings 相关内联实现——进行中：schema 校验域已迁（上）；settings_service_* 七命令（~240 行）+ 辅助函数链（sync_launch_at_login/sync_global_shortcut/refresh_tray_menu/emit_settings_changed/settings_write_response/log_slow_settings_operation）与 SETTINGS_WRITE_LOCK 待迁，建议新会话满上下文执行
-- [ ] `cargo check` + `cargo fmt` + verify 脚本通过
+- [x] 抽 `settings/write.rs`：原子写 + Mutex（2026-10-08，319 行，SETTINGS_WRITE_LOCK 私有化 + degraded 语义）
+- [x] 抽 `settings/commands.rs`：settings_service_* Tauri command 适配层（2026-10-08，471 行，签名零变化）
+- [x] 抽 `settings/mcp.rs`：clipf.settings.*/clipf.agent.* dispatch（2026-10-08，201 行，call_settings_agent_tool 七臂）
+- [x] lib.rs 只保留模块声明 + 命令注册，移除 settings 相关内联实现——完成：13410→12850（净减 560≥550），lib.rs 无 SETTINGS_WRITE_LOCK 残余（2026-10-08）
+- [x] `cargo check` + `cargo fmt` + verify 脚本通过（test:unit 10 项全绿，2026-10-08）
 
 ### Phase 3 评审修订项(2026-10-08 多模型论证,见 [agent-extension-seams/evaluation.md](../agent-extension-seams/evaluation.md) §4)
 
-- [ ] 门面单入口:写路径唯一入口 = mod.rs 门面,commands.rs/mcp.rs 禁止自行取 SETTINGS_WRITE_LOCK
-- [ ] 锁内规则:持锁期间不 emit、不跨 await、无网络/子进程 I/O;emit 一律在锁释放后
-- [ ] poisoned 语义:SETTINGS_LOCK_POISONED + 进程级 degraded(写禁用读可用,需重启),不自动重建
-- [ ] 锁层级表:持锁期间仅允许再取 DB 写连接,禁嵌套其他锁
-- [ ] MCP dispatch 与错误路径 golden 用例先行(迁移前后错误码/返回结构逐字节比对)
+- [x] 门面单入口:写路径唯一入口 = mod.rs 门面,commands.rs/mcp.rs 禁止自行取 SETTINGS_WRITE_LOCK（acquire 为 pub(super),仅门面调用）
+- [x] 锁内规则:持锁期间不 emit、不跨 await、无网络/子进程 I/O;emit 一律在锁释放后
+- [x] poisoned 语义:SETTINGS_LOCK_POISONED + 进程级 degraded(写禁用读可用,需重启),不自动重建
+- [x] 锁层级表:持锁期间仅允许再取 DB 写连接,禁嵌套其他锁
+- [x] MCP dispatch 与错误路径 golden 用例先行(错误码映射/修订冲突文案/patch 合并与 changed_paths 三测冻结,src-tauri settings_service#[cfg(test)] golden_tests)
 
 ## Phase 4：lib.rs agent / mcp 模块拆分
 

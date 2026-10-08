@@ -85,11 +85,7 @@ fn read_limited<R: Read>(mut reader: R, max_bytes: usize) -> Result<Vec<u8>, Str
 }
 
 /// 递归清理外部采集器结果中的 prompt、token、cookie 等敏感字段。
-pub(crate) fn redact_sensitive(
-    value: Value,
-    path: String,
-    redacted: &mut Vec<String>,
-) -> Value {
+pub(crate) fn redact_sensitive(value: Value, path: String, redacted: &mut Vec<String>) -> Value {
     match value {
         Value::Object(object) => {
             let mut next = Map::new();
@@ -108,9 +104,7 @@ pub(crate) fn redact_sensitive(
             items
                 .into_iter()
                 .enumerate()
-                .map(|(index, child)| {
-                    redact_sensitive(child, format!("{path}[{index}]"), redacted)
-                })
+                .map(|(index, child)| redact_sensitive(child, format!("{path}[{index}]"), redacted))
                 .collect(),
         ),
         other => other,

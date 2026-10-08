@@ -10,6 +10,50 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::{log_to_file, settings_path};
 
+/// golden 用例（modularity Phase 3 评审修订项）：冻结纯函数层行为——修订冲突文案、
+/// patch 合并结果、变更路径格式；重构前后断言不变。
+#[cfg(test)]
+mod golden_tests {
+    use super::{collect_changed_paths, ensure_expected_settings_revision, merge_settings_patch};
+    use serde_json::json;
+
+    #[test]
+    fn revision_conflict_message_is_stable() {
+        // revision 是内容哈希(settings_revision 计算),fixture 里塞 "revision" 字段不影响
+        let settings = json!({"general": {"launchAtLogin": false}});
+        let error = ensure_expected_settings_revision(&settings, Some("rev-0")).unwrap_err();
+        assert!(
+            error.starts_with("SETTINGS_REVISION_CONFLICT: expected rev-0, current rev_")
+                && error.ends_with("; get latest settings before retrying"),
+            "实际文案: {error}"
+        );
+        // 无 expected / 空串 = 跳过乐观并发检查,返回当前内容哈希
+        assert!(ensure_expected_settings_revision(&settings, None)
+            .unwrap()
+            .starts_with("rev_"));
+        assert!(ensure_expected_settings_revision(&settings, Some("  "))
+            .unwrap()
+            .starts_with("rev_"));
+    }
+
+    #[test]
+    fn patch_merge_and_changed_paths_are_stable() {
+        let original = json!({"general": {"launchAtLogin": false}, "theme": "dark", "removed": 1});
+        let mut base = original.clone();
+        let patch = json!({"general": {"launchAtLogin": true}, "theme": "dark", "added": 2});
+        merge_settings_patch(&mut base, &patch);
+        // base 保留自身键、被 patch 覆盖/新增;patch 中 null 语义 = 删除(此处未用到)
+        assert_eq!(
+            base,
+            json!({"general": {"launchAtLogin": true}, "theme": "dark", "removed": 1, "added": 2})
+        );
+        let mut paths = Vec::new();
+        collect_changed_paths(&original, &base, "$", &mut paths);
+        // 仅报告真正变化的路径;removed 在两边未变,不出现
+        assert_eq!(paths, vec!["$.added", "$.general.launchAtLogin"]);
+    }
+}
+
 /// 设置写入互斥锁（B2b）：保护 read-modify-write 全段，避免设置窗 + MCP/主面板并发写入导致 lost-update。
 /// Phase 3 起锁私有于本模块，且只在 mod.rs 门面（run_settings_write / commit_settings_*）里持有；
 /// 底层 read/write 不加锁，避免重入死锁。
