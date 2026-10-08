@@ -328,7 +328,7 @@ function ClipForgeApp() {
     normalizeClip,
   });
 
-  const { loadMoreClips, captureClipboard } = useClipboardList({
+  const { loadMoreClips, captureClipboard, mergeTopClip } = useClipboardList({
     isSettingsWindow,
     setClips,
     clipsRef,
@@ -420,6 +420,10 @@ function ClipForgeApp() {
         focusRetryTimersRef.current.push(timer);
       });
       setNativeStatus(reason === "tray" ? tr("main.status.panelFocusedTray") : tr("main.status.panelFocusedShortcut"));
+      // 唤起即合并最新 1 条：快速复制后立刻唤起时，Rust 侧已在显示前同步入库（open_panel
+      // 预采集），这里立刻把它并进列表，首帧即最终态。不能等 +300ms 的 manual 采集——
+      // 那会让首行在用户手指落下后才突然变化（用户反馈「每次唤起后第一条改变」）。
+      void mergeTopClip();
       // 后台监听线程每 100ms 已在采集，这里只是兜底；延后到 300ms，避免与「唤起后立即输入」
       // 抢主线程——setClips 触发的重渲染会吞掉最初几个按键，造成「面板出来后要等一下才能打字」。
       window.setTimeout(() => {

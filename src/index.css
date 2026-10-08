@@ -151,10 +151,12 @@
 /* 弹簧：damping 1.0 / response 0.4 → cubic-bezier(0.32, 0.72, 0, 1)。
    入场只动 transform、不动 opacity：后台 WKWebView 冻结动画时间轴时若卡在 from 帧，
    opacity:0 会让整个面板隐形（「触发白屏」）；位移帧冻结最坏常驻几 px 偏移，不隐形。
-   0.22s：0.45s 的淡入在唤起场景被感知为「白屏半秒」。 */
+   0.22s：0.45s 的淡入在唤起场景被感知为「白屏半秒」。
+   只保留 scale 不做 translateY：translateY(8px)→0 是每次唤起输入区整体上浮 8px 的可见
+   位置跳动（用户反馈影响体验）；scale 围绕中心收缩，搜索框竖向位移 <2px，无方向性漂移。 */
 @keyframes panel-in {
   from {
-    transform: translateY(8px) scale(0.98);
+    transform: scale(0.985);
   }
 }
 .panel-in {

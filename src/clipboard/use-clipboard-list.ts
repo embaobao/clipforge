@@ -188,6 +188,30 @@ export function useClipboardList({
     return payload.status;
   };
 
+  /** 取库内最新 1 条做增量合并（置顶/按 id 去重）。唤起时与 clipboard-changed 事件共用：
+   * 唤起路径必须首帧即最终列表态，不能等 +300ms manual 采集才把新条目顶到首行。 */
+  const mergeTopClip = async (): Promise<void> => {
+    const request = searchRequestRef.current;
+    try {
+      const result = await invoke<QueryClipPayload>("search_clip_records", {
+        input: { bucket: typeof request.bucket === "string" ? request.bucket : "all", limit: 1 },
+      });
+      if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
+      const topClip = result.items
+        .map((item) => normalizeClip(item, settingsRef.current))
+        .find((item): item is ClipItem => Boolean(item));
+      if (!topClip) return;
+      const current = clipsRef.current.filter((item) => item.id !== topClip.id);
+      const next = [topClip, ...current].slice(0, settingsRef.current.maxStoredItems);
+      clipsRef.current = next;
+      setClips(next);
+      setSelectedId(topClip.id);
+      setActiveView("history");
+    } catch (error) {
+      console.error("[CLIPBOARD] incremental refresh failed:", error);
+    }
+  };
+
   /** 读取系统剪贴板并入库（startup/manual/shortcut 三种触发来源）。 */
   const captureClipboard = async (reason: "startup" | "manual" | "shortcut") => {
     if (captureInFlightRef.current) return;
@@ -239,28 +263,11 @@ export function useClipboardList({
         // 纯列表视图：只取最新 1 条做增量合并（置顶/按 id 去重），不全量刷新 200 行。
         // 解决「每次复制一次 70ms+2MB IPC 的卡顿尖峰」和「分页后列表被截断回 200 条」。
         if (isPlainListRequest(request)) {
-          try {
-            const result = await invoke<QueryClipPayload>("search_clip_records", {
-              input: { bucket: typeof request.bucket === "string" ? request.bucket : "all", limit: 1 },
-            });
-            if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
-            const topClip = result.items
-              .map((item) => normalizeClip(item, settingsRef.current))
-              .find((item): item is ClipItem => Boolean(item));
-            if (!topClip) return;
-            const current = clipsRef.current.filter((item) => item.id !== topClip.id);
-            const next = [topClip, ...current].slice(0, settingsRef.current.maxStoredItems);
-            clipsRef.current = next;
-            setClips(next);
-            setSelectedId(topClip.id);
-            setActiveView("history");
-            if (payload.preview) {
-              lastSeenClipboard.current = payload.preview.trim();
-            }
-            setNativeStatus(tr("main.status.clipboardCapturedNew"));
-          } catch (error) {
-            console.error("[CLIPBOARD] incremental refresh failed:", error);
+          await mergeTopClip();
+          if (payload.preview) {
+            lastSeenClipboard.current = payload.preview.trim();
           }
+          setNativeStatus(tr("main.status.clipboardCapturedNew"));
           return;
         }
         // 搜索/过滤/回收站视图：后端已入库，按当前请求全量刷新（保留已加载条数，不截断）。
@@ -298,5 +305,5 @@ export function useClipboardList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSettingsWindow, tr]);
 
-  return { appendLoadedClips, loadMoreClips, syncCapturedClipboardPayload, captureClipboard };
+  return { appendLoadedClips, loadMoreClips, syncCapturedClipboardPayload, captureClipboard, mergeTopClip };
 }

@@ -1,6 +1,6 @@
 /** 快速面板失焦自动隐藏 hook（从 App.tsx 切出）：blur 后延迟查询 Rust 固定状态，未固定则淡出并隐藏窗口。 */
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { getCurrentWindowSafe, logAppError } from "./panel-shared";
 
 export type PanelBlurHideOptions = {
@@ -89,7 +89,11 @@ export function usePanelBlurHide({
   }, [enabled, setPanelClosing, setIsPanelEntering, panelFocusGraceUntilRef, blurHideInFlightRef]);
 }
 
-/** 托盘/快捷键唤起与隐藏事件监听（clipforge://show-quick-panel / hide-quick-panel）。 */
+/** 托盘/快捷键唤起与隐藏事件监听（clipforge://show-quick-panel / hide-quick-panel）。
+ * 回调经 ref 间接调用：showQuickPanel 依赖链含非稳定引用（captureClipboard 等普通函数），
+ * 若直接进 deps，每次唤起引发的连续 setState 会让本 effect 反复重建；cleanup 时 listen
+ * promise 若尚未 resolve，unlisten 不会被压入旧数组 → 旧监听泄漏一份。表现为同一次唤起
+ * mergeTopClip/manual capture 被执行 N 次（每次都过 osascript 慢路径），列表延迟跳动。 */
 export function usePanelWindowListeners({
   enabled,
   setPanelClosing,
@@ -103,17 +107,25 @@ export function usePanelWindowListeners({
   settingsRef: { current: { panelPinned: boolean } };
   showQuickPanel: (reason: "shortcut" | "tray") => void;
 }) {
+  const showQuickPanelRef = useRef(showQuickPanel);
+  useEffect(() => {
+    showQuickPanelRef.current = showQuickPanel;
+  });
   useEffect(() => {
     if (!enabled) return;
     // 浏览器预览无 Tauri 窗口对象；getCurrentWindow() 同步抛错会触发重挂载死循环。
     const appWindow = getCurrentWindowSafe();
     if (!appWindow) return;
+    let disposed = false;
     const unlisteners: Array<() => void> = [];
     appWindow
       .listen<string>("clipforge://show-quick-panel", ({ payload }) => {
-        showQuickPanel(payload === "tray" ? "tray" : "shortcut");
+        showQuickPanelRef.current(payload === "tray" ? "tray" : "shortcut");
       })
-      .then((unlisten) => unlisteners.push(unlisten))
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlisteners.push(unlisten);
+      })
       .catch((error) => logAppError("warn", "Register tray listener failed", String(error)));
     appWindow
       .listen<string>("clipforge://hide-quick-panel", () => {
@@ -125,10 +137,17 @@ export function usePanelWindowListeners({
         setIsPanelEntering(false);
         setPanelClosing(false);
       })
-      .then((unlisten) => unlisteners.push(unlisten))
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else unlisteners.push(unlisten);
+      })
       .catch((error) => logAppError("warn", "Register quick panel hide listener failed", String(error)));
     return () => {
+      // disposed 防竞态：cleanup 先于 listen resolve 时，迟到的 unlisten 自行解绑。
+      disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [enabled, setPanelClosing, setIsPanelEntering, settingsRef, showQuickPanel]);
+    // 回调走 ref，effect 只注册一次；额外 deps 均为 setState/store 稳定引用。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, setPanelClosing, setIsPanelEntering, settingsRef]);
 }

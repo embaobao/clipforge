@@ -25,12 +25,25 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt as AutostartManagerExt};
 use tauri_plugin_updater::UpdaterExt;
 
+mod agent;
 mod application_context;
 mod clipboard;
 mod context_collector_runtime;
 mod context_collector_system;
 mod context_collectors;
+mod mcp;
 mod settings_service;
+
+pub use mcp::run_mcp_stdio;
+use agent::{
+    agent_cancel_run, agent_check_provider, agent_detect, agent_get_config, agent_get_run,
+    agent_get_transcript, agent_list_provider_models, agent_list_providers, agent_prepare_run,
+    agent_restore_session, agent_start_run, cleanup_agent_children,
+};
+use mcp::{
+    get_mcp_status, mcp_tool_names, start_mcp_server, start_mcp_server_with_reason,
+    stop_mcp_server,
+};
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
 use settings_service::{
@@ -101,6 +114,37 @@ extern "C" {
     static kAXTrustedCheckOptionPrompt: CFStringRef;
     fn AXIsProcessTrusted() -> u8;
     fn AXIsProcessTrustedWithOptions(options: core_foundation::dictionary::CFDictionaryRef) -> u8;
+    // 粘贴目标快照用的原生 AX API。旧实现走 System Events osascript，本机实测单次 >1s，
+    // 使粘贴目标 bundle/bounds 缓存延迟 1s+ 才就绪（用户快速选中时缓存仍为空，粘贴前
+    // 无法激活目标 App，内容落不进输入框）。AX API 直连辅助功能权限（已授予），亚毫秒返回。
+    fn AXUIElementCreateSystemWide() -> *mut std::os::raw::c_void;
+    fn AXUIElementCopyAttributeValue(
+        element: *mut std::os::raw::c_void,
+        attribute: CFStringRef,
+        value: *mut *mut std::os::raw::c_void,
+    ) -> i32;
+    fn AXUIElementCopyParameterizedAttributeValue(
+        element: *mut std::os::raw::c_void,
+        attribute: CFStringRef,
+        parameter: *mut std::os::raw::c_void,
+        value: *mut *mut std::os::raw::c_void,
+    ) -> i32;
+    fn AXUIElementGetPid(element: *mut std::os::raw::c_void, pid: *mut i32) -> i32;
+    fn AXValueCreate(the_type: usize, value_ptr: *const std::os::raw::c_void)
+    -> *mut std::os::raw::c_void;
+    fn AXValueGetValue(
+        value: *mut std::os::raw::c_void,
+        the_type: usize,
+        value_ptr: *mut std::os::raw::c_void,
+    ) -> u8;
+}
+
+// AXValueCopyAttributeValue 返回的 CFType 引用计数 +1，用完必须释放；CFRelease 在
+// CoreFoundation 框架（core-foundation crate 未直接导出该符号）。
+#[cfg(target_os = "macos")]
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRelease(cf: *mut std::os::raw::c_void);
 }
 
 const QUICK_PANEL_WIDTH: f64 = 420.0;
@@ -195,12 +239,6 @@ static PASTE_TARGET_BOUNDS_CACHE: std::sync::OnceLock<Arc<Mutex<CachedFocusBound
     std::sync::OnceLock::new();
 static PASTE_TARGET_APP_BUNDLE_CACHE: std::sync::OnceLock<Arc<Mutex<String>>> =
     std::sync::OnceLock::new();
-static MCP_CHILD: std::sync::OnceLock<Arc<Mutex<Option<Child>>>> = std::sync::OnceLock::new();
-static AGENT_RUNS: std::sync::OnceLock<Arc<Mutex<HashMap<String, AgentRunState>>>> =
-    std::sync::OnceLock::new();
-static AGENT_READINESS_CACHE: std::sync::OnceLock<
-    Arc<Mutex<HashMap<String, AgentProviderReadiness>>>,
-> = std::sync::OnceLock::new();
 static PANEL_LAST_POSITION: std::sync::OnceLock<Arc<Mutex<Option<NormalizedPosition>>>> =
     std::sync::OnceLock::new();
 #[cfg(debug_assertions)]
@@ -234,21 +272,6 @@ fn dev_quick_probe_target_bundle_cache() -> Arc<Mutex<String>> {
         .clone()
 }
 
-fn mcp_child() -> Arc<Mutex<Option<Child>>> {
-    MCP_CHILD.get_or_init(|| Arc::new(Mutex::new(None))).clone()
-}
-
-fn agent_runs() -> Arc<Mutex<HashMap<String, AgentRunState>>> {
-    AGENT_RUNS
-        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
-        .clone()
-}
-
-fn agent_readiness_cache() -> Arc<Mutex<HashMap<String, AgentProviderReadiness>>> {
-    AGENT_READINESS_CACHE
-        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
-        .clone()
-}
 
 fn panel_last_position() -> Arc<Mutex<Option<NormalizedPosition>>> {
     PANEL_LAST_POSITION
@@ -565,264 +588,6 @@ struct PanelTriggerPayload {
     message: String,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct McpStatusPayload {
-    enabled: bool,
-    running: bool,
-    transport: String,
-    command: String,
-    tools: Vec<String>,
-    message: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClipboardAgentProviderConfig {
-    id: String,
-    label: String,
-    kind: String,
-    configured: bool,
-    command_preview: String,
-    redacted_config: Value,
-    last_readiness: Option<AgentProviderReadiness>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClipboardAgentToolDescriptor {
-    name: String,
-    description: String,
-    permission: String,
-    write: bool,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentProviderReadiness {
-    provider_id: String,
-    status: String,
-    reason: String,
-    checked_at: i64,
-    command_preview: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentDetectCandidate {
-    provider_id: String,
-    label: String,
-    kind: String,
-    command: String,
-    args: Vec<String>,
-    configured: bool,
-    base_url: Option<String>,
-    api_key: Option<String>,
-    api_key_ref: Option<String>,
-    model_id: Option<String>,
-    timeout_seconds: Option<u64>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentConfigPayload {
-    active_provider_id: Option<String>,
-    providers: Vec<ClipboardAgentProviderConfig>,
-    tools: Vec<ClipboardAgentToolDescriptor>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentProviderModelsPayload {
-    provider_id: String,
-    active_model_id: Option<String>,
-    models: Vec<String>,
-    source: String,
-    message: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentInvocationConfig {
-    provider_id: Option<String>,
-    prompt: String,
-    context_set: Value,
-    allow_full_content: Option<bool>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentStartRunInput {
-    run_id: Option<String>,
-    provider_id: Option<String>,
-    prompt: String,
-    context_set: Value,
-    confirmed: Option<bool>,
-    allow_full_content: Option<bool>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentRunPayload {
-    id: String,
-    conversation_id: String,
-    provider_id: String,
-    status: String,
-    prompt_preview: String,
-    command_preview: String,
-    context_summary: String,
-    output: String,
-    error_code: Option<String>,
-    error_message: Option<String>,
-    exit_code: Option<i32>,
-    created_at: i64,
-    updated_at: i64,
-    started_at: Option<i64>,
-    finished_at: Option<i64>,
-    duration_ms: Option<i64>,
-}
-
-#[derive(Clone, Copy)]
-enum AgentRunStatus {
-    Idle,
-    Preparing,
-    WaitingConfirmation,
-    Running,
-    Streaming,
-    Succeeded,
-    Failed,
-    Cancelling,
-    Cancelled,
-}
-
-impl AgentRunStatus {
-    fn as_str(self) -> &'static str {
-        match self {
-            AgentRunStatus::Idle => "idle",
-            AgentRunStatus::Preparing => "preparing",
-            AgentRunStatus::WaitingConfirmation => "waiting_confirmation",
-            AgentRunStatus::Running => "running",
-            AgentRunStatus::Streaming => "streaming",
-            AgentRunStatus::Succeeded => "succeeded",
-            AgentRunStatus::Failed => "failed",
-            AgentRunStatus::Cancelling => "cancelling",
-            AgentRunStatus::Cancelled => "cancelled",
-        }
-    }
-
-    fn is_active(self) -> bool {
-        matches!(
-            self,
-            AgentRunStatus::Preparing
-                | AgentRunStatus::WaitingConfirmation
-                | AgentRunStatus::Running
-                | AgentRunStatus::Streaming
-                | AgentRunStatus::Cancelling
-        )
-    }
-}
-
-fn agent_status_from_str(status: &str) -> Option<AgentRunStatus> {
-    match status {
-        "idle" => Some(AgentRunStatus::Idle),
-        "preparing" => Some(AgentRunStatus::Preparing),
-        "waiting_confirmation" => Some(AgentRunStatus::WaitingConfirmation),
-        "running" => Some(AgentRunStatus::Running),
-        "streaming" => Some(AgentRunStatus::Streaming),
-        "succeeded" => Some(AgentRunStatus::Succeeded),
-        "failed" => Some(AgentRunStatus::Failed),
-        "cancelling" => Some(AgentRunStatus::Cancelling),
-        "cancelled" => Some(AgentRunStatus::Cancelled),
-        _ => None,
-    }
-}
-
-fn agent_status(status: AgentRunStatus) -> String {
-    status.as_str().to_string()
-}
-
-fn set_agent_run_status(payload: &mut AgentRunPayload, status: AgentRunStatus, now: i64) {
-    payload.status = agent_status(status);
-    payload.updated_at = now;
-    if matches!(
-        status,
-        AgentRunStatus::Succeeded | AgentRunStatus::Failed | AgentRunStatus::Cancelled
-    ) {
-        payload.finished_at = Some(now);
-        payload.duration_ms = payload.started_at.map(|started| now - started);
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentPreparedRunPayload {
-    run: AgentRunPayload,
-    requires_confirmation: bool,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentTranscriptRowPayload {
-    id: String,
-    run_id: String,
-    kind: String,
-    text: String,
-    scroll_anchor: bool,
-    created_at: i64,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentUiMessagePayload {
-    run_id: String,
-    message_id: String,
-    role: String,
-    parts: Value,
-    metadata: Value,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentAgUiEventPayload {
-    run_id: String,
-    message_id: String,
-    event_type: String,
-    role: String,
-    text: Option<String>,
-    status: Option<String>,
-    tool_name: Option<String>,
-    arguments_preview: Option<String>,
-    result_preview: Option<String>,
-    custom_event: Option<String>,
-    custom_payload: Option<Value>,
-    created_at: i64,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentRunSnapshotPayload {
-    run: AgentRunPayload,
-    transcript: Vec<AgentTranscriptRowPayload>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentSessionSnapshotPayload {
-    runs: Vec<AgentRunSnapshotPayload>,
-    active_run_id: Option<String>,
-    restored_at: i64,
-}
-
-struct AgentRunState {
-    payload: AgentRunPayload,
-    transcript: Vec<AgentTranscriptRowPayload>,
-    child: Option<Child>,
-    foreground_clip_id: Option<String>,
-}
-
-fn is_active_agent_status(status: &str) -> bool {
-    agent_status_from_str(status).is_some_and(AgentRunStatus::is_active)
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -833,11 +598,6 @@ struct AnalyzeClipPayload {
     tags: Vec<String>,
 }
 
-struct McpToolSpec {
-    name: &'static str,
-    description: &'static str,
-    input_schema: fn() -> Value,
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1113,7 +873,7 @@ fn paste_clipboard_item<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, String> {
+pub(crate) fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, String> {
     let metadata = json!({
         "editor": {
             "sessionId": input.session_id,
@@ -1136,1196 +896,6 @@ fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, Str
         copied: None,
     })
     .map_err(|error| preserve_command_error("EDITOR_SAVE_FAILED", error))
-}
-
-fn agent_trace_id(prefix: &str) -> String {
-    now_millis()
-        .map(|ts| format!("{prefix}_{ts}"))
-        .unwrap_or_else(|_| format!("{prefix}_unknown"))
-}
-
-fn agent_tool_descriptors() -> Vec<ClipboardAgentToolDescriptor> {
-    vec![
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.context.get".to_string(),
-            description: "读取当前或指定剪贴板条目的安全上下文快照".to_string(),
-            permission: "read-summary".to_string(),
-            write: false,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.context.compose".to_string(),
-            description: "按当前、选中、收藏、搜索结果或最近历史组合上下文集合".to_string(),
-            permission: "read-summary".to_string(),
-            write: false,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.content.parse".to_string(),
-            description: "解析 URL、文件路径、JSON、命令、代码块、错误日志和 Markdown 候选"
-                .to_string(),
-            permission: "read-summary".to_string(),
-            write: false,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.capture".to_string(),
-            description: "显式写入一条新的 ClipForge 历史".to_string(),
-            permission: "confirm-write".to_string(),
-            write: true,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.update".to_string(),
-            description: "通过可见结果动作更新内容、标签、收藏、归档等字段".to_string(),
-            permission: "confirm-write".to_string(),
-            write: true,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.copy".to_string(),
-            description: "按统一多类型写回接口复制剪贴板条目".to_string(),
-            permission: "confirm-write".to_string(),
-            write: true,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.search".to_string(),
-            description: "使用文本、tag、type、kind、bucket、favorite、file extension 检索"
-                .to_string(),
-            permission: "read-summary".to_string(),
-            write: false,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.skill.list".to_string(),
-            description: "列出私域剪贴板 skill 摘要".to_string(),
-            permission: "read-summary".to_string(),
-            write: false,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.skill.save_draft".to_string(),
-            description: "保存用户确认后的私域 skill 草稿".to_string(),
-            permission: "confirm-write".to_string(),
-            write: true,
-        },
-        ClipboardAgentToolDescriptor {
-            name: "clipboard.skill.run".to_string(),
-            description: "用当前上下文集合手动运行私域 skill".to_string(),
-            permission: "read-summary".to_string(),
-            write: false,
-        },
-    ]
-}
-
-fn split_agent_command_template(template: &str) -> Option<(String, Vec<String>)> {
-    let parts = template
-        .split_whitespace()
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let (command, args) = parts.split_first()?;
-    Some((command.clone(), args.to_vec()))
-}
-
-fn agent_path_env() -> String {
-    let current = std::env::var("PATH").unwrap_or_default();
-    #[cfg(target_os = "macos")]
-    {
-        let gui_paths = [
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin",
-            "/Applications/Cursor.app/Contents/Resources/app/bin",
-            "/Applications/Visual Studio Code.app/Contents/Resources/app/bin",
-        ];
-        return format!("{}:{}", gui_paths.join(":"), current);
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        current
-    }
-}
-
-fn value_string(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn value_bool(value: &Value, key: &str, default: bool) -> bool {
-    value.get(key).and_then(Value::as_bool).unwrap_or(default)
-}
-
-fn value_string_array(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn configured_default_agent_provider_id() -> Option<String> {
-    let settings = read_user_settings().ok()?.settings;
-    settings
-        .get("agent")
-        .and_then(|agent| {
-            value_string(
-                agent,
-                &[
-                    "defaultProviderId",
-                    "default_provider_id",
-                    "defaultAgentId",
-                    "default_agent_id",
-                ],
-            )
-        })
-        .or_else(|| {
-            value_string(
-                &settings,
-                &[
-                    "defaultProviderId",
-                    "default_provider_id",
-                    "defaultAgentId",
-                    "default_agent_id",
-                ],
-            )
-        })
-}
-
-fn configured_agent_providers_from_settings() -> Vec<AgentDetectCandidate> {
-    let settings = read_user_settings()
-        .map(|payload| payload.settings)
-        .unwrap_or(Value::Null);
-    let providers = settings
-        .get("agent")
-        .and_then(|agent| agent.get("providers"))
-        .and_then(Value::as_array)
-        .or_else(|| settings.get("agentProviders").and_then(Value::as_array));
-    let Some(providers) = providers else {
-        return Vec::new();
-    };
-    providers
-        .iter()
-        .enumerate()
-        .filter_map(|(index, provider)| {
-            if !provider.is_object() || !value_bool(provider, "enabled", true) {
-                return None;
-            }
-            let kind = value_string(provider, &["kind"])
-                .unwrap_or_else(|| "openai-compatible".to_string());
-            let fallback_id = format!("settings-agent-{index}");
-            let provider_id = value_string(provider, &["id"]).unwrap_or(fallback_id);
-            let label =
-                value_string(provider, &["label", "name"]).unwrap_or_else(|| provider_id.clone());
-            if kind == "openai-compatible" || kind == "openapi" || kind == "openai" {
-                let base_url = value_string(provider, &["baseUrl", "baseURL", "endpoint"])
-                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-                let model_id = value_string(provider, &["modelId", "model"]);
-                let api_key = value_string(provider, &["apiKey"]);
-                let api_key_ref = value_string(provider, &["apiKeyEnv", "apiKeyRef"])
-                    .or_else(|| Some("CLIPFORGE_AGENT_OPENAI_API_KEY".to_string()));
-                let configured = model_id.is_some()
-                    && (api_key.is_some()
-                        || api_key_ref
-                            .as_deref()
-                            .and_then(|key| std::env::var(key).ok())
-                            .map(|value| !value.trim().is_empty())
-                            .unwrap_or(false));
-                return Some(AgentDetectCandidate {
-                    provider_id,
-                    label,
-                    kind: "openai-compatible".to_string(),
-                    command: "python3".to_string(),
-                    args: vec![
-                        "-u".to_string(),
-                        "-c".to_string(),
-                        "<openai-compatible-stream-bridge>".to_string(),
-                    ],
-                    configured,
-                    base_url: Some(base_url),
-                    api_key,
-                    api_key_ref,
-                    model_id,
-                    timeout_seconds: provider.get("timeoutSeconds").and_then(Value::as_u64),
-                });
-            }
-            if kind == "local-cli" || kind == "cli" || kind == "local-cli-configured" {
-                let command = value_string(provider, &["command"])?;
-                return Some(local_agent_candidate(
-                    &provider_id,
-                    &label,
-                    &command,
-                    value_string_array(provider, "args"),
-                    true,
-                ));
-            }
-            None
-        })
-        .collect()
-}
-
-fn agent_detect_candidates() -> Vec<AgentDetectCandidate> {
-    let mut candidates = Vec::new();
-    candidates.extend(configured_agent_providers_from_settings());
-    if let Ok(template) = std::env::var("CLIPFORGE_AGENT_COMMAND") {
-        if let Some((command, args)) = split_agent_command_template(&template) {
-            candidates.push(local_agent_candidate(
-                "local-configured",
-                "Configured local command",
-                &command,
-                args,
-                true,
-            ));
-        }
-    }
-    candidates.extend([
-        local_agent_candidate("claude-cli", "Claude CLI", "claude", Vec::new(), false),
-        local_agent_candidate("codex-cli", "Codex CLI", "codex", Vec::new(), false),
-        local_agent_candidate("qwen-cli", "Qwen CLI", "qwen", Vec::new(), false),
-    ]);
-    candidates.push(openai_compatible_agent_candidate());
-    candidates
-}
-
-fn local_agent_candidate(
-    provider_id: &str,
-    label: &str,
-    command: &str,
-    args: Vec<String>,
-    configured: bool,
-) -> AgentDetectCandidate {
-    AgentDetectCandidate {
-        provider_id: provider_id.to_string(),
-        label: label.to_string(),
-        kind: if configured {
-            "local-cli-configured"
-        } else {
-            "local-cli"
-        }
-        .to_string(),
-        command: command.to_string(),
-        args,
-        configured,
-        base_url: None,
-        api_key: None,
-        api_key_ref: None,
-        model_id: None,
-        timeout_seconds: None,
-    }
-}
-
-fn openai_compatible_agent_candidate() -> AgentDetectCandidate {
-    let base_url = std::env::var("CLIPFORGE_AGENT_OPENAI_BASE_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-    let model_id = std::env::var("CLIPFORGE_AGENT_OPENAI_MODEL")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-    let api_key_ref = "CLIPFORGE_AGENT_OPENAI_API_KEY".to_string();
-    let configured = model_id.is_some()
-        && std::env::var(&api_key_ref)
-            .ok()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
-    AgentDetectCandidate {
-        provider_id: "openai-compatible".to_string(),
-        label: "OpenAI-compatible".to_string(),
-        kind: "openai-compatible".to_string(),
-        command: "python3".to_string(),
-        args: vec![
-            "-u".to_string(),
-            "-c".to_string(),
-            "<openai-compatible-stream-bridge>".to_string(),
-        ],
-        configured,
-        base_url: Some(base_url),
-        api_key: None,
-        api_key_ref: Some(api_key_ref),
-        model_id,
-        timeout_seconds: None,
-    }
-}
-
-fn command_preview(candidate: &AgentDetectCandidate) -> String {
-    if candidate.kind == "openai-compatible" {
-        return format!(
-            "OpenAI-compatible streamText model={} baseURL={} apiKeyRef={}",
-            candidate.model_id.as_deref().unwrap_or("not-configured"),
-            candidate.base_url.as_deref().unwrap_or("not-configured"),
-            candidate.api_key_ref.as_deref().unwrap_or("not-configured")
-        );
-    }
-    if candidate.args.is_empty() {
-        candidate.command.clone()
-    } else {
-        format!("{} {}", candidate.command, candidate.args.join(" "))
-    }
-}
-
-fn cached_agent_readiness(provider_id: &str) -> Option<AgentProviderReadiness> {
-    agent_readiness_cache()
-        .lock()
-        .ok()
-        .and_then(|cache| cache.get(provider_id).cloned())
-}
-
-fn cache_agent_readiness(readiness: AgentProviderReadiness) -> AgentProviderReadiness {
-    if let Ok(mut cache) = agent_readiness_cache().lock() {
-        cache.insert(readiness.provider_id.clone(), readiness.clone());
-    }
-    readiness
-}
-
-fn agent_candidate_by_id(provider_id: Option<&str>) -> Option<AgentDetectCandidate> {
-    let candidates = agent_detect_candidates();
-    if let Some(provider_id) = provider_id {
-        candidates
-            .iter()
-            .find(|candidate| candidate.provider_id == provider_id)
-            .cloned()
-            .or_else(|| candidates.first().cloned())
-    } else {
-        candidates.first().cloned()
-    }
-}
-
-fn check_agent_candidate(candidate: &AgentDetectCandidate) -> AgentProviderReadiness {
-    let checked_at = now_millis().unwrap_or(0);
-    if candidate.kind == "openai-compatible" {
-        let missing_key = candidate
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .map(str::is_empty)
-            .unwrap_or_else(|| {
-                candidate
-                    .api_key_ref
-                    .as_deref()
-                    .and_then(|key| std::env::var(key).ok())
-                    .map(|value| value.trim().is_empty())
-                    .unwrap_or(true)
-            });
-        if missing_key || candidate.model_id.is_none() {
-            return cache_agent_readiness(AgentProviderReadiness {
-                provider_id: candidate.provider_id.clone(),
-                status: "not-configured".to_string(),
-                reason: "configure modelId plus apiKey or apiKeyEnv in settings.json5 to enable OpenAI-compatible provider".to_string(),
-                checked_at,
-                command_preview: command_preview(candidate),
-            });
-        }
-        let bridge_ready = Command::new("sh")
-            .arg("-lc")
-            .arg("command -v python3")
-            .env("PATH", agent_path_env())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-        return cache_agent_readiness(AgentProviderReadiness {
-            provider_id: candidate.provider_id.clone(),
-            status: if bridge_ready { "ready" } else { "not-found" }.to_string(),
-            reason: if bridge_ready {
-                "OpenAI-compatible config is present; runtime bridge is available"
-            } else {
-                "python3 bridge runtime is not available in merged PATH"
-            }
-            .to_string(),
-            checked_at,
-            command_preview: command_preview(candidate),
-        });
-    }
-    let path = agent_path_env();
-    let mut child = match Command::new("sh")
-        .arg("-lc")
-        .arg(format!(
-            "command -v {}",
-            shell_escape_word(&candidate.command)
-        ))
-        .env("PATH", path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            return cache_agent_readiness(AgentProviderReadiness {
-                provider_id: candidate.provider_id.clone(),
-                status: "health-timeout".to_string(),
-                reason: error.to_string(),
-                checked_at,
-                command_preview: command_preview(candidate),
-            });
-        }
-    };
-    let started = std::time::Instant::now();
-    let status_result = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if started.elapsed() >= Duration::from_millis(1500) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err("provider detect exceeded 1500ms".to_string());
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(25)),
-            Err(error) => break Err(error.to_string()),
-        }
-    };
-    let (status, reason): (String, String) = match status_result {
-        Ok(status) if status.success() => {
-            ("ready".to_string(), "command found in PATH".to_string())
-        }
-        Ok(status) if status.code() == Some(126) => (
-            "permission-denied".to_string(),
-            "command exists but is not executable".to_string(),
-        ),
-        Ok(_) if candidate.configured => (
-            "not-found".to_string(),
-            "configured command is not available in merged PATH".to_string(),
-        ),
-        Ok(_) => (
-            "not-configured".to_string(),
-            "candidate command is not available in merged PATH".to_string(),
-        ),
-        Err(error) => ("health-timeout".to_string(), error),
-    };
-    cache_agent_readiness(AgentProviderReadiness {
-        provider_id: candidate.provider_id.clone(),
-        status,
-        reason,
-        checked_at,
-        command_preview: command_preview(candidate),
-    })
-}
-
-fn check_openai_compatible_models(candidate: &AgentDetectCandidate) -> AgentProviderModelsPayload {
-    if candidate.kind != "openai-compatible" {
-        return AgentProviderModelsPayload {
-            provider_id: candidate.provider_id.clone(),
-            active_model_id: candidate.model_id.clone(),
-            models: Vec::new(),
-            source: "unsupported-provider".to_string(),
-            message: "Model listing is only available for OpenAI-compatible providers".to_string(),
-        };
-    }
-
-    let mut models = Vec::new();
-    if let Some(model_id) = candidate.model_id.as_deref() {
-        models.push(model_id.to_string());
-    }
-    models.extend(
-        [
-            "gpt-4.1-mini",
-            "gpt-4.1",
-            "gpt-4o-mini",
-            "gpt-4o",
-            "o4-mini",
-            "o3-mini",
-        ]
-        .iter()
-        .map(|model| model.to_string()),
-    );
-    models.sort();
-    models.dedup();
-
-    AgentProviderModelsPayload {
-        provider_id: candidate.provider_id.clone(),
-        active_model_id: candidate.model_id.clone(),
-        models,
-        source: "static-openai-compatible".to_string(),
-        message: "Static model suggestions; edit settings.json5 to use a custom modelId"
-            .to_string(),
-    }
-}
-
-fn shell_escape_word(value: &str) -> String {
-    if value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/'))
-    {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
-}
-
-fn provider_configs_with_readiness(check: bool) -> Vec<ClipboardAgentProviderConfig> {
-    agent_detect_candidates()
-        .into_iter()
-        .map(|candidate| {
-            let last_readiness = if check {
-                Some(check_agent_candidate(&candidate))
-            } else {
-                cached_agent_readiness(&candidate.provider_id)
-            };
-            ClipboardAgentProviderConfig {
-                id: candidate.provider_id.clone(),
-                label: candidate.label.clone(),
-                kind: candidate.kind.clone(),
-                configured: candidate.configured,
-                command_preview: command_preview(&candidate),
-                redacted_config: if candidate.kind == "openai-compatible" {
-                    json!({
-                        "protocol": "openai-compatible",
-                        "baseURL": candidate.base_url.as_deref().unwrap_or("not-configured"),
-                        "apiKeyRef": candidate.api_key_ref.as_deref().unwrap_or("not-configured"),
-                        "apiKey": "not-sent-to-react",
-                        "hasInlineApiKey": candidate.api_key.as_deref().map(|value| !value.trim().is_empty()).unwrap_or(false),
-                        "modelId": candidate.model_id.as_deref().unwrap_or("not-configured"),
-                        "timeoutSeconds": candidate.timeout_seconds.unwrap_or(120)
-                    })
-                } else {
-                    json!({
-                        "command": candidate.command,
-                        "argsCount": candidate.args.len(),
-                        "apiKey": "not-sent-to-react",
-                        "baseURL": "not-sent-to-react"
-                    })
-                },
-                last_readiness,
-            }
-        })
-        .collect()
-}
-
-fn compact_agent_text(value: &str, max: usize) -> String {
-    let text = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.chars().count() <= max {
-        text
-    } else {
-        let mut out = text.chars().take(max.saturating_sub(1)).collect::<String>();
-        out.push('…');
-        out
-    }
-}
-
-fn agent_application_context_summary(reference: &Value) -> String {
-    let Some(context) = reference.get("applicationContext") else {
-        return String::new();
-    };
-    let mut fields = Vec::new();
-    if let Some(kind) = context.get("kind").and_then(Value::as_str) {
-        fields.push(format!("kind={kind}"));
-    }
-    if let Some(title) = context
-        .get("window")
-        .and_then(|window| window.get("title"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-    {
-        fields.push(format!("window={}", compact_agent_text(title, 120)));
-    }
-    if let Some(browser) = context.get("browser") {
-        if let Some(url) = browser.get("url").and_then(Value::as_str) {
-            fields.push(format!("url={}", compact_agent_text(url, 180)));
-        }
-        if let Some(title) = browser.get("title").and_then(Value::as_str) {
-            fields.push(format!("page={}", compact_agent_text(title, 100)));
-        }
-    }
-    for (label, key) in [("workspace", "workspace"), ("document", "document")] {
-        if let Some(value) = context
-            .get(key)
-            .and_then(|item| item.get("path").or_else(|| item.get("name")))
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-        {
-            fields.push(format!("{label}={}", compact_agent_text(value, 140)));
-        }
-    }
-    if let Some(selection) = context.get("selection") {
-        let count = selection.get("count").and_then(Value::as_u64).unwrap_or(0);
-        let first_path = selection
-            .get("paths")
-            .and_then(Value::as_array)
-            .and_then(|paths| paths.first())
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if count > 0 {
-            fields.push(format!(
-                "selectionCount={count}{}",
-                if first_path.is_empty() {
-                    String::new()
-                } else {
-                    format!(" first={}", compact_agent_text(first_path, 120))
-                }
-            ));
-        }
-    }
-    if fields.is_empty() {
-        String::new()
-    } else {
-        fields.join(" ")
-    }
-}
-
-fn agent_context_summary(context_set: &Value, allow_full_content: bool) -> String {
-    let mode = context_set
-        .get("mode")
-        .and_then(Value::as_str)
-        .unwrap_or("current");
-    let references = context_set
-        .get("references")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if references.is_empty() {
-        return format!("mode={mode}; references=0");
-    }
-    let lines = references
-        .iter()
-        .take(20)
-        .enumerate()
-        .map(|(index, reference)| {
-            let title = reference
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or("untitled");
-            let payload_kind = reference
-                .get("payloadKind")
-                .and_then(Value::as_str)
-                .unwrap_or("text");
-            let permission = reference
-                .get("permissionScope")
-                .and_then(Value::as_str)
-                .unwrap_or("summary");
-            let url = reference
-                .get("primaryUrl")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let tags = reference
-                .get("tags")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .take(8)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                })
-                .unwrap_or_default();
-            let preview_key = if allow_full_content {
-                "textPreview"
-            } else {
-                "summary"
-            };
-            let preview = reference
-                .get(preview_key)
-                .and_then(Value::as_str)
-                .or_else(|| reference.get("textPreview").and_then(Value::as_str))
-                .unwrap_or("");
-            let application_context = agent_application_context_summary(reference);
-            format!(
-                "{}. [{} permission={}] {} url={} context={} tags={} preview={}",
-                index + 1,
-                payload_kind,
-                permission,
-                compact_agent_text(title, 80),
-                compact_agent_text(url, 120),
-                compact_agent_text(&application_context, 420),
-                tags,
-                compact_agent_text(preview, if allow_full_content { 1200 } else { 240 })
-            )
-        })
-        .collect::<Vec<_>>();
-    format!(
-        "mode={mode}; references={}\n{}",
-        references.len(),
-        lines.join("\n")
-    )
-}
-
-fn agent_context_foreground_clip_id(context_set: &Value) -> Option<String> {
-    context_set
-        .get("references")
-        .and_then(Value::as_array)
-        .and_then(|references| references.first())
-        .and_then(|reference| reference.get("clipId"))
-        .and_then(Value::as_str)
-        .filter(|id| !id.trim().is_empty())
-        .map(ToString::to_string)
-}
-
-fn compose_agent_prompt(input: &AgentInvocationConfig) -> String {
-    let allow_full_content = input.allow_full_content.unwrap_or(false);
-    [
-        "You are ClipForge's clipboard agent runtime.".to_string(),
-        "Use only the structured context below. Do not assume hidden clipboard content.".to_string(),
-        "Write operations must be returned as suggestions unless the user confirms a visible action.".to_string(),
-        "".to_string(),
-        "Context snapshot:".to_string(),
-        agent_context_summary(&input.context_set, allow_full_content),
-        "".to_string(),
-        "User request:".to_string(),
-        input.prompt.clone(),
-    ]
-    .join("\n")
-}
-
-fn build_agent_run_payload(
-    run_id: String,
-    provider: &AgentDetectCandidate,
-    prompt: &str,
-    context_set: &Value,
-    status: &str,
-    now: i64,
-    allow_full_content: bool,
-) -> AgentRunPayload {
-    AgentRunPayload {
-        id: run_id,
-        conversation_id: context_set
-            .get("id")
-            .and_then(Value::as_str)
-            .map(|id| format!("conversation:{id}"))
-            .unwrap_or_else(|| "conversation:current".to_string()),
-        provider_id: provider.provider_id.clone(),
-        status: status.to_string(),
-        prompt_preview: compact_agent_text(prompt, 240),
-        command_preview: command_preview(provider),
-        context_summary: agent_context_summary(context_set, allow_full_content),
-        output: String::new(),
-        error_code: None,
-        error_message: None,
-        exit_code: None,
-        created_at: now,
-        updated_at: now,
-        started_at: None,
-        finished_at: None,
-        duration_ms: None,
-    }
-}
-
-fn log_agent_event(event: &str, run: &AgentRunPayload, extra: Value) {
-    let snapshot = json!({
-        "event": event,
-        "runId": run.id,
-        "conversationId": run.conversation_id,
-        "providerId": run.provider_id,
-        "status": run.status,
-        "promptPreviewLength": run.prompt_preview.chars().count(),
-        "contextSummaryLength": run.context_summary.chars().count(),
-        "outputLength": run.output.chars().count(),
-        "errorCode": run.error_code,
-        "exitCode": run.exit_code,
-        "durationMs": run.duration_ms,
-        "redactedFields": ["prompt", "output", "contextSummary", "commandPreview"],
-        "extra": extra,
-    });
-    log_to_file("info", "agent-runtime", &snapshot.to_string());
-}
-
-fn insert_agent_transcript(
-    run_id: &str,
-    kind: &str,
-    text: &str,
-    scroll_anchor: bool,
-) -> AgentTranscriptRowPayload {
-    AgentTranscriptRowPayload {
-        id: agent_trace_id("agent_row"),
-        run_id: run_id.to_string(),
-        kind: kind.to_string(),
-        text: text.to_string(),
-        scroll_anchor,
-        created_at: now_millis().unwrap_or(0),
-    }
-}
-
-fn emit_agent_ui_message<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    run_id: &str,
-    role: &str,
-    text: &str,
-    status: Option<&str>,
-) {
-    let message_id = format!("{role}:{run_id}");
-    let event_type = if text.is_empty() {
-        "STATE_DELTA"
-    } else if matches!(status, Some("succeeded" | "failed" | "cancelled")) {
-        "STATE_DELTA"
-    } else {
-        "TEXT_MESSAGE_CONTENT"
-    };
-    let event = AgentAgUiEventPayload {
-        run_id: run_id.to_string(),
-        message_id,
-        event_type: event_type.to_string(),
-        role: role.to_string(),
-        text: if text.is_empty() {
-            None
-        } else {
-            Some(text.to_string())
-        },
-        status: status.map(str::to_string),
-        tool_name: None,
-        arguments_preview: None,
-        result_preview: None,
-        custom_event: None,
-        custom_payload: None,
-        created_at: now_millis().unwrap_or(0),
-    };
-    emit_agent_agui_event(app, event);
-}
-
-fn agent_agui_event_parts(event: &AgentAgUiEventPayload) -> Value {
-    let mut parts = Vec::new();
-    if let Some(text) = event.text.as_deref() {
-        parts.push(json!({ "type": "text", "text": text }));
-    }
-    match event.event_type.as_str() {
-        "TOOL_CALL" => {
-            if let Some(name) = event.tool_name.as_deref() {
-                parts.push(json!({
-                    "type": "data-tool-call",
-                    "data": {
-                        "name": name,
-                        "argumentsPreview": event.arguments_preview.as_deref().unwrap_or(""),
-                        "status": event.status.as_deref().unwrap_or("running")
-                    }
-                }));
-            }
-        }
-        "TOOL_RESULT" => {
-            if let Some(name) = event.tool_name.as_deref() {
-                parts.push(json!({
-                    "type": "data-tool-result",
-                    "data": {
-                        "name": name,
-                        "resultPreview": event.result_preview.as_deref().unwrap_or(""),
-                        "status": event.status.as_deref().unwrap_or("succeeded")
-                    }
-                }));
-            }
-        }
-        "CUSTOM" => {
-            if let Some(custom_event) = event.custom_event.as_deref() {
-                parts.push(json!({
-                    "type": "data-custom",
-                    "data": {
-                        "event": custom_event,
-                        "payload": event.custom_payload.clone().unwrap_or_else(|| json!({}))
-                    }
-                }));
-            }
-        }
-        _ => {}
-    }
-    if let Some(status) = event.status.as_deref() {
-        parts.push(json!({
-            "type": "data-status",
-            "data": { "status": status }
-        }));
-    }
-    Value::Array(parts)
-}
-
-fn emit_agent_agui_event<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    event: AgentAgUiEventPayload,
-) {
-    let parts = agent_agui_event_parts(&event);
-    let payload = AgentUiMessagePayload {
-        run_id: event.run_id.clone(),
-        message_id: event.message_id.clone(),
-        role: event.role.clone(),
-        parts,
-        metadata: json!({
-            "conversationId": format!("conversation:{}", event.run_id),
-            "runId": event.run_id.clone(),
-            "createdAt": event.created_at,
-            "aguiEventType": event.event_type.clone(),
-        }),
-    };
-    let _ = app.emit("agent_agui_event", &event);
-    let _ = app.emit("agent_ui_message", payload);
-}
-
-fn cleanup_agent_children() {
-    let runs_ref = agent_runs();
-    let Ok(mut runs) = runs_ref.lock() else {
-        return;
-    };
-    let now = now_millis().unwrap_or(0);
-    for state in runs.values_mut() {
-        if let Some(child) = state.child.as_mut() {
-            let _ = child.kill();
-        }
-        if state.child.is_some() {
-            state.child = None;
-            if is_active_agent_status(&state.payload.status) {
-                set_agent_run_status(&mut state.payload, AgentRunStatus::Cancelled, now);
-            }
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum AgentOutputMode {
-    PlainText,
-    StandardJsonEvents,
-}
-
-fn openai_compatible_bridge_script() -> &'static str {
-    r#"
-import json
-import os
-import sys
-import urllib.error
-import urllib.request
-
-def emit(payload):
-    print(json.dumps(payload, ensure_ascii=False), flush=True)
-
-try:
-    config = json.loads(sys.stdin.read())
-    base_url = (config.get("baseUrl") or "https://api.openai.com/v1").rstrip("/")
-    model = config["modelId"]
-    api_key_env = config.get("apiKeyEnv") or "CLIPFORGE_AGENT_OPENAI_API_KEY"
-    api_key = config.get("apiKey") or os.environ.get(api_key_env, "")
-    if not api_key:
-        emit({"type": "error", "message": api_key_env + " is not set"})
-        sys.exit(2)
-    body = {
-        "model": model,
-        "stream": True,
-        "messages": [
-            {"role": "system", "content": "You are ClipForge's clipboard agent runtime. Return concise, actionable output."},
-            {"role": "user", "content": config.get("prompt", "")},
-        ],
-    }
-    request = urllib.request.Request(
-        base_url + "/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": "Bearer " + api_key,
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=int(config.get("timeoutSeconds", 120))) as response:
-        for raw in response:
-            line = raw.decode("utf-8", "replace").strip()
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-            chunk = json.loads(data)
-            for choice in chunk.get("choices", []):
-                delta = choice.get("delta", {})
-                content = delta.get("content")
-                if content:
-                    emit({"type": "text", "delta": content})
-                for tool_call in delta.get("tool_calls", []) or []:
-                    function = tool_call.get("function", {}) or {}
-                    emit({
-                        "type": "tool_call",
-                        "name": function.get("name") or tool_call.get("id") or "tool_call",
-                        "argumentsPreview": function.get("arguments") or "",
-                    })
-except urllib.error.HTTPError as error:
-    detail = error.read().decode("utf-8", "replace")
-    emit({"type": "error", "message": "OpenAI-compatible HTTP error", "status": error.code, "detail": detail[:1000]})
-    sys.exit(1)
-except Exception as error:
-    emit({"type": "error", "message": str(error)})
-    sys.exit(1)
-"#
-}
-
-fn handle_standard_agent_event<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    run_id: &str,
-    line: &str,
-) -> bool {
-    let Ok(value) = serde_json::from_str::<Value>(line) else {
-        return false;
-    };
-    match value.get("type").and_then(Value::as_str).unwrap_or("") {
-        "text" => {
-            let text = value
-                .get("delta")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            if text.is_empty() {
-                return true;
-            }
-            append_agent_output(run_id, &text, false);
-            emit_agent_ui_message(app, run_id, "assistant", &text, Some("streaming"));
-            let _ = app.emit(
-                "agent_message_delta",
-                json!({ "runId": run_id, "stream": "stdout", "text": text }),
-            );
-            true
-        }
-        "tool_call" => {
-            let event = AgentAgUiEventPayload {
-                run_id: run_id.to_string(),
-                message_id: format!("assistant:{run_id}"),
-                event_type: "TOOL_CALL".to_string(),
-                role: "assistant".to_string(),
-                text: None,
-                status: Some("running".to_string()),
-                tool_name: value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                arguments_preview: value
-                    .get("argumentsPreview")
-                    .and_then(Value::as_str)
-                    .map(|text| compact_agent_text(text, 800)),
-                result_preview: None,
-                custom_event: None,
-                custom_payload: None,
-                created_at: now_millis().unwrap_or(0),
-            };
-            emit_agent_agui_event(app, event);
-            true
-        }
-        "tool_result" => {
-            let event = AgentAgUiEventPayload {
-                run_id: run_id.to_string(),
-                message_id: format!("assistant:{run_id}"),
-                event_type: "TOOL_RESULT".to_string(),
-                role: "tool".to_string(),
-                text: None,
-                status: Some(
-                    value
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("succeeded")
-                        .to_string(),
-                ),
-                tool_name: value
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                arguments_preview: None,
-                result_preview: value
-                    .get("resultPreview")
-                    .and_then(Value::as_str)
-                    .map(|text| compact_agent_text(text, 800)),
-                custom_event: None,
-                custom_payload: None,
-                created_at: now_millis().unwrap_or(0),
-            };
-            emit_agent_agui_event(app, event);
-            true
-        }
-        "error" => {
-            let message = value
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("OpenAI-compatible provider error");
-            append_agent_output(run_id, message, true);
-            emit_agent_ui_message(app, run_id, "assistant", message, Some("failed"));
-            true
-        }
-        _ => false,
-    }
-}
-
-fn spawn_agent_output_reader<R, T>(
-    app: tauri::AppHandle<R>,
-    run_id: String,
-    stream: &'static str,
-    reader: T,
-    stderr: bool,
-    mode: AgentOutputMode,
-) where
-    R: tauri::Runtime,
-    T: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let reader = BufReader::new(reader);
-        let mut buffered = Vec::<String>::new();
-        let mut last_emit = std::time::Instant::now();
-        let flush = |items: &mut Vec<String>| {
-            if items.is_empty() {
-                return;
-            }
-            let text = items.join("\n");
-            items.clear();
-            append_agent_output(&run_id, &text, stderr);
-            emit_agent_ui_message(&app, &run_id, "assistant", &text, Some("streaming"));
-            let _ = app.emit(
-                "agent_message_delta",
-                json!({ "runId": run_id, "stream": stream, "text": text }),
-            );
-        };
-        for line in reader.lines().map_while(Result::ok) {
-            if matches!(mode, AgentOutputMode::StandardJsonEvents)
-                && !stderr
-                && handle_standard_agent_event(&app, &run_id, &line)
-            {
-                continue;
-            }
-            buffered.push(line);
-            let buffered_len: usize = buffered.iter().map(|item| item.len()).sum();
-            if buffered.len() >= 8
-                || buffered_len >= 2048
-                || last_emit.elapsed() >= Duration::from_millis(120)
-            {
-                flush(&mut buffered);
-                last_emit = std::time::Instant::now();
-            }
-        }
-        flush(&mut buffered);
-    });
-}
-
-fn settings_service_resolve_agent_config() -> Result<AgentConfigPayload, String> {
-    let providers = provider_configs_with_readiness(false);
-    let default_provider_id = configured_default_agent_provider_id();
-    let active_provider_id = default_provider_id
-        .as_deref()
-        .and_then(|default_id| providers.iter().find(|provider| provider.id == default_id))
-        .or_else(|| providers.iter().find(|provider| provider.configured))
-        .or_else(|| providers.first())
-        .map(|provider| provider.id.clone());
-    Ok(AgentConfigPayload {
-        active_provider_id,
-        providers,
-        tools: agent_tool_descriptors(),
-    })
-}
-
-#[tauri::command]
-fn agent_get_config() -> Result<AgentConfigPayload, String> {
-    settings_service_resolve_agent_config()
-}
-
-#[tauri::command]
-fn agent_list_providers() -> Result<Vec<ClipboardAgentProviderConfig>, String> {
-    Ok(provider_configs_with_readiness(false))
-}
-
-#[tauri::command]
-fn agent_check_provider(provider_id: Option<String>) -> Result<AgentProviderReadiness, String> {
-    let candidate = agent_candidate_by_id(provider_id.as_deref())
-        .ok_or_else(|| "AGENT_PROVIDER_NOT_CONFIGURED".to_string())?;
-    Ok(check_agent_candidate(&candidate))
-}
-
-#[tauri::command]
-fn agent_list_provider_models(
-    provider_id: Option<String>,
-) -> Result<AgentProviderModelsPayload, String> {
-    let candidate = agent_candidate_by_id(provider_id.as_deref())
-        .ok_or_else(|| "AGENT_PROVIDER_NOT_CONFIGURED".to_string())?;
-    Ok(check_openai_compatible_models(&candidate))
 }
 
 /// 记录一次设置操作的耗时，超 300ms 写 app log（B6：300ms 性能预算可观测）。
@@ -2433,460 +1003,6 @@ fn set_launch_at_login<R: tauri::Runtime>(
     set_launch_at_login_native(&app, enabled)
 }
 
-#[tauri::command]
-fn agent_detect() -> Result<Vec<AgentProviderReadiness>, String> {
-    Ok(agent_detect_candidates()
-        .iter()
-        .map(check_agent_candidate)
-        .collect())
-}
-
-#[tauri::command]
-fn agent_prepare_run(input: AgentInvocationConfig) -> Result<AgentPreparedRunPayload, String> {
-    let provider = agent_candidate_by_id(input.provider_id.as_deref())
-        .ok_or_else(|| "AGENT_PROVIDER_NOT_CONFIGURED".to_string())?;
-    let now = now_millis()?;
-    let prompt = compose_agent_prompt(&input);
-    let run_id = agent_trace_id("agent_run");
-    let foreground_clip_id = agent_context_foreground_clip_id(&input.context_set);
-    let payload = build_agent_run_payload(
-        run_id.clone(),
-        &provider,
-        &prompt,
-        &input.context_set,
-        AgentRunStatus::WaitingConfirmation.as_str(),
-        now,
-        input.allow_full_content.unwrap_or(false),
-    );
-    let transcript = vec![
-        insert_agent_transcript(&run_id, "run-marker", "prepared", true),
-        insert_agent_transcript(&run_id, "user-message", &input.prompt, true),
-    ];
-    agent_runs()
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(
-            run_id,
-            AgentRunState {
-                payload: payload.clone(),
-                transcript,
-                child: None,
-                foreground_clip_id,
-            },
-        );
-    log_agent_event(
-        "prepared",
-        &payload,
-        json!({ "referenceCount": input.context_set.get("references").and_then(Value::as_array).map(|items| items.len()).unwrap_or(0) }),
-    );
-    Ok(AgentPreparedRunPayload {
-        run: payload,
-        requires_confirmation: true,
-    })
-}
-
-#[tauri::command]
-fn agent_start_run<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    input: AgentStartRunInput,
-) -> Result<AgentRunPayload, String> {
-    if input.confirmed != Some(true) {
-        return Err("AGENT_RUN_CONFIRMATION_REQUIRED".to_string());
-    }
-    let provider = agent_candidate_by_id(input.provider_id.as_deref())
-        .ok_or_else(|| "AGENT_PROVIDER_NOT_CONFIGURED".to_string())?;
-    let run_id = input.run_id.unwrap_or_else(|| agent_trace_id("agent_run"));
-    let foreground_clip_id = agent_context_foreground_clip_id(&input.context_set);
-    if let Some(clip_id) = foreground_clip_id.as_deref() {
-        let runs_ref = agent_runs();
-        let runs = runs_ref.lock().map_err(|error| error.to_string())?;
-        for state in runs.values() {
-            if state.foreground_clip_id.as_deref() != Some(clip_id) {
-                continue;
-            }
-            if state.payload.id == run_id && state.child.is_none() {
-                continue;
-            }
-            if state.payload.id == run_id && state.child.is_some() {
-                return Ok(state.payload.clone());
-            }
-            if state.child.is_some() || is_active_agent_status(&state.payload.status) {
-                return Err(format!("AGENT_FOREGROUND_RUN_EXISTS:{}", state.payload.id));
-            }
-        }
-    }
-    let readiness = check_agent_candidate(&provider);
-    if readiness.status != "ready" {
-        let now = now_millis()?;
-        let mut payload = build_agent_run_payload(
-            run_id.clone(),
-            &provider,
-            &input.prompt,
-            &input.context_set,
-            AgentRunStatus::Failed.as_str(),
-            now,
-            input.allow_full_content.unwrap_or(false),
-        );
-        payload.error_code = Some(readiness.status.clone());
-        payload.error_message = Some(readiness.reason.clone());
-        set_agent_run_status(&mut payload, AgentRunStatus::Failed, now);
-        agent_runs()
-            .lock()
-            .map_err(|error| error.to_string())?
-            .insert(
-                run_id.clone(),
-                AgentRunState {
-                    payload: payload.clone(),
-                    transcript: vec![insert_agent_transcript(
-                        &run_id,
-                        "run-error",
-                        &readiness.reason,
-                        true,
-                    )],
-                    child: None,
-                    foreground_clip_id,
-                },
-            );
-        log_agent_event(
-            "provider-unavailable",
-            &payload,
-            json!({ "readinessStatus": readiness.status }),
-        );
-        emit_agent_ui_message(
-            &app,
-            &run_id,
-            "assistant",
-            &readiness.reason,
-            Some("failed"),
-        );
-        let _ = app.emit("agent_run_error", &payload);
-        return Ok(payload);
-    }
-
-    let invocation = AgentInvocationConfig {
-        provider_id: Some(provider.provider_id.clone()),
-        prompt: input.prompt.clone(),
-        context_set: input.context_set.clone(),
-        allow_full_content: input.allow_full_content,
-    };
-    let prompt = compose_agent_prompt(&invocation);
-    let now = now_millis()?;
-    let output_mode = if provider.kind == "openai-compatible" {
-        AgentOutputMode::StandardJsonEvents
-    } else {
-        AgentOutputMode::PlainText
-    };
-    let mut command = if provider.kind == "openai-compatible" {
-        let mut command = Command::new("python3");
-        command.args(["-u", "-c", openai_compatible_bridge_script()]);
-        command
-    } else {
-        let mut command = Command::new(&provider.command);
-        command.args(&provider.args);
-        command
-    };
-    command
-        .env("PATH", agent_path_env())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("AGENT_SPAWN_FAILED: {error}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        if provider.kind == "openai-compatible" {
-            let bridge_input = json!({
-                "prompt": prompt.clone(),
-                "baseUrl": provider.base_url.as_deref().unwrap_or("https://api.openai.com/v1"),
-                "apiKey": provider.api_key.as_deref().unwrap_or(""),
-                "apiKeyEnv": provider.api_key_ref.as_deref().unwrap_or("CLIPFORGE_AGENT_OPENAI_API_KEY"),
-                "modelId": provider.model_id.as_deref().unwrap_or(""),
-                "timeoutSeconds": provider.timeout_seconds.unwrap_or(120),
-            });
-            stdin
-                .write_all(bridge_input.to_string().as_bytes())
-                .map_err(|error| format!("AGENT_STDIN_FAILED: {error}"))?;
-        } else {
-            stdin
-                .write_all(prompt.as_bytes())
-                .map_err(|error| format!("AGENT_STDIN_FAILED: {error}"))?;
-        }
-    }
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let mut payload = build_agent_run_payload(
-        run_id.clone(),
-        &provider,
-        &prompt,
-        &input.context_set,
-        AgentRunStatus::Streaming.as_str(),
-        now,
-        input.allow_full_content.unwrap_or(false),
-    );
-    payload.started_at = Some(now);
-    set_agent_run_status(&mut payload, AgentRunStatus::Streaming, now);
-    let transcript = vec![
-        insert_agent_transcript(&run_id, "run-marker", "started", true),
-        insert_agent_transcript(&run_id, "user-message", &input.prompt, true),
-    ];
-    agent_runs()
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(
-            run_id.clone(),
-            AgentRunState {
-                payload: payload.clone(),
-                transcript,
-                child: Some(child),
-                foreground_clip_id,
-            },
-        );
-    log_agent_event(
-        "started",
-        &payload,
-        json!({ "allowFullContent": input.allow_full_content.unwrap_or(false) }),
-    );
-    let _ = app.emit("agent_run_started", &payload);
-    emit_agent_ui_message(
-        &app,
-        &run_id,
-        "assistant",
-        &format!("正在运行: {}", payload.command_preview),
-        Some("streaming"),
-    );
-
-    if let Some(stdout) = stdout {
-        spawn_agent_output_reader(
-            app.clone(),
-            run_id.clone(),
-            "stdout",
-            stdout,
-            false,
-            output_mode,
-        );
-    }
-    if let Some(stderr) = stderr {
-        spawn_agent_output_reader(
-            app.clone(),
-            run_id.clone(),
-            "stderr",
-            stderr,
-            true,
-            AgentOutputMode::PlainText,
-        );
-    }
-
-    let app_for_wait = app.clone();
-    let run_id_for_wait = run_id.clone();
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_millis(80));
-        let maybe_finished = {
-            let runs_ref = agent_runs();
-            let mut runs = match runs_ref.lock() {
-                Ok(runs) => runs,
-                Err(_) => return,
-            };
-            let Some(state) = runs.get_mut(&run_id_for_wait) else {
-                return;
-            };
-            let Some(child) = state.child.as_mut() else {
-                return;
-            };
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let now = now_millis().unwrap_or(0);
-                    state.child = None;
-                    let next_status = if status.success() {
-                        AgentRunStatus::Succeeded
-                    } else {
-                        AgentRunStatus::Failed
-                    };
-                    state.payload.exit_code = status.code();
-                    set_agent_run_status(&mut state.payload, next_status, now);
-                    if !status.success() {
-                        state.payload.error_code = Some("AGENT_EXIT_FAILED".to_string());
-                        state.payload.error_message =
-                            Some(format!("provider exited with code {:?}", status.code()));
-                    }
-                    let row_text = format!(
-                        "finished status={} exit={:?}",
-                        state.payload.status,
-                        status.code()
-                    );
-                    state.transcript.push(insert_agent_transcript(
-                        &run_id_for_wait,
-                        "run-marker",
-                        &row_text,
-                        true,
-                    ));
-                    Some(state.payload.clone())
-                }
-                Ok(None) => None,
-                Err(error) => {
-                    let now = now_millis().unwrap_or(0);
-                    state.child = None;
-                    state.payload.error_code = Some("AGENT_WAIT_FAILED".to_string());
-                    state.payload.error_message = Some(error.to_string());
-                    set_agent_run_status(&mut state.payload, AgentRunStatus::Failed, now);
-                    Some(state.payload.clone())
-                }
-            }
-        };
-        if let Some(payload) = maybe_finished {
-            log_agent_event("finished", &payload, json!({ "terminal": true }));
-            emit_agent_ui_message(
-                &app_for_wait,
-                &payload.id,
-                "assistant",
-                if payload.output.is_empty() {
-                    payload.error_message.as_deref().unwrap_or(&payload.status)
-                } else {
-                    &payload.output
-                },
-                Some(&payload.status),
-            );
-            if payload.status == "succeeded" {
-                let _ = app_for_wait.emit("agent_run_finished", &payload);
-            } else {
-                let _ = app_for_wait.emit("agent_run_error", &payload);
-            }
-            let _ = app_for_wait.emit(
-                "agent_transcript_rows",
-                agent_get_transcript(run_id_for_wait.clone()).unwrap_or_default(),
-            );
-            return;
-        }
-    });
-
-    Ok(payload)
-}
-
-fn append_agent_output(run_id: &str, line: &str, stderr: bool) {
-    let runs_ref = agent_runs();
-    let Ok(mut runs) = runs_ref.lock() else {
-        return;
-    };
-    let Some(state) = runs.get_mut(run_id) else {
-        return;
-    };
-    if !state.payload.output.is_empty() {
-        state.payload.output.push('\n');
-    }
-    state.payload.output.push_str(line);
-    if state.payload.output.chars().count() > 60_000 {
-        state.payload.output = state
-            .payload
-            .output
-            .chars()
-            .rev()
-            .take(60_000)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-    }
-    state.payload.updated_at = now_millis().unwrap_or(state.payload.updated_at);
-    log_agent_event(
-        "output-flush",
-        &state.payload,
-        json!({
-            "stream": if stderr { "stderr" } else { "stdout" },
-            "chunkLength": line.chars().count(),
-        }),
-    );
-    state.transcript.push(insert_agent_transcript(
-        run_id,
-        if stderr {
-            "stderr"
-        } else {
-            "assistant-message"
-        },
-        line,
-        false,
-    ));
-}
-
-#[tauri::command]
-fn agent_cancel_run(run_id: String) -> Result<AgentRunPayload, String> {
-    let now = now_millis()?;
-    let runs_ref = agent_runs();
-    let mut runs = runs_ref.lock().map_err(|error| error.to_string())?;
-    let state = runs
-        .get_mut(&run_id)
-        .ok_or_else(|| "AGENT_RUN_NOT_FOUND".to_string())?;
-    if state.child.is_some() {
-        set_agent_run_status(&mut state.payload, AgentRunStatus::Cancelling, now);
-    }
-    if let Some(child) = state.child.as_mut() {
-        let _ = child.kill();
-    }
-    state.child = None;
-    set_agent_run_status(&mut state.payload, AgentRunStatus::Cancelled, now);
-    state.transcript.push(insert_agent_transcript(
-        &run_id,
-        "run-marker",
-        "cancelled",
-        true,
-    ));
-    log_agent_event("cancelled", &state.payload, json!({ "terminal": true }));
-    Ok(state.payload.clone())
-}
-
-#[tauri::command]
-fn agent_get_run(run_id: String) -> Result<AgentRunPayload, String> {
-    agent_runs()
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&run_id)
-        .map(|state| state.payload.clone())
-        .ok_or_else(|| "AGENT_RUN_NOT_FOUND".to_string())
-}
-
-#[tauri::command]
-fn agent_get_transcript(run_id: String) -> Result<Vec<AgentTranscriptRowPayload>, String> {
-    agent_runs()
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(&run_id)
-        .map(|state| state.transcript.clone())
-        .ok_or_else(|| "AGENT_RUN_NOT_FOUND".to_string())
-}
-
-#[tauri::command]
-fn agent_restore_session() -> Result<AgentSessionSnapshotPayload, String> {
-    let runs_ref = agent_runs();
-    let runs = runs_ref.lock().map_err(|error| error.to_string())?;
-    let mut snapshots: Vec<AgentRunSnapshotPayload> = runs
-        .values()
-        .map(|state| AgentRunSnapshotPayload {
-            run: state.payload.clone(),
-            transcript: state.transcript.clone(),
-        })
-        .collect();
-    snapshots.sort_by_key(|snapshot| snapshot.run.created_at);
-    let active_run_id = snapshots
-        .iter()
-        .rev()
-        .find(|snapshot| is_active_agent_status(&snapshot.run.status))
-        .or_else(|| snapshots.last())
-        .map(|snapshot| snapshot.run.id.clone());
-    log_to_file(
-        "info",
-        "agent-runtime",
-        &json!({
-            "event": "restore-session",
-            "runCount": snapshots.len(),
-            "activeRunId": active_run_id.clone(),
-            "redactedFields": ["prompt", "output", "contextSummary", "commandPreview", "transcriptText"],
-        })
-        .to_string(),
-    );
-    Ok(AgentSessionSnapshotPayload {
-        runs: snapshots,
-        active_run_id,
-        restored_at: now_millis()?,
-    })
-}
 
 #[tauri::command]
 fn init_clip_database() -> Result<DbInitPayload, String> {
@@ -3108,7 +1224,7 @@ fn persist_update_state(state: &UpdateCheckState) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn capture_clip_record(
+pub(crate) fn capture_clip_record(
     content: String,
     source_label: Option<String>,
     observed_at: i64,
@@ -3125,7 +1241,7 @@ fn capture_clip_record(
 }
 
 #[tauri::command]
-fn capture_current_clipboard(
+pub(crate) fn capture_current_clipboard(
     source_label: Option<String>,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
@@ -3191,6 +1307,19 @@ fn capture_clip_payload(
     source_label: Option<String>,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
+    capture_clip_payload_with_options(payload, source_label, observed_at, true)
+}
+
+/// 带「是否采集应用上下文」开关的入库实现。application snapshot 内部含 System Events
+/// osascript（本机实测单次 >1s、预算 500ms），只适合后台线程；唤起热路径（open_panel
+/// 显示前补采）必须传 false 跳过，缺失的 source_app 元数据由轮询线程 ≤100ms 后的全量
+/// 采集补齐（同 content_hash 幂等 UPDATE，不产生重复行）。
+fn capture_clip_payload_with_options(
+    payload: clipboard::StandardClipboardPayload,
+    source_label: Option<String>,
+    observed_at: i64,
+    allow_application_context: bool,
+) -> Result<CaptureClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let image_store = clipboard::ImageStore::new(image_storage_path()?);
@@ -3202,7 +1331,8 @@ fn capture_clip_payload(
     let hash = draft.content_hash.clone();
     let primary_format = draft.primary_format.clone();
     let source_label_value = source_label.unwrap_or_else(|| "Clipboard".to_string());
-    let include_application_context = should_capture_application_context();
+    let include_application_context =
+        allow_application_context && should_capture_application_context();
     let application_snapshot = capture_application_snapshot(include_application_context);
     let delayed_external_context = include_application_context
         && application_snapshot.is_some()
@@ -3447,7 +1577,7 @@ fn apply_capture_settings(
     }
 }
 
-fn log_to_file(level: &str, module: &str, message: &str) {
+pub(crate) fn log_to_file(level: &str, module: &str, message: &str) {
     // 非阻塞：只把格式化好的日志行投递给后台写线程，绝不在调用线程（往往是 IPC / 粘贴 /
     // 唤起热路径）上做 fs::OpenOptions + write_all。show/hide/copy/paste 每次都产生若干条
     // 日志，同步落盘是整体「停顿感」的主要来源之一。
@@ -3878,7 +2008,7 @@ fn get_log_stats() -> Result<LogStatsPayload, String> {
 }
 
 #[tauri::command]
-fn query_clip_records(
+pub(crate) fn query_clip_records(
     text: Option<String>,
     bucket: Option<String>,
     limit: Option<i64>,
@@ -4004,7 +2134,7 @@ fn query_clip_records(
 }
 
 #[tauri::command]
-fn search_clip_records(input: SearchClipsRequest) -> Result<QueryClipPayload, String> {
+pub(crate) fn search_clip_records(input: SearchClipsRequest) -> Result<QueryClipPayload, String> {
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let limit = input.limit.unwrap_or(50).clamp(1, 200);
@@ -4123,7 +2253,7 @@ fn push_in_clause(
 }
 
 #[tauri::command]
-fn soft_delete_clip_records(ids: Vec<String>) -> Result<DeleteClipPayload, String> {
+pub(crate) fn soft_delete_clip_records(ids: Vec<String>) -> Result<DeleteClipPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_DELETE_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_DELETE_FAILED", error))?;
@@ -4215,7 +2345,7 @@ fn hard_delete_clip_records(ids: Vec<String>) -> Result<HardDeleteClipPayload, S
 }
 
 #[tauri::command]
-fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String> {
+pub(crate) fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_UPDATE_FAILED", error))?;
@@ -4391,7 +2521,7 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
 }
 
 #[tauri::command]
-fn export_clip_records(include_deleted: Option<bool>) -> Result<ExportClipPayload, String> {
+pub(crate) fn export_clip_records(include_deleted: Option<bool>) -> Result<ExportClipPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_EXPORT_FAILED", error))?;
@@ -4464,7 +2594,7 @@ fn export_clip_text_files<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-fn import_clip_records(items: Vec<ImportClipInput>) -> Result<ImportClipPayload, String> {
+pub(crate) fn import_clip_records(items: Vec<ImportClipInput>) -> Result<ImportClipPayload, String> {
     let conn =
         open_clip_db().map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))?;
     init_schema(&conn).map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))?;
@@ -5343,93 +3473,6 @@ fn reset_accessibility_permission() -> Result<AccessibilityPermissionPayload, St
     reset_accessibility_permission_platform()
 }
 
-#[tauri::command]
-fn start_mcp_server() -> Result<McpStatusPayload, String> {
-    start_mcp_server_with_reason("settings")
-}
-
-fn start_mcp_server_with_reason(reason: &str) -> Result<McpStatusPayload, String> {
-    let child_ref = mcp_child();
-    let mut child_slot = child_ref.lock().map_err(|error| error.to_string())?;
-    if let Some(child) = child_slot.as_mut() {
-        if child
-            .try_wait()
-            .map_err(|error| error.to_string())?
-            .is_none()
-        {
-            return Ok(mcp_status_payload(
-                true,
-                true,
-                "stdio",
-                &format!("MCP server is already running ({reason})"),
-            ));
-        }
-    }
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let child = Command::new(exe)
-        .arg("--mcp")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    *child_slot = Some(child);
-    log_to_file(
-        "info",
-        "mcp",
-        &format!("MCP server started, reason={}", reason),
-    );
-    Ok(mcp_status_payload(
-        true,
-        true,
-        "stdio",
-        &format!("MCP server started ({reason})"),
-    ))
-}
-
-#[tauri::command]
-fn stop_mcp_server() -> Result<McpStatusPayload, String> {
-    let child_ref = mcp_child();
-    let mut child_slot = child_ref.lock().map_err(|error| error.to_string())?;
-    if let Some(child) = child_slot.as_mut() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    *child_slot = None;
-    Ok(mcp_status_payload(
-        true,
-        false,
-        "stdio",
-        "MCP server stopped",
-    ))
-}
-
-#[tauri::command]
-fn get_mcp_status() -> Result<McpStatusPayload, String> {
-    let child_ref = mcp_child();
-    let mut child_slot = child_ref.lock().map_err(|error| error.to_string())?;
-    let running = if let Some(child) = child_slot.as_mut() {
-        child
-            .try_wait()
-            .map_err(|error| error.to_string())?
-            .is_none()
-    } else {
-        false
-    };
-    if !running {
-        *child_slot = None;
-    }
-    Ok(mcp_status_payload(
-        true,
-        running,
-        "stdio",
-        if running {
-            "MCP server running"
-        } else {
-            "MCP server idle"
-        },
-    ))
-}
 
 #[cfg(target_os = "macos")]
 fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> {
@@ -5612,26 +3655,20 @@ fn restore_paste_target_focus() -> String {
 
 #[cfg(target_os = "macos")]
 fn frontmost_app_identity_including_self() -> Option<(String, String)> {
-    let script = r#"
-tell application "System Events"
-  set frontApp to first application process whose frontmost is true
-  return (name of frontApp) & "|" & (bundle identifier of frontApp)
-end tell
-"#;
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let (name, bundle_id) = raw.split_once('|')?;
+    // 原生 NSRunningApplication.frontmostApplication：无 TCC 授权依赖、亚毫秒返回。
+    // 旧实现 fork osascript 查 System Events，本机单次 >1s 且 500ms 预算内必超时，
+    // 导致粘贴目标 bundle 缓存长期为空、粘贴前无法激活目标 App（内容落不进输入框）。
+    use tauri_nspanel::objc2_app_kit::NSWorkspace;
+    let front = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+    let name = front
+        .localizedName()
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let bundle_id = front.bundleIdentifier()?.to_string();
     if bundle_id.trim().is_empty() {
         return None;
     }
-    Some((name.trim().to_string(), bundle_id.trim().to_string()))
+    Some((name.trim().to_string(), bundle_id))
 }
 
 #[cfg(target_os = "macos")]
@@ -5721,75 +3758,165 @@ fn start_focus_prefetch_thread() {
 
 #[cfg(target_os = "macos")]
 fn native_focused_input_bounds() -> Result<NativeBounds, String> {
-    let script = r#"
-tell application "System Events"
-  set frontApp to first application process whose frontmost is true
-  try
-    set frontAppName to name of frontApp
-    if frontAppName is "ClipForge" then return ""
-    set focusedElement to value of attribute "AXFocusedUIElement" of frontApp
-    try
-      set selectedRange to value of attribute "AXSelectedTextRange" of focusedElement
-      set rangeBounds to value of parameterized attribute "AXBoundsForRange" of focusedElement with parameter selectedRange
-      if (count of rangeBounds) is 4 then
-        return (item 1 of rangeBounds as text) & "," & (item 2 of rangeBounds as text) & "," & (item 3 of rangeBounds as text) & "," & (item 4 of rangeBounds as text) & ",focused-caret"
-      end if
-    end try
-    set elementPosition to value of attribute "AXPosition" of focusedElement
-    set elementSize to value of attribute "AXSize" of focusedElement
-    return (item 1 of elementPosition as text) & "," & (item 2 of elementPosition as text) & "," & (item 1 of elementSize as text) & "," & (item 2 of elementSize as text) & ",focused-input"
-  on error
-    return ""
-  end try
-end tell
-"#;
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
-    let raw = String::from_utf8_lossy(&output.stdout);
-    parse_native_bounds_with_source(&raw, "focused-input")
-        .ok_or_else(|| "focused input bounds unavailable".to_string())
-}
+    use core_foundation::base::CFRange;
+    use core_foundation::string::CFString;
+    use core_graphics::geometry::{CGPoint, CGRect, CGSize};
 
-fn parse_native_bounds(raw: &str, source: &'static str) -> Option<NativeBounds> {
-    let parts = raw
-        .trim()
-        .split(',')
-        .filter_map(|part| part.trim().parse::<f64>().ok())
-        .collect::<Vec<_>>();
-    if parts.len() != 4 || parts[2] <= 0.0 || parts[3] <= 0.0 {
-        return None;
-    }
-    Some(NativeBounds {
-        x: parts[0],
-        y: parts[1],
-        width: parts[2],
-        height: parts[3],
-        source,
-    })
-}
+    const AX_ERROR_SUCCESS: i32 = 0;
+    // AXValueType：1=CGPoint 2=CGSize 3=CFRange 4=CGRect（ApplicationServices/AXValue.h）。
+    const AX_VALUE_POINT: usize = 1;
+    const AX_VALUE_SIZE: usize = 2;
+    const AX_VALUE_RANGE: usize = 3;
+    const AX_VALUE_RECT: usize = 4;
 
-fn parse_native_bounds_with_source(
-    raw: &str,
-    fallback_source: &'static str,
-) -> Option<NativeBounds> {
-    let trimmed = raw.trim();
-    let source = if trimmed.ends_with(",focused-caret") {
-        "focused-caret"
-    } else if trimmed.ends_with(",focused-input") {
-        "focused-input"
-    } else {
-        fallback_source
-    };
-    let numeric_part = trimmed
-        .trim_end_matches(",focused-caret")
-        .trim_end_matches(",focused-input");
-    parse_native_bounds(numeric_part, source)
+    // 原生 AX 直查（辅助功能权限已授予）：系统级焦点应用 → 焦点元素 → 选区光标/元素 bounds。
+    // 语义与旧 System Events AppleScript 一致：焦点是自身 → Err；读不到 → Err（上层退光标兜底）。
+    unsafe {
+        let system_wide = AXUIElementCreateSystemWide();
+        if system_wide.is_null() {
+            return Err("AXUIElementCreateSystemWide failed".to_string());
+        }
+        let result = (|| {
+            let mut focused_app: *mut std::os::raw::c_void = std::ptr::null_mut();
+            let status = AXUIElementCopyAttributeValue(
+                system_wide,
+                CFString::new("AXFocusedApplication").as_concrete_TypeRef(),
+                &mut focused_app,
+            );
+            if status != AX_ERROR_SUCCESS || focused_app.is_null() {
+                return Err(format!("AXFocusedApplication failed status={status}"));
+            }
+            let mut pid: i32 = 0;
+            let pid_status = AXUIElementGetPid(focused_app, &mut pid);
+            CFRelease(focused_app);
+            if pid_status != AX_ERROR_SUCCESS {
+                return Err(format!("AXUIElementGetPid failed status={pid_status}"));
+            }
+            if pid == std::process::id() as i32 {
+                return Err("focused app is ClipForge itself".to_string());
+            }
+
+            let mut focused_element: *mut std::os::raw::c_void = std::ptr::null_mut();
+            let element_status = AXUIElementCopyAttributeValue(
+                system_wide,
+                CFString::new("AXFocusedUIElement").as_concrete_TypeRef(),
+                &mut focused_element,
+            );
+            if element_status != AX_ERROR_SUCCESS || focused_element.is_null() {
+                return Err(format!("AXFocusedUIElement failed status={element_status}"));
+            }
+
+            // 1) 选区光标优先（AXSelectedTextRange → AXBoundsForRange → focused-caret）。
+            let mut range_value: *mut std::os::raw::c_void = std::ptr::null_mut();
+            let range_status = AXUIElementCopyAttributeValue(
+                focused_element,
+                CFString::new("AXSelectedTextRange").as_concrete_TypeRef(),
+                &mut range_value,
+            );
+            if range_status == AX_ERROR_SUCCESS && !range_value.is_null() {
+                let mut range = CFRange {
+                    location: 0,
+                    length: 0,
+                };
+                let has_range = AXValueGetValue(
+                    range_value,
+                    AX_VALUE_RANGE,
+                    &mut range as *mut CFRange as *mut std::os::raw::c_void,
+                ) != 0;
+                CFRelease(range_value);
+                if has_range {
+                    let range_param = AXValueCreate(
+                        AX_VALUE_RANGE,
+                        &range as *const CFRange as *const std::os::raw::c_void,
+                    );
+                    if !range_param.is_null() {
+                        let mut bounds_value: *mut std::os::raw::c_void = std::ptr::null_mut();
+                        let bounds_status = AXUIElementCopyParameterizedAttributeValue(
+                            focused_element,
+                            CFString::new("AXBoundsForRange").as_concrete_TypeRef(),
+                            range_param,
+                            &mut bounds_value,
+                        );
+                        CFRelease(range_param);
+                        if bounds_status == AX_ERROR_SUCCESS && !bounds_value.is_null() {
+                            let mut rect = CGRect {
+                                origin: CGPoint { x: 0.0, y: 0.0 },
+                                size: CGSize {
+                                    width: 0.0,
+                                    height: 0.0,
+                                },
+                            };
+                            let has_rect = AXValueGetValue(
+                                bounds_value,
+                                AX_VALUE_RECT,
+                                &mut rect as *mut CGRect as *mut std::os::raw::c_void,
+                            ) != 0;
+                            CFRelease(bounds_value);
+                            if has_rect && rect.size.width > 0.0 && rect.size.height > 0.0 {
+                                return Ok(NativeBounds {
+                                    x: rect.origin.x,
+                                    y: rect.origin.y,
+                                    width: rect.size.width,
+                                    height: rect.size.height,
+                                    source: "focused-caret",
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2) 退到焦点元素整体 bounds（AXPosition + AXSize → focused-input）。
+            let mut position_value: *mut std::os::raw::c_void = std::ptr::null_mut();
+            let position_status = AXUIElementCopyAttributeValue(
+                focused_element,
+                CFString::new("AXPosition").as_concrete_TypeRef(),
+                &mut position_value,
+            );
+            let mut size_value: *mut std::os::raw::c_void = std::ptr::null_mut();
+            let size_status = AXUIElementCopyAttributeValue(
+                focused_element,
+                CFString::new("AXSize").as_concrete_TypeRef(),
+                &mut size_value,
+            );
+            if position_status != AX_ERROR_SUCCESS || size_status != AX_ERROR_SUCCESS {
+                CFRelease(focused_element);
+                return Err(format!(
+                    "AXPosition/AXSize failed status={position_status}/{size_status}"
+                ));
+            }
+            let mut point = CGPoint { x: 0.0, y: 0.0 };
+            let mut size = CGSize {
+                width: 0.0,
+                height: 0.0,
+            };
+            let has_point = AXValueGetValue(
+                position_value,
+                AX_VALUE_POINT,
+                &mut point as *mut CGPoint as *mut std::os::raw::c_void,
+            ) != 0;
+            let has_size = AXValueGetValue(
+                size_value,
+                AX_VALUE_SIZE,
+                &mut size as *mut CGSize as *mut std::os::raw::c_void,
+            ) != 0;
+            CFRelease(position_value);
+            CFRelease(size_value);
+            CFRelease(focused_element);
+            if has_point && has_size && size.width > 0.0 && size.height > 0.0 {
+                return Ok(NativeBounds {
+                    x: point.x,
+                    y: point.y,
+                    width: size.width,
+                    height: size.height,
+                    source: "focused-input",
+                });
+            }
+            Err("focused element bounds unavailable".to_string())
+        })();
+        CFRelease(system_wide);
+        result
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -6476,7 +4603,7 @@ fn image_storage_path() -> Result<PathBuf, String> {
         .join("clipboard-images"))
 }
 
-fn open_clip_db() -> Result<Connection, String> {
+pub(crate) fn open_clip_db() -> Result<Connection, String> {
     let path = database_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -6493,7 +4620,7 @@ fn open_clip_db() -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn init_schema(conn: &Connection) -> Result<(), String> {
+pub(crate) fn init_schema(conn: &Connection) -> Result<(), String> {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap_or(0);
@@ -6738,14 +4865,14 @@ fn detect_payload_kind(content: &str) -> String {
     clipboard::detect_text(content).payload_kind
 }
 
-fn now_millis() -> Result<i64, String> {
+pub(crate) fn now_millis() -> Result<i64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_millis() as i64)
 }
 
-fn analyze_clip(content: &str, source_label: &str) -> ClipAnalysisPayload {
+pub(crate) fn analyze_clip(content: &str, source_label: &str) -> ClipAnalysisPayload {
     let trimmed = content.trim();
     let first_url = trimmed
         .split_whitespace()
@@ -6771,7 +4898,7 @@ fn analyze_clip(content: &str, source_label: &str) -> ClipAnalysisPayload {
     }
 }
 
-fn analysis_kind(analysis: &ClipAnalysisPayload) -> String {
+pub(crate) fn analysis_kind(analysis: &ClipAnalysisPayload) -> String {
     if analysis.url.is_some() {
         "link"
     } else if analysis.is_markdown {
@@ -6792,7 +4919,7 @@ fn analysis_kind_from_payload(payload_kind: &str) -> String {
     .to_string()
 }
 
-fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
+pub(crate) fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
     let mut tags = Vec::new();
     if analysis.url.is_some() {
         tags.push("链接".to_string());
@@ -6838,7 +4965,7 @@ fn upsert_fts(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
+pub(crate) fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
     conn.query_row(
         "SELECT id, content, content_hash, primary_format, available_formats, representations_json,
                 plain_text, search_text, sub_kind, width, height, size, file_types, thumbnail_path,
@@ -7109,7 +5236,7 @@ fn read_command(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-fn suppress_writeback_for(duration: Duration) {
+pub(crate) fn suppress_writeback_for(duration: Duration) {
     WRITEBACK_SUPPRESS.store(true, Ordering::SeqCst);
     thread::spawn(move || {
         thread::sleep(duration);
@@ -9739,6 +7866,31 @@ fn open_panel<R: tauri::Runtime>(
 ) -> Result<PanelTriggerPayload, String> {
     let panel_started = Instant::now();
     let mut panel_last_step = panel_started;
+    // 唤起前同步补采一次剪贴板：快速复制后立刻唤起时，100ms 轮询尚未采到新条目，
+    // 面板首帧先显示旧列表，300ms 后前端 manual 补采才把新条目顶到首行——列表在
+    // 手指落下后才跳动（用户反馈「每次唤起后界面刷新、第一条改变」）。提前到显示前
+    // 采集，首帧即最终态。capture_clip_payload 按 content_hash 幂等（重复调用仅
+    // promote 同一行），轮询线程稍后重采不会产生重复条目。文本读板 ~1ms、图片数十 ms，
+    // 在唤起热路径可接受。
+    if !is_listen_paused() && !should_skip_writeback() {
+        if let Ok(Some(raw_payload)) = clipboard::read_clipboard_payload() {
+            if let Ok(Some(payload)) = apply_capture_settings(raw_payload) {
+                let now = now_millis().unwrap_or(0);
+                if let Err(error) = capture_clip_payload_with_options(
+                    payload,
+                    Some("Clipboard".to_string()),
+                    now,
+                    false,
+                ) {
+                    log_to_file(
+                        "debug",
+                        "panel-open-perf",
+                        &format!("open_panel: pre-show capture skipped: {}", error),
+                    );
+                }
+            }
+        }
+    }
     if let Some(window) = app.get_webview_window("main") {
         maybe_prompt_accessibility_on_first_panel(app, reason);
         log_panel_open_step(
@@ -9935,7 +8087,7 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
 }
 
 /// 面板「固定」状态：true 时失焦/外部点击不自动隐藏（参考 EcoPaste CLIPBOARD_WINDOW_PINNED）。
-static PANEL_PINNED: AtomicBool = AtomicBool::new(false);
+pub(crate) static PANEL_PINNED: AtomicBool = AtomicBool::new(false);
 
 fn is_panel_pinned() -> bool {
     PANEL_PINNED.load(Ordering::Relaxed)
@@ -10931,158 +9083,6 @@ fn get_strategy_for_source(source: &str) -> PanelPositionStrategy {
     }
 }
 
-fn mcp_status_payload(
-    enabled: bool,
-    running: bool,
-    transport: &str,
-    message: &str,
-) -> McpStatusPayload {
-    McpStatusPayload {
-        enabled,
-        running,
-        transport: transport.to_string(),
-        command: format!(
-            "{} --mcp",
-            std::env::current_exe()
-                .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "clipforge".to_string())
-        ),
-        tools: mcp_tool_names()
-            .into_iter()
-            .map(ToString::to_string)
-            .collect(),
-        message: message.to_string(),
-    }
-}
-
-fn mcp_tool_names() -> Vec<&'static str> {
-    mcp_tool_specs().into_iter().map(|tool| tool.name).collect()
-}
-
-pub fn run_mcp_stdio() -> Result<(), String> {
-    let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let line = line.map_err(|error| error.to_string())?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let request: Value = match serde_json::from_str(trimmed) {
-            Ok(value) => value,
-            Err(error) => {
-                writeln!(
-                    stdout,
-                    "{}",
-                    mcp_error(Value::Null, -32700, &error.to_string())
-                )
-                .map_err(|write_error| write_error.to_string())?;
-                stdout.flush().map_err(|error| error.to_string())?;
-                continue;
-            }
-        };
-        if let Some(response) = handle_mcp_request(request) {
-            writeln!(stdout, "{response}").map_err(|error| error.to_string())?;
-            stdout.flush().map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-fn handle_mcp_request(request: Value) -> Option<Value> {
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let method = request
-        .get("method")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if method.starts_with("notifications/") {
-        return None;
-    }
-    let response = match method {
-        "initialize" => Ok(json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "clipforge", "version": "0.1.0" }
-        })),
-        "tools/list" => Ok(json!({ "tools": mcp_tools() })),
-        "tools/call" => {
-            let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
-            call_mcp_tool(params)
-        }
-        _ => Err((-32601, format!("unknown method: {method}"))),
-    };
-    Some(match response {
-        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err((code, message)) => mcp_error_with_data(id, code, &message, method, None),
-    })
-}
-
-fn mcp_error(id: Value, code: i64, message: &str) -> Value {
-    mcp_error_with_data(id, code, message, "protocol", None)
-}
-
-fn mcp_error_with_data(
-    id: Value,
-    code: i64,
-    message: &str,
-    method: &str,
-    tool: Option<&str>,
-) -> Value {
-    let trace_id = mcp_trace_id();
-    json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": {
-            "code": code,
-            "message": message,
-            "data": {
-                "ok": false,
-                "traceId": trace_id,
-                "method": method,
-                "tool": tool.unwrap_or(""),
-                "businessChain": "mcp -> clipforge-service",
-                "hint": mcp_error_hint(message),
-                "expected": "Use tools/list to inspect schemas, then call tools/call with { name: \"clipf.*\", arguments: { ... } }."
-            }
-        }
-    })
-}
-
-fn mcp_trace_id() -> String {
-    now_millis()
-        .map(|ts| format!("mcp_{ts}"))
-        .unwrap_or_else(|_| "mcp_unknown".to_string())
-}
-
-fn mcp_error_hint(message: &str) -> &'static str {
-    if message.contains("requires id") {
-        "Provide a valid ClipForge item id, for example {\"id\":\"clip_xxx\"}."
-    } else if message.contains("requires text or id") {
-        "Provide either text or id. Prefer id when operating on an existing clipboard item."
-    } else if message.contains("requires content") {
-        "Provide content as a string."
-    } else if message.contains("requires ids") {
-        "Provide ids as an array, for example {\"ids\":[\"clip_xxx\"]}."
-    } else if message.contains("unknown tool") {
-        "Use the clipf.* tool namespace. Call tools/list before choosing a tool."
-    } else {
-        "Check the tool input schema and retry with the required arguments."
-    }
-}
-
-fn mcp_tools() -> Vec<Value> {
-    mcp_tool_specs()
-        .into_iter()
-        .map(|tool| {
-            json!({
-                "name": tool.name,
-                "description": tool.description,
-                "inputSchema": (tool.input_schema)(),
-            })
-        })
-        .collect()
-}
-
 fn mcp_tool_specs() -> Vec<McpToolSpec> {
     vec![
         McpToolSpec {
@@ -11567,1284 +9567,3 @@ fn mcp_tool_specs() -> Vec<McpToolSpec> {
     ]
 }
 
-fn mcp_result_envelope(tool: &str, args: &Value, result: Value) -> Result<Value, (i64, String)> {
-    let trace_id = mcp_trace_id();
-    let source = mcp_source_payload(args);
-    Ok(json!({
-        "ok": true,
-        "traceId": trace_id,
-        "tool": tool,
-        "source": source,
-        "businessChain": "mcp -> clipforge-service -> local-store",
-        "permissionDecision": {
-            "decision": "allow",
-            "reason": "local MCP stdio call with explicit tool arguments"
-        },
-        "redactedFields": [],
-        "nextActions": mcp_next_actions(tool),
-        "result": result,
-    }))
-}
-
-fn mcp_source_payload(args: &Value) -> Value {
-    json!({
-        "surface": "mcp",
-        "client": args.get("client").and_then(Value::as_str).unwrap_or("unknown-agent"),
-        "sourceLabel": args.get("sourceLabel").and_then(Value::as_str).unwrap_or("MCP Agent"),
-        "requestId": args.get("requestId").and_then(Value::as_str).unwrap_or("")
-    })
-}
-
-fn json_string_vec(args: &Value, key: &str) -> Option<Vec<String>> {
-    match args.get(key)? {
-        Value::Array(values) => {
-            let out = values
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            if out.is_empty() {
-                None
-            } else {
-                Some(out)
-            }
-        }
-        Value::String(value) => {
-            let out = value
-                .split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            if out.is_empty() {
-                None
-            } else {
-                Some(out)
-            }
-        }
-        _ => None,
-    }
-}
-
-fn mcp_next_actions(tool: &str) -> Vec<&'static str> {
-    match tool {
-        "clipboard.context.get" => vec![
-            "clipboard.content.parse id=<item id>",
-            "clipboard.update id=<item id>",
-        ],
-        "clipboard.context.compose" => vec![
-            "clipboard.content.parse id=<item id>",
-            "clipboard.search text=<keyword>",
-        ],
-        "clipboard.context.live" => vec![
-            "clipboard.context.collectors.list",
-            "clipboard.context.collector.contract",
-            "clipboard.context.collector.debug collectorId=<id>",
-        ],
-        "clipboard.context.collectors.list" => vec!["clipboard.context.collector.contract"],
-        "clipboard.context.collector.contract" => vec!["clipboard.context.collectors.list"],
-        "clipboard.context.collector.debug" => vec!["clipboard.context.live includeExternal=true"],
-        "clipboard.content.parse" => vec![
-            "clipboard.capture content=<text>",
-            "clipboard.search text=<keyword>",
-        ],
-        "clipboard.capture" => vec![
-            "clipboard.context.get id=<returned id>",
-            "clipboard.copy id=<returned id>",
-        ],
-        "clipboard.search" => vec![
-            "clipboard.context.get id=<item id>",
-            "clipboard.copy id=<item id>",
-        ],
-        "clipboard.copy" => vec!["paste in target app", "clipboard.update id=<item id>"],
-        "clipboard.update" => vec!["clipboard.context.get id=<item id>"],
-        "clipboard.editor.context" => vec![
-            "clipboard.editor.preview_patch id=<item id>",
-            "clipboard.editor.suggest_update id=<item id>",
-        ],
-        "clipboard.editor.preview_patch" => {
-            vec!["clipboard.editor.apply_patch id=<item id> confirmed=true"]
-        }
-        "clipboard.editor.apply_patch" | "clipboard.editor.save" => {
-            vec!["clipboard.editor.context id=<item id>"]
-        }
-        "clipboard.editor.render_template" => {
-            vec!["clipboard.editor.preview_patch replacement=<rendered>"]
-        }
-        "clipboard.editor.suggest_update" => vec![
-            "show tagPatch preview",
-            "clipboard.editor.apply_patch confirmed=true",
-        ],
-        "clipboard.plugin.list" => vec!["clipboard.plugin.call pluginId=builtin.open-detail"],
-        "clipboard.plugin.call" => vec![
-            "show action preview",
-            "clipboard.editor.preview_patch id=<item id>",
-        ],
-        "clipboard.agent.run" => vec![
-            "show command preview",
-            "agent_start_run confirmed=true from visible UI",
-        ],
-        "clipf.capture" => vec!["clipf.get id=<returned id>", "clipf.copy id=<returned id>"],
-        "clipf.list" | "clipf.search" => vec!["clipf.get id=<item id>", "clipf.copy id=<item id>"],
-        "clipf.get" => vec!["clipf.copy id=<item id>", "clipf.update id=<item id>"],
-        "clipf.analyze" => vec![
-            "clipf.capture content=<text>",
-            "clipf.search text=<keyword>",
-        ],
-        "clipf.copy" => vec![
-            "paste in target app",
-            "clipf.update id=<item id> copied=true",
-        ],
-        _ => vec!["clipf.list limit=9"],
-    }
-}
-
-fn builtin_plugin_manifests_value() -> Value {
-    json!([
-        {
-            "id": "builtin.open-link",
-            "name": "打开链接",
-            "version": "1.0.0",
-            "runtime": "builtin",
-            "actions": [{ "id": "open-link", "type": "openUrl", "label": "打开链接" }],
-            "matching": {
-                "priority": 900,
-                "contentKinds": ["link"],
-                "payloadKinds": ["link", "html", "markdown", "text"],
-                "urlPatterns": ["^https?://"]
-            },
-            "permissions": {
-                "requiresUserConfirmation": false,
-                "allowFullContent": false,
-                "allowOpenUrl": true,
-                "allowOpenApp": false,
-                "allowRunCommand": false
-            },
-            "compatibility": { "app": ">=0.1.0", "contextSchema": 1 }
-        },
-        {
-            "id": "builtin.open-detail",
-            "name": "进入详情",
-            "version": "1.0.0",
-            "runtime": "builtin",
-            "actions": [{ "id": "open-detail", "type": "navigateDetail", "label": "进入详情" }],
-            "matching": {
-                "priority": 100,
-                "contentKinds": ["text", "markdown", "code", "command", "attachment", "json", "chart", "table"]
-            },
-            "permissions": {
-                "requiresUserConfirmation": false,
-                "allowFullContent": false,
-                "allowOpenUrl": false,
-                "allowOpenApp": false,
-                "allowRunCommand": false
-            },
-            "compatibility": { "app": ">=0.1.0", "contextSchema": 1 }
-        }
-    ])
-}
-
-fn first_safe_http_url(content: &str) -> Option<String> {
-    content
-        .split_whitespace()
-        .map(|part| {
-            part.trim_matches(|ch: char| {
-                matches!(ch, '<' | '>' | '"' | '\'' | ')' | ']' | ',' | ';')
-            })
-        })
-        .find(|part| part.starts_with("http://") || part.starts_with("https://"))
-        .map(ToString::to_string)
-}
-
-fn mcp_content_response(result: Value) -> Result<Value, (i64, String)> {
-    Ok(json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string_pretty(&result).map_err(|error| (-32000, error.to_string()))?
-        }]
-    }))
-}
-
-fn capture_context_url(context: &CaptureContextPayload) -> Option<&str> {
-    context
-        .application_context
-        .as_ref()
-        .and_then(|value| value.get("browser"))
-        .and_then(|browser| browser.get("url"))
-        .and_then(Value::as_str)
-}
-
-fn mcp_context_reference(item: &ClipItemPayload, include_content: bool) -> Value {
-    json!({
-        "id": format!("clip:{}", item.id),
-        "source": "clip",
-        "clipId": item.id,
-        "title": item.analysis.title,
-        "summary": compact_agent_text(&item.analysis.summary, 320),
-        "payloadKind": item.payload_kind,
-        "primaryUrl": item.analysis.url.as_deref().or_else(|| capture_context_url(&item.capture_context)),
-        "textPreview": compact_agent_text(&item.content, if include_content { 2000 } else { 240 }),
-        "tags": item.tags,
-        "sourceAppName": item.source_app.as_ref().map(|source| source.name.clone()),
-        "applicationContext": item.capture_context.application_context,
-        "permissionScope": if include_content { "current-content" } else { "summary" },
-        "contentLength": item.content.chars().count(),
-        "captureContext": {
-            "schemaVersion": item.capture_context.schema_version,
-            "surface": item.capture_context.surface,
-            "sourceLabel": item.capture_context.source_label,
-            "sourceApp": item.capture_context.source_app,
-            "observedAt": item.capture_context.observed_at,
-            "primaryFormat": item.capture_context.primary_format,
-            "availableFormats": item.capture_context.available_formats,
-            "applicationContext": item.capture_context.application_context,
-            "collectors": item.capture_context.collectors,
-            "environment": item.capture_context.environment,
-        },
-        "provenance": {
-            "agentContext": item.agent_context,
-            "source": item.source,
-            "bucket": item.bucket,
-        }
-    })
-}
-
-fn mcp_context_snapshot(item: &ClipItemPayload, include_content: bool) -> Value {
-    let trace_id = mcp_trace_id();
-    log_to_file(
-        "info",
-        "mcp-context-snapshot",
-        &format!(
-            "traceId={} contextSchema=ClipboardContextSnapshot.v1 clipId={} payloadKind={} includeContent={} contentLength={} tagCount={} sourceApp={}",
-            trace_id,
-            item.id,
-            item.payload_kind,
-            include_content,
-            item.content.chars().count(),
-            item.tags.len(),
-            item.source_app
-                .as_ref()
-                .map(|source| source.name.as_str())
-                .unwrap_or("")
-        ),
-    );
-    json!({
-        "schemaVersion": 1,
-        "clip": mcp_context_reference(item, include_content),
-        "permission": {
-            "includeContent": include_content,
-            "redactedFields": if include_content { Vec::<&str>::new() } else { vec!["content"] },
-            "decision": if include_content { "user-authorized-content" } else { "summary-only" }
-        },
-        "trace": {
-            "traceId": trace_id,
-            "contextSchema": "ClipboardContextSnapshot.v1"
-        }
-    })
-}
-
-#[cfg(test)]
-mod context_snapshot_tests {
-    use super::*;
-
-    fn test_clip(id: &str, content: &str, payload_kind: &str) -> ClipItemPayload {
-        ClipItemPayload {
-            id: id.to_string(),
-            content: content.to_string(),
-            content_hash: format!("hash-{id}"),
-            created_at: 1,
-            updated_at: 1,
-            last_seen_at: 1,
-            last_copied_at: None,
-            source: "clipboard".to_string(),
-            kind: payload_kind.to_string(),
-            bucket: "history".to_string(),
-            favorite: false,
-            tags: vec!["AI".to_string(), "work".to_string()],
-            copy_count: 0,
-            analysis: ClipAnalysisPayload {
-                source_name: "Example".to_string(),
-                badge: "TXT".to_string(),
-                title: format!("Title {id}"),
-                summary: "Safe summary".to_string(),
-                url: content
-                    .split_whitespace()
-                    .find(|part| part.starts_with("https://"))
-                    .map(ToString::to_string),
-                host: Some("example.com".to_string()),
-                is_markdown: payload_kind == "markdown",
-            },
-            payload_kind: payload_kind.to_string(),
-            primary_format: if payload_kind == "markdown" {
-                "text/markdown"
-            } else {
-                "text/plain"
-            }
-            .to_string(),
-            available_formats: vec!["text/plain".to_string()],
-            representations: vec![ClipboardRepresentationPayload {
-                format: "text/plain".to_string(),
-                storage: "inline".to_string(),
-                content: Some(content.to_string()),
-                file_name: None,
-                size: Some(content.len() as i64),
-                hash: Some(format!("hash-{id}")),
-                preferred: true,
-            }],
-            plain_text: content.to_string(),
-            search_text: Some(content.to_string()),
-            sub_kind: None,
-            width: None,
-            height: None,
-            size: Some(content.len() as i64),
-            file_types: if payload_kind == "file" {
-                Some("txt".to_string())
-            } else {
-                None
-            },
-            thumbnail_path: None,
-            image_file: None,
-            is_sensitive: false,
-            capture_context: CaptureContextPayload {
-                schema_version: 1,
-                surface: "unit-test".to_string(),
-                source_label: "Unit Test".to_string(),
-                source_app: Some(json!({ "name": "Safari", "bundleId": "com.apple.Safari" })),
-                application_context: Some(json!({
-                    "kind": "browser",
-                    "browser": { "url": "https://example.com", "title": "Example" }
-                })),
-                collectors: json!({ "status": "complete", "results": [], "diagnostics": [] }),
-                observed_at: 1,
-                primary_format: "text/plain".to_string(),
-                available_formats: vec!["text/plain".to_string()],
-                environment: json!({ "platform": "test" }),
-            },
-            metadata: json!({ "note": "metadata is safe" }),
-            agent_context: json!({ "generatedBy": "agent", "conversationId": "conv-test" }),
-            source_app: Some(SourceAppPayload {
-                name: "Safari".to_string(),
-                bundle_id: "com.apple.Safari".to_string(),
-                executable_path: "/Applications/Safari.app".to_string(),
-                icon_base64: None,
-            }),
-        }
-    }
-
-    #[test]
-    fn context_snapshot_covers_source_link_markdown_file_and_long_text() {
-        let link = test_clip("link", "https://example.com/a?b=1", "link");
-        let link_snapshot = mcp_context_snapshot(&link, false);
-        assert_eq!(link_snapshot["schemaVersion"], 1);
-        assert_eq!(link_snapshot["clip"]["sourceAppName"], "Safari");
-        assert_eq!(
-            link_snapshot["clip"]["primaryUrl"],
-            "https://example.com/a?b=1"
-        );
-        assert_eq!(
-            link_snapshot["clip"]["applicationContext"]["browser"]["url"],
-            "https://example.com"
-        );
-        assert_eq!(
-            link_snapshot["clip"]["captureContext"]["sourceApp"]["name"],
-            "Safari"
-        );
-        assert_eq!(
-            link_snapshot["clip"]["captureContext"]["environment"]["platform"],
-            "test"
-        );
-        assert_eq!(link_snapshot["clip"]["tags"][0], "AI");
-        assert_eq!(
-            link_snapshot["clip"]["provenance"]["agentContext"]["generatedBy"],
-            "agent"
-        );
-        assert_eq!(link_snapshot["permission"]["decision"], "summary-only");
-        assert_eq!(link_snapshot["permission"]["redactedFields"][0], "content");
-
-        let markdown = test_clip("markdown", "# Heading\n\n- item", "markdown");
-        let markdown_snapshot = mcp_context_snapshot(&markdown, false);
-        assert_eq!(markdown_snapshot["clip"]["payloadKind"], "markdown");
-        assert_eq!(
-            markdown_snapshot["clip"]["captureContext"]["primaryFormat"],
-            "text/plain"
-        );
-
-        let file = test_clip("file", "/Users/example/report.txt", "file");
-        let file_snapshot = mcp_context_snapshot(&file, false);
-        assert_eq!(file_snapshot["clip"]["payloadKind"], "file");
-        assert_eq!(file_snapshot["clip"]["contentLength"], 25);
-
-        let long_content = "0123456789 ".repeat(80);
-        let long_item = test_clip("long", &long_content, "text");
-        let summary_snapshot = mcp_context_snapshot(&long_item, false);
-        let full_snapshot = mcp_context_snapshot(&long_item, true);
-        assert!(
-            summary_snapshot["clip"]["textPreview"]
-                .as_str()
-                .unwrap()
-                .chars()
-                .count()
-                <= 240
-        );
-        assert_eq!(
-            full_snapshot["permission"]["decision"],
-            "user-authorized-content"
-        );
-        assert!(full_snapshot["permission"]["redactedFields"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-        assert!(
-            full_snapshot["clip"]["textPreview"]
-                .as_str()
-                .unwrap()
-                .chars()
-                .count()
-                > summary_snapshot["clip"]["textPreview"]
-                    .as_str()
-                    .unwrap()
-                    .chars()
-                    .count()
-        );
-    }
-}
-
-fn parse_clipboard_content_candidates(content: &str) -> Value {
-    let trimmed = content.trim();
-    let mut candidates = Vec::new();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        candidates.push(json!({ "type": "url", "value": trimmed, "confidence": "high" }));
-    }
-    if trimmed.starts_with('/') || trimmed.starts_with("~/") || trimmed.contains(":\\") {
-        candidates.push(json!({ "type": "file-path", "value": compact_agent_text(trimmed, 500), "confidence": "medium" }));
-    }
-    if serde_json::from_str::<Value>(trimmed).is_ok() {
-        candidates.push(json!({ "type": "json", "value": "valid-json", "confidence": "high" }));
-    }
-    for line in trimmed.lines().take(80) {
-        let line_trimmed = line.trim();
-        if line_trimmed.starts_with("```") {
-            candidates.push(
-                json!({ "type": "code-block", "value": "markdown-fence", "confidence": "medium" }),
-            );
-        }
-        if line_trimmed.starts_with("http://") || line_trimmed.starts_with("https://") {
-            candidates.push(json!({ "type": "url", "value": line_trimmed, "confidence": "high" }));
-        }
-        if line_trimmed.contains("Error:")
-            || line_trimmed.contains("Exception")
-            || line_trimmed.contains("Traceback")
-        {
-            candidates.push(json!({ "type": "error-log", "value": compact_agent_text(line_trimmed, 500), "confidence": "high" }));
-        }
-        if line_trimmed.starts_with('$')
-            || line_trimmed.starts_with("pnpm ")
-            || line_trimmed.starts_with("cargo ")
-            || line_trimmed.starts_with("npm ")
-        {
-            candidates.push(json!({ "type": "command", "value": compact_agent_text(line_trimmed, 500), "confidence": "medium" }));
-        }
-        if line_trimmed.contains("](") && line_trimmed.contains(')') {
-            candidates.push(json!({ "type": "markdown-link", "value": compact_agent_text(line_trimmed, 500), "confidence": "medium" }));
-        }
-    }
-    candidates.dedup_by(|a, b| a == b);
-    json!({
-        "schemaVersion": 1,
-        "contentLength": content.chars().count(),
-        "candidates": candidates,
-        "permissionDecision": {
-            "decision": "parse-only",
-            "reason": "Candidates are metadata only and are not executed."
-        }
-    })
-}
-
-fn json_tags_arg(args: &Value, fallback: &[String]) -> Vec<String> {
-    args.get("tags")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|tag| {
-                    tag.trim()
-                        .trim_start_matches('#')
-                        .trim_start_matches("tag:")
-                        .trim()
-                        .to_string()
-                })
-                .filter(|tag| !tag.is_empty())
-                .take(12)
-                .collect::<Vec<_>>()
-        })
-        .filter(|tags| !tags.is_empty())
-        .unwrap_or_else(|| fallback.to_vec())
-}
-
-fn editor_context_snapshot(item: &ClipItemPayload, args: &Value) -> Value {
-    let content = args
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or(&item.content);
-    let tags = json_tags_arg(args, &item.tags);
-    let session_id = args
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .unwrap_or("mcp-editor-session");
-    let draft_version = args
-        .get("draftVersion")
-        .and_then(Value::as_i64)
-        .unwrap_or(1);
-    json!({
-        "schemaVersion": 1,
-        "clip": {
-            "id": item.id,
-            "kind": item.kind,
-            "payloadKind": item.payload_kind,
-            "title": item.analysis.title,
-            "summary": item.analysis.summary,
-            "tags": item.tags,
-            "sourceAppName": item.source_app.as_ref().map(|source| source.name.clone())
-        },
-        "editor": {
-            "sessionId": session_id,
-            "draftVersion": draft_version,
-            "format": item.payload_kind,
-            "selectionText": "",
-            "contentLength": content.chars().count(),
-            "tags": tags,
-            "suggestedTags": extract_hash_tags(content),
-            "dirty": content != item.content || tags != item.tags
-        },
-        "runtime": {
-            "platform": std::env::consts::OS,
-            "route": "/clip/$clipId",
-            "activeView": "detail",
-            "panelPinned": PANEL_PINNED.load(Ordering::Relaxed)
-        },
-        "permission": {
-            "exposeFullContent": false,
-            "redactedFields": ["previousClipboard.content", "sourceApp.executablePath"]
-        }
-    })
-}
-
-fn extract_hash_tags(content: &str) -> Vec<String> {
-    let mut tags = Vec::new();
-    for word in content.split_whitespace() {
-        let tag = word
-            .trim_matches(|ch: char| !ch.is_alphanumeric() && ch != '#' && ch != '_' && ch != '-')
-            .trim_start_matches('#')
-            .trim();
-        if tag.is_empty()
-            || tag.len() > 32
-            || tags
-                .iter()
-                .any(|current: &String| current.eq_ignore_ascii_case(tag))
-        {
-            continue;
-        }
-        tags.push(tag.to_string());
-        if tags.len() >= 12 {
-            break;
-        }
-    }
-    tags
-}
-
-fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
-    let name = params
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| (-32602, "tools/call requires name".to_string()))?;
-    let args = params
-        .get("arguments")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    log_to_file(
-        "info",
-        "mcp",
-        &format!(
-            "tool_call start tool={} source={} requestId={}",
-            name,
-            args.get("sourceLabel")
-                .and_then(Value::as_str)
-                .unwrap_or("MCP Agent"),
-            args.get("requestId").and_then(Value::as_str).unwrap_or("")
-        ),
-    );
-    let result = match name {
-        "clipboard.capture" | "clipf.capture" => {
-            let source_label = format!(
-                "{} via {}",
-                args.get("sourceLabel")
-                    .and_then(Value::as_str)
-                    .unwrap_or("MCP Agent"),
-                name
-            );
-            let payload = if let Some(content) = args.get("content").and_then(Value::as_str) {
-                capture_clip_record(
-                    content.to_string(),
-                    Some(source_label),
-                    now_millis().map_err(|error| (-32000, error))?,
-                )
-                .map_err(|error| (-32000, error))?
-            } else {
-                capture_current_clipboard(
-                    Some(source_label),
-                    now_millis().map_err(|error| (-32000, error))?,
-                )
-                .map_err(|error| (-32000, error))?
-            };
-            serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipboard.context.get" | "clipf.get" => {
-            let id = args
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, format!("{name} requires id")))?;
-            let conn = open_clip_db().map_err(|error| (-32000, error))?;
-            init_schema(&conn).map_err(|error| (-32000, error))?;
-            let item = load_clip(&conn, id).map_err(|error| (-32000, error))?;
-            if name == "clipboard.context.get" {
-                mcp_context_snapshot(
-                    &item,
-                    args.get("includeContent")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                )
-            } else {
-                serde_json::to_value(item).map_err(|error| (-32000, error.to_string()))?
-            }
-        }
-        "clipboard.context.live" => context_collectors::capture_live_context(
-            args.get("collectorId").and_then(Value::as_str),
-            args.get("includeExternal")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        )
-        .map_err(|error| (-32000, error))?,
-        "clipboard.context.collectors.list" => context_collectors::list_collectors(),
-        "clipboard.context.collector.contract" => context_collectors::collector_catalog(),
-        "clipboard.context.collector.debug" => {
-            let collector_id =
-                args.get("collectorId")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        (
-                            -32602,
-                            "clipboard.context.collector.debug requires collectorId".to_string(),
-                        )
-                    })?;
-            context_collectors::debug_collector(collector_id, args.get("fixture").cloned())
-                .map_err(|error| (-32000, error))?
-        }
-        "clipboard.context.compose" => {
-            let conn = open_clip_db().map_err(|error| (-32000, error))?;
-            init_schema(&conn).map_err(|error| (-32000, error))?;
-            let mode = args
-                .get("mode")
-                .and_then(Value::as_str)
-                .unwrap_or("current");
-            let include_content = args
-                .get("includeContent")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let items = if let Some(ids) = args.get("ids").and_then(Value::as_array) {
-                ids.iter()
-                    .filter_map(Value::as_str)
-                    .filter_map(|id| load_clip(&conn, id).ok())
-                    .collect::<Vec<_>>()
-            } else if mode == "favorites" {
-                search_clip_records(SearchClipsRequest {
-                    text: None,
-                    bucket: Some("all".to_string()),
-                    kinds: None,
-                    types: None,
-                    tags: None,
-                    file_extensions: None,
-                    favorite: Some(true),
-                    limit: args.get("limit").and_then(Value::as_i64).or(Some(20)),
-                    cursor: None,
-                })
-                .map_err(|error| (-32000, error))?
-                .items
-            } else if mode == "search-result" {
-                search_clip_records(SearchClipsRequest {
-                    text: args
-                        .get("text")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string),
-                    bucket: Some("all".to_string()),
-                    kinds: None,
-                    types: json_string_vec(&args, "types"),
-                    tags: json_string_vec(&args, "tags"),
-                    file_extensions: json_string_vec(&args, "fileExtensions"),
-                    favorite: args.get("favorite").and_then(Value::as_bool),
-                    limit: args.get("limit").and_then(Value::as_i64).or(Some(20)),
-                    cursor: None,
-                })
-                .map_err(|error| (-32000, error))?
-                .items
-            } else {
-                query_clip_records(
-                    None,
-                    Some("all".to_string()),
-                    args.get("limit").and_then(Value::as_i64).or(Some(20)),
-                    None,
-                )
-                .map_err(|error| (-32000, error))?
-                .items
-            };
-            json!({
-                "contextSet": {
-                    "id": agent_trace_id("mcp_context"),
-                    "mode": mode,
-                    "references": items.iter().map(|item| mcp_context_reference(item, include_content)).collect::<Vec<_>>(),
-                    "createdAt": now_millis().unwrap_or(0),
-                    "updatedAt": now_millis().unwrap_or(0),
-                    "limits": {
-                        "maxItems": args.get("limit").and_then(Value::as_i64).unwrap_or(20),
-                        "maxCharsPerItem": if include_content { 2000 } else { 240 },
-                        "maxTotalChars": if include_content { 12000 } else { 4000 }
-                    }
-                }
-            })
-        }
-        "clipf.list" => {
-            let payload = query_clip_records(
-                None,
-                args.get("bucket")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                args.get("limit").and_then(Value::as_i64),
-                args.get("cursor")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-            )
-            .map_err(|error| (-32000, error))?;
-            serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipboard.search" | "clipf.search" => {
-            let payload = search_clip_records(SearchClipsRequest {
-                text: args
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                bucket: args
-                    .get("bucket")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                kinds: json_string_vec(&args, "kinds").or_else(|| {
-                    json_string_vec(&args, "kind")
-                        .map(|values| values.into_iter().take(1).collect())
-                }),
-                types: json_string_vec(&args, "types").or_else(|| {
-                    json_string_vec(&args, "type")
-                        .map(|values| values.into_iter().take(1).collect())
-                }),
-                tags: json_string_vec(&args, "tags").or_else(|| {
-                    json_string_vec(&args, "tag").map(|values| values.into_iter().take(1).collect())
-                }),
-                file_extensions: json_string_vec(&args, "fileExtensions")
-                    .or_else(|| json_string_vec(&args, "fileExtension"))
-                    .or_else(|| json_string_vec(&args, "file")),
-                favorite: args.get("favorite").and_then(Value::as_bool),
-                limit: args.get("limit").and_then(Value::as_i64),
-                cursor: args
-                    .get("cursor")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-            })
-            .map_err(|error| (-32000, error))?;
-            serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipboard.content.parse" => {
-            let content = if let Some(content) = args.get("content").and_then(Value::as_str) {
-                content.to_string()
-            } else if let Some(id) = args.get("id").and_then(Value::as_str) {
-                let conn = open_clip_db().map_err(|error| (-32000, error))?;
-                init_schema(&conn).map_err(|error| (-32000, error))?;
-                load_clip(&conn, id)
-                    .map_err(|error| (-32000, error))?
-                    .content
-            } else {
-                return Err((
-                    -32602,
-                    "clipboard.content.parse requires content or id".to_string(),
-                ));
-            };
-            parse_clipboard_content_candidates(&content)
-        }
-        "clipf.analyze" => {
-            let content = args
-                .get("content")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipf.analyze requires content".to_string()))?;
-            let source_label = args
-                .get("sourceLabel")
-                .and_then(Value::as_str)
-                .unwrap_or("MCP");
-            let analysis = analyze_clip(content, source_label);
-            let payload = AnalyzeClipPayload {
-                content: content.to_string(),
-                kind: analysis_kind(&analysis),
-                tags: default_tags(&analysis, content),
-                analysis,
-            };
-            serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipboard.copy" | "clipf.copy" => {
-            let conn = open_clip_db().map_err(|error| (-32000, error))?;
-            init_schema(&conn).map_err(|error| (-32000, error))?;
-            let item = if let Some(id) = args.get("id").and_then(Value::as_str) {
-                load_clip(&conn, id).map_err(|error| (-32000, error))?
-            } else {
-                let text = args
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| (-32602, format!("{name} requires text or id")))?
-                    .to_string();
-                capture_clip_record(
-                    text,
-                    Some(format!(
-                        "{} via {}",
-                        args.get("sourceLabel")
-                            .and_then(Value::as_str)
-                            .unwrap_or("MCP Agent"),
-                        name
-                    )),
-                    now_millis().map_err(|error| (-32000, error))?,
-                )
-                .map_err(|error| (-32000, error))?
-                .item
-            };
-            let paste_mode = args.get("pasteMode").and_then(Value::as_str);
-            suppress_writeback_for(Duration::from_millis(450));
-            let write_result = clipboard::write_clipboard_item(&item, paste_mode)
-                .map_err(|error| (-32000, error))?;
-            let updated = update_clip_record(UpdateClipInput {
-                id: item.id.clone(),
-                content: None,
-                tags: None,
-                bucket: None,
-                favorite: None,
-                pinned: None,
-                note: None,
-                metadata: None,
-                agent_context: None,
-                copied: Some(true),
-            })
-            .map_err(|error| (-32000, error))?;
-            json!({
-                "ok": true,
-                "id": updated.id,
-                "primaryFormat": updated.primary_format,
-                "availableFormats": updated.available_formats,
-                "writtenFormats": write_result.written_formats,
-                "chars": write_result.text_fallback.chars().count()
-            })
-        }
-        "clipboard.update" | "clipf.update" => {
-            let id = args
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipf.update requires id".to_string()))?
-                .to_string();
-            let payload = update_clip_record(UpdateClipInput {
-                id,
-                content: args
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                tags: args.get("tags").and_then(Value::as_array).map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(ToString::to_string)
-                        .collect()
-                }),
-                bucket: args
-                    .get("bucket")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                favorite: args.get("favorite").and_then(Value::as_bool),
-                pinned: args.get("pinned").and_then(Value::as_bool),
-                note: args
-                    .get("note")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                metadata: args.get("metadata").cloned(),
-                agent_context: args.get("agentContext").cloned(),
-                copied: None,
-            })
-            .map_err(|error| (-32000, error))?;
-            serde_json::to_value(payload).map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipboard.skill.list" => json!({
-            "skills": [],
-            "source": "frontend-local-private-skills",
-            "message": "Private skill drafts stay in the visible frontend store unless the user confirms native persistence."
-        }),
-        "clipboard.skill.save_draft" => {
-            let name = args.get("name").and_then(Value::as_str).ok_or_else(|| {
-                (
-                    -32602,
-                    "clipboard.skill.save_draft requires name".to_string(),
-                )
-            })?;
-            let prompt_template = args
-                .get("promptTemplate")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    (
-                        -32602,
-                        "clipboard.skill.save_draft requires promptTemplate".to_string(),
-                    )
-                })?;
-            json!({
-                "draft": {
-                    "id": agent_trace_id("skill_draft"),
-                    "name": name,
-                    "description": args.get("description").and_then(Value::as_str).unwrap_or(""),
-                    "promptTemplatePreview": compact_agent_text(prompt_template, 500),
-                    "requiresUserConfirmation": true
-                }
-            })
-        }
-        "clipboard.skill.run" => {
-            let context_set = args.get("contextSet").cloned().unwrap_or_else(|| json!({}));
-            let trimmed_references = context_set
-                .get("references")
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .take(20)
-                        .map(|item| {
-                            json!({
-                                "id": item.get("id").and_then(Value::as_str).unwrap_or(""),
-                                "source": item.get("source").and_then(Value::as_str).unwrap_or(""),
-                                "clipId": item.get("clipId").and_then(Value::as_str).unwrap_or(""),
-                                "title": item.get("title").and_then(Value::as_str).unwrap_or(""),
-                                "summary": compact_agent_text(item.get("summary").and_then(Value::as_str).unwrap_or(""), 320),
-                                "payloadKind": item.get("payloadKind").and_then(Value::as_str).unwrap_or(""),
-                                "primaryUrl": item.get("primaryUrl").and_then(Value::as_str).unwrap_or(""),
-                                "tags": item.get("tags").cloned().unwrap_or_else(|| json!([])),
-                                "permissionScope": item.get("permissionScope").and_then(Value::as_str).unwrap_or("summary"),
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            json!({
-                "status": "prepared",
-                "skillId": args.get("skillId").and_then(Value::as_str).unwrap_or(""),
-                "trimmedContextSet": {
-                    "id": context_set.get("id").and_then(Value::as_str).unwrap_or(""),
-                    "mode": context_set.get("mode").and_then(Value::as_str).unwrap_or("current"),
-                    "references": trimmed_references,
-                    "limits": context_set.get("limits").cloned().unwrap_or_else(|| json!({}))
-                },
-                "permissionDecision": {
-                    "decision": "trimmed-summary-only",
-                    "reason": "clipboard.skill.run must carry explicit context scope; full content is not forwarded through MCP skill run."
-                },
-                "requiresUserConfirmation": true
-            })
-        }
-        "clipboard.plugin.list" => json!({
-            "manifests": builtin_plugin_manifests_value(),
-            "source": "builtin",
-            "capabilitySchema": 1
-        }),
-        "clipboard.plugin.call" => {
-            let plugin_id = args
-                .get("pluginId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    (
-                        -32602,
-                        "clipboard.plugin.call requires pluginId".to_string(),
-                    )
-                })?;
-            let action_id =
-                args.get("actionId")
-                    .and_then(Value::as_str)
-                    .unwrap_or(match plugin_id {
-                        "builtin.open-link" => "open-link",
-                        "builtin.open-detail" => "open-detail",
-                        _ => "",
-                    });
-            let loaded_item = if let Some(id) = args.get("id").and_then(Value::as_str) {
-                let conn = open_clip_db().map_err(|error| (-32000, error))?;
-                init_schema(&conn).map_err(|error| (-32000, error))?;
-                Some(load_clip(&conn, id).map_err(|error| (-32000, error))?)
-            } else {
-                None
-            };
-            let content = args
-                .get("content")
-                .and_then(Value::as_str)
-                .map(ToString::to_string)
-                .or_else(|| loaded_item.as_ref().map(|item| item.content.clone()))
-                .unwrap_or_default();
-            let explicit_target = args.get("target").and_then(Value::as_str);
-            match plugin_id {
-                "builtin.open-link" => {
-                    let target = explicit_target
-                        .map(ToString::to_string)
-                        .or_else(|| {
-                            loaded_item
-                                .as_ref()
-                                .and_then(|item| item.analysis.url.clone())
-                        })
-                        .or_else(|| first_safe_http_url(&content))
-                        .ok_or_else(|| {
-                            (
-                                -32602,
-                                "builtin.open-link requires a safe http(s) target".to_string(),
-                            )
-                        })?;
-                    json!({
-                        "status": "resolved",
-                        "pluginId": plugin_id,
-                        "actionId": action_id,
-                        "action": {
-                            "type": "openUrl",
-                            "target": target,
-                            "requiresUserConfirmation": false
-                        },
-                        "execution": "preview-only",
-                        "parsedTargets": parse_clipboard_content_candidates(&content)
-                    })
-                }
-                "builtin.open-detail" => json!({
-                    "status": "resolved",
-                    "pluginId": plugin_id,
-                    "actionId": action_id,
-                    "action": {
-                        "type": "navigateDetail",
-                        "clipId": loaded_item.as_ref().map(|item| item.id.clone()).unwrap_or_default(),
-                        "requiresUserConfirmation": false
-                    },
-                    "execution": "preview-only",
-                    "parsedTargets": parse_clipboard_content_candidates(&content)
-                }),
-                _ => return Err((-32602, format!("unsupported pluginId: {plugin_id}"))),
-            }
-        }
-        "clipboard.agent.run" => {
-            let prompt = args
-                .get("prompt")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipboard.agent.run requires prompt".to_string()))?
-                .to_string();
-            let prepared = agent_prepare_run(AgentInvocationConfig {
-                provider_id: args
-                    .get("providerId")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string),
-                prompt,
-                context_set: args.get("contextSet").cloned().unwrap_or_else(|| json!({})),
-                allow_full_content: args.get("allowFullContent").and_then(Value::as_bool),
-            })
-            .map_err(|error| (-32000, error))?;
-            json!({
-                "status": "prepared",
-                "run": prepared.run,
-                "requiresConfirmation": prepared.requires_confirmation,
-                "execution": "not-started"
-            })
-        }
-        "clipboard.editor.context" => {
-            let id = args
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, "clipboard.editor.context requires id".to_string()))?;
-            let conn = open_clip_db().map_err(|error| (-32000, error))?;
-            init_schema(&conn).map_err(|error| (-32000, error))?;
-            let item = load_clip(&conn, id).map_err(|error| (-32000, error))?;
-            editor_context_snapshot(&item, &args)
-        }
-        "clipboard.editor.preview_patch" => {
-            let id = args.get("id").and_then(Value::as_str).ok_or_else(|| {
-                (
-                    -32602,
-                    "clipboard.editor.preview_patch requires id".to_string(),
-                )
-            })?;
-            let conn = open_clip_db().map_err(|error| (-32000, error))?;
-            init_schema(&conn).map_err(|error| (-32000, error))?;
-            let item = load_clip(&conn, id).map_err(|error| (-32000, error))?;
-            let replacement = args
-                .get("replacement")
-                .and_then(Value::as_str)
-                .unwrap_or(&item.content);
-            json!({
-                "preview": {
-                    "id": agent_trace_id("editor_patch"),
-                    "sessionId": args.get("sessionId").and_then(Value::as_str).unwrap_or("mcp-editor-session"),
-                    "draftVersion": args.get("draftVersion").and_then(Value::as_i64).unwrap_or(1),
-                    "contentPatch": {
-                        "type": "replaceDocument",
-                        "beforeChars": item.content.chars().count(),
-                        "afterChars": replacement.chars().count(),
-                        "preview": compact_agent_text(replacement, 1200)
-                    },
-                    "tagPatch": args.get("tagPatch").cloned().unwrap_or_else(|| json!({ "add": [], "remove": [], "keep": item.tags })),
-                    "writesDatabase": false
-                }
-            })
-        }
-        "clipboard.editor.apply_patch" | "clipboard.editor.save" => {
-            if name == "clipboard.editor.apply_patch"
-                && args.get("confirmed").and_then(Value::as_bool) != Some(true)
-            {
-                return Err((
-                    -32602,
-                    "clipboard.editor.apply_patch requires confirmed=true".to_string(),
-                ));
-            }
-            let id = args
-                .get("id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, format!("{name} requires id")))?
-                .to_string();
-            let content = args
-                .get(if name == "clipboard.editor.apply_patch" {
-                    "replacement"
-                } else {
-                    "content"
-                })
-                .and_then(Value::as_str)
-                .ok_or_else(|| (-32602, format!("{name} requires content")))?;
-            let conn = open_clip_db().map_err(|error| (-32000, error))?;
-            init_schema(&conn).map_err(|error| (-32000, error))?;
-            let item = load_clip(&conn, &id).map_err(|error| (-32000, error))?;
-            let saved = save_editor_draft(SaveEditorDraftInput {
-                id,
-                session_id: args
-                    .get("sessionId")
-                    .and_then(Value::as_str)
-                    .unwrap_or("mcp-editor-session")
-                    .to_string(),
-                draft_version: args
-                    .get("draftVersion")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(1),
-                content: content.to_string(),
-                tags: json_tags_arg(&args, &item.tags),
-                metadata: Some(json!({ "surface": "mcp", "tool": name })),
-            })
-            .map_err(|error| (-32000, error))?;
-            serde_json::to_value(saved).map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipboard.editor.render_template" => {
-            let mut rendered = args
-                .get("template")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    (
-                        -32602,
-                        "clipboard.editor.render_template requires template".to_string(),
-                    )
-                })?
-                .to_string();
-            if let Some(vars) = args.get("variables").and_then(Value::as_object) {
-                for (key, value) in vars {
-                    let token = format!("{{{{{key}}}}}");
-                    let replacement = value
-                        .as_str()
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| value.to_string());
-                    rendered = rendered.replace(&token, &replacement);
-                }
-            }
-            json!({ "rendered": rendered, "chars": rendered.chars().count() })
-        }
-        "clipboard.editor.suggest_update" => {
-            let id = args.get("id").and_then(Value::as_str).ok_or_else(|| {
-                (
-                    -32602,
-                    "clipboard.editor.suggest_update requires id".to_string(),
-                )
-            })?;
-            let conn = open_clip_db().map_err(|error| (-32000, error))?;
-            init_schema(&conn).map_err(|error| (-32000, error))?;
-            let item = load_clip(&conn, id).map_err(|error| (-32000, error))?;
-            let content = args
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or(&item.content);
-            let suggested = extract_hash_tags(content);
-            json!({
-                "suggestion": {
-                    "id": agent_trace_id("editor_suggestion"),
-                    "sessionId": args.get("sessionId").and_then(Value::as_str).unwrap_or("mcp-editor-session"),
-                    "draftVersion": args.get("draftVersion").and_then(Value::as_i64).unwrap_or(1),
-                    "contentPatch": Value::Null,
-                    "tagPatch": {
-                        "add": suggested.iter().filter(|tag| !item.tags.iter().any(|current| current.eq_ignore_ascii_case(tag))).collect::<Vec<_>>(),
-                        "remove": [],
-                        "keep": item.tags
-                    },
-                    "rationale": "从当前草稿中的 #tag 生成待确认 tagPatch；不直接写入数据库。",
-                    "riskLevel": "low"
-                }
-            })
-        }
-        "clipf.delete" => {
-            let ids = args
-                .get("ids")
-                .and_then(Value::as_array)
-                .ok_or_else(|| (-32602, "clipf.delete requires ids".to_string()))?
-                .iter()
-                .filter_map(Value::as_str)
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            serde_json::to_value(soft_delete_clip_records(ids).map_err(|error| (-32000, error))?)
-                .map_err(|error| (-32000, error.to_string()))?
-        }
-        "clipf.export" => serde_json::to_value(
-            export_clip_records(args.get("includeDeleted").and_then(Value::as_bool))
-                .map_err(|error| (-32000, error))?,
-        )
-        .map_err(|error| (-32000, error.to_string()))?,
-        "clipf.import" => {
-            let items_value = args
-                .get("items")
-                .cloned()
-                .ok_or_else(|| (-32602, "clipf.import requires items".to_string()))?;
-            let items = serde_json::from_value::<Vec<ImportClipInput>>(items_value)
-                .map_err(|error| (-32602, error.to_string()))?;
-            serde_json::to_value(import_clip_records(items).map_err(|error| (-32000, error))?)
-                .map_err(|error| (-32000, error.to_string()))?
-        }
-        // ===== B3：MCP 设置/Agent 工具分发（复用统一 SettingsService 底层函数；实现见 settings_service/mcp.rs）=====
-        "clipf.settings.get" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
-        "clipf.settings.patch" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
-        "clipf.settings.replace" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
-        "clipf.settings.reset" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
-        "clipf.agent.providers" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
-        "clipf.agent.check" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
-        "clipf.agent.models" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
-        _ => return Err((-32602, format!("unknown tool: {name}"))),
-    };
-    log_to_file(
-        "info",
-        "mcp",
-        &format!(
-            "tool_call success tool={} source={} requestId={}",
-            name,
-            args.get("sourceLabel")
-                .and_then(Value::as_str)
-                .unwrap_or("MCP Agent"),
-            args.get("requestId").and_then(Value::as_str).unwrap_or("")
-        ),
-    );
-    mcp_content_response(mcp_result_envelope(name, &args, result)?)
-}

@@ -167,6 +167,36 @@ fn extract_uri_or_path(command_line: &str, flags: &[&str]) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn capture_macos(include_application_context: bool) -> Option<CapturedApplicationContext> {
+    // 快速路径（热路径）：只要前台应用身份。原生 NSWorkspace 无授权依赖、亚毫秒返回；
+    // 旧实现无条件跑 osascript（500ms 预算）本机常态 300-500ms。扩展上下文仅显式要求时走 osascript。
+    if !include_application_context {
+        if let Some((name, bundle_id)) = crate::frontmost_app_identity_including_self() {
+            // icon/executablePath 快速路径不取（入库 badge 非必需，省文件 IO）。
+            let source_app = SourceAppInfo {
+                icon_base64: None, executable_path: String::new(),
+                name: name.clone(), bundle_id,
+            };
+            let kind = classify_application(&source_app.bundle_id, &name);
+            // 字段与下方 osascript 完整路径同构；AX 项置空（来源 macos.workspace）。
+            let context = json!({
+                "schemaVersion": 1, "kind": kind, "confidence": "best-effort",
+                "application": {
+                    "name": source_app.name, "bundleId": source_app.bundle_id,
+                    "executablePath": null, "processId": null,
+                },
+                "window": { "title": null, "source": "macos.workspace" },
+                "document": null, "workspace": null, "browser": null,
+                "terminal": null, "selection": null,
+                "signals": ["frontmost-application"],
+                "permissions": { "accessibility": "not-used", "automation": "not-requested" },
+            });
+            return Some(CapturedApplicationContext {
+                source_app,
+                application_context: context,
+            });
+        }
+        // 原生快照失败时退回 osascript 完整路径，不静默降级为 None。
+    }
     let raw = match run_osascript(
         r#"
 tell application "System Events"
