@@ -8404,6 +8404,17 @@ fn configure_platform_quick_panel<R: tauri::Runtime>(window: &tauri::WebviewWind
             );
             panel.set_hides_on_deactivate(false);
             panel.set_works_when_modal(true);
+            // 关键:utilityWindow 面板的 orderOut 默认带 WindowServer 端整窗淡出
+            // (animationBehavior 默认继承 default→utility 语义),系统按自身 ~500ms
+            // 时间线淡出后才真正 unmap——窗口滞留 CGWindowList ~630ms,既是「隐藏慢」
+            // 的窗口服务器侧真相,也会拦截点击。设 none 后 orderOut 即同步 unmap,
+            // Swift 探针实测:169ms→36ms;视觉淡出仍由我们自己的 110ms alpha 动画负责。
+            unsafe {
+                let _: () = tauri_nspanel::objc2::msg_send![
+                    panel.as_panel(),
+                    setAnimationBehavior: 2i64 // NSWindowAnimationBehaviorNone
+                ];
+            }
             log_to_file(
                 "info",
                 "panel-focus",
@@ -8528,7 +8539,9 @@ fn hide_panel_with_native_fade<R: tauri::Runtime>(
     // 收尾延时 = 动画时长 + 25ms 余量（animator 提交到 WindowServer 合成有间隔）。
     // 用确定性定时替代轮询：定时线程只 sleep 后回主线程，不碰 AppKit 属性，
     // 也不受主线程繁忙影响；代际号校验保证 show 抢占时安全弃权。
-    const FINISH_DELAY_MS: u64 = FADE_MS + 25;
+    // 收尾延迟:alpha 动画 110ms + 8ms 合成器提交余量。animationBehavior=none 后
+    // orderOut 是同步 unmap,无系统淡出可撞车;25ms 旧余量纯增加列表滞留时间。
+    const FINISH_DELAY_MS: u64 = FADE_MS + 8;
     let app_for_dispatch = app.clone();
     let _ = app_for_dispatch.run_on_main_thread(move || {
         let fade_started = std::time::Instant::now();
@@ -8563,7 +8576,13 @@ fn hide_panel_with_native_fade<R: tauri::Runtime>(
                     return; // 已被 show/新淡出接管
                 }
                 panel_for_finish.hide();
-                panel_for_finish.set_alpha_value(1.0);
+                // alpha 复位推迟到下个 runloop tick:orderOut 同一 runloop tick 内
+                // setAlphaValue(1.0) 会让带动画行为的窗口以 alpha=1 复活回闪
+                // (Kimi 评审指出的机制);behavior=none 后保险仍保留。
+                let panel_for_alpha = panel_for_finish.clone();
+                let _ = app_for_closure.run_on_main_thread(move || {
+                    panel_for_alpha.set_alpha_value(1.0);
+                });
                 PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
                 let _ = app_for_closure.emit("clipforge://panel-fade-finished", "hide");
                 log_to_file(

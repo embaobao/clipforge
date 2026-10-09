@@ -62,6 +62,11 @@ export function VirtualList<T extends { id: string }>({
   const lastScrollPerfAtRef = useRef(0);
   const lastAutoScrollActiveIdRef = useRef<string | null>(null);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  // 滚动期毛玻璃降级(见 index.css .material[data-scrolling]):28px backdrop blur
+  // 在透明窗口上每帧滚动都触发整屏重采样(唤起后首秒滚动顿挫的主因),
+  // 滚动中把祖先 .material 的 blur 降到 6px,停滚 160ms 后恢复。
+  const scrollBlurNodeRef = useRef<HTMLElement | null>(null);
+  const scrollBlurTimerRef = useRef<number | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
 
   // WKWebView 的怪癖：列表滚动、指针原地不动时，滚动停下后不会对新位置的行重新发
@@ -104,6 +109,22 @@ export function VirtualList<T extends { id: string }>({
     [reemitHoverAtLastPointer],
   );
 
+  // 毛玻璃降级:首次滚动时定位祖先 .material 节点并打 data-scrolling,停滚 160ms 摘除。
+  const setScrollBlurActive = useCallback((active: boolean) => {
+    if (active) {
+      if (!scrollBlurNodeRef.current) {
+        scrollBlurNodeRef.current = ref.current?.closest<HTMLElement>(".material") ?? null;
+      }
+      if (scrollBlurNodeRef.current && scrollBlurNodeRef.current.dataset.scrolling !== "true") {
+        scrollBlurNodeRef.current.dataset.scrolling = "true";
+      }
+    }
+    if (scrollBlurTimerRef.current) window.clearTimeout(scrollBlurTimerRef.current);
+    scrollBlurTimerRef.current = window.setTimeout(() => {
+      delete scrollBlurNodeRef.current?.dataset.scrolling;
+    }, 160);
+  }, []);
+
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -124,6 +145,8 @@ export function VirtualList<T extends { id: string }>({
     return () => {
       if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
       if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+      if (scrollBlurTimerRef.current) window.clearTimeout(scrollBlurTimerRef.current);
+      delete scrollBlurNodeRef.current?.dataset.scrolling;
     };
   }, []);
 
@@ -224,6 +247,7 @@ export function VirtualList<T extends { id: string }>({
           });
         }
         setFeedback(true);
+        setScrollBlurActive(true);
         if (hasMore && !isLoadingMore && node.scrollHeight - node.scrollTop - node.clientHeight < itemHeight * 6) {
           onEndReached?.();
         }

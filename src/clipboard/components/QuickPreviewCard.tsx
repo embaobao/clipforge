@@ -47,8 +47,11 @@ export function QuickPreviewCard({ item, onPaste, onCopyPlain, onFavorite, onClo
     ...(imageSrc ? [dims, sizeKb].filter(Boolean) : [`${content.length.toLocaleString()} 字符`]),
   ].join(" · ");
   return (
-    <div className="row-in mx-2 mt-2 rounded-[10px] bg-black/[0.03] p-3.5 dark:bg-white/[0.05]">
-      <div className="flex items-start gap-3">
+    // max-h 70% + 内部滚动:长内容(长文本/markdown)此前无高度约束,卡片被撑满整个
+    // 面板——内容自身不可滚、列表被挤到不可见,滚轮落在卡片上无所作为(「空格预览
+    // 不能滚动」)。限高后内容区滚动,列表保留可见高度照常滚轮。
+    <div className="row-in mx-2 mt-2 flex max-h-[70%] flex-col overflow-hidden rounded-[10px] bg-black/[0.03] p-3.5 dark:bg-white/[0.05]">
+      <div className="thin-scroll flex min-h-0 items-start gap-3 overflow-y-auto">
         <div className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] bg-black/[0.05] dark:bg-white/[0.08]">
           <span className="text-muted-foreground">{kindIcon(item.payloadKind)}</span>
         </div>

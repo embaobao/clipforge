@@ -12,6 +12,7 @@
     3. 幻影 blur 自愈：面板显示中激活其他 app（无用户输入）→ 1.5s 后面板应仍在
 阈值：show/hide ≤ --threshold-ms（默认 180ms）；幻影 blur 必须存活。
 任一不达标退出码 1，可挂 CI / pnpm test:perf-panel。
+退出码：0=通过；1=有指标不达标（回归）；2=环境/实例不可用；3=屏幕锁定（环境假性失败，非回归）。
 
 依赖：macOS 系统 python3（自带 pyobjc：Quartz）。热键从实例的 settings.json5 读取。
 """
@@ -106,6 +107,32 @@ def panel_bounds(pid: int):
         if window.get("kCGWindowOwnerPID") == pid and window.get("kCGWindowName") == "ClipForge":
             return window.get("kCGWindowBounds")
     return None
+
+
+def screen_locked() -> bool:
+    """macOS 锁屏检测（ioreg IOConsoleLocked，系统级权威源）。
+
+    教训（2026-10-09）：锁屏时 CGEventPost 的 HID 级注入不会派发到会话，
+    探针所有轮次必然超时——曾据此误判「系统热键派发故障，需注销重登」，
+    实际解锁即恢复。锁屏是环境状态不是 app 回归，必须与真实失败区分。
+    """
+    try:
+        out = subprocess.run(
+            ["ioreg", "-r", "-d", "1", "-k", "IOConsoleLocked"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout
+        if '"IOConsoleLocked" = Yes' in out:
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return False
+
+
+LOCK_HINT = (
+    "屏幕已锁定：CGEvent HID 级注入在锁屏会话不派发，所有轮次必然超时——\n"
+    "  这是环境假性失败，不是 app 回归。请解锁屏幕后重跑；\n"
+    "  长时间无人值守跑探针前先 `caffeinate -dimsu &` 或关闭自动锁屏。"
+)
 
 
 def tap_hotkey(vk: int, flags: int) -> float:
@@ -228,6 +255,10 @@ def main() -> int:
     parser.add_argument("--skip-phantom", action="store_true", help="跳过幻影 blur 自愈检查")
     args = parser.parse_args()
 
+    if screen_locked():
+        print(f"✗ 环境预检失败（退出码 3，非回归）\n{LOCK_HINT}")
+        return 3
+
     pid = app_pid(args.sandbox)
     shortcut = read_shortcut(args.sandbox)
     vk, flags = shortcut_to_vk(shortcut)
@@ -241,6 +272,11 @@ def main() -> int:
 
     show_lat, hide_lat = [], []
     for round_no in range(1, args.rounds + 1):
+        # 每轮复检：长跑期间可能被自动锁屏（2026-10-09 实际发生过：编译后机器自动锁，
+        # 探针在锁屏会话里跑出全超时假性失败）。锁了立即停，不污染统计。
+        if screen_locked():
+            print(f"\n✗ round {round_no} 前检测到屏幕锁定，中止（退出码 3，非回归）\n{LOCK_HINT}")
+            return 3
         # show: 确保收起 → 注入 → 等出现
         if panel_window_id(pid) is not None:
             tap_hotkey(vk, flags)

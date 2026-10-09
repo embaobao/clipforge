@@ -191,6 +191,15 @@
   animation: row-in var(--motion-surface) var(--ease-enter) both;
 }
 
+/* 滚动性能:透明窗口 + backdrop-filter(28px blur)下,列表每帧滚动都会强制
+   WindowServer 重采 backdrop(整屏 blur 重栅格化),表现为滚动头 1s 顿挫。
+   滚动中临时把 blur 半径降到 6px(视觉仍在,alpha 0.88 本就近乎不透),
+   滚动停止 160ms 后恢复;data-scrolling 由 VirtualList onScroll 增删。 */
+.material[data-scrolling="true"] {
+  -webkit-backdrop-filter: blur(6px) saturate(180%);
+  backdrop-filter: blur(6px) saturate(180%);
+}
+
 /* 细滚动条 */
 .thin-scroll::-webkit-scrollbar {
   width: 6px;
