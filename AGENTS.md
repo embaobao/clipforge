@@ -54,6 +54,15 @@ pnpm tauri dev
 
 日常调试一律使用 `pnpm dev:sandbox`（CLIPFORGE_DATA_DIR 数据目录隔离 + CLIPFORGE_DEV_OPEN=panel 自动开面板）：沙箱实例的设置/数据库/日志/图片缓存全部写到独立目录，不与 `/Applications/ClipForge.app` 稳定版共享数据；稳定版常驻并持有全局快捷键，沙箱的快捷键注册失败只记 warning 不崩溃，面板经 dev-open 入口打开。稳定版只由 `pnpm tauri build` 后显式部署更新，开发构建不触碰它。
 
+面板性能回归用固化的自动探针（不用手工 CGEvent 注入+截图比对）：
+
+```bash
+pnpm test:perf-panel              # 测稳定版：show/hide 延迟、幻影 blur 自愈、动画可打断、透明鬼影
+pnpm test:perf-panel -- --sandbox # 测沙箱实例（快捷键自动读该实例 settings.json5）
+```
+
+阈值：show/hide 端到端 ≤180ms；任一不达标退出码 1，可挂 CI。注意：探针依赖 CGEvent 注入全局热键，**锁屏/息屏状态下必然全部超时**，跑之前确认机器处于解锁状态。
+
 如果因为本机依赖、权限或系统安全策略无法完成，必须在交付说明中明确写出未验证项。
 
 ## 开发规范（可维护性）

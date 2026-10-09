@@ -15,7 +15,7 @@
     "test:interaction": "bash scripts/run-interaction-tests.sh",
     "test:boundaries": "node scripts/verify-hot-path.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-file-size.mjs && node scripts/verify-surface-boundaries.mjs",
     "test:perf": "node scripts/perf-smoke.mjs",
- "verify:settings:visual": "node scripts/verify-settings-visual.mjs",
+    "verify:settings:visual": "node scripts/verify-settings-visual.mjs",
     "verify:motion": "node scripts/verify-motion-tokens.mjs",
     "build:manual": "node scripts/generate-release-manual.mjs",
     "build": "bash ./scripts/build-mac-release.sh",
@@ -25,7 +25,8 @@
     "motion:render:intro": "pnpm --filter @clipforge/remotion-workbench render:intro",
     "motion:render:onboarding": "pnpm --filter @clipforge/remotion-workbench render:onboarding",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:perf-panel": "/usr/bin/python3 scripts/perf-panel-probe.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
