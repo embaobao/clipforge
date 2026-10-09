@@ -2,10 +2,10 @@
 
 ## 1. Bug 1：软删条目重采撞 UNIQUE 索引丢数据（必修）
 
-- [ ] 1.1 lib.rs:1366-1375 查重 SELECT 去掉 `AND deleted_at IS NULL`（含中文注释：为什么必须查软删行）
-- [ ] 1.2 lib.rs:1376-1387 命中行 UPDATE 增加 `deleted_at = NULL`（复活语义，注释对齐 import 路径 lib.rs:5153-5156）
+- [x] 1.1 lib.rs:1366-1375 查重 SELECT 去掉 `AND deleted_at IS NULL`（含中文注释：为什么必须查软删行）
+- [x] 1.2 lib.rs:1376-1387 命中行 UPDATE 增加 `deleted_at = NULL`（复活语义，注释对齐 import 路径 lib.rs:5153-5156）
 - [ ] 1.3 实机验证：复制文本 → 删除条目 → 再复制同文本 → 条目复活 + 日志 `status=promoted` + 无 CLIP_CAPTURE 报错（沙箱 `pnpm dev:sandbox`）
-- [ ] 1.4 回归：活行重复复制仍 promote 不新增行；轮询重复复制不新增行；不同内容正常 INSERT
+- [x] 1.4 回归：活行重复复制仍 promote 不新增行；轮询重复复制不新增行；不同内容正常 INSERT
 
 ## 2. 缺口 2：watcher 短路导致重复复制不置顶（评估后定）
 
