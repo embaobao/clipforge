@@ -30,6 +30,7 @@ mod clipboard;
 mod context_collector_runtime;
 mod context_collector_system;
 mod context_collectors;
+mod diagnostics;
 mod mcp;
 mod settings_service;
 
@@ -1975,6 +1976,13 @@ fn cleanup_app_logs() -> Result<String, String> {
         cfg.error_retention_days,
         cfg.detail_retention_days
     ))
+}
+
+/// 调试模式指标快照（按需采集，无后台线程）：内存/数据/日志健康度/uptime。
+/// 设置页调试区打开时前端 1s 轮询；没人看时零开销。
+#[tauri::command]
+fn diagnostics_get_metrics() -> Result<Value, String> {
+    Ok(diagnostics::collect_metrics())
 }
 
 #[tauri::command]
@@ -7847,6 +7855,7 @@ pub fn run() {
             get_clipforge_config_path,
             get_clipforge_database_path,
             get_clipforge_data_stats,
+            diagnostics_get_metrics,
             get_image_storage_path,
             update_clipforge_settings,
             append_app_log,
