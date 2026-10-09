@@ -36,6 +36,18 @@ export function usePanelBlurHide({
       hideTimer = null;
       setPanelClosing(false);
     };
+    let unlisteners: Array<() => void> = [];
+    // Rust 幻影 blur 自愈信号:后台 app 无用户输入抢 key 时,Rust 已夺回 key 并抢占
+    // 在途淡出。此处把随后到达的 blur 当宽限事件忽略——否则前端 60ms 后的 hide
+    // invoke 会发起一次真淡出,把刚夺回的面板又藏掉(用户看到「失焦后透明消失」)。
+    appWindow
+      .listen("clipforge://panel-focus-guard", () => {
+        panelFocusGraceUntilRef.current = Date.now() + 600;
+      })
+      .then((unlisten) => {
+        unlisteners.push(unlisten);
+      })
+      .catch((error) => logAppError("warn", "Register focus guard listener failed", String(error)));
     appWindow
       .onFocusChanged(({ payload: focused }) => {
         if (focused) {
@@ -85,7 +97,10 @@ export function usePanelBlurHide({
         }, 60);
       })
       .catch((error) => logAppError("warn", "Register focus listener failed", String(error)));
-    return cancelHide;
+    return () => {
+      cancelHide();
+      unlisteners.forEach((unlisten) => unlisten());
+    };
   }, [enabled, setPanelClosing, setIsPanelEntering, panelFocusGraceUntilRef, blurHideInFlightRef]);
 }
 

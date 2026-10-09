@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from "react";
-import { Bot, ClipboardList, Heart, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Heart, Search, Trash2 } from "lucide-react";
 import type { TranslationKey } from "../../i18n";
 
 export type OnboardingStepKey = "welcome" | "accessibility" | "capture" | "shortcut" | "tour";
@@ -95,11 +95,6 @@ export const FEATURE_CARDS: Array<{ icon: typeof ClipboardList; titleKey: Transl
     icon: Trash2,
     titleKey: "settings.onboarding.feature.trash.title",
     bodyKey: "settings.onboarding.feature.trash.body",
-  },
-  {
-    icon: Bot,
-    titleKey: "settings.onboarding.feature.agent.title",
-    bodyKey: "settings.onboarding.feature.agent.body",
   },
 ];
 

@@ -697,6 +697,44 @@ export function SettingsApp() {
     void copySettingsSnippet(tab.label, tab.content);
   }
   const activeSection = SECTIONS.find((item) => item.key === section) ?? SECTIONS[0];
+  // configStatus 降级为 transient 提示:写入/加载成功后 2.5s 自动清除。旧行为是它在
+  // stickyStatusPrimary 兜底链里永久常驻,停在内容区左下角像一张不消失的 toast
+  // (用户截图反馈丑陋)。清除后主位回落当前 section 名;失败态由 status/
+  // saveFeedback 承担,不依赖 configStatus。
+  const configStatusClearTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!state.configStatus) return;
+    if (configStatusClearTimer.current) window.clearTimeout(configStatusClearTimer.current);
+    configStatusClearTimer.current = window.setTimeout(() => {
+      setState((prev) => (prev.configStatus ? { ...prev, configStatus: "" } : prev));
+    }, 2500);
+    return () => {
+      if (configStatusClearTimer.current) window.clearTimeout(configStatusClearTimer.current);
+    };
+  }, [state.configStatus]);
+  // 底部常驻信息栏数据:版本 + 渠道 + 更新状态徽标(替代原来只有一行版本号,
+  // 用户要求「单独区域常驻显示状态/版本信息」)。徽标 detail 供悬停查看
+  // 最近检查时间与错误码/错误信息。数据全部来自 state.update(Rust 权威)。
+  const updateBadge = (() => {
+    const update = state.update;
+    if (!update) {
+      return { tone: "idle" as const, label: tr("settings.update.badge.unknown"), detail: "" };
+    }
+    const checkedAt = update.lastCheckedAt ? new Date(update.lastCheckedAt).toLocaleString() : "";
+    if (update.status === "checking") {
+      return { tone: "checking" as const, label: tr("settings.update.badge.checking"), detail: checkedAt };
+    }
+    if (update.status === "failed") {
+      const detail = [checkedAt, update.errorCode, update.errorMessage].filter(Boolean).join(" · ");
+      return { tone: "error" as const, label: tr("settings.update.badge.failed"), detail };
+    }
+    if (update.availableVersion) {
+      const detail = [checkedAt, `${update.currentVersion} → ${update.availableVersion}`].filter(Boolean).join(" · ");
+      return { tone: "available" as const, label: tr("settings.update.badge.available"), detail };
+    }
+    return { tone: "ok" as const, label: tr("settings.update.badge.upToDate"), detail: checkedAt };
+  })();
+  const versionMeta = state.update?.channel ?? "stable";
   const stickyStatusPrimary =
     state.status || state.saveFeedback.message || state.configStatus || tr(activeSection.labelKey);
   // 次要位只展示与主位不同的保存反馈，避免左右两列渲染同一句状态。
@@ -765,6 +803,8 @@ export function SettingsApp() {
           setSection(typedSection);
         }}
         version={`ClipForge v${state.update?.currentVersion ?? "0.1.0"}`}
+        versionMeta={versionMeta}
+        updateBadge={updateBadge}
         statusBar={
           <SettingsStickyStatusBar
             primary={stickyStatusPrimary}

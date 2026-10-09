@@ -361,9 +361,24 @@ fn registered_global_shortcuts() -> Vec<String> {
     shortcuts
 }
 
+/// 沙箱调试标识：CLIPFORGE_DATA_DIR 非空即视为数据隔离实例（pnpm dev:sandbox 设置）。
+/// 与 lib.rs settings_path() 的隔离判据保持一致。
+fn is_sandbox_data_isolated() -> bool {
+    std::env::var("CLIPFORGE_DATA_DIR")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
 /// 按当前设置重建全局快捷键注册（设置写入后与 app 启动时调用）。
 pub fn sync_global_shortcut_registration<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    let shortcuts = registered_global_shortcuts();
+    // 沙箱实例只注册设置中的主快捷键，不注册 DEFAULT/FALLBACK 硬编码键（均为 Control+V）：
+    // 稳定版常驻先注册持有 Control+V，沙箱再注册只会得到失败 warning；反之若沙箱先启动，
+    // 还会把稳定版的全局热键抢走导致正式版「快捷键失灵」。稳定版（无隔离环境变量）行为不变。
+    let shortcuts = if is_sandbox_data_isolated() {
+        vec![current_global_shortcut_value()]
+    } else {
+        registered_global_shortcuts()
+    };
     if let Err(error) = app.global_shortcut().unregister_all() {
         let _ = append_app_log(
             "warn".to_string(),

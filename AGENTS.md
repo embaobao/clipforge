@@ -52,6 +52,8 @@ cd src-tauri && cargo check
 pnpm tauri dev
 ```
 
+日常调试一律使用 `pnpm dev:sandbox`（CLIPFORGE_DATA_DIR 数据目录隔离 + CLIPFORGE_DEV_OPEN=panel 自动开面板）：沙箱实例的设置/数据库/日志/图片缓存全部写到独立目录，不与 `/Applications/ClipForge.app` 稳定版共享数据；稳定版常驻并持有全局快捷键，沙箱的快捷键注册失败只记 warning 不崩溃，面板经 dev-open 入口打开。稳定版只由 `pnpm tauri build` 后显式部署更新，开发构建不触碰它。
+
 如果因为本机依赖、权限或系统安全策略无法完成，必须在交付说明中明确写出未验证项。
 
 ## 开发规范（可维护性）

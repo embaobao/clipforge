@@ -7,7 +7,6 @@ import {
   ExternalLink,
   FileJson,
   Heart,
-  ScanSearch,
   Square,
   Trash2,
   X,
@@ -40,7 +39,6 @@ export interface ClipContextMenuProps {
   onOpenAggregate: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
   onCopyMode: (mode: PasteMode) => void;
-  onAnalyzeClipboard?: (item: ClipItem) => void;
   onCopySelected: () => void;
   onStartMultiSelect: (id: string) => void;
   onClearSelection: () => void;
@@ -67,7 +65,6 @@ export function ClipContextMenu({
   onOpenAggregate,
   onPaste,
   onCopyMode,
-  onAnalyzeClipboard,
   onCopySelected,
   onStartMultiSelect,
   onClearSelection,
@@ -166,14 +163,6 @@ export function ClipContextMenu({
               <Copy size={14} />
               <span>{tr("main.context.copyPath")}</span>
               <DropdownMenuShortcut className={menuShortcut}>Path</DropdownMenuShortcut>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className={menuItem}
-              disabled={!onAnalyzeClipboard}
-              onSelect={() => run(() => onAnalyzeClipboard?.(item))}
-            >
-              <ScanSearch size={14} />
-              <span>AI 分析</span>
             </DropdownMenuItem>
             <DropdownMenuItem className={menuItem} onSelect={() => run(onOpenDetail)}>
               <FileJson size={14} />

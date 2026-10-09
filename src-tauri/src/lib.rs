@@ -1362,9 +1362,13 @@ fn capture_clip_payload_with_options(
     let source_app_bundle = source_app.map(|s| s.bundle_id.as_str()).unwrap_or("");
     let source_app_executable = source_app.map(|s| s.executable_path.as_str()).unwrap_or("");
     let source_app_icon = source_app.and_then(|s| s.icon_base64.as_deref());
+    // 查重不排除软删行：同内容再次采集时复活该行（清 deleted_at 更新时间戳），
+    // 否则旧行仍占着 content_hash，INSERT 会撞 UNIQUE 索引直接失败、新条目丢失。
+    // 与 import 路径 ON CONFLICT ... deleted_at = NULL 的复活语义保持一致；
+    // 活行命中时行为不变（deleted_at 本就是 NULL）。
     let existing_id: Option<String> = conn
         .query_row(
-            "SELECT id FROM clips WHERE content_hash = ?1 AND deleted_at IS NULL LIMIT 1",
+            "SELECT id FROM clips WHERE content_hash = ?1 LIMIT 1",
             params![hash],
             |row| row.get(0),
         )
@@ -1373,7 +1377,10 @@ fn capture_clip_payload_with_options(
 
     if let Some(id) = existing_id {
         conn.execute(
-            "UPDATE clips SET last_seen_at = ?1, updated_at = ?1,
+            // deleted_at = NULL：软删行被再次采集时复活回历史列表（用户重新复制即意图收回），
+            // 同时避免后续 INSERT 撞 content_hash UNIQUE 索引。favorite/copy_count 不动，
+            // 保留用户此前的标记与复制计数。
+            "UPDATE clips SET last_seen_at = ?1, updated_at = ?1, deleted_at = NULL,
                 capture_context_json = ?2, source_app_name = ?3, source_app_bundle = ?4,
                 source_app_executable = ?5, source_app_icon = ?6 WHERE id = ?7",
             params![
@@ -8158,31 +8165,34 @@ fn is_phantom_blur(now_ms: i64) -> Option<bool> {
     Some(since_show_ms <= PHANTOM_WINDOW_MS && since_input >= USER_INPUT_WINDOW_S)
 }
 
-/// 幻影 blur 自愈：夺回 key window 并恢复 WKWebView 首响应者，面板继续可用。
-/// 去重：RECLAIM 后 800ms 内的连环 blur 直接忽略（真隐藏路径会在淡出中置
-/// PANEL_FADE_ACTIVE，走不到这里；此处只挡「自愈夺回引发的 resign 波纹」）。
+/// 幻影 blur 自愈:后台 app 无用户输入抢走 key 时,夺回 key 让面板继续可用。
+/// 必须走完整 show 抢占(而非裸 make_key_window):递增代际号取消在途淡出、
+/// 复位 alpha=1——否则面板夺回 key 后仍会继续淡没(用户看到「失焦后面板透明消失」)。
+/// 去重:RECLAIM 后 800ms 内的连环 blur 直接忽略(resign 波纹会触发多次 focusChanged)。
 #[cfg(target_os = "macos")]
 fn reclaim_panel_key_after_phantom_blur<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-    window: &tauri::Window<R>,
+    _window: &tauri::Window<R>,
     now_ms: i64,
 ) -> bool {
     let last_reclaim = PANEL_LAST_RECLAIM_MS.load(Ordering::Relaxed);
     if last_reclaim > 0 && now_ms - last_reclaim < 800 {
         return false;
     }
-    let Ok(panel) = app.get_webview_panel("main") else {
+    let Some(webview) = app.get_webview_window("main") else {
         return false;
     };
     PANEL_LAST_RECLAIM_MS.store(now_ms, Ordering::Relaxed);
-    panel.make_key_window();
-    if let Some(webview) = app.get_webview_window("main") {
-        focus_webview_for_input(&webview);
-    }
+    // 完整抢占:代际号+1 使在途淡出的收尾弃权,alpha 复位 1,order_front + make_key。
+    show_floating_window_by_label(app, "main", &webview);
+    // 同步通知前端把本次 blur 当宽限事件忽略:前端 blur→60ms→hide 链路会在 60ms 后
+    // 发起一次真淡出,把刚夺回的面板又藏掉(夺回先行到达,前端收到 focus-guard 后
+    // 再收到 blur 时处于宽限窗内,直接 return)。
+    let _ = app.emit("clipforge://panel-focus-guard", now_ms);
     log_to_file(
         "info",
         "panel-focus",
-        "phantom blur reclaim: background app stole key without user input, re-keyed panel",
+        "phantom blur reclaim: background app stole key without user input, re-keyed panel via show preemption",
     );
     true
 }
@@ -8502,66 +8512,59 @@ fn hide_panel_with_native_fade<R: tauri::Runtime>(
     panel.resign_key_window();
     let app = app.clone();
     let panel_for_cb = panel.clone();
-    // 动画时长 160ms,与原 CSS --motion-panel-out 对齐;兜底计时 400ms:
-    // animator 回调不可靠时(冻结/竞态)保证面板终会被隐藏,不产生幽灵窗口。
-    const FADE_MS: u64 = 160;
+    // 动画时长 110ms：工具类软件隐藏端到端必须 ≤180ms。旧实现 160ms 动画 +
+    // 后台线程 1ms 轮询 alphaValue 检测完成，实测检测不稳定多次落入 400ms
+    // 兜底超时（端到端 440ms+，用户实测「隐藏很慢」）。
+    const FADE_MS: u64 = 110;
+    // 收尾延时 = 动画时长 + 25ms 余量（animator 提交到 WindowServer 合成有间隔）。
+    // 用确定性定时替代轮询：定时线程只 sleep 后回主线程，不碰 AppKit 属性，
+    // 也不受主线程繁忙影响；代际号校验保证 show 抢占时安全弃权。
+    const FINISH_DELAY_MS: u64 = FADE_MS + 25;
     let app_for_dispatch = app.clone();
     let _ = app_for_dispatch.run_on_main_thread(move || {
+        let fade_started = std::time::Instant::now();
         unsafe {
             let raw_panel = panel_for_cb.as_panel();
             // animator 代理:返回 NSWindow 的 animator 对象(NSAnimatablePropertyContainer),
             // 对其 setAlphaValue 即生成原生隐式动画;时长由外层 NSAnimationContext.duration 控制。
             let animator: *mut AnyObject = tauri_nspanel::objc2::msg_send![raw_panel, animator];
             if animator.is_null() {
+                // 极端场景 animator 不可用:瞬切收尾,并解除在途标志(否则后续 hide 全被守卫挡住)。
                 panel_for_cb.hide();
                 panel_for_cb.set_alpha_value(1.0);
+                PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
                 return;
             }
             let ctx = NSAnimationContext::currentContext();
             ctx.setDuration(FADE_MS as f64 / 1000.0);
             let _: () = tauri_nspanel::objc2::msg_send![animator, setAlphaValue: 0.0f64];
         }
-        // 动画完成检测用轮询(1ms 粒度,窗口期 400ms):避免引入 block2 依赖;
-        // alpha 到 0 或代际号翻转(中途被 show/新淡出接管)都终止流程。
-        // 注意:NSWindow.orderOut/hide 属于主线程 AppKit 调用,禁止在轮询线程直呼
-        // (EXC_BREAKPOINT in NSWMWindowCoordinator,macOS 26 实测崩溃),必须 dispatch 回主线程。
-        let app_for_poll = app.clone();
-        let panel_for_poll = panel_for_cb.clone();
+        // 收尾:定时线程睡满 FINISH_DELAY_MS 后回主线程 hide。
+        // 注意:NSWindow.orderOut/hide 属于主线程 AppKit 调用,禁止在定时线程直呼。
+        let app_for_schedule = app.clone();
+        let panel_for_finish = panel_for_cb.clone();
         std::thread::spawn(move || {
-            let started = std::time::Instant::now();
-            let mut fade_reached_zero = false;
-            while started.elapsed().as_millis() < 400 {
-                // 代际号不匹配 = 本次淡出已被 show/新淡出抢占,收尾职责移交当前持有者。
-                if PANEL_FADE_GENERATION.load(Ordering::SeqCst) != generation {
-                    return;
-                }
-                if !panel_for_poll.is_visible() {
-                    return; // 中途被 show/hide 旁路接管,交给旁路收尾
-                }
-                // is_visible 在淡出中仍为 true,只有 alpha 动画完成前 hide 未执行;
-                // 用 alpha 值判定收尾时机:alpha 归零窗口出现即执行 hide。
-                if panel_for_poll.as_panel().alphaValue() <= 0.01 {
-                    fade_reached_zero = true;
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            // fade_reached_zero=false 且超时:淡出未生效(animator 被系统吞掉),瞬切收尾,
-            // 绝不留下常驻半透明面板。两种情况都回主线程执行 hide + alpha 复位。
-            let app_for_finish = app_for_poll.clone();
-            let _ = app_for_finish.run_on_main_thread(move || {
-                // 主线程串行点上再校验一次:排队期间可能已被 show 抢占(代际号变化)。
+            std::thread::sleep(std::time::Duration::from_millis(FINISH_DELAY_MS));
+            let app_for_closure = app_for_schedule.clone();
+            let _ = app_for_schedule.run_on_main_thread(move || {
+                // 主线程串行点上再校验一次:排队期间可能已被 show 抢占(代际号变化)或面板已隐藏。
                 if PANEL_FADE_GENERATION.load(Ordering::SeqCst) != generation
-                    || !panel_for_poll.is_visible()
+                    || !panel_for_finish.is_visible()
                 {
                     return; // 已被 show/新淡出接管
                 }
-                panel_for_poll.hide();
-                panel_for_poll.set_alpha_value(1.0);
+                panel_for_finish.hide();
+                panel_for_finish.set_alpha_value(1.0);
                 PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
-                let _ = app_for_poll.emit(
-                    "clipforge://panel-fade-finished",
-                    if fade_reached_zero { "hide" } else { "hide-fallback" },
+                let _ = app_for_closure.emit("clipforge://panel-fade-finished", "hide");
+                log_to_file(
+                    "debug",
+                    "panel-fade",
+                    &format!(
+                        "fade hidden +{}ms (fade={}ms)",
+                        fade_started.elapsed().as_millis(),
+                        FADE_MS
+                    ),
                 );
             });
         });
@@ -8583,8 +8586,26 @@ fn show_floating_window_by_label<R: tauri::Runtime>(
         if let Ok(now) = now_millis() {
             PANEL_LAST_SHOWN_MS.store(now, Ordering::Relaxed);
         }
-        // 原生淡出可能在中途被唤起打断:先复位满透明度,防止面板停在半透明。
-        panel.set_alpha_value(1.0);
+        // 原生淡出可能在中途被唤起打断:以 0 时长 animator 复位满透明度。
+        // 必须走 animator 而非裸 set_alpha_value:在途的 110ms alpha 动画不会因模型值
+        // 改变而停止(CA 动画按自身时间线跑完),裸赋值会让面板先淡没再瞬现(闪烁);
+        // 0 时长 animator 赋值替换同 key 的在途动画,presentation 立即回到 1——
+        // 这就是「动画随时可被硬需求打断」在 AppKit 侧的落点。
+        unsafe {
+            use tauri_nspanel::objc2::runtime::AnyObject;
+            use tauri_nspanel::objc2_app_kit::NSAnimationContext;
+            let raw_panel = panel.as_panel();
+            let animator: *mut AnyObject = tauri_nspanel::objc2::msg_send![raw_panel, animator];
+            if !animator.is_null() {
+                NSAnimationContext::beginGrouping();
+                let ctx = NSAnimationContext::currentContext();
+                ctx.setDuration(0.0);
+                let _: () = tauri_nspanel::objc2::msg_send![animator, setAlphaValue: 1.0f64];
+                NSAnimationContext::endGrouping();
+            } else {
+                panel.set_alpha_value(1.0);
+            }
+        }
         panel.set_level(quick_panel_level());
         panel.order_front_regardless();
         panel.show_and_make_key();

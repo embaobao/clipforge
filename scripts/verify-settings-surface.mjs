@@ -105,7 +105,6 @@ match(onboarding, /updateSettings\(\{\s*globalShortcut:\s*event\.currentTarget\.
 include(onboardingShared, "settings.onboarding.feature.search.title", "onboarding feature overview should still include search");
 include(onboardingShared, "settings.onboarding.feature.favorite.title", "onboarding feature overview should still include favorites");
 include(onboardingShared, "settings.onboarding.feature.trash.title", "onboarding feature overview should still include trash");
-include(onboardingShared, "settings.onboarding.feature.agent.title", "onboarding feature overview should still include agent");
 
 // App shell: top navigation and first-launch onboarding handoff.
 match(topToolbar, /data-dev-probe="top-toolbar"[^>]*data-tauri-drag-region[^>]*onPointerDown=\{onDrag\}/, "top toolbar should remain the drag region");

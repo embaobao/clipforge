@@ -24,6 +24,10 @@ export interface SettingsShellProps {
   onToggleCollapsed: () => void;
   /** 版本号字符串，显示在底部左侧。 */
   version: string;
+  /** 版本补充信息（发布渠道等），跟在版本号后以 · 分隔。 */
+  versionMeta?: string;
+  /** 底部常驻更新状态徽标（数据由调用方从 Rust update 检查结果计算）。 */
+  updateBadge?: { tone: "idle" | "checking" | "ok" | "available" | "error"; label: string; detail?: string };
   /** 内容区子节点。 */
   children: ReactNode;
   /** 固定在滚动区外的底部状态条（保存反馈/后台状态），内容短也贴底。 */
@@ -51,6 +55,8 @@ export function SettingsShell({
   collapsed,
   onToggleCollapsed,
   version,
+  versionMeta,
+  updateBadge,
   children,
   statusBar,
   onReset,
@@ -119,7 +125,36 @@ export function SettingsShell({
 
           {/* 底部：留白分隔，不画分割线 */}
           <div className="flex items-center justify-between gap-3 px-6 pb-2.5 pt-1">
-            <span className="mono text-[10.5px] text-muted-foreground/70">{version}</span>
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="mono text-[10.5px] text-muted-foreground/70">{version}</span>
+              {versionMeta ? (
+                <span className="text-[10.5px] text-muted-foreground/70">· {versionMeta}</span>
+              ) : null}
+              {updateBadge ? (
+                <span
+                  className={cn(
+                    "flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px]",
+                    updateBadge.tone === "error" && "text-destructive",
+                    updateBadge.tone === "ok" && "text-emerald-700 dark:text-emerald-400",
+                    updateBadge.tone === "available" && "bg-black/[0.05] text-foreground dark:bg-white/[0.08]",
+                    (updateBadge.tone === "idle" || updateBadge.tone === "checking") && "text-muted-foreground",
+                  )}
+                  title={updateBadge.detail}
+                >
+                  <span
+                    className={cn(
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      updateBadge.tone === "error" ? "bg-destructive" : null,
+                      updateBadge.tone === "ok" ? "bg-emerald-600 dark:bg-emerald-400" : null,
+                      updateBadge.tone === "available" ? "bg-foreground" : null,
+                      updateBadge.tone === "idle" ? "bg-muted-foreground/50" : null,
+                      updateBadge.tone === "checking" ? "animate-pulse bg-muted-foreground" : null,
+                    )}
+                  />
+                  {updateBadge.label}
+                </span>
+              ) : null}
+            </div>
             <div className="flex gap-1">
               {onReset ? (
                 <button
