@@ -679,9 +679,10 @@ await page.evaluate(() => {
 });
 await page.waitForTimeout(300);
 
-// ---------- T20 显隐动画契约：panel-in 不含 opacity、panel-out 存在、材质不透明度足够 ----------
+// ---------- T20 显隐动画契约：panel-in 不含 opacity、panel-out 已删除(收起走 Rust 原生 alpha 淡出)、材质不透明度足够 ----------
 // 回归「触发白屏/闪烁」：后台 WKWebView 冻结动画时间轴时，from 帧含 opacity:0 会让面板
-// 停在隐形帧。入场/退场动画只允许动 transform。材质 alpha 过低会在浅色桌面上透底难读。
+// 停在隐形帧。入场动画只允许动 transform;收起动画在 Rust 层(NSWindow alphaValue),
+// 若 CSS panel-out 复活会重新引入 backdrop-filter 逐帧重采样卡顿——必须保持删除。
 const t20 = await page.evaluate(() => {
   const doc = document.getElementById("panel").contentDocument;
   const win = doc.defaultView;
@@ -707,8 +708,8 @@ const t20 = await page.evaluate(() => {
   return { panelInHasOpacity, panelOutExists, mainBg, alpha };
 });
 report(
-  "T20 panel-in 无 opacity 帧 + panel-out 存在 + 材质 alpha ≥ 0.85",
-  t20.panelInHasOpacity === false && t20.panelOutExists && t20.alpha >= 0.85,
+  "T20 panel-in 无 opacity 帧 + panel-out 保持删除 + 材质 alpha ≥ 0.85",
+  t20.panelInHasOpacity === false && !t20.panelOutExists && t20.alpha >= 0.85,
   JSON.stringify(t20),
 );
 

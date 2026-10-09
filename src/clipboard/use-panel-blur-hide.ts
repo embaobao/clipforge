@@ -31,12 +31,9 @@ export function usePanelBlurHide({
     const appWindow = getCurrentWindowSafe();
     if (!appWindow) return;
     let hideTimer: number | null = null;
-    let closeTimer: number | null = null;
     const cancelHide = () => {
       if (hideTimer) window.clearTimeout(hideTimer);
-      if (closeTimer) window.clearTimeout(closeTimer);
       hideTimer = null;
-      closeTimer = null;
       setPanelClosing(false);
     };
     appWindow
@@ -75,13 +72,16 @@ export function usePanelBlurHide({
             return;
           }
           setIsPanelEntering(false);
-          setPanelClosing(true);
-          closeTimer = window.setTimeout(() => {
-            logAppError("info", "panel-pin: hide executing now");
-            invoke("hide_quick_panel_command")
-              .catch((error) => logAppError("warn", "Hide quick panel failed", String(error)))
-              .finally(() => setPanelClosing(false));
-          }, 180);
+          // 收起动画走 Rust 原生 NSWindow alpha 淡出（hide_panel 内部）：合成器线程插值,
+          // 不触发 WKWebView 重绘,backdrop-filter 不再逐帧重采样（CSS panel-out 方案卡顿根源）。
+          // 60ms 延迟保留:吸收「点到面板外又快速点回」的假失焦,避免闪隐。
+          logAppError("info", "panel-pin: native fade hide dispatched");
+          invoke("hide_quick_panel_command")
+            .catch((error) => logAppError("warn", "Hide quick panel failed", String(error)))
+            .finally(() => {
+              blurHideInFlightRef.current = false;
+              setPanelClosing(false);
+            });
         }, 60);
       })
       .catch((error) => logAppError("warn", "Register focus listener failed", String(error)));

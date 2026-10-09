@@ -119,8 +119,7 @@ module.exports = {
   			instant: 'var(--motion-instant)',
   			fast: 'var(--motion-fast)',
   			surface: 'var(--motion-surface)',
-  			'panel-in': 'var(--motion-panel-in)',
-  			'panel-out': 'var(--motion-panel-out)'
+  			'panel-in': 'var(--motion-panel-in)'
   		},
   		transitionTimingFunction: {
   			enter: 'var(--ease-enter)',

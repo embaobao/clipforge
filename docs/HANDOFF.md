@@ -1,5 +1,26 @@
 # ClipForge 视觉重构 · 交接摘要
 
+## 2026-10-09 会话增量（收起丝滑化 + 面板"点不开"诊断）
+
+### ① 面板收起丝滑化 ✅（未提交）
+- **Rust** `src-tauri/src/lib.rs`：新增 `hide_panel_with_native_fade`——NSWindow animator 原生 alpha 淡出（160ms，对齐原 CSS `--motion-panel-out`），动画完成后主线程 `resign_key + hide + set_alpha(1.0)`；轮询 1ms 粒度、400ms 兜底瞬切。**动机**：CSS opacity 动画下 backdrop-filter material 层每帧强制重新栅格化，是失焦自动收起卡顿的根源；原生淡出走 WindowServer 合成路径，WKWebView 零重绘。
+- **前端** `src/clipboard/use-panel-blur-hide.ts`：失焦收起改调原生淡出命令，不再走 CSS `panel-out`。
+- **验证**：cargo check ✓ / pnpm build:web ✓ / tauri dev 实机 show→blur→淡出收起无感 ✓；连按两轮开收进程稳定无崩溃（此前的 `NSWMWindowCoordinator` EXC_BREAKPOINT 崩溃已消除——orderOut/hide 全部经 `run_on_main_thread` 回主线程）。
+
+### ② 淡出竞态修复 ✅（未提交，lib.rs ~8320-8470）
+- **问题**：160ms 淡出窗口期内 `is_visible()` 仍为 true,连按 Ctrl+V 被 toggle 误判成第二次 hide → 面板被彻底藏没（is_visible=true 但 alpha=0 的"隐形窗口"），再按也"出不来"。
+- **修复**：`PANEL_FADE_ACTIVE: AtomicBool`（hide 发起时置位、show 抢占/收尾完成复位）+ `PANEL_FADE_GENERATION: AtomicI64` 代际号（hide 抢占递增、show 复位，迟到的轮询/收尾闭包校验代际号不匹配即弃权）。`toggle_quick_panel` 判定改为 `visible && !is_panel_fading()`——淡出中再按=唤起。
+- **验证**：cargo check ✓；实机 show→hide→160ms 内再按→正确走 show（决策日志 `show/hide/show`）。
+
+### ③ 面板"点不开"诊断结论（2026-10-09 晚）：系统会话故障，非 app bug ⚠️ 需用户重启/注销
+- **现象**：Ctrl+V 全局快捷键完全失效（托盘菜单「打开快捷面板」仍可用）。
+- **排查**：日志 `registered shortcuts` 成功但无 `pressed`；进程/主线程/托盘/面板链路全部健康（AX+sample 抓栈证实）；**决定性实验：独立 Swift Carbon 探针注册同组合键，RegisterEventHotKey 返回 0 但回调 0 次（HID 级 CGEvent 注入 + 用户物理按键均无反应）** → macOS 登录会话的全局热键派发故障，与 ClipForge 无关。时间点约 20:59（同时段 Dock 重启、出现 `IMKCFRunLoopWakeUpReliable` 报错）。
+- **恢复手段**：注销重登或重启系统。重登后 ClipForge autostart 自启，Ctrl+V 即恢复。应急入口：菜单栏 ClipForge 图标 → 「打开快捷面板」。
+- 诊断工具与套路已入长期记忆（Carbon 探针 + CGEvent HID 注入 + AX 托盘定位，注意 clipforge 是 background only 进程）。
+
+### ④ pi-sdk-agent-foundation 收官（2026-10-08 已记录，24/26）
+L2 key redaction + provider UI + L3 智能标签已完成并勾选（见 4c+ 条）；剩 Phase 4 全量回归与归档两项。
+
 ## 会话背景
 
 用户要求按 `docs/Kimi_Agent_设计系统草图.zip` 中的设计稿，将 ClipForge 从旧 CSS 架构全面迁移到 Tailwind CSS v3 + shadcn/ui 新视觉体系。设计稿对应文档为 `docs/DESIGN_SYSTEM.md`（本次会话新建）。

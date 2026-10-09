@@ -94,6 +94,8 @@
 
 > 2026-10-08 对账(数据源 `openspec list` 实数);推进顺序由 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次表单点解释,本表是其文档视图。
 
+> **2026-10-09 会话增量**：① 面板收起丝滑化落地(原生 alpha 淡出替代 CSS panel-out,`hide_panel_with_native_fade` + `use-panel-blur-hide` 改造,cargo check/build:web/tauri dev 实测过,**未提交**);② 淡出 160ms 竞态修复(`PANEL_FADE_ACTIVE` + `PANEL_FADE_GENERATION`,淡出中再按=唤起,**未提交**);③ 「Ctrl+V 点不开」定性为 macOS 登录会话全局热键派发故障(独立 Carbon 探针回调 0 次 + 物理按键无反应,与 app 无关,**待用户注销重登/重启恢复**;恢复后需复测快捷键链路)。见 [HANDOFF](HANDOFF.md) 2026-10-09 节。
+
 | 波次 | Change | 当前进度 | 下一验收点 |
 | --- | --- | --- | --- |
 | W1 | `file-image-clipboard-support` | 75/83 | 文本/HTML/图片/文件 复制、展示、粘贴与磁盘清理实机矩阵 |

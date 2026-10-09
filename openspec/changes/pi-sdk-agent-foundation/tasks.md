@@ -46,7 +46,7 @@
 ## Phase 4：验证与收尾 🟡
 
 - [ ] 全量回归 + CLIPFORGE_DISABLE_CAPTURE=1 冒烟 + 盟哥视觉/功能验收
-- [ ] docs/HANDOFF.md 与 PROPOSAL_ROADMAP.md 收官更新
+- [x] docs/HANDOFF.md 与 PROPOSAL_ROADMAP.md 收官更新 --2026-10-09:HANDOFF 增 4c+(L2/L3 收官)与 2026-10-09 会话增量节;ROADMAP 增当日增量注记与 W3 行 24/26 对账
 
 ## 注意事项
 

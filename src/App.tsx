@@ -304,7 +304,8 @@ function ClipForgeApp() {
   const blurHideInFlightRef = useRef(false);
   const focusRetryTimersRef = useRef<number[]>([]);
   const panelShowStartedAtRef = useRef(0);
-  const isPanelClosing = usePanelUiStore((state) => state.isClosing);
+  // setPanelClosing 仍被 blur-hide/show 流程调用,但收起动画已迁到 Rust 原生 alpha 淡出,
+  // isClosing 状态不再驱动任何 UI(CSS panel-out 已移除),故不订阅 isClosing。
   const setPanelClosing = usePanelUiStore((state) => state.setClosing);
   const workspaceRoute = useWorkspaceStore((state) => state.route);
   const errorBoundaryCopy = useMemo<ErrorBoundaryCopy>(
@@ -1064,7 +1065,7 @@ function ClipForgeApp() {
       // 高度撑满窗口（h-screen）：悬浮窗是 transparent 窗口，面板 h-fit 时内容低于窗高
       // 会在底部留一条透明带，macOS 合成器在该区域画出残留波浪状伪影（「背景透明/波浪线」）。
       // 窗高由 Rust 按设置设定（300-1000），面板必须等于窗高，不再用 h-fit/max-h 截断。
-      className={`relative mx-auto grid h-screen w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow${isPanelEntering ? " panel-in" : ""}${isPanelClosing ? " panel-out pointer-events-none" : ""}`}
+      className={`relative mx-auto grid h-screen w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow${isPanelEntering ? " panel-in" : ""}`}
       ref={shellRef}
     >
       {workspaceRoute.name !== "detail" && (

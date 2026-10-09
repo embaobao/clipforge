@@ -37,7 +37,7 @@
     --motion-fast: 150ms; /* 小控件出入场（tooltip/菜单/下拉） */
     --motion-surface: 180ms; /* 区域级过渡（行入场等） */
     --motion-panel-in: 220ms; /* 面板唤起弹簧 */
-    --motion-panel-out: 140ms; /* 面板失焦退出（须 ≤ use-panel-blur-hide 180ms - 20ms 余量） */
+    /* --motion-panel-out 已删除:失焦收起动画迁至 Rust 原生 NSWindow alpha 淡出(160ms) */
     --ease-enter: cubic-bezier(0.32, 0.72, 0, 1); /* 减速入场（弹簧 damping 1.0 / response 0.4） */
     --ease-exit: cubic-bezier(0.4, 0, 1, 1); /* 加速出场 */
   }
@@ -164,16 +164,9 @@
   animation: panel-in var(--motion-panel-in) var(--ease-enter);
 }
 
-/* 失焦退出动画（use-panel-blur-hide 的 180ms 窗口内播放）。
-   只动 transform：冻结守卫同理，终帧天然可见，hide 由 Rust 执行，不依赖动画播完。 */
-@keyframes panel-out {
-  to {
-    transform: translateY(6px) scale(0.985);
-  }
-}
-.panel-out {
-  animation: panel-out var(--motion-panel-out) var(--ease-exit) forwards;
-}
+/* 失焦退出动画已迁至 Rust 原生 NSWindow alpha 淡出（hide_panel_with_native_fade）：
+   CSS panel-out 方案在透明窗口 + backdrop-filter 材质上每帧强制重新栅格化,
+   是自动收起卡顿的根源,已删除。收起丝滑度由 WindowServer 合成线程保证。 */
 
 /* ---------- 动画冻结守卫（cf-anim-frozen） ----------
    后台 app 的 WKWebView 冻结 CSS 动画时间轴时（anim-freeze-guard 探针判定），

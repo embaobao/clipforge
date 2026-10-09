@@ -8022,8 +8022,7 @@ fn hide_panel<R: tauri::Runtime>(
     #[cfg(target_os = "macos")]
     {
         if let Ok(panel) = app.get_webview_panel("main") {
-            panel.resign_key_window();
-            panel.hide();
+            hide_panel_with_native_fade(&app, &panel);
         } else {
             let _ = window.hide();
         }
@@ -8053,7 +8052,10 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let visible = window.is_visible().unwrap_or(false);
+    // 「可见」必须是用户感知可见:原生淡出在途(160ms 窗口期)的窗口 is_visible 仍为 true,
+    // 但对用户已等同隐藏;此时按快捷键意图是「唤起」,必须走 show 分支取消淡出,
+    // 否则误判成第二次 hide,面板被彻底藏没(隐形面板 bug 根因)。
+    let visible = window.is_visible().unwrap_or(false) && !is_panel_fading();
     let focused = window.is_focused().unwrap_or(false);
     let panel_visible = app
         .get_webview_panel("main")
@@ -8315,6 +8317,121 @@ fn show_panel_window<R: tauri::Runtime>(
 
 /// 通用浮窗显示：把指定 label 的窗口设为 NSPanel status-level 浮动面板并置于最前。
 /// 剪贴板主面板等浮窗共用同一「悬浮于其他应用之上」能力，按 label 泛化。
+/// 失焦/切换收起的原生淡出：走 NSWindow animator 的 alphaValue 代理动画,
+/// 插值由 WindowServer 合成路径执行,不触发 WKWebView 重绘(backdrop-filter 的
+/// material 层在 CSS opacity 动画下每帧强制重新栅格化,是自动收起卡顿的根源)。
+/// 动画结束后 resign_key + hide,并把 alpha 复位为 1(下次唤起天然满透明度)。
+/// 边界:主线程标记拿不到时退回瞬切,功能不回退;动画途中面板被再次唤起时,
+/// show 路径会先 set_alpha_value(1.0) 抹掉中间态,不会停在半透明。
+
+/// 面板原生淡出在途标志:hide 发起淡出时置位,show 抢占或收尾完成时复位。
+/// toggle/失焦链据此判定「用户感知可见性」:淡出中的面板对用户等同不可见,
+/// 此时再按快捷键必须走 show(取消淡出),否则误判成 hide 会把面板藏没。
+static PANEL_FADE_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// 面板淡出代际号:每次发起新淡出或 show 抢占时递增;
+/// 迟到的轮询/收尾闭包校验代际号不匹配即弃权,防止旧 hide 链干扰新状态。
+static PANEL_FADE_GENERATION: AtomicI64 = AtomicI64::new(0);
+
+fn next_fade_generation() -> i64 {
+    PANEL_FADE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
+}
+
+fn is_panel_fading() -> bool {
+    PANEL_FADE_ACTIVE.load(Ordering::SeqCst)
+}
+
+#[cfg(target_os = "macos")]
+fn hide_panel_with_native_fade<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    panel: &std::sync::Arc<dyn tauri_nspanel::Panel<R>>,
+) {
+    use tauri_nspanel::objc2::runtime::AnyObject;
+    use tauri_nspanel::objc2_app_kit::NSAnimationContext;
+    use tauri_nspanel::objc2_foundation::MainThreadMarker;
+
+    // AppKit 未在主线程的极端场景退回瞬切,保证隐藏语义不变。
+    if MainThreadMarker::new().is_none() {
+        panel.resign_key_window();
+        panel.hide();
+        return;
+    }
+    if !panel.is_visible() {
+        panel.set_alpha_value(1.0);
+        return;
+    }
+    // 抢占语义:置位「淡出在途」并递增代际号,旧淡出的轮询/收尾闭包校验失败自动弃权。
+    PANEL_FADE_ACTIVE.store(true, Ordering::SeqCst);
+    let generation = next_fade_generation();
+    panel.resign_key_window();
+    let app = app.clone();
+    let panel_for_cb = panel.clone();
+    // 动画时长 160ms,与原 CSS --motion-panel-out 对齐;兜底计时 400ms:
+    // animator 回调不可靠时(冻结/竞态)保证面板终会被隐藏,不产生幽灵窗口。
+    const FADE_MS: u64 = 160;
+    let app_for_dispatch = app.clone();
+    let _ = app_for_dispatch.run_on_main_thread(move || {
+        unsafe {
+            let raw_panel = panel_for_cb.as_panel();
+            // animator 代理:返回 NSWindow 的 animator 对象(NSAnimatablePropertyContainer),
+            // 对其 setAlphaValue 即生成原生隐式动画;时长由外层 NSAnimationContext.duration 控制。
+            let animator: *mut AnyObject = tauri_nspanel::objc2::msg_send![raw_panel, animator];
+            if animator.is_null() {
+                panel_for_cb.hide();
+                panel_for_cb.set_alpha_value(1.0);
+                return;
+            }
+            let ctx = NSAnimationContext::currentContext();
+            ctx.setDuration(FADE_MS as f64 / 1000.0);
+            let _: () = tauri_nspanel::objc2::msg_send![animator, setAlphaValue: 0.0f64];
+        }
+        // 动画完成检测用轮询(1ms 粒度,窗口期 400ms):避免引入 block2 依赖;
+        // alpha 到 0 或代际号翻转(中途被 show/新淡出接管)都终止流程。
+        // 注意:NSWindow.orderOut/hide 属于主线程 AppKit 调用,禁止在轮询线程直呼
+        // (EXC_BREAKPOINT in NSWMWindowCoordinator,macOS 26 实测崩溃),必须 dispatch 回主线程。
+        let app_for_poll = app.clone();
+        let panel_for_poll = panel_for_cb.clone();
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let mut fade_reached_zero = false;
+            while started.elapsed().as_millis() < 400 {
+                // 代际号不匹配 = 本次淡出已被 show/新淡出抢占,收尾职责移交当前持有者。
+                if PANEL_FADE_GENERATION.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                if !panel_for_poll.is_visible() {
+                    return; // 中途被 show/hide 旁路接管,交给旁路收尾
+                }
+                // is_visible 在淡出中仍为 true,只有 alpha 动画完成前 hide 未执行;
+                // 用 alpha 值判定收尾时机:alpha 归零窗口出现即执行 hide。
+                if panel_for_poll.as_panel().alphaValue() <= 0.01 {
+                    fade_reached_zero = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            // fade_reached_zero=false 且超时:淡出未生效(animator 被系统吞掉),瞬切收尾,
+            // 绝不留下常驻半透明面板。两种情况都回主线程执行 hide + alpha 复位。
+            let app_for_finish = app_for_poll.clone();
+            let _ = app_for_finish.run_on_main_thread(move || {
+                // 主线程串行点上再校验一次:排队期间可能已被 show 抢占(代际号变化)。
+                if PANEL_FADE_GENERATION.load(Ordering::SeqCst) != generation
+                    || !panel_for_poll.is_visible()
+                {
+                    return; // 已被 show/新淡出接管
+                }
+                panel_for_poll.hide();
+                panel_for_poll.set_alpha_value(1.0);
+                PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
+                let _ = app_for_poll.emit(
+                    "clipforge://panel-fade-finished",
+                    if fade_reached_zero { "hide" } else { "hide-fallback" },
+                );
+            });
+        });
+    });
+}
+
 #[cfg(target_os = "macos")]
 fn show_floating_window_by_label<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -8322,6 +8439,12 @@ fn show_floating_window_by_label<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
 ) {
     if let Ok(panel) = app.get_webview_panel(label) {
+        // show 即抢占:递增淡出代际号使在途淡出全部失效,并清掉在途标志,
+        // 防止旧 hide 链在唤起后把面板藏掉或把 alpha 拉回 0(隐形面板 bug)。
+        next_fade_generation();
+        PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
+        // 原生淡出可能在中途被唤起打断:先复位满透明度,防止面板停在半透明。
+        panel.set_alpha_value(1.0);
         panel.set_level(quick_panel_level());
         panel.order_front_regardless();
         panel.show_and_make_key();
