@@ -7742,6 +7742,34 @@ pub fn run() {
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_window_event(|window, event| {
+            // 幻影 blur 诊断:面板 show 后 ~0.5-1.1s 无操作失焦并自动淡出,前端只能看到
+            // onFocusChanged,看不到「谁抢走了 key」。这里在 Rust 侧补一条:
+            // 失焦瞬间的 keyWindow 归属(是否仍是本面板)+ 前台 app 身份,
+            // 用于区分 系统抢占(其他窗口/IME 拿 key) vs 应用内部状态抖动。
+            if let tauri::WindowEvent::Focused(focused) = event {
+                if window.label() == "main" && !*focused {
+                    let app = window.app_handle();
+                    let now = now_millis().unwrap_or(0);
+                    // 自愈优先于诊断:判定为幻影 blur 时夺回 key,面板对用户保持可用。
+                    if !is_panel_pinned() {
+                        // pinned 时不自愈也不隐藏,保持面板可见即可。
+                        if is_phantom_blur(now) == Some(true) {
+                            reclaim_panel_key_after_phantom_blur(app, window, now);
+                            return;
+                        }
+                    }
+                    log_to_file(
+                        "debug",
+                        "panel-focus",
+                        &format!(
+                            "window-event blurred {}",
+                            focus_context_snapshot(window)
+                        ),
+                    );
+                }
+            }
+        })
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -8087,8 +8115,76 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
 /// 面板「固定」状态：true 时失焦/外部点击不自动隐藏（参考 EcoPaste CLIPBOARD_WINDOW_PINNED）。
 static PANEL_PINNED: AtomicBool = AtomicBool::new(false);
 
+/// 最近一次面板 show 的毫秒时间戳（UNIX epoch）：幻影 blur 自愈的时间窗判定基准。
+/// 只在 macOS show_floating_window_by_label 成功路径写入；0 表示从未 show 或已重置。
+#[cfg(target_os = "macos")]
+static PANEL_LAST_SHOWN_MS: AtomicI64 = AtomicI64::new(0);
+
+/// 最近一次幻影 blur 自愈（夺回 key）的毫秒时间戳：同一轮自愈引发的连环 blur
+/// （resign_key 波纹会触发多次 focusChanged）只自愈一次，避免与后台 app 反复争抢。
+#[cfg(target_os = "macos")]
+static PANEL_LAST_RECLAIM_MS: AtomicI64 = AtomicI64::new(0);
+
 fn is_panel_pinned() -> bool {
     PANEL_PINNED.load(Ordering::Relaxed)
+}
+
+/// 幻影 blur 判定：面板 show 后短时间内、且系统层无任何用户输入（键/鼠/滚轮）时发生的
+/// 失焦，几乎都是后台 App 自激活（agent 终端、剪贴板管理器等周期性 activate 自己）抢走
+/// key——面板对用户仍应可见可用，此时自动夺回 key 而不是淡出隐藏。用户真实操作
+/// （点击面板外、Cmd-Tab、点其他窗口）会留下 CGEventSource 输入时间戳，照常隐藏。
+/// 返回 Some(true)=判定为幻影 blur（可自愈）；Some(false)=用户输入触发的真 blur；None=无法判定（保守走隐藏）。
+#[cfg(target_os = "macos")]
+fn is_phantom_blur(now_ms: i64) -> Option<bool> {
+    // core-graphics crate 未导出该 C 函数，按现有 AX extern 风格直接声明；
+    // CoreGraphics 框架已被 AppKit 链接，无需额外链接参数。
+    // eventType 传 -1（kCGAnyInputEventType）统计任意输入类型。
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceSecondsSinceLastEventType(state_id: i32, event_type: i32) -> f64;
+    }
+    // 0.35s 内有过物理输入即视为用户引发的失焦;show 后 3s 内的静默失焦按幻影处理。
+    // 3s 依据实测:后台 app 自激活型幻影 blur 落在 show 后 0.57s-4s 区间,
+    // 1.2s 太窄会漏掉;用户操作型失焦(点击/Cmd-Tab)都会在 0.35s 内留下输入事件,不会误判。
+    const USER_INPUT_WINDOW_S: f64 = 0.35;
+    const PHANTOM_WINDOW_MS: i64 = 3000;
+    let since_input =
+        unsafe { CGEventSourceSecondsSinceLastEventType(0 /* kCGEventSourceStateCombinedSessionState */, -1) };
+    if !since_input.is_finite() {
+        return None;
+    }
+    let shown = PANEL_LAST_SHOWN_MS.load(Ordering::Relaxed);
+    let since_show_ms = if shown > 0 { now_ms - shown } else { i64::MAX };
+    Some(since_show_ms <= PHANTOM_WINDOW_MS && since_input >= USER_INPUT_WINDOW_S)
+}
+
+/// 幻影 blur 自愈：夺回 key window 并恢复 WKWebView 首响应者，面板继续可用。
+/// 去重：RECLAIM 后 800ms 内的连环 blur 直接忽略（真隐藏路径会在淡出中置
+/// PANEL_FADE_ACTIVE，走不到这里；此处只挡「自愈夺回引发的 resign 波纹」）。
+#[cfg(target_os = "macos")]
+fn reclaim_panel_key_after_phantom_blur<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    window: &tauri::Window<R>,
+    now_ms: i64,
+) -> bool {
+    let last_reclaim = PANEL_LAST_RECLAIM_MS.load(Ordering::Relaxed);
+    if last_reclaim > 0 && now_ms - last_reclaim < 800 {
+        return false;
+    }
+    let Ok(panel) = app.get_webview_panel("main") else {
+        return false;
+    };
+    PANEL_LAST_RECLAIM_MS.store(now_ms, Ordering::Relaxed);
+    panel.make_key_window();
+    if let Some(webview) = app.get_webview_window("main") {
+        focus_webview_for_input(&webview);
+    }
+    log_to_file(
+        "info",
+        "panel-focus",
+        "phantom blur reclaim: background app stole key without user input, re-keyed panel",
+    );
+    true
 }
 
 #[tauri::command]
@@ -8229,6 +8325,38 @@ fn configure_quick_panel_window<R: tauri::Runtime>(window: &tauri::WebviewWindow
     configure_platform_quick_panel(window);
 }
 
+/// 焦点诊断快照:失焦瞬间的 keyWindow 归属与前台 app 身份,一次性拼成短串。
+/// 仅诊断路径调用,不参与业务逻辑;拿不到主线程/panel 时逐项降级为占位符。
+#[cfg(target_os = "macos")]
+fn focus_context_snapshot<R: tauri::Runtime>(window: &tauri::Window<R>) -> String {
+    use tauri_nspanel::objc2::msg_send;
+    use tauri_nspanel::objc2_app_kit::{NSApplication, NSWindow};
+    use tauri_nspanel::objc2_foundation::MainThreadMarker;
+
+    let key_desc = if MainThreadMarker::new().is_some() {
+        let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
+        let key: Option<tauri_nspanel::objc2::rc::Retained<NSWindow>> =
+            unsafe { msg_send![&*app, keyWindow] };
+        match key {
+            Some(key_window) => format!("keyWindow=ptr:{:?}", &*key_window as *const NSWindow),
+            None => "keyWindow=nil".to_string(),
+        }
+    } else {
+        "keyWindow=nonmain".to_string()
+    };
+    let front = frontmost_app_identity_including_self()
+        .map(|(name, bundle)| format!("front={name}|{bundle}"))
+        .unwrap_or_else(|| "front=nil".to_string());
+    let visible = window.is_visible().unwrap_or(false);
+    let focused = window.is_focused().unwrap_or(false);
+    format!("{key_desc} {front} winVisible={visible} winFocused={focused}")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focus_context_snapshot<R: tauri::Runtime>(_window: &tauri::Window<R>) -> String {
+    String::new()
+}
+
 fn configure_panel_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, panel_width: f64) {
     let mut panel_height = QUICK_PANEL_FALLBACK_HEIGHT;
     if let Some((x, y, height)) = panel_position(window, panel_width, panel_height) {
@@ -8356,6 +8484,14 @@ fn hide_panel_with_native_fade<R: tauri::Runtime>(
         panel.hide();
         return;
     }
+    // 幂等守卫:淡出已在途时再次进入(快捷键 hide 后前端 blur 路径 60ms 的迟到重入、
+    // resign_key 引发的连环 blur 重试)直接弃权,不重启动画。旧行为:每次重入都
+    // animator setAlphaValue 重启 160ms 淡出 + resign_key 又触发一次 blur → 前端
+    // 60ms 后再次 invoke → 单次隐藏被拖成 6 段 ~62ms 的锯齿渐隐(用户感知「不丝滑」)。
+    // 边界:show 抢占路径已把 PANEL_FADE_ACTIVE 复位为 false,之后的 hide 会正常发起新淡出。
+    if PANEL_FADE_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
     if !panel.is_visible() {
         panel.set_alpha_value(1.0);
         return;
@@ -8443,6 +8579,10 @@ fn show_floating_window_by_label<R: tauri::Runtime>(
         // 防止旧 hide 链在唤起后把面板藏掉或把 alpha 拉回 0(隐形面板 bug)。
         next_fade_generation();
         PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
+        // 幻影 blur 自愈基准:记录本次 show 时刻,1.2s 内的静默失焦才走自愈判定。
+        if let Ok(now) = now_millis() {
+            PANEL_LAST_SHOWN_MS.store(now, Ordering::Relaxed);
+        }
         // 原生淡出可能在中途被唤起打断:先复位满透明度,防止面板停在半透明。
         panel.set_alpha_value(1.0);
         panel.set_level(quick_panel_level());

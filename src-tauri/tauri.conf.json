@@ -79,6 +79,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "signingIdentity": "ClipForge Dev"
+    },
     "resources": [
       "../release-assets/CLIPFORGE_MUST_READ.html"
     ],
