@@ -8,8 +8,9 @@ import { toast } from "sonner";
 import type { TranslationKey } from "../i18n";
 import { waitForPasteTriggerRelease, logAppError } from "./panel-shared";
 import { startPerfSpan } from "../performance-smoke";
-import { extractHashTags, normalizeTagList } from "./clip-model";
+import { extractHashTags, normalizeTagList, truncateText } from "./clip-model";
 import { pasteClipboard, writeClipboard } from "../services/clipboard";
+import type { PasteMode } from "../services/clipboard";
 
 type ExportTextFilesPayload = {
   directory: string;
@@ -57,6 +58,21 @@ export function useClipWriteback({
   openPath,
   openUrl,
 }: ClipWritebackOptions) {
+  /** 命令回包归一化后合并回列表:按 id 原地替换并同步 clipsRef。
+   *  写回族(copyClip/pasteText/pasteClip/聚合复制)共用同一回写形态,抽出来避免
+   *  六处复制粘贴;失败由调用方 try/catch 承接。 */
+  function applyNormalizedToClips(payload: Partial<ClipItem>) {
+    const normalized = normalizeClip(payload, settingsRef.current);
+    if (normalized) {
+      setClips((current) => {
+        const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
+        clipsRef.current = next;
+        return next;
+      });
+    }
+    return normalized;
+  }
+
   /** 复制成功后的乐观 UI：置最新复制 id、选中、copyCount+1，1.4s 后清除高亮。
    *  useCallback：依赖全为 setter/ref（pasteClip 与 ClipboardRow memo 依赖引用稳定）。 */
   const markClipCopied = useCallback(function markClipCopied(item: ClipItem, status: string) {
@@ -167,14 +183,7 @@ export function useClipWriteback({
         pasteMode: "rich",
         source: "ui:multi-select-aggregate",
       });
-      const normalized = normalizeClip(payload, settingsRef.current);
-      if (normalized) {
-        setClips((current) => {
-          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-          clipsRef.current = next;
-          return next;
-        });
-      }
+      applyNormalizedToClips(payload);
       lastSeenClipboard.current = text.trim();
       setNativeStatus(tr("main.status.aggregateCopied", { count: items.length }));
     } catch {
@@ -264,13 +273,8 @@ export function useClipWriteback({
         },
       },
     });
-    const normalized = normalizeClip(payload, settingsRef.current);
+    const normalized = applyNormalizedToClips(payload);
     if (!normalized) throw new Error(tr("main.error.emptySavedClip"));
-    setClips((current) => {
-      const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-      clipsRef.current = next;
-      return next;
-    });
     setSelectedId(normalized.id);
     setNativeStatus(tr("main.status.detailSaved"));
     logAppError("info", "clip-detail-edit: saved", {
@@ -335,14 +339,7 @@ export function useClipWriteback({
           pasteMode: "rich",
           source: `${source}:fallback-copy`,
         });
-        const normalized = normalizeClip(payload, settingsRef.current);
-        if (normalized) {
-          setClips((current) => {
-            const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-            clipsRef.current = next;
-            return next;
-          });
-        }
+        applyNormalizedToClips(payload);
       } catch {
         await navigator.clipboard.writeText(item.content);
       }
@@ -355,6 +352,7 @@ export function useClipWriteback({
   return {
     markClipCopied,
     captureStandardTextClip,
+    copyClip,
     copyText,
     updateClip,
     exportSelectedTextFiles,
@@ -365,6 +363,33 @@ export function useClipWriteback({
     openSystemPath,
     updateClipContent,
   };
+
+  /** 复制条目到剪贴板（rich/plain/filesAsPaths 三种模式）。
+   *  从 App.tsx 迁入（modularity 写回域接线）：乐观标记 + Rust writeClipboard +
+   *   失败回落浏览器剪贴板 + toast 反馈；依赖全部来自 hook 入参。 */
+  async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
+    const finishCopyPerf = startPerfSpan("quick.copy", { source: "ui", pasteMode });
+    let perfStatus = "ok";
+    const optimisticStatus =
+      pasteMode === "plain"
+        ? tr("main.status.copiedPlain")
+        : pasteMode === "filesAsPaths"
+          ? tr("main.status.copiedFilePaths")
+          : tr("main.status.copiedRich");
+    lastSeenClipboard.current = item.content.trim();
+    markClipCopied(item, optimisticStatus);
+    try {
+      const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode, source: "ui" });
+      applyNormalizedToClips(payload);
+    } catch {
+      perfStatus = "fallback";
+      await navigator.clipboard.writeText(item.content);
+      setNativeStatus(tr("main.status.copiedBrowser"));
+    } finally {
+      toast.success("已复制到剪贴板", { description: truncateText(item.plainText || item.content, 42) });
+      finishCopyPerf({ status: perfStatus });
+    }
+  }
 
   async function captureStandardTextClip(
     text: string,
@@ -433,14 +458,7 @@ export function useClipWriteback({
     try {
       const item = await captureStandardTextClip(text, source, context);
       const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode: "rich", source });
-      const normalized = normalizeClip(payload, settingsRef.current);
-      if (normalized) {
-        setClips((current) => {
-          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-          clipsRef.current = next;
-          return next;
-        });
-      }
+      applyNormalizedToClips(payload);
       lastSeenClipboard.current = text.trim();
       setNativeStatus(tr("main.status.copiedCodeSystem"));
       toast.success(tr("main.toast.copied"));

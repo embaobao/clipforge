@@ -20,7 +20,7 @@ import {
   type AppLanguagePreference,
   type TranslationKey,
 } from "./i18n";
-import { pasteClipboard, writeClipboard, type FilePathStatus } from "./services/clipboard";
+import { pasteClipboard, type FilePathStatus } from "./services/clipboard";
 import { resolvePrimaryPluginAction } from "./plugin-actions";
 import {
   getSearchSuggestionToken,
@@ -57,7 +57,6 @@ import { buildBaseSearchSuggestions, buildSearchClipsRequest, buildSearchSuggest
 import {
   createClip,
   normalizeClip,
-  truncateText,
   type ContentDisplayMode,
   type PanelArrowKey,
   type PanelDensity,
@@ -71,7 +70,6 @@ import {
   type ClipItem,
   type ClipTypeFilter,
   canOpenClipTarget,
-  type PasteMode,
 } from "./clipboard/clip-model";
 
 export { extractHashTags, normalizeTagList } from "./clipboard/clip-model";
@@ -755,7 +753,7 @@ function ClipForgeApp() {
     window.setTimeout(() => searchRef.current?.focus(), 0);
   };
 
-  const { markClipCopied, captureStandardTextClip, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent } = useClipWriteback({
+  const { captureStandardTextClip, copyClip, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent } = useClipWriteback({
     setClips,
     clipsRef,
     settingsRef,
@@ -855,37 +853,6 @@ function ClipForgeApp() {
     setGroupScrollTarget,
     setActiveSuggestionIndex,
   });
-
-  async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
-    const finishCopyPerf = startPerfSpan("quick.copy", { source: "ui", pasteMode });
-    let perfStatus = "ok";
-    const optimisticStatus =
-      pasteMode === "plain"
-        ? tr("main.status.copiedPlain")
-        : pasteMode === "filesAsPaths"
-          ? tr("main.status.copiedFilePaths")
-          : tr("main.status.copiedRich");
-    lastSeenClipboard.current = item.content.trim();
-    markClipCopied(item, optimisticStatus);
-    try {
-      const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode, source: "ui" });
-      const normalized = normalizeClip(payload, settingsRef.current);
-      if (normalized) {
-        setClips((current) => {
-          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-          clipsRef.current = next;
-          return next;
-        });
-      }
-    } catch {
-      perfStatus = "fallback";
-      await navigator.clipboard.writeText(item.content);
-      setNativeStatus(tr("main.status.copiedBrowser"));
-    } finally {
-      toast.success("已复制到剪贴板", { description: truncateText(item.plainText || item.content, 42) });
-      finishCopyPerf({ status: perfStatus });
-    }
-  }
 
   async function pasteText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
     const finishPastePerf = startPerfSpan("quick.paste", { source });
