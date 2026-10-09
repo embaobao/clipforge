@@ -23,3 +23,5 @@
 ## dormant 期登记(现在就生效)
 
 - [ ] L2/L3 同源重复实现计数登记(当前 2 处:clipboard 域、settings 域;每新增一处在此追加并评估判据 3)
+  - [x] 第 3 处:面板显隐域(2026-10-09 登记)——show_quick_panel/toggle_quick_panel/hide_quick_panel/panel_trigger_payload 在 lib.rs 与 L2 面板工具、MCP `clipf.panel.*` 各写一份;判定见「评估判据 3」→ 已满足,本提案触发实施(注册表→事件面→清单生成断言 顺序落地)
+- [x] 面板显隐类问题诊断方法论登记(2026-10-09)——「面板自己消失/不丝滑」两步定位:(a) clipforge.jsonl 看 `window-event blurred` 的 front= 字段,blur 瞬间前台 app 切换=外部抢 key,没变=内部;(b) 用 Python Quartz CGEventTap(kCGSessionEventTap,ListenOnly) 监听会话级输入事件流验证静默;再以 CGEventSourceSecondsSinceLastEventType(CombinedSessionState,-1) 做运行时判据。淡出 stutter 的日志指纹:`blur detected` 与 `fade hide dispatched` 每 ~62ms 成对连续出现=连环 fade 重启。
