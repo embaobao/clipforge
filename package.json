@@ -6,6 +6,7 @@
   "packageManager": "pnpm@11.7.0",
   "scripts": {
     "dev": "vite",
+    "dev:sandbox": "D=\"$HOME/Library/Application Support/ClipForge-dev\"; mkdir -p \"$D\"; grep -q globalShortcut \"$D/settings.json5\" 2>/dev/null || echo '{\"globalShortcut\":\"Control+N\",\"debugLogsEnabled\":true}' > \"$D/settings.json5\"; CLIPFORGE_DATA_DIR=\"$D\" CLIPFORGE_DEV_OPEN=panel tauri dev",
     "build:web": "tsc && vite build",
     "check:i18n": "node scripts/check-i18n-keys.mjs && node scripts/scan-hardcoded-copy.mjs",
     "locate": "node scripts/locate.mjs",
