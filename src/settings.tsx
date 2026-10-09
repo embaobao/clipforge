@@ -17,6 +17,7 @@ import { ShortcutLanguageSection } from "./settings/sections/ShortcutLanguageSec
 import { CaptureContentSection, StorageLogsSection } from "./settings/sections/CaptureStorageSections";
 import { DisplayPanelSection } from "./settings/sections/DisplayPanelSection";
 import { SettingsErrorBoundary } from "./settings/components/SettingsErrorBoundary";
+import { buildAgentProviderTemplateText, buildJsonRpcExamples, buildMcpServerConfigJson } from "./settings/settings-code-snippets";
 import { SettingsShell } from "./settings/components/SettingsShell";
 import { type SettingsCodeTab } from "./settings/components/SettingsCodeTabs";
 import { type SettingsStatusPanelState } from "./settings/components/SettingsStatusPanel";
@@ -498,39 +499,6 @@ export function SettingsApp() {
     return (state.settings.agent?.providers ?? state.settings.agentProviders ?? []).length;
   }
 
-  function getAgentProviderTemplateText() {
-    return JSON.stringify(
-      {
-        agent: {
-          providers: [
-            {
-              id: "openai-main",
-              name: "OpenAI compatible",
-              kind: "openai-compatible",
-              enabled: true,
-              baseUrl: "https://api.openai.com/v1",
-              modelId: "gpt-4.1-mini",
-              apiKeyEnv: "OPENAI_API_KEY",
-              timeoutSeconds: 120,
-            },
-            {
-              id: "local-openai-compatible",
-              name: "Local OpenAI-compatible gateway",
-              kind: "openai-compatible",
-              enabled: false,
-              baseUrl: "http://127.0.0.1:1234/v1",
-              modelId: "local-model",
-              apiKeyEnv: "CLIPFORGE_AGENT_LOCAL_API_KEY",
-              timeoutSeconds: 120,
-            },
-          ],
-        },
-      },
-      null,
-      2,
-    );
-  }
-
   function getAgentInstallPrompt() {
     return [
       tr("settings.manual.installPrompt.line1"),
@@ -540,161 +508,94 @@ export function SettingsApp() {
     ].join("\n");
   }
 
-  async function copySettingsSnippet(label: string, content: string) {
+  // 统一复制出口:所有代码 tab 与模板复制都走这里,差异只在成功文案 key。
+  async function copyToClipboard(label: string, content: string, statusKey: Parameters<typeof tr>[0] = "settings.status.copied") {
     try {
       await navigator.clipboard.writeText(content);
-      setState((prev) => ({ ...prev, status: tr("settings.status.copied", { label }) }));
+      setState((prev) => ({ ...prev, status: tr(statusKey, { label }) }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
 
-  async function copyAgentProviderTemplate() {
-    try {
-      await navigator.clipboard.writeText(getAgentProviderTemplateText());
-      setState((prev) => ({ ...prev, status: tr("settings.agent.providerTemplateCopied") }));
-    } catch (error) {
-      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
-    }
-  }
-
-  async function copyMcpCommand(source: string) {
-    const command = getAgentInstallPrompt();
-    try {
-      await navigator.clipboard.writeText(command);
-      setState((prev) => ({ ...prev, status: tr("settings.manual.installPromptCopied", { source }) }));
-    } catch (error) {
-      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
-    }
-  }
-
-  async function checkUpdateNow() {
-    setState((prev) => ({
-      ...prev,
-      update: prev.update ? { ...prev.update, status: "checking" } : prev.update,
-      status: tr("settings.update.status.checking"),
-    }));
-    try {
-      const update = await invoke<UpdateCheckState>("check_update");
-      setState((prev) => ({
-        ...prev,
-        update,
-        status: update.status === "failed" ? tr("settings.update.status.failed") : tr("settings.update.status.refreshed"),
-      }));
-    } catch (error) {
-      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
-    }
-  }
-
-  async function downloadUpdateNow() {
-    setState((prev) => ({
-      ...prev,
-      update: prev.update ? { ...prev.update, status: "downloading", downloadProgress: 0 } : prev.update,
-      status: tr("settings.update.status.downloading"),
-    }));
-    try {
-      const update = await invoke<UpdateCheckState>("download_update");
-      setState((prev) => ({
-        ...prev,
-        update,
-        status: update.status === "failed" ? tr("settings.update.status.failed") : tr("settings.update.status.ready"),
-      }));
-    } catch (error) {
-      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
-    }
-  }
-
-  async function installUpdateNow() {
-    try {
-      const update = await invoke<UpdateCheckState>("install_update");
-      setState((prev) => ({
-        ...prev,
-        update,
-        status: update.status === "failed" ? tr("settings.update.status.failed") : tr("settings.update.status.installing"),
-      }));
-    } catch (error) {
-      setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
-    }
-  }
-
-  async function ignoreCurrentUpdate() {
+  // 更新流程四动作表驱动:check/download/install/ignore 只有 pending 文案、命令与
+  // 成功分支不同;ignore 特殊:前置校验 availableVersion,成功文案带版本号参数。
+  async function runUpdateAction(
+    action: "check" | "download" | "install" | "ignore",
+  ) {
     const version = state.update?.availableVersion;
-    if (!version) return;
+    if (action === "ignore" && !version) return;
+    const command = { check: "check_update", download: "download_update", install: "install_update", ignore: "ignore_update_version" }[action];
+    setState((prev) => {
+      const patch: Partial<UpdateCheckState> =
+        action === "check"
+          ? { status: "checking" }
+          : action === "download"
+            ? { status: "downloading", downloadProgress: 0 }
+            : {};
+      return {
+        ...prev,
+        update: prev.update ? { ...prev.update, ...patch } : prev.update,
+        status:
+          action === "ignore" && version
+            ? tr("settings.update.status.installing")
+            : tr(`settings.update.status.${action === "check" ? "checking" : action === "download" ? "downloading" : "installing"}` as const),
+      };
+    });
     try {
-      const update = await invoke<UpdateCheckState>("ignore_update_version", { version });
-      setState((prev) => ({ ...prev, update, status: tr("settings.update.status.ignored", { version }) }));
+      const update = await invoke<UpdateCheckState>(command, action === "ignore" ? { version } : undefined);
+      const successStatus =
+        action === "ignore" && version
+          ? tr("settings.update.status.ignored", { version })
+          : update.status === "failed"
+            ? tr("settings.update.status.failed")
+            : action === "check"
+              ? tr("settings.update.status.refreshed")
+              : action === "download"
+                ? tr("settings.update.status.ready")
+                : tr("settings.update.status.installing");
+      setState((prev) => ({ ...prev, update, status: successStatus }));
     } catch (error) {
       setState((prev) => ({ ...prev, status: formatSettingsError(error) }));
     }
   }
+  const checkUpdateNow = () => runUpdateAction("check");
+  const downloadUpdateNow = () => runUpdateAction("download");
+  const installUpdateNow = () => runUpdateAction("install");
+  const ignoreCurrentUpdate = () => runUpdateAction("ignore");
 
-  const updateStatusCopy =
-    state.update?.status === "latest"
-      ? tr("settings.update.status.latest")
-      : state.update?.status === "available"
-        ? tr("settings.update.status.available", { version: state.update.availableVersion ?? "" })
-        : state.update?.status === "checking"
-          ? tr("settings.update.status.checking")
-          : state.update?.status === "downloading"
-            ? tr("settings.update.status.downloading")
-            : state.update?.status === "ready"
-              ? tr("settings.update.status.ready")
-              : state.update?.status === "failed"
-                ? tr("settings.update.status.failed")
-                : tr("settings.update.status.idle");
-  const densityCopy: Record<AppSettings["panelDensity"], string> = {
-    dense: tr("settings.display.density.dense"),
-    normal: tr("settings.display.density.normal"),
-    comfortable: tr("settings.display.density.comfortable"),
-  };
-  const displayModeCopy: Record<AppSettings["contentDisplayMode"], string> = {
-    summary: tr("settings.display.contentMode.summary"),
-    middle: tr("settings.display.contentMode.middle"),
-    raw: tr("settings.display.contentMode.raw"),
-  };
-  const positionStrategyCopy: Record<AppSettings["positionStrategy"], string> = {
-    trayCenter: tr("settings.display.positionStrategy.trayCenter"),
-    followCursor: tr("settings.display.positionStrategy.followCursor"),
-    center: tr("settings.display.positionStrategy.center"),
-    windowCenter: tr("settings.display.positionStrategy.windowCenter"),
-    lastPosition: tr("settings.display.positionStrategy.lastPosition"),
-    focusInput: tr("settings.display.positionStrategy.focusInput"),
-  };
-  const tagModeLabels: Record<AppSettings["tagMode"], string> = {
-    similar: tr("settings.tags.mode.similar"),
-    rules: tr("settings.tags.mode.rules"),
-    off: tr("settings.tags.mode.off"),
-  };
+  // 更新状态文案:普通状态查表,available 需版本号参数,idle 兜底。
+  const updateStatusCopy = (() => {
+    const status = state.update?.status ?? "idle";
+    if (status === "available") {
+      return tr("settings.update.status.available", { version: state.update?.availableVersion ?? "" });
+    }
+    if (status === "idle") {
+      return tr("settings.update.status.idle");
+    }
+    return tr(`settings.update.status.${status}` as const);
+  })();
   const mcpCommand = getMcpCommand();
   const agentInstallPrompt = getAgentInstallPrompt();
-  // 标准 mcpServers 接入配置：复制后粘进支持 MCP 的 Agent（Claude Desktop/Cursor 等）配置即可接入。
-  const mcpServerConfigJson = JSON.stringify(
-    { mcpServers: { clipforge: { command: mcpCommand.replace(/\s*--mcp\s*$/, ""), args: ["--mcp"] } } },
-    null,
-    2,
-  );
-  // 真实 JSON-RPC 示例：与 MCP stdio 协议一致（tools/call），供调试参考。
-  const jsonRpcExamples = [
-    '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"clipf.list","arguments":{"limit":9}}}',
-    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"clipf.search","arguments":{"text":"github","limit":20}}}',
-  ].join("\n");
+  const mcpServerConfigJson = buildMcpServerConfigJson(mcpCommand);
+  const jsonRpcExamples = buildJsonRpcExamples();
   const mcpAgentCodeTabs: SettingsCodeTab[] = [
     { value: "mcp-servers", label: tr("settings.mcp.serverConfig"), language: "json", content: mcpServerConfigJson },
     { value: "install", label: tr("settings.mcp.agentInstallPrompt"), language: "text", content: agentInstallPrompt },
     { value: "command", label: tr("settings.mcp.command"), language: "bash", content: mcpCommand },
     { value: "json-rpc", label: tr("settings.mcp.jsonRpc"), language: "json", content: jsonRpcExamples },
-    { value: "provider", label: tr("settings.agent.providerTemplate"), language: "json", content: getAgentProviderTemplateText() },
+    { value: "provider", label: tr("settings.agent.providerTemplate"), language: "json", content: buildAgentProviderTemplateText() },
   ];
   function copyMcpAgentCodeTab(tab: SettingsCodeTab) {
     if (tab.value === "install") {
-      void copyMcpCommand(tab.label);
+      void copyToClipboard(tab.label, getAgentInstallPrompt(), "settings.manual.installPromptCopied");
       return;
     }
     if (tab.value === "provider") {
-      void copyAgentProviderTemplate();
+      void copyToClipboard(tab.label, buildAgentProviderTemplateText(), "settings.agent.providerTemplateCopied");
       return;
     }
-    void copySettingsSnippet(tab.label, tab.content);
+    void copyToClipboard(tab.label, tab.content);
   }
   const activeSection = SECTIONS.find((item) => item.key === section) ?? SECTIONS[0];
   // configStatus 降级为 transient 提示:写入/加载成功后 2.5s 自动清除。旧行为是它在
@@ -838,10 +739,7 @@ export function SettingsApp() {
           )}
           {section === "display-panel" && (
             <DisplayPanelSection
-              densityCopy={densityCopy}
-              displayModeCopy={displayModeCopy}
               panel={state.panel}
-              positionStrategyCopy={positionStrategyCopy}
               refreshPanelStatus={refreshPanelStatus}
               settings={state.settings}
               testFloatingPanel={testFloatingPanel}
@@ -883,7 +781,6 @@ export function SettingsApp() {
               deleteTagRule={deleteTagRule}
               renderTabs={renderSectionTabs}
               settings={state.settings}
-              tagModeLabels={tagModeLabels}
               tr={tr}
               updateSettings={updateSettings}
               updateTagRule={updateTagRule}
@@ -902,7 +799,7 @@ export function SettingsApp() {
           {section === "storage-logs" && (
             <StorageLogsSection
               configPath={state.configPath}
-              copySettingsSnippet={copySettingsSnippet}
+              copySettingsSnippet={copyToClipboard}
               databasePath={state.databasePath}
               dangerConfirmation={dangerConfirmation}
               formatBytes={formatBytes}

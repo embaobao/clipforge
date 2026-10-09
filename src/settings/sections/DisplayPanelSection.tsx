@@ -12,9 +12,6 @@ export type DisplayPanelSectionProps = {
   panel: PanelTriggerPayload | null;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
   updateSettings: (next: Partial<AppSettings>) => void;
-  densityCopy: Record<AppSettings["panelDensity"], string>;
-  displayModeCopy: Record<AppSettings["contentDisplayMode"], string>;
-  positionStrategyCopy: Record<AppSettings["positionStrategy"], string>;
   testFloatingPanel: () => Promise<void> | void;
   refreshPanelStatus: () => Promise<void> | void;
   renderTabs: (panels: Partial<Record<SettingsTabId, ReactNode>>) => ReactNode;
@@ -26,13 +23,29 @@ export function DisplayPanelSection({
   panel,
   tr,
   updateSettings,
-  densityCopy,
-  displayModeCopy,
-  positionStrategyCopy,
   testFloatingPanel,
   refreshPanelStatus,
   renderTabs,
 }: DisplayPanelSectionProps) {
+  // 文案映射表仅本组件使用,直接从 tr 构造,不再经宿主中转。
+  const densityCopy: Record<AppSettings["panelDensity"], string> = {
+    dense: tr("settings.display.density.dense"),
+    normal: tr("settings.display.density.normal"),
+    comfortable: tr("settings.display.density.comfortable"),
+  };
+  const displayModeCopy: Record<AppSettings["contentDisplayMode"], string> = {
+    summary: tr("settings.display.contentMode.summary"),
+    middle: tr("settings.display.contentMode.middle"),
+    raw: tr("settings.display.contentMode.raw"),
+  };
+  const positionStrategyCopy: Record<AppSettings["positionStrategy"], string> = {
+    trayCenter: tr("settings.display.positionStrategy.trayCenter"),
+    followCursor: tr("settings.display.positionStrategy.followCursor"),
+    center: tr("settings.display.positionStrategy.center"),
+    windowCenter: tr("settings.display.positionStrategy.windowCenter"),
+    lastPosition: tr("settings.display.positionStrategy.lastPosition"),
+    focusInput: tr("settings.display.positionStrategy.focusInput"),
+  };
   return renderTabs({
     density: (
       <SettingGroup>

@@ -312,7 +312,6 @@ export function UpdateDistributionSection({
 
 export type TagRulesSectionProps = {
   settings: Pick<AppSettings, "tagMode" | "tagRules">;
-  tagModeLabels: Record<AppSettings["tagMode"], string>;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
   updateSettings: (next: Partial<AppSettings>) => void;
   addTagRule: () => void;
@@ -324,7 +323,6 @@ export type TagRulesSectionProps = {
 /** 标签规则 section（tag-mode/rules 两个 tab）：自动打标模式与关键词规则编辑。 */
 export function TagRulesSection({
   settings,
-  tagModeLabels,
   tr,
   updateSettings,
   addTagRule,
@@ -332,6 +330,11 @@ export function TagRulesSection({
   deleteTagRule,
   renderTabs,
 }: TagRulesSectionProps) {
+  const tagModeLabels: Record<AppSettings["tagMode"], string> = {
+    similar: tr("settings.tags.mode.similar"),
+    rules: tr("settings.tags.mode.rules"),
+    off: tr("settings.tags.mode.off"),
+  };
   return renderTabs({
     "tag-mode": (
       <SettingGroup>

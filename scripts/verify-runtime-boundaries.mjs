@@ -62,7 +62,7 @@ assert(shortcutSection.includes('tr("settings.accessibility.status.granted")'), 
 assert(shortcutSection.includes('tr("settings.accessibility.action.request")'), "Settings accessibility request action is not wired to i18n");
 assert(settings.includes('status: tr("settings.accessibility.status.reset")'), "Settings accessibility reset status is not wired to i18n");
 assert(zhLocale.includes('"settings.accessibility.title": "macOS 辅助功能权限"'), "Settings accessibility copy is missing from zh-CN locale");
-const safeUpdate = sliceBetween(settings, "async function safeInvokeUpdateCheck", "const tagModeLabels");
+const safeUpdate = sliceBetween(settings, "async function safeInvokeUpdateCheck", "async function runUpdateAction");
 assert(safeUpdate.includes('status: "failed"'), "Failed update checks do not return a failed state");
 assert(safeUpdate.includes('errorCode: "UPDATE_CHECK_FAILED"'), "Failed update checks do not expose a stable error code");
 const settingsBootstrap = sliceBetween(settings, "Promise.all([", "]);");
