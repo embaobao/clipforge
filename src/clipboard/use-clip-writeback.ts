@@ -110,7 +110,7 @@ export function useClipWriteback({
         id,
         bucket: next.bucket,
         favorite: typeof next.favorite === "boolean" ? next.favorite : undefined,
-        tags: Array.isArray(next.tags) ? next.tags : undefined,
+        metadata: next.metadata,
       },
     }).catch((error) => logAppError("warn", "Update clip failed", String(error)));
     invalidateViewClipCache();
@@ -268,7 +268,7 @@ export function useClipWriteback({
     item: ClipItem,
     content: string,
     tags?: string[],
-    context?: { sessionId: string; draftVersion: number },
+    context?: { sessionId: string; draftVersion: number; tagsProvenance?: Record<string, unknown> },
   ) {
     const payload = await invoke<Partial<ClipItem>>("save_editor_draft", {
       input: {
@@ -280,6 +280,8 @@ export function useClipWriteback({
         metadata: {
           source: "detail-compact-editor",
           payloadKind: item.payloadKind,
+          // 详情页提案 §5.2：tags_provenance 平铺进 clips.metadata（Rust 侧平铺合并）。
+          ...(context?.tagsProvenance ? { tags_provenance: context.tagsProvenance } : {}),
         },
       },
     });

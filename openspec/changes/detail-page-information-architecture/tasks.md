@@ -1,40 +1,53 @@
-# Tasks: 详情页信息架构、类型渲染管线与插件化
+# Tasks: 详情页信息架构、三态编辑模型与插件化
 
-## Phase 1: 布局重排（行为零变化）
+## Phase 1: 布局重排与三态骨架（行为零变化迁移）
 
-- [ ] 1.1 新建 `src/workspace/components/detail/detail-layout.tsx`：五区骨架（crumb/meta/内容/插件占位/底部动作区），从 ClipDetailWorkspace 抽出渲染编排，保持既有 props 不变
-- [ ] 1.2 DetailMeta 改造：三行 → 单行 chip 行（类型 + 来源 app + tags 全量 `overflow-x-auto` 横滚，点 tag 仍走 onSearchTag）；来源地址/应用上下文行删除，数据移入溢出菜单数据源
-- [ ] 1.3 crumb 收敛：back + 标题 + prev/next + 溢出菜单（分组：复制地址/来源/应用上下文/采集上下文 JSON）；edit 钮移底部动作区
-- [ ] 1.4 底部动作区：复制（`bg-primary text-primary-foreground` 主钮）/ 粘贴 / 编辑 / AI 触发钮 + detail-action 占位渲染点；PiAnalysisBar props 接口不变，仅迁移挂载位置
-- [ ] 1.5 链接 chips 从独立底部区并入内容区尾部；采集上下文 accordion 删除，JSON 查看走底部滑入面板
-- [ ] 1.6 验证：`pnpm build` + `cd src-tauri && cargo check` + `pnpm test:unit` + `pnpm test:boundaries`；`pnpm dev:sandbox` 真机走查六种 payloadKind + 长内容滚动 + 键盘 prev/next
+- [x] 1.1 安装 `react-icons`（仅按子路径导入 `react-icons/ri`）；prev/next 换 `RiArrowUpWideFill` / `RiArrowDownWideFill`
+- [x] 1.2 新建 `src/workspace/components/detail/detail-layout.tsx`：五区骨架（crumb / 路径行 / meta 单行 / 内容三态容器 / 底部动作区），从 ClipDetailWorkspace 抽出渲染编排，props 透传不变
+- [x] 1.3 DetailMeta 改造：三行 → 单行 chip 行（静态类型 chip + 来源 app chip + tags 横滚）；来源地址行删除并入数据源；来源 app chip 点击 → 采集原数据弹窗（既有 accordion 内容迁移为 modal）
+- [x] 1.4 crumb 收敛：back + 标题 + prev/next + 溢出菜单；edit 钮移底部动作区
+- [x] 1.5 三态状态机：`detail-state.ts`（'view' | 'edit' | 'diff'）+ E/双击/⌘S/Esc 键盘路由；底部动作区按 mode 切换按钮组
+- [ ] 1.6 验证：`pnpm build` + `cd src-tauri && cargo check` + `pnpm test:unit` + `pnpm test:boundaries`；`pnpm dev:sandbox` 走查六种 payloadKind 浏览态
 
-## Phase 2: 类型渲染注册表（内置迁移，行为零变化）
+## Phase 2: MD 编辑器与 tags 行内编辑
 
-- [ ] 2.1 新建 `src/workspace/components/detail/renderer-registry.ts`：DetailRendererEntry 类型 + builtinRenderers 8 条（迁移现有 if/else 分支，match 含 payloadKind/extensions/mimePrefix/heuristic/order）
-- [ ] 2.2 golden 对照测试：fixture clips（image/file/imageUrl/html/link/json/markdown/纯文本）× 断言 resolveDetailRenderer 命中 id 与迁移前分支一致（先固化现分支命中表再动手）
-- [ ] 2.3 ClipDetailWorkspace 只读态替换为 resolveDetailRenderer(clip) 分发；DetailPreview 各预览组件不动
-- [ ] 2.4 验证：`pnpm test:unit`（含 golden）+ `pnpm dev:sandbox` 真机六类条目渲染对照截图无回归
+- [x] 2.1 新建 `src/workspace/components/detail/md-editor.tsx`：工具条（B/I/S/H1/H2/列表/引用/行内代码/代码块/链接 + ⌘B/⌘I）+ textarea + 预览 tab + 状态行（Markdown · 字数 · 快捷键提示）
+- [x] 2.2 编辑态挂载：替换下钻编辑层为内容区直挂（隐藏浏览态正文/路径行/提示行）；image/file 只读条目禁用编辑
+- [x] 2.3 tags 行内编辑：编辑态 chip × 删、行尾 input 回车加；保存组装完整数组走 update_clip_record
+- [ ] 2.4 验证：test:unit + 沙箱：E 进编辑、⌘B 加粗、预览 tab 渲染、⌘S 保存刷新生效、Esc 丢弃
 
-## Phase 3: tag provenance 与内联编辑
+## Phase 3: 复制三路（纯文本 / 原格式 / 路径）
 
-- [ ] 3.1 `src/workspace/components/detail/tag-chips.tsx`：四源 chip（4px 来源色点 + tooltip 来源/时间）+ 横滚 + 行尾 + 钮内联编辑（回车加/点 x 删/建议 chips）
-- [ ] 3.2 provenance 读写：clip record 解析 metadata_json.tags_provenance；保存时前端组装完整数组 + provenance 更新，走既有 update_clip_record 整体替换（后端协议不动）
-- [ ] 3.3 PiAnalysisBar applyTags 写入 provenance source=ai
-- [ ] 3.4 验证：`pnpm test:unit` + 沙箱真机：改 tag → 刷新 provenance 保持；AI applyTags → chip 出现 ai 色点
+- [x] 3.1 底部动作区：复制（主钮，plain）+ ⧉原格式（rich；representations 含 text/html|rtf 才启用）+ ⤓路径（无路径隐藏）
+- [x] 3.2 来源路径行：`detail-path-row.tsx`——representations(file-list fileName) / analysis.url / metadata 取路径；等宽 chip 点击复制 + ⇧⌘C
+- [x] 3.3 复制成功反馈（主钮 icon ✓ + success 600ms；路径行「已复制」就地置换）
+- [ ] 3.4 验证：沙箱实测——富文本条目原格式复制粘贴到备忘录保留格式；路径粘贴到终端正确
 
-## Phase 4: 动效与可访问性
+## Phase 4: 类型渲染注册表（内置迁移，行为零变化）
 
-- [ ] 4.1 prev/next 方向感知过渡（translateY ±6px + fade 140ms cubic-bezier(0.32,0.72,0,1)）
-- [ ] 4.2 AI/采集上下文底部滑入面板（220ms 同曲线、可打断、进出同路径）；溢出菜单 origin 缩放入场 120ms
-- [ ] 4.3 复制成功反馈（主钮 success 置换 600ms）；tag 行内编辑展开高度过渡
-- [ ] 4.4 全部动效 prefers-reduced-motion 退化 crossfade；验证 `defaults read com.apple.universalaccess reduceMotion` 开关下真机走查
-- [ ] 4.5 验证：`pnpm build` + 真机动效可打断性（动画中途反向操作）走查
+- [x] 4.1 新建 `src/workspace/components/detail/renderer-registry.ts`：DetailRendererEntry + builtinRenderers 8 条（迁移 if/else 分支）
+- [x] 4.2 golden 对照测试：fixture clips × 断言 resolveDetailRenderer 命中 id 与迁移前一致（先固化现分支命中表再动手）
+- [x] 4.3 只读态替换为 resolveDetailRenderer(clip) 分发；DetailPreview 各预览组件不动
+- [ ] 4.4 验证：test:unit（含 golden）+ 沙箱六类条目渲染对照
 
-## Phase 5: 插槽占位与提案回写
+## Phase 5: tag provenance 与规则治理
 
-- [ ] 5.1 detail-action / detail-section 占位渲染容器（空注册零 DOM、零开销，不阻塞内容首帧；>3 个折叠「扩展 (N)」）
-- [ ] 5.2 renderer-registry 预留插件合并入口（读插件声明 match，与 builtin 合并排序；运行时本体未到前空数组直通）
-- [ ] 5.3 回写 agent-plugin-runtime design §8 surface 表：新增 detail-renderer / detail-action / detail-section 三行（含字段、白名单组件、order 抢占授权、tag append 协议引用）
-- [ ] 5.4 回写本提案 design §2/§3/§5 与实现状态对齐；docs/BUSINESS_INDEX.md 同步（detail 域入口改 detail-layout.tsx / renderer-registry.ts）
-- [ ] 5.5 验证：`pnpm build` + `pnpm test:unit`（--check-index 过）+ openspec validate 全绿
+- [x] 5.1 `tag-chips.tsx`：四源 chip（来源色点 + tooltip）+ 横滚 + AI 建议 chips 点选追加
+- [x] 5.2 provenance 读写：metadata.tags_provenance 解析/组装；人工保存标 manual；AI applyTags 标 ai
+- [x] 5.3 设置页「内置标签规则」分区：显式开关列表；#多行 规则删除（lib.rs L4953-4955）；自定义规则读写 settings.tag_rules
+- [ ] 5.4 验证：改 tag → 刷新 provenance 保持；AI 建议 → chip 出现 ai 色点；#多行 不再自动打标
+
+## Phase 6: 插件区与 diff 草稿态（宿主侧占位）
+
+- [x] 6.1 插件区：tags 行右侧 `⌕ AI` 下拉容器（功能列表占位 + 队列入口 + 配置入口 + ＋安装入口）；队列角标 + popover（并发 2 状态机，宿主侧纯 UI）
+- [x] 6.2 diff 草稿态：draft-banner + 行级 diff 渲染（简易 LCS）+ 保存生效/放弃草稿；draft 仅内存
+- [x] 6.3 detail-action / detail-section 占位容器（空注册零 DOM；>3 折叠「扩展 (N)」）；renderer-registry 预留插件合并入口（空数组直通）
+- [x] 6.4 回写 agent-plugin-runtime design §8 surface 表（detail-renderer / detail-action / detail-section + AI 功能契约引用）
+- [ ] 6.5 验证：⌕ 下拉开合、队列状态流转、模拟草稿→diff→保存链路；空注册零 DOM 断言
+
+## Phase 7: 动效与可访问性收口
+
+- [x] 7.1 三态切换/prev-next 方向感知/popover origin 缩放/草稿横幅/diff 行交错/复制反馈/tag 增删/弹窗进出，按 design §7 参数表实施（统一 220ms/140ms 曲线，可打断）
+- [x] 7.2 全部 prefers-reduced-motion 退化 crossfade；`defaults read com.apple.universalaccess reduceMotion` 开关下真机走查
+- [x] 7.3 docs/BUSINESS_INDEX.md 同步（detail 域入口 detail-layout.tsx / renderer-registry.ts）；本提案 design 与实现状态对齐
+- [ ] 7.4 终验：`pnpm build` + `cargo check` + `pnpm test:unit`（--check-index 过）+ `pnpm test:boundaries` + openspec validate 全绿 + 沙箱全流程走查（六类条目 × 三态 × 键盘动线 × 原格式/路径复制）

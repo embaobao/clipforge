@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>详情页 v6 vs v7 · 行内编辑 · 插件区右移 · 站内 diff</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --surface: #ffffff; --fg: #18181b; --muted: #71717a;
+    --border: #e4e4e7; --accent: #18181b; --accent-fg: #ffffff;
+    --success: #16a34a; --warning: #d97706; --error: #dc2626; --info: #2563eb;
+    --chip: #f4f4f5; --chip-hover: #ebebee;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.05);
+    --shadow-md: 0 4px 16px rgba(0,0,0,.08);
+    --shadow-lg: 0 12px 40px rgba(0,0,0,.14);
+    --ease: cubic-bezier(.32,.72,0,1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#09090b; --surface:#131316; --fg:#fafafa; --muted:#a1a1aa; --border:#27272a; --accent:#fafafa; --accent-fg:#09090b; --chip:#1c1c1f; --chip-hover:#242428; }
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:32px; font-size:14px; }
+  .page-head { max-width:1660px; margin:0 auto 24px; }
+  .page-head h1 { font-size:19px; font-weight:650; letter-spacing:-.01em; }
+  .page-head p { font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.6; }
+  .tabs { display:flex; gap:8px; margin-top:14px; align-items:center; }
+  .tab { font-size:12px; padding:5px 13px; border-radius:8px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--muted); box-shadow:var(--shadow-sm); }
+  .tab:hover { color:var(--fg); }
+  .tab.active { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  .tabs .hint { font-size:11px; color:var(--muted); margin-left:6px; }
+
+  .cols { display:grid; grid-template-columns:1fr 1.15fr; gap:24px; max-width:1660px; margin:0 auto; }
+  @media (max-width:1100px){ .cols { grid-template-columns:1fr; } }
+  .col-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
+  .col-head h2 { font-size:14px; font-weight:650; }
+  .col-head .stat { font-size:11px; color:var(--muted); }
+
+  .window { width:100%; max-width:780px; aspect-ratio:780/720; background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--shadow-md); }
+  .topbar { display:flex; align-items:center; gap:8px; padding:10px 14px; flex-shrink:0; }
+  .back-btn { width:30px; height:30px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--muted); cursor:pointer; transition:background .12s; }
+  .back-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .meta-chip { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border-radius:8px; background:var(--chip); border:none; font-size:11.5px; color:var(--fg); cursor:pointer; font-family:inherit; transition:background .12s, transform .08s; }
+  .meta-chip:hover { background:var(--chip-hover); }
+  .meta-chip:active { transform:scale(.97); }
+  .meta-chip .app-ico { width:15px; height:15px; border-radius:4px; background:linear-gradient(135deg,#5cabff,#1a6ed8); display:inline-flex; align-items:center; justify-content:center; color:#fff; font-size:8.5px; font-weight:700; }
+  .chev { width:11px; height:11px; color:var(--muted); flex-shrink:0; }
+  .nav-btn { width:30px; height:30px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--muted); cursor:pointer; transition:background .12s,transform .08s; flex-shrink:0; }
+  .nav-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .nav-btn:active { transform:scale(.92); }
+  .nav-btn svg { width:15px; height:15px; }
+  .nav-btn.star-on { color:var(--warning); }
+
+  /* tags 行 + 右侧插件区 */
+  .tags-line { display:flex; align-items:center; gap:8px; padding:0 14px 8px; flex-shrink:0; }
+  .tags-scroll { display:flex; gap:4px; overflow-x:auto; scrollbar-width:none; flex:1; min-width:0; align-items:center; }
+  .tags-scroll::-webkit-scrollbar { display:none; }
+  .tag-btn { display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 8px; border-radius:6px; border:none; background:var(--chip); color:var(--muted); font-size:11px; cursor:pointer; white-space:nowrap; transition:background .12s,color .12s; flex-shrink:0; }
+  .tag-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .tag-btn .src { width:5px; height:5px; border-radius:50%; display:inline-block; }
+  .tag-btn .rm { color:var(--muted); font-size:10px; margin-left:2px; }
+  .tag-btn .rm:hover { color:var(--error); }
+  .tag-input { height:22px; border:none; background:transparent; color:var(--fg); font-size:11px; outline:none; width:90px; border-bottom:1px dashed var(--border); }
+  .plus-tag { width:22px; height:22px; border-radius:6px; color:var(--muted); font-size:12px; border:none; background:transparent; cursor:pointer; flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; }
+  .plus-tag:hover { background:var(--chip); color:var(--fg); }
+  .plug-zone { display:flex; gap:3px; align-items:center; padding:3px; border-radius:9px; border:1px dashed var(--border); flex-shrink:0; position:relative; }
+  .plug-zone .pz-label { font-size:9.5px; color:var(--muted); padding:0 3px 0 7px; }
+  .plug-btn { height:24px; padding:0 8px; border-radius:7px; display:inline-flex; align-items:center; gap:5px; border:none; background:transparent; color:var(--muted); cursor:pointer; font-size:11.5px; font-family:inherit; transition:background .12s,color .12s; }
+  .plug-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .plug-btn.active { color:var(--accent); background:var(--chip); }
+  .plug-btn .qbadge { min-width:15px; height:15px; border-radius:999px; background:var(--info); color:#fff; font-size:9px; display:none; align-items:center; justify-content:center; padding:0 4px; }
+  .plug-btn .qbadge.show { display:inline-flex; }
+  .plug-btn.ghost { width:24px; padding:0; justify-content:center; color:var(--border); }
+
+  .content { flex:1; min-height:0; overflow:auto; padding:4px 16px 12px; display:flex; flex-direction:column; gap:8px; position:relative; border-top:1px solid var(--border); }
+  .content .doc { padding-top:10px; }
+  .content .title { font-size:13px; font-weight:650; }
+  .content p { font-size:12.5px; line-height:1.7; }
+  .content .muted { color:var(--muted); font-size:11.5px; }
+  .hint-row { margin-top:auto; display:flex; gap:10px; align-items:center; color:var(--muted); font-size:10.5px; padding-top:10px; flex-wrap:wrap; }
+  .kbd { font-size:9.5px; color:var(--muted); border:1px solid var(--border); border-bottom-width:2px; border-radius:4px; padding:0 4px; background:var(--surface); }
+
+  /* 编辑态：详情页即编辑器，最大化显示 */
+  .editor-box { flex:1; display:none; flex-direction:column; gap:8px; min-height:0; padding-top:10px; }
+  .editor-box.on { display:flex; }
+  .editor-box textarea { flex:1; min-height:120px; border:1px solid var(--border); border-radius:10px; padding:12px; font-family:inherit; font-size:13px; line-height:1.75; resize:none; background:var(--bg); color:var(--fg); }
+  .editor-box textarea:focus { outline:2px solid color-mix(in srgb, var(--accent) 22%, transparent); outline-offset:-1px; }
+  .ed-status { display:flex; gap:10px; align-items:center; color:var(--muted); font-size:10.5px; }
+  .ed-status .grow { flex:1; }
+
+  /* diff 态：草稿对比，站内呈现 */
+  .draft-banner { display:none; align-items:center; gap:8px; padding:6px 12px; border-radius:9px; background:color-mix(in srgb, var(--info) 10%, var(--surface)); border:1px solid color-mix(in srgb, var(--info) 30%, transparent); font-size:11.5px; color:var(--fg); }
+  .draft-banner.show { display:flex; }
+  .draft-banner .src-id { font-family:ui-monospace,Menlo,monospace; font-size:10px; color:var(--info); }
+  .diff-box { display:none; flex-direction:column; gap:6px; min-height:0; flex:1; padding-top:10px; }
+  .diff-box.on { display:flex; }
+  .diff-view { border:1px solid var(--border); border-radius:10px; overflow:auto; font-family:ui-monospace,Menlo,monospace; font-size:11.5px; line-height:1.8; background:var(--bg); flex:1; }
+  .diff-line { padding:1px 12px; white-space:pre-wrap; }
+  .diff-line.add { background:color-mix(in srgb, var(--success) 12%, var(--bg)); color:var(--success); }
+  .diff-line.del { background:color-mix(in srgb, var(--error) 10%, var(--bg)); color:var(--error); text-decoration:line-through; opacity:.75; }
+  .diff-line.ctx { color:var(--muted); }
+  .diff-actions { display:flex; gap:8px; align-items:center; }
+
+  /* 下拉 / 弹层 */
+  .pop { position:absolute; background:var(--surface); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow-lg); z-index:25; display:none; flex-direction:column; padding:5px; animation:pop .16s var(--ease); }
+  .pop.open { display:flex; }
+  @keyframes pop { from { opacity:0; transform:scale(.96) translateY(-4px);} to { opacity:1; transform:none; } }
+  .type-pop { top:34px; left:0; width:250px; transform-origin:top left; }
+  .ai-pop { top:34px; right:0; width:262px; transform-origin:top right; }
+  .pop .tp-head { font-size:10px; color:var(--muted); padding:6px 9px 4px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; display:flex; align-items:center; gap:6px; }
+  .pop .tp-head .grow { flex:1; }
+  .pop button.tp-item { display:flex; align-items:center; gap:8px; height:31px; padding:0 9px; border:none; background:transparent; color:var(--fg); font-size:12px; border-radius:8px; cursor:pointer; font-family:inherit; text-align:left; }
+  .pop button.tp-item:hover { background:var(--chip); }
+  .pop button.tp-item .ic { width:16px; text-align:center; color:var(--muted); font-size:12px; flex-shrink:0; }
+  .pop button.tp-item .fid { font-family:ui-monospace,Menlo,monospace; font-size:9.5px; color:var(--muted); }
+  .pop button.tp-item .k { margin-left:auto; font-size:9.5px; color:var(--muted); border:1px solid var(--border); border-radius:4px; padding:0 4px; }
+  .pop .tp-div { height:1px; background:var(--border); margin:4px 7px; }
+
+  /* 插件队列 popover */
+  .queue-pop { position:absolute; bottom:52px; right:14px; width:270px; transform-origin:bottom right; }
+  .q-item { display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:8px; font-size:11.5px; }
+  .q-item .qic { width:16px; text-align:center; flex-shrink:0; }
+  .q-item .grow { flex:1; min-width:0; }
+  .q-item .fid { font-family:ui-monospace,Menlo,monospace; font-size:9.5px; color:var(--muted); }
+  .q-item .st { font-size:10px; color:var(--muted); flex-shrink:0; }
+  .q-item .st.run { color:var(--info); }
+  .q-item .st.ok { color:var(--success); }
+  .spin { display:inline-block; width:10px; height:10px; border:2px solid color-mix(in srgb, var(--info) 30%, transparent); border-top-color:var(--info); border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  .action-bar { border-top:1px solid var(--border); padding:9px 14px; display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:30px; padding:0 13px; border-radius:8px; font-size:12.5px; cursor:pointer; border:1px solid var(--border); background:var(--surface); color:var(--fg); white-space:nowrap; transition:background .12s,transform .08s; flex-shrink:0; }
+  .btn:hover { background:var(--chip); }
+  .btn:active { transform:scale(.97); }
+  .btn.primary { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  .btn.primary:hover { opacity:.9; background:var(--accent); }
+  .btn.done { background:var(--success); border-color:var(--success); color:#fff; }
+  .action-bar .divider { width:1px; height:20px; background:var(--border); margin:0 2px; }
+  .action-bar .spacer { flex:1; }
+
+  .overlay { position:absolute; inset:0; background:rgba(0,0,0,.32); z-index:30; display:none; align-items:center; justify-content:center; animation:fadein .15s ease; }
+  @media (prefers-color-scheme: dark){ .overlay { background:rgba(0,0,0,.5); } }
+  .overlay.open { display:flex; }
+  @keyframes fadein { from{opacity:0;} to{opacity:1;} }
+  .modal { width:86%; max-width:470px; max-height:84%; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-lg); display:flex; flex-direction:column; overflow:hidden; animation:pop2 .18s var(--ease); }
+  @keyframes pop2 { from { opacity:0; transform:scale(.97) translateY(6px);} to { opacity:1; transform:none; } }
+  .modal-head { display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px solid var(--border); font-size:13px; font-weight:650; }
+  .modal-head .sub { font-size:10.5px; color:var(--muted); font-weight:400; }
+  .modal-head .x { margin-left:auto; width:26px; height:26px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; }
+  .modal-head .x:hover { background:var(--chip-hover); color:var(--fg); }
+  .modal-body { padding:14px 16px; overflow:auto; display:flex; flex-direction:column; gap:12px; flex:1; }
+  .modal-foot { padding:10px 16px; border-top:1px solid var(--border); display:flex; gap:8px; align-items:center; }
+  .modal-foot .right { margin-left:auto; display:flex; gap:8px; }
+  .raw-json { font-family:ui-monospace,Menlo,monospace; font-size:11px; line-height:1.75; background:var(--chip); border-radius:10px; padding:12px 14px; white-space:pre-wrap; }
+  .raw-json .k { color:var(--accent); font-weight:600; }
+  .raw-json .dim { color:var(--muted); }
+  .kv { display:flex; gap:10px; font-size:11.5px; padding:7px 0; border-bottom:1px solid var(--border); }
+  .kv:last-child { border-bottom:none; }
+  .kv .k2 { width:92px; color:var(--muted); flex-shrink:0; }
+  .kv .v { word-break:break-all; }
+  /* AI 功能配置表 */
+  .fn-row { display:flex; align-items:center; gap:8px; padding:8px 2px; border-bottom:1px solid var(--border); font-size:11.5px; }
+  .fn-row:last-child { border-bottom:none; }
+  .fn-row .nm { width:76px; font-weight:600; flex-shrink:0; }
+  .fn-row .fid { font-family:ui-monospace,Menlo,monospace; font-size:10px; color:var(--info); width:104px; flex-shrink:0; }
+  .fn-row input[type=text] { width:64px; height:24px; border:1px solid var(--border); border-radius:6px; font-size:10px; font-family:ui-monospace,Menlo,monospace; padding:0 6px; background:var(--bg); color:var(--fg); }
+  .fn-row select { height:24px; border:1px solid var(--border); border-radius:6px; font-size:10.5px; background:var(--bg); color:var(--fg); flex:1; min-width:0; }
+  .fn-row .tg { width:32px; height:18px; border-radius:999px; background:var(--success); position:relative; cursor:pointer; flex-shrink:0; }
+  .fn-row .tg::after { content:''; position:absolute; top:2px; right:2px; width:14px; height:14px; border-radius:50%; background:#fff; transition:right .15s; }
+  .fn-row .tg.off { background:var(--border); }
+  .fn-row .tg.off::after { right:16px; }
+  .cfg-note { font-size:10.5px; color:var(--muted); line-height:1.6; }
+
+  .toast { position:absolute; left:50%; bottom:56px; transform:translateX(-50%) translateY(6px); background:var(--fg); color:var(--bg); font-size:11.5px; padding:7px 14px; border-radius:9px; opacity:0; pointer-events:none; transition:opacity .15s, transform .15s; z-index:40; box-shadow:var(--shadow-md); white-space:nowrap; }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  .json-view { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; line-height:1.7; background:var(--chip); border-radius:10px; padding:10px 12px; }
+  .img-ph { width:70%; aspect-ratio:16/9; border-radius:10px; background:linear-gradient(135deg,var(--chip) 25%,var(--chip-hover) 50%,var(--chip) 75%); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; }
+
+  .v6-dim { opacity:.82; }
+  .scenarios { max-width:1660px; margin:26px auto 0; }
+  .scenarios h3 { font-size:13.5px; font-weight:650; margin-bottom:12px; }
+  .scenarios table { width:100%; border-collapse:collapse; font-size:11.5px; }
+  .scenarios th, .scenarios td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--border); vertical-align:top; line-height:1.6; }
+  .scenarios th { color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; }
+  .scenarios td:first-child { white-space:nowrap; font-weight:600; }
+  .footnote { max-width:1660px; margin:16px auto 0; font-size:11px; color:var(--muted); line-height:1.75; }
+</style>
+</head>
+<body>
+<div class="page-head">
+  <h1>详情页 v6 vs v7 · 行内编辑 · 插件区右移 · 站内 diff</h1>
+  <p>v7 取舍：①AI 侧推删除 ②详情页本身即编辑器（编辑态行内改内容 + tags），编辑器最大化 ③插件区移到 tags 行右侧；AI 钮 = 下拉（自定义功能带 id/快捷键/触发时机）+ 插件队列 ④插件产出 → 详情页站内 diff，保存即生效、不保存退出即弃</p>
+  <div class="tabs">
+    <button class="tab active" data-type="text">文本条目</button>
+    <button class="tab" data-type="json">JSON 条目</button>
+    <button class="tab" data-type="image">图片条目</button>
+    <span class="hint">右栏 v7 可点：✎ 进编辑态（tags 可删可加）· ⌕ 下拉跑「润色重写」看站内 diff · 队列 / 配置在 ⌕ 下拉里</span>
+  </div>
+</div>
+
+<div class="cols">
+
+  <div class="col v6-dim">
+    <div class="col-head"><h2>v6 · 上一版</h2><div class="stat">AI 侧推面板 · 编辑下钻层 · 插件区在底部</div></div>
+    <div class="window" style="pointer-events:none">
+      <div class="topbar">
+        <span style="font-size:13px;color:var(--muted)">←</span>
+        <span class="meta-chip">📄 文本 ▾</span><span class="meta-chip">S Safari ▾</span>
+        <span style="flex:1"></span><span style="font-size:12px;color:var(--muted)">☆ ↑↓</span>
+      </div>
+      <div class="tags-line"><span class="tag-btn">#链接</span><span class="tag-btn">#工作</span><span style="flex:1"></span></div>
+      <div class="content">
+        <div class="doc"><span class="title">ClipForge 开发纪要</span><p>主分支近期合并了面板性能修复与设置页改版。</p></div>
+        <p class="muted">（v6 痛点：AI 走侧推面板 + 自带 MD 编辑器，容器又多一层；编辑仍是下钻覆盖层；插件区挤在底部动作区；diff 藏在 AI 面板里，主流程看不见）</p>
+      </div>
+      <div class="action-bar">
+        <button class="btn primary">⧉ 复制</button><button class="btn">↵ 粘贴</button><button class="btn">✎ 编辑</button>
+        <span class="divider"></span>
+        <div class="plug-zone"><span class="pz-label">插件</span><span class="plug-btn">⌕</span><span class="plug-btn ghost">＋</span></div>
+        <span class="spacer"></span><span style="font-size:12px;color:var(--muted)">⋯</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="col-head"><h2>v7 · 本版（终版候选）</h2><div class="stat">三态：浏览 / 编辑 / diff · 插件下拉 + 队列</div></div>
+    <div class="window" id="v7Win">
+      <!-- 顶栏 -->
+      <div class="topbar">
+        <button class="back-btn" title="返回列表 (Esc)"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5 5 8l4.5 4.5"/></svg></button>
+        <div style="position:relative">
+          <button class="meta-chip" id="v7KindChip" title="当前类型 · 下拉快速操作">📄 <span id="v7Kind">文本</span><svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 4.5 6 7.5 9 4.5"/></svg></button>
+          <div class="pop type-pop" id="v7TypePop"></div>
+        </div>
+        <button class="meta-chip" id="v7AppChip" title="采集信息 · 点击查看原数据"><span class="app-ico">S</span><span id="v7App">Safari</span><svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 4.5 6 7.5 9 4.5"/></svg></button>
+        <span style="flex:1"></span>
+        <button class="nav-btn" id="v7Star" title="收藏 (F)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.2L8 11.5l-3.8 2 .7-4.2-3.1-3 4.3-.6z"/></svg></button>
+        <button class="nav-btn" id="v7Prev" title="上一条 (K)"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 8.36853L20.9679 13.1162L20.0321 14.8838L12 10.6315L3.9679 14.8838L3.03212 13.1162L12 8.36853Z"/></svg></button>
+        <button class="nav-btn" id="v7Next" title="下一条 (J)"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 15.6315L20.9679 10.8838L20.0321 9.11619L12 13.3685L3.96788 9.11619L3.0321 10.8838L12 15.6315Z"/></svg></button>
+      </div>
+
+      <!-- tags 行：左 tags（编辑态行内编辑）/ 右插件区 -->
+      <div class="tags-line">
+        <div class="tags-scroll" id="v7Tags"></div>
+        <input class="tag-input" id="v7TagInput" placeholder="加标签 ↵" style="display:none">
+        <button class="plus-tag" id="v7AddTag" title="添加标签">＋</button>
+        <div style="width:1px;height:16px;background:var(--border)"></div>
+        <div class="plug-zone">
+          <span class="pz-label">插件</span>
+          <div style="position:relative">
+            <button class="plug-btn" id="v7AiPlug" title="AI 分析 · 插件">⌕ AI<span class="qbadge" id="v7QBadge">0</span></button>
+            <div class="pop ai-pop" id="v7AiPop">
+              <div class="tp-head">自定义功能 <span style="font-weight:400;text-transform:none;letter-spacing:0">id · 快捷键 · 触发时机</span></div>
+              <button class="tp-item" data-fn="summarize"><span class="ic">≡</span>概要内容 <span class="fid">ai.summarize</span><span class="k">⌘⇧S</span></button>
+              <button class="tp-item" data-fn="polish"><span class="ic">✎</span>润色重写 <span class="fid">ai.polish</span><span class="k">⌘⇧P</span></button>
+              <button class="tp-item" data-fn="tags"><span class="ic">#</span>推荐标签 <span class="fid">ai.tags</span><span class="k">⌘⇧T</span></button>
+              <button class="tp-item" data-fn="describe"><span class="ic">◌</span>识别图片 <span class="fid">ai.describe</span><span class="k">⌘⇧I</span></button>
+              <div class="tp-div"></div>
+              <button class="tp-item" id="v7QueueBtn"><span class="ic">⧗</span>插件队列 <span class="fid" id="v7QueueHint">空闲</span></button>
+              <button class="tp-item" id="v7CfgBtn"><span class="ic">⚙</span>配置功能 / 触发时机…</button>
+            </div>
+          </div>
+          <button class="plug-btn ghost" title="detail-action 插件位">＋</button>
+        </div>
+      </div>
+
+      <!-- 内容区：三态 -->
+      <div class="content" id="v7Content">
+        <!-- 浏览态 -->
+        <div class="doc" id="v7Body"></div>
+        <div class="hint-row" id="v7Hints">
+          <span><span class="kbd">⌘C</span> 复制</span><span><span class="kbd">E</span> 编辑</span><span><span class="kbd">F</span> 收藏</span><span><span class="kbd">J/K</span> 翻条目</span><span><span class="kbd">Esc</span> 返回/弃草稿</span>
+          <span style="margin-left:auto">插件产出 → 站内 diff · 保存生效</span>
+        </div>
+
+        <!-- 编辑态：详情页即编辑器（最大化） -->
+        <div class="editor-box" id="v7Editor">
+          <textarea id="v7EditArea" spellcheck="false"></textarea>
+          <div class="ed-status">
+            <span id="v7WordCount">0 字</span><span class="grow"></span>
+            <span><span class="kbd">⌘S</span> 保存生效</span><span><span class="kbd">Esc</span> 不保存退出</span>
+          </div>
+        </div>
+
+        <!-- diff 态：草稿对比（插件产出触发） -->
+        <div class="draft-banner" id="v7DraftBanner">
+          <span style="color:var(--info)">◈ 草稿</span><span>来自插件</span><span class="src-id" id="v7DraftSrc">ai.polish</span>
+          <span style="flex:1"></span><span style="color:var(--muted);font-size:10.5px">保存生效 / 不保存退出</span>
+        </div>
+        <div class="diff-box" id="v7DiffBox">
+          <div class="diff-view" id="v7DiffView"></div>
+          <div class="diff-actions">
+            <button class="btn primary" id="v7Keep" style="height:28px">保存生效 (⌘S)</button>
+            <button class="btn" id="v7Drop" style="height:28px">放弃草稿 (Esc)</button>
+            <span style="font-size:10.5px;color:var(--muted)">草稿不落库；退出即弃</span>
+          </div>
+        </div>
+
+        <div class="toast" id="v7Toast"></div>
+
+        <!-- 采集原数据弹窗 -->
+        <div class="overlay" id="v7RawOverlay">
+          <div class="modal">
+            <div class="modal-head">采集原数据 <span class="sub" id="v7RawSub">Safari</span><button class="x" data-close>✕</button></div>
+            <div class="modal-body">
+              <div>
+                <div class="kv"><span class="k2">来源应用</span><span class="v">Safari (com.apple.Safari)</span></div>
+                <div class="kv"><span class="k2">进程</span><span class="v">pid 4821 · Safari</span></div>
+                <div class="kv"><span class="k2">采集时间</span><span class="v">2026-10-12 19:42:07</span></div>
+                <div class="kv"><span class="k2">触发</span><span class="v">clipboard-change · 选区复制</span></div>
+                <div class="kv"><span class="k2">内容哈希</span><span class="v">sha256:9f2c…</span></div>
+              </div>
+              <div class="raw-json" id="v7RawJson"></div>
+            </div>
+            <div class="modal-foot"><span style="font-size:10.5px;color:var(--muted)">Esc 或点击弹窗外关闭</span><span class="right"><button class="btn" id="v7CopyRaw">复制 JSON</button></span></div>
+          </div>
+        </div>
+
+        <!-- 插件队列 popover -->
+        <div class="pop queue-pop" id="v7QueuePop">
+          <div class="tp-head">插件队列</div>
+          <div id="v7QueueList"></div>
+          <div class="tp-div"></div>
+          <div style="padding:6px 9px;font-size:10px;color:var(--muted)">并发上限 2 · 完成自动进 diff / 追加 tag 建议</div>
+        </div>
+
+        <!-- AI 功能配置（设置页同 schema） -->
+        <div class="overlay" id="v7CfgOverlay">
+          <div class="modal" style="max-width:520px">
+            <div class="modal-head">AI 插件 · 功能配置 <span class="sub">设置页同 schema · Agent 可写入</span><button class="x" data-close>✕</button></div>
+            <div class="modal-body">
+              <div class="fn-row"><span class="nm">概要内容</span><span class="fid">ai.summarize</span><input type="text" value="⌘⇧S"><select><option>手动触发</option><option>进入详情时</option><option>保存前</option></select><span class="tg"></span></div>
+              <div class="fn-row"><span class="nm">润色重写</span><span class="fid">ai.polish</span><input type="text" value="⌘⇧P"><select><option>手动触发</option><option>进入详情时</option><option>保存前</option></select><span class="tg"></span></div>
+              <div class="fn-row"><span class="nm">推荐标签</span><span class="fid">ai.tags</span><input type="text" value="⌘⇧T"><select><option selected>进入详情时</option><option>手动触发</option><option>保存前</option></select><span class="tg"></span></div>
+              <div class="fn-row"><span class="nm">识别图片</span><span class="fid">ai.describe</span><input type="text" value="⌘⇧I"><select><option>手动触发</option><option>进入详情时</option><option>保存前</option></select><span class="tg off"></span></div>
+              <div class="cfg-note">每个功能：稳定 id（插件注册）· 全局快捷键（可改绑/清空）· 触发时机（手动 / 进入详情 / 保存前）· 启用开关。提示词模板与能力开关见设置页「AI 插件」分区。</div>
+            </div>
+            <div class="modal-foot"><span style="font-size:10.5px;color:var(--muted)">队列：并发 2，超限排队</span><span class="right"><button class="btn" data-close>取消</button><button class="btn primary" data-close>保存配置</button></span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部动作区：随状态切换 -->
+      <div class="action-bar" id="v7ActionBar"></div>
+    </div>
+  </div>
+</div>
+
+<div class="scenarios">
+  <h3>本轮批注 → v7 吸收</h3>
+  <table>
+    <tr><th>批注</th><th>v7 落法</th></tr>
+    <tr><td>不要侧拉了；详情页编辑状态下直接编辑 tag、文本等内容</td><td>侧推面板 + 自带 MD 编辑器整体删除。详情页三态：<b>浏览</b>（只读）→ <b>编辑</b>（内容区即编辑器，textarea 满高；tags 行内编辑：× 删、输入加）→ <b>diff</b>（插件草稿对比）。E/双击进入编辑，⌘S 保存生效，Esc 不保存退出</td></tr>
+    <tr><td>AI 插件区域放 tag 右边</td><td>插件区从底部动作区上移至 tags 行右侧（虚线分组恒定可见）；底部动作区只剩 复制/粘贴/编辑 与状态化按钮，更干净</td></tr>
+    <tr><td>AI 按钮支持下拉；自定义功能支持绑定快捷键和 id、定义触发时机</td><td>⌕ AI = 下拉：自定义功能列表（名称 + 稳定 id + 快捷键），配置弹窗可改绑快捷键、选触发时机（手动/进入详情时/保存前）、启用开关；id 是插件注册的稳定标识，Agent 可写入</td></tr>
+    <tr><td>插件队列</td><td>下拉内「插件队列」+ ⌕ 钮角标：显示运行中（spinner）/排队中/完成态，并发上限 2；完成产出自动路由——改内容 → diff 态，标签建议 → 追加到 tags</td></tr>
+    <tr><td>触发详情页 diff 效果；保存即生效，不保存就退出</td><td>插件改写类产出在<b>详情页内容区</b>直接呈现红删绿增 diff + 草稿横幅（来源 id）；草稿不落库：⌘S 保存生效回浏览态，Esc/放弃 丢弃草稿。编辑态与 diff 态共用同一「保存即生效 / 退出即弃」模型</td></tr>
+    <tr><td>尽量保证完整编辑器的显示状态</td><td>编辑态隐藏浏览态正文与提示行，textarea 占满内容区（含自动增高与字数状态行）；顶部 chips/插件区仍可用，编辑中可随时唤起插件（如推荐标签）直接并入草稿</td></tr>
+  </table>
+</div>
+
+<div class="footnote">
+  v7 完整交互设计（终版候选）：<br>
+  <b>状态机</b> 浏览 ⇄ 编辑（E/双击 ↔ ⌘S/Esc）· 浏览 → diff（插件产出/编辑中调用插件）→ 浏览（⌘S 生效 / Esc 弃）· 弹窗层仅两处：采集原数据、AI 功能配置。<br>
+  <b>一处一操作</b> 复制=底部主钮 · 编辑=底部 ✎/E · 类型快速操作=类型 chip 下拉 · 采集原数据=来源 chip · 插件功能=tags 右侧 ⌕ 下拉 · 深层配置=设置页。<br>
+  <b>插件契约（宿主侧）</b> 功能=稳定 id + 名称 + 快捷键（可绑）+ 触发时机（manual/on-enter/on-save）+ match 类型；改写产出走 diff 草稿协议，标签产出走建议-点选协议；队列并发 2。细节归 agent-plugin-runtime 提案，本提案定义落位与协议。<br>
+  <b>tag 规则</b> 内置规则设置页显式开关（#多行 删除，lib.rs L4953-4955）；自定义规则 Agent 可写入（tag_rules + provenance）。
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const ORIG = '主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。';
+  const POLISHED = 'ClipForge 近期完成面板性能修复与设置页改版；下一步聚焦详情页信息架构重构，目标是打开即见内容。';
+  const bodies = {
+    text: { kind:'文本', app:'Safari', body:'<span class="title">ClipForge 开发纪要</span><p id="v7LiveText">'+ORIG+'</p>',
+      tpOps:'<div class="tp-head">文本 · 快速操作</div><button class="tp-item" data-op="smart"><span class="ic">◧</span>智能识别格式</button><button class="tp-item" data-op="upper"><span class="ic">Aa</span>大小写转换</button><button class="tp-item" data-op="md"><span class="ic">M↓</span>转为 Markdown</button><div class="tp-div"></div><button class="tp-item" data-op="cfg"><span class="ic">⚙</span>配置此类型的操作…</button>',
+      raw:'{\n  <span class="k">"payload_kind"</span>: "text",\n  <span class="k">"source_app"</span>: "Safari",\n  <span class="k">"bundle_id"</span>: "com.apple.Safari",\n  <span class="dim">…</span>\n}' },
+    json: { kind:'JSON', app:'Raycast', body:'<span class="title">config.json</span><div class="json-view">"build": { "command": "pnpm build" },<br><span style="color:var(--muted)">… 24 键已折叠</span></div>',
+      tpOps:'<div class="tp-head">JSON · 快速操作</div><button class="tp-item" data-op="fold"><span class="ic">⊟</span>折叠全部</button><button class="tp-item" data-op="fmt"><span class="ic">{ }</span>复制格式化</button><button class="tp-item" data-op="min"><span class="ic">≡</span>复制压缩</button><div class="tp-div"></div><button class="tp-item" data-op="cfg"><span class="ic">⚙</span>配置此类型的操作…</button>',
+      raw:'{\n  <span class="k">"payload_kind"</span>: "json",\n  <span class="k">"source_app"</span>: "Raycast",\n  <span class="dim">…</span>\n}' },
+    image: { kind:'图片', app:'PixelSnap', body:'<span class="title">screenshot-panel.png</span><div class="img-ph">图片预览 · 适缩</div>',
+      tpOps:'<div class="tp-head">图片 · 快速操作</div><button class="tp-item" data-op="fit"><span class="ic">⤢</span>适缩 / 原尺寸</button><button class="tp-item" data-op="save"><span class="ic">⤓</span>另存为 PNG</button><button class="tp-item" data-op="ocr"><span class="ic">T</span>OCR 识别文字</button><div class="tp-div"></div><button class="tp-item" data-op="cfg"><span class="ic">⚙</span>配置此类型的操作…</button>',
+      raw:'{\n  <span class="k">"payload_kind"</span>: "image",\n  <span class="k">"dimensions"</span>: "1920x1080",\n  <span class="dim">…</span>\n}' },
+  };
+  let t='text', mode='view', draft=POLISHED, dirty=false;
+  const tags0=[{n:'链接',c:'var(--accent)'},{n:'工作',c:'var(--accent)'},{n:'Markdown',c:'var(--success)'}];
+  let tags=[...tags0];
+  function toast(msg){ const el=$('v7Toast'); el.textContent=msg; el.classList.add('show'); clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove('show'),1600); }
+  function renderTags(){
+    const box=$('v7Tags'); box.innerHTML='';
+    tags.forEach((tg,i)=>{ const b=document.createElement('button'); b.className='tag-btn';
+      b.innerHTML='<i class="src" style="background:'+tg.c+'"></i>#'+tg.n+(mode==='edit'?'<span class="rm" data-i="'+i+'">×</span>':'');
+      b.onclick=e=>{ if(mode==='edit'&&e.target.classList.contains('rm')){ tags.splice(i,1); renderTags(); toast('已删标签（保存生效）'); dirty=true; } else toast('搜索 #'+tg.n); };
+      box.appendChild(b); });
+    $('v7TagInput').style.display = mode==='edit' ? '' : 'none';
+    $('v7AddTag').style.display = mode==='edit' ? 'none' : '';
+  }
+  function setMode(m){
+    mode=m;
+    $('v7Editor').classList.toggle('on', m==='edit');
+    $('v7Body').style.display = m==='view' ? '' : 'none';
+    $('v7Hints').style.display = m==='view' ? 'flex' : 'none';
+    $('v7DiffBox').classList.toggle('on', m==='diff');
+    $('v7DraftBanner').classList.toggle('show', m==='diff');
+    renderTags(); renderBar();
+    if(m==='edit'){ $('v7WordCount').textContent=$('v7EditArea').value.length+' 字'; }
+  }
+  function renderBar(){
+    const bar=$('v7ActionBar');
+    if(mode==='view') bar.innerHTML='<button class="btn primary" id="v7Copy">⧉ 复制</button><button class="btn" id="v7Paste">↵ 粘贴</button><button class="btn" id="v7Edit">✎ 编辑</button><span class="divider"></span><span style="font-size:10px;color:var(--muted)">插件区在上方 tags 行右侧</span><span class="spacer"></span><button class="nav-btn" id="v7More">⋯</button>';
+    else if(mode==='edit') bar.innerHTML='<button class="btn primary" id="v7Save">保存生效 (⌘S)</button><button class="btn" id="v7Exit">不保存退出 (Esc)</button><span style="font-size:10px;color:var(--muted)">编辑中可调用插件，产出并入草稿</span><span class="spacer"></span><button class="nav-btn" id="v7More">⋯</button>';
+    else bar.innerHTML='<button class="btn primary" id="v7Keep2">保存生效 (⌘S)</button><button class="btn" id="v7Drop2">放弃草稿 (Esc)</button><span style="font-size:10px;color:var(--muted)">草稿来自插件 · 不落库</span><span class="spacer"></span><button class="nav-btn" id="v7More">⋯</button>';
+    const q=id=>$(id); 
+    if(q('v7Copy'))q('v7Copy').onclick=()=>toast('已复制');
+    if(q('v7Paste'))q('v7Paste').onclick=()=>toast('已粘贴到前台应用');
+    if(q('v7Edit'))q('v7Edit').onclick=enterEdit;
+    if(q('v7Save'))q('v7Save').onclick=saveAll;
+    if(q('v7Keep2'))q('v7Keep2').onclick=saveAll;
+    if(q('v7Exit'))q('v7Exit').onclick=()=>{ setMode('view'); toast('已退出，未保存改动丢弃'); };
+    if(q('v7Drop2'))q('v7Drop2').onclick=()=>{ setMode('view'); toast('草稿已丢弃'); };
+    if(q('v7More'))q('v7More').onclick=()=>toast('⋯：删除 / 导出');
+  }
+  function enterEdit(){ $('v7EditArea').value = mode==='diff' ? draft : ($('v7LiveText') ? $('v7LiveText').textContent : $('v7EditArea').value); setMode('edit'); setTimeout(()=>$('v7EditArea').focus(),60); }
+  function saveAll(){
+    if(mode==='edit'){ const txt=$('v7EditArea').value; const live=$('v7LiveText'); if(live) live.textContent=txt; $('v7Body').innerHTML='<span class="title">ClipForge 开发纪要</span><p id="v7LiveText">'+txt+'</p>'; }
+    if(mode==='diff'){ $('v7Body').innerHTML='<span class="title">ClipForge 开发纪要</span><p id="v7LiveText">'+draft+'</p>'; }
+    setMode('view'); dirty=false; toast('已保存生效');
+  }
+  // 类型切换
+  function apply(type){ t=type; const d=bodies[type];
+    $('v7Kind').textContent=d.kind; $('v7App').textContent=d.app;
+    $('v7Body').innerHTML=d.body; $('v7RawJson').innerHTML=d.raw; $('v7RawSub').textContent=d.app;
+    $('v7TypePop').innerHTML=d.tpOps; $('v7EditArea').value = type==='text' ? ORIG : '';
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.type===type));
+    bindTp(); if(mode!=='view') setMode('view');
+  }
+  function bindTp(){ $('v7TypePop').querySelectorAll('.tp-item').forEach(b=>b.addEventListener('click',()=>{ $('v7TypePop').classList.remove('open'); toast(b.dataset.op==='cfg'?'设置 → 类型操作（自定义触发与顺序）':'已执行：'+b.textContent.trim()); })); }
+  $('v7KindChip').addEventListener('click',e=>{ e.stopPropagation(); closePops('v7TypePop'); $('v7TypePop').classList.toggle('open'); });
+  $('v7AppChip').onclick=()=>{ $('v7RawOverlay').classList.add('open'); };
+  $('v7CopyRaw').onclick=()=>toast('已复制采集 JSON');
+  // 插件下拉
+  function closePops(except){ ['v7TypePop','v7AiPop','v7QueuePop'].forEach(id=>{ if(id!==except) $(id).classList.remove('open'); }); }
+  $('v7AiPlug').addEventListener('click',e=>{ e.stopPropagation(); closePops('v7AiPop'); $('v7AiPop').classList.toggle('open'); $('v7AiPlug').classList.toggle('active'); });
+  document.addEventListener('click',e=>{ if(!e.target.closest('.pop')) closePops(); });
+  // 队列
+  let qRunning=0;
+  function renderQueue(items){
+    $('v7QueueList').innerHTML = items.map(x=>'<div class="q-item"><span class="qic">'+x.icon+'</span><span class="grow">'+x.n+' <span class="fid">'+x.id+'</span></span><span class="st '+x.st+'">'+x.stTxt+'</span></div>').join('');
+    const badge=$('v7QBadge'); const n=items.filter(x=>x.st==='run'||x.st==='wait').length;
+    badge.textContent=n; badge.classList.toggle('show',n>0);
+    $('v7QueueHint').textContent = n ? n+' 进行中' : '空闲';
+  }
+  $('v7QueueBtn').addEventListener('click',e=>{ e.stopPropagation(); closePops('v7QueuePop'); $('v7QueuePop').classList.add('open'); });
+  $('v7CfgBtn').addEventListener('click',()=>{ closePops(); $('v7CfgOverlay').classList.add('open'); });
+  // 插件功能执行 → 队列 → diff
+  $('v7AiPop').querySelectorAll('[data-fn]').forEach(b=>b.addEventListener('click',()=>{
+    const fn=b.dataset.fn; closePops(); $('v7AiPlug').classList.add('active');
+    if(fn==='tags'){ toast('推荐标签已并入（建议态，点选应用）'); tags.push({n:'开发',c:'var(--success)'},{n:'纪要',c:'var(--success)'}); renderTags(); return; }
+    if(fn==='summarize'){ renderQueue([{icon:'<span class="spin"></span>',n:'概要内容',id:'ai.summarize',st:'run',stTxt:'运行中'}]); setTimeout(()=>{ renderQueue([{icon:'✓',n:'概要内容',id:'ai.summarize',st:'ok',stTxt:'完成'}]); toast('概述已生成（只读产出，不进 diff）'); },700); return; }
+    if(fn==='polish'){
+      renderQueue([{icon:'<span class="spin"></span>',n:'润色重写',id:'ai.polish',st:'run',stTxt:'运行中'},{icon:'⧗',n:'推荐标签',id:'ai.tags',st:'wait',stTxt:'排队中'}]);
+      setTimeout(()=>{
+        renderQueue([{icon:'✓',n:'润色重写',id:'ai.polish',st:'ok',stTxt:'完成'},{icon:'<span class="spin"></span>',n:'推荐标签',id:'ai.tags',st:'run',stTxt:'运行中'}]);
+        showDiff('ai.polish');
+      },900);
+      setTimeout(()=>renderQueue([{icon:'✓',n:'润色重写',id:'ai.polish',st:'ok',stTxt:'完成'},{icon:'✓',n:'推荐标签',id:'ai.tags',st:'ok',stTxt:'完成'}]),1800);
+    }
+  }));
+  function showDiff(srcId){
+    draft=POLISHED; $('v7DraftSrc').textContent=srcId;
+    const lines=[
+      ['ctx', ORIG.split('。')[0]+'。'],
+      ['del', '- '+ORIG.split('。')[1]+'。'],
+      ['add', '+ '+POLISHED.split('；')[0]+'；'],
+      ['add', '+ '+POLISHED.split('；')[1]],
+    ];
+    $('v7DiffView').innerHTML=lines.map(l=>'<div class="diff-line '+l[0]+'">'+l[1]+'</div>').join('');
+    setMode('diff'); toast('插件产出 → 站内 diff');
+  }
+  $('v7Keep').onclick=saveAll; $('v7Drop').onclick=()=>{ setMode('view'); toast('草稿已丢弃'); };
+  // 弹窗通用关闭
+  document.querySelectorAll('.overlay').forEach(ov=>{
+    ov.addEventListener('click',e=>{ if(e.target===ov) ov.classList.remove('open'); });
+    ov.querySelectorAll('[data-close]').forEach(b2=>b2.addEventListener('click',()=>ov.classList.remove('open')));
+  });
+  document.querySelectorAll('.fn-row .tg').forEach(tg=>tg.addEventListener('click',()=>tg.classList.toggle('off')));
+  // 编辑入口
+  $('v7Body').ondblclick=enterEdit;
+  $('v7TagInput').addEventListener('keydown',e=>{ if(e.key==='Enter'&&e.target.value.trim()){ tags.push({n:e.target.value.trim().replace(/^#/,''),c:'var(--warning)'}); e.target.value=''; renderTags(); dirty=true; toast('已加标签（保存生效）'); } });
+  $('v7AddTag').onclick=()=>toast('进入编辑态可在行内加标签（E）');
+  $('v7Star').onclick=()=>{ $('v7Star').classList.toggle('star-on'); toast('已收藏'); };
+  $('v7Prev').onclick=$('v7Next').onclick=()=>apply(t==='text'?'json':'text');
+  document.querySelectorAll('.tab').forEach(x=>x.addEventListener('click',()=>apply(x.dataset.type)));
+  // 键盘：Esc 关层/退出，⌘S 保存
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){ const openOv=[...document.querySelectorAll('.overlay.open')].pop(); if(openOv){ openOv.classList.remove('open'); return; } closePops(); if(mode!=='view'){ setMode('view'); toast('已退出，改动丢弃'); } }
+    if((e.metaKey||e.ctrlKey)&&e.key==='s'){ e.preventDefault(); if(mode!=='view') saveAll(); }
+    if(e.key==='e'&&!e.metaKey&&mode==='view'&&!e.target.closest('textarea,input')) enterEdit();
+  });
+  renderQueue([]); apply('text'); setMode('view');
+</script>
+</body>
+</html>

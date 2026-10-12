@@ -872,15 +872,26 @@ fn paste_clipboard_item<R: tauri::Runtime>(
 
 #[tauri::command]
 fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, String> {
-    let metadata = json!({
-        "editor": {
+    // editor 会话元信息 + 调用方 metadata（如 tags_provenance）平铺合并：
+    // tags_provenance 需落在 metadata 顶层供前端直接解析（详情页提案 §5.2），不再嵌套 extra。
+    let mut metadata_map = serde_json::Map::new();
+    metadata_map.insert(
+        "editor".to_string(),
+        json!({
             "sessionId": input.session_id,
             "draftVersion": input.draft_version,
             "savedAt": now_millis()?,
             "source": "detail-compact-editor"
-        },
-        "extra": input.metadata.unwrap_or_else(|| json!({}))
-    });
+        }),
+    );
+    if let Some(Value::Object(extra)) = input.metadata {
+        for (key, value) in extra {
+            if key != "editor" {
+                metadata_map.insert(key, value);
+            }
+        }
+    }
+    let metadata = Value::Object(metadata_map);
     update_clip_record(UpdateClipInput {
         id: input.id,
         content: Some(input.content),
@@ -4846,6 +4857,21 @@ fn should_capture_application_context() -> bool {
         .unwrap_or(true)
 }
 
+/// 内置标签规则开关（详情页提案 §5.4）：链接/Markdown/#话题 三条内置规则可在设置页显式关闭；
+/// 读 settings.builtinTagRules，缺省全开（旧配置无此键）。#多行 规则已按定稿删除。
+fn builtin_tag_rules_enabled() -> (bool, bool, bool) {
+    let raw = read_user_settings()
+        .ok()
+        .and_then(|payload| payload.settings.get("builtinTagRules").cloned());
+    let value = |key: &str| -> bool {
+        raw.as_ref()
+            .and_then(|rules| rules.get(key))
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    };
+    (value("link"), value("markdown"), value("hashtag"))
+}
+
 fn make_capture_context(
     source_label: &str,
     source_app: Option<&SourceAppInfo>,
@@ -4943,27 +4969,27 @@ fn analysis_kind_from_payload(payload_kind: &str) -> String {
 }
 
 fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
+    let (link_enabled, markdown_enabled, hashtag_enabled) = builtin_tag_rules_enabled();
     let mut tags = Vec::new();
-    if analysis.url.is_some() {
+    if link_enabled && analysis.url.is_some() {
         tags.push("链接".to_string());
     }
-    if analysis.is_markdown {
+    if markdown_enabled && analysis.is_markdown {
         tags.push("Markdown".to_string());
     }
-    if content.contains('\n') {
-        tags.push("多行".to_string());
-    }
-    for token in content.split_whitespace() {
-        let tag = token
-            .trim_matches(|ch: char| {
-                matches!(
-                    ch,
-                    '#' | ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\''
-                )
-            })
-            .trim_start_matches('#');
-        if token.starts_with('#') && !tag.is_empty() {
-            tags.push(tag.to_string());
+    if hashtag_enabled {
+        for token in content.split_whitespace() {
+            let tag = token
+                .trim_matches(|ch: char| {
+                    matches!(
+                        ch,
+                        '#' | ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\''
+                    )
+                })
+                .trim_start_matches('#');
+            if token.starts_with('#') && !tag.is_empty() {
+                tags.push(tag.to_string());
+            }
         }
     }
     tags

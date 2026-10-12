@@ -1,7 +1,7 @@
 /** 设置窗口「MCP/Agent」「更新与分发」「标签规则」三个 section（从 settings.tsx 切出的展示组件）。
  *  边界：状态与动作经 props 注入；MCP code tabs 的三条过滤断言锚定本文件。 */
 import { FileDown, Plus, RefreshCw, Tags, Trash2, UploadCloud } from "lucide-react";
-import { SegmentSetting, SettingGroup } from "../controls";
+import { SegmentSetting, SettingGroup, ToggleSetting } from "../controls";
 import { AgentProviderManager } from "./AgentProviderManager";
 import type { ReactNode } from "react";
 import type { TranslationKey } from "../../i18n";
@@ -311,7 +311,7 @@ export function UpdateDistributionSection({
 }
 
 export type TagRulesSectionProps = {
-  settings: Pick<AppSettings, "tagMode" | "tagRules">;
+  settings: Pick<AppSettings, "tagMode" | "tagRules" | "builtinTagRules">;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
   updateSettings: (next: Partial<AppSettings>) => void;
   addTagRule: () => void;
@@ -348,6 +348,27 @@ export function TagRulesSection({
           selected={settings.tagMode}
           onChange={(tagMode) => updateSettings({ tagMode })}
         />
+        <div className="mt-3 space-y-0.5 border-t border-black/[0.06] pt-3 dark:border-white/[0.08]">
+          <p className="pb-1 text-[12.5px] text-muted-foreground">{tr("settings.tags.builtinHint")}</p>
+          <ToggleSetting
+            checked={settings.builtinTagRules?.link ?? true}
+            label={tr("settings.tags.builtinLink")}
+            probeId="settings-control:builtinTagRules.link"
+            onChange={(link) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, link } })}
+          />
+          <ToggleSetting
+            checked={settings.builtinTagRules?.markdown ?? true}
+            label={tr("settings.tags.builtinMarkdown")}
+            probeId="settings-control:builtinTagRules.markdown"
+            onChange={(markdown) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, markdown } })}
+          />
+          <ToggleSetting
+            checked={settings.builtinTagRules?.hashtag ?? true}
+            label={tr("settings.tags.builtinHashtag")}
+            probeId="settings-control:builtinTagRules.hashtag"
+            onChange={(hashtag) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, hashtag } })}
+          />
+        </div>
       </SettingGroup>
     ),
     rules: (

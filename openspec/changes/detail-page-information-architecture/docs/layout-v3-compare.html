@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>详情页 v2 vs v3 · 批注吸收 + AI 场景演示</title>
+<style>
+  :root {
+    --bg: #fafafa; --surface: #ffffff; --fg: #0a0a0a; --muted: #737373;
+    --border: #e5e5e5; --accent: #0a0a0a; --accent-fg: #ffffff;
+    --success: #16a34a; --warning: #d97706; --error: #dc2626; --info: #2563eb;
+    --chip: #f4f4f5; --chip-hover: #ebebeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0a0a0a; --surface:#141414; --fg:#fafafa; --muted:#a3a3a3; --border:#262626; --accent:#fafafa; --accent-fg:#0a0a0a; --chip:#1e1e1e; --chip-hover:#262626; }
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:28px; font-size:14px; }
+  .page-head { max-width:1560px; margin:0 auto 20px; }
+  .page-head h1 { font-size:18px; font-weight:600; }
+  .page-head p { font-size:12px; color:var(--muted); margin-top:6px; }
+  .tabs { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center; }
+  .tab { font-size:12px; padding:5px 12px; border-radius:7px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--muted); }
+  .tab:hover { background:var(--chip); }
+  .tab.active { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:22px; max-width:1560px; margin:0 auto; }
+  @media (max-width:1100px){ .cols { grid-template-columns:1fr; } }
+  .col-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; }
+  .col-head h2 { font-size:14px; font-weight:600; }
+  .col-head .stat { font-size:11px; color:var(--muted); }
+
+  .window { width:100%; max-width:760px; aspect-ratio:760/660; background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04); }
+  .crumb { display:flex; align-items:center; gap:8px; padding:9px 14px; border-bottom:1px solid var(--border); font-size:12.5px; color:var(--muted); flex-shrink:0; }
+  .crumb .title-btn { background:none; border:none; cursor:pointer; font-size:12.5px; color:var(--muted); display:inline-flex; align-items:center; gap:5px; padding:2px 6px; border-radius:6px; font-family:inherit; }
+  .crumb .title-btn:hover { background:var(--chip); color:var(--fg); }
+  .icon-btn { width:26px; height:26px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; transition:background .1s,transform .1s; flex-shrink:0; }
+  .icon-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .icon-btn:active { transform:scale(.94); }
+  .icon-btn.on { color:var(--warning); }
+  .chip { display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 8px; border-radius:999px; background:var(--chip); font-size:10.5px; color:var(--muted); white-space:nowrap; }
+  .chip.accent { color:var(--fg); }
+  .tag-btn { display:inline-flex; align-items:center; gap:3px; height:20px; padding:0 7px; border-radius:5px; border:none; background:transparent; color:var(--muted); font-size:11px; cursor:pointer; white-space:nowrap; }
+  .tag-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .tag-btn .src { width:5px; height:5px; border-radius:50%; display:inline-block; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:5px; height:28px; padding:0 11px; border-radius:7px; font-size:12px; cursor:pointer; border:1px solid var(--border); background:transparent; color:var(--fg); white-space:nowrap; transition:background .1s,transform .1s,box-shadow .1s; flex-shrink:0; }
+  .btn:hover { background:var(--chip); }
+  .btn:active { transform:scale(.97); }
+  .btn.primary { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  .btn.ghost { color:var(--muted); border-style:dashed; }
+  .btn.done { background:var(--success); border-color:var(--success); color:#fff; }
+  .btn.thinking { color:var(--info); border-color:var(--info); }
+
+  .meta-line { display:flex; align-items:center; gap:6px; padding:7px 14px; border-bottom:1px solid var(--border); height:34px; flex-shrink:0; }
+  .tags-scroll { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; flex:1; min-width:0; }
+  .tags-scroll::-webkit-scrollbar { display:none; }
+  .scroll-hint { color:var(--muted); font-size:10px; flex-shrink:0; }
+  .plus-tag { color:var(--muted); font-size:12px; width:20px; height:20px; border-radius:5px; border:none; background:transparent; cursor:pointer; flex-shrink:0; }
+  .plus-tag:hover { background:var(--chip); color:var(--fg); }
+
+  .content { flex:1; min-height:0; overflow:auto; padding:12px 16px; display:flex; flex-direction:column; gap:8px; position:relative; scroll-behavior:smooth; }
+  .content .title { font-size:12.5px; font-weight:600; }
+  .content p { font-size:12.5px; line-height:1.65; }
+  .content .muted { color:var(--muted); font-size:11.5px; }
+  .mini-bar { position:sticky; top:0; z-index:5; align-self:flex-end; display:flex; gap:2px; padding:2px; border-radius:8px; background:color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter:blur(6px); border:1px solid var(--border); float:right; margin:-2px -2px 0 8px; }
+  .mini-bar .icon-btn { width:24px; height:24px; font-size:11px; }
+  .mini-bar .count { font-size:10px; color:var(--muted); align-self:center; padding:0 6px; }
+  .links-tail { margin-top:auto; padding-top:10px; display:flex; gap:6px; flex-wrap:wrap; }
+  .link-chip { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 10px; border-radius:7px; border:1px solid var(--border); background:var(--surface); font-size:11.5px; cursor:pointer; }
+  .link-chip:hover { background:var(--chip); }
+
+  /* AI 场景四态 */
+  .ai-inline { border:1px solid var(--accent); border-radius:10px; padding:10px 12px; background:var(--surface); margin-top:6px; animation:expand .22s cubic-bezier(.32,.72,0,1); }
+  @keyframes expand { from { opacity:0; transform:translateY(8px);} to { opacity:1; transform:none;} }
+  @media (prefers-reduced-motion:reduce){ .ai-inline { animation:fade .12s ease; } @keyframes fade { from{opacity:0;} to{opacity:1;} } }
+  .ai-inline .hd { display:flex; align-items:center; gap:8px; font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:5px; }
+  .ai-inline .sum { font-size:12px; line-height:1.55; margin-bottom:8px; }
+  .ai-inline .sug { display:flex; gap:5px; align-items:center; flex-wrap:wrap; }
+  .ai-inline .apply { font-size:11px; color:var(--accent); background:none; border:none; cursor:pointer; font-weight:600; }
+  .ai-inline .pin { margin-left:auto; font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; }
+  .ai-inline .pin.pinned { color:var(--warning); }
+  .ai-inline.overlay { position:absolute; left:12px; right:12px; bottom:10px; box-shadow:0 6px 24px rgba(0,0,0,.12); z-index:6; }
+  .ai-thinking { border:1px dashed var(--info); border-radius:10px; padding:10px 12px; margin-top:6px; }
+  .ai-thinking .dots { display:inline-flex; gap:4px; margin-right:8px; }
+  .ai-thinking .dots i { width:5px; height:5px; border-radius:50%; background:var(--info); animation:pulse 1s infinite ease-in-out; }
+  .ai-thinking .dots i:nth-child(2){ animation-delay:.15s; } .ai-thinking .dots i:nth-child(3){ animation-delay:.3s; }
+  @keyframes pulse { 0%,100%{opacity:.25; transform:scale(.85);} 50%{opacity:1; transform:scale(1.15);} }
+  .ai-thinking .txt { font-size:11.5px; color:var(--info); }
+  .ai-error { border:1px solid var(--error); border-radius:10px; padding:10px 12px; margin-top:6px; font-size:11.5px; color:var(--error); display:flex; align-items:center; gap:8px; }
+  .ai-error .retry { font-size:11px; color:var(--accent); background:none; border:1px solid var(--border); border-radius:6px; padding:2px 8px; cursor:pointer; }
+  .ai-applied { border:1px solid var(--success); border-radius:10px; padding:8px 12px; margin-top:6px; font-size:11.5px; color:var(--success); display:flex; gap:6px; align-items:center; flex-wrap:wrap; animation:expand .22s cubic-bezier(.32,.72,0,1); }
+
+  .raw-json { font-family:ui-monospace,Menlo,monospace; font-size:11px; line-height:1.7; background:var(--chip); border-radius:8px; padding:10px 12px; white-space:pre-wrap; }
+  .raw-json .k { color:var(--accent); font-weight:600; }
+  .raw-json .dim { color:var(--muted); }
+
+  .action-bar { border-top:1px solid var(--border); padding:8px 12px; display:flex; align-items:center; gap:7px; flex-shrink:0; }
+  .action-bar .spacer { flex:1; }
+  .plugin-zone { border-top:1px dashed var(--warning); color:var(--warning); font-size:10.5px; padding:5px 14px; display:none; }
+  .plugin-zone.visible { display:block; }
+
+  .json-view { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; line-height:1.7; background:var(--chip); border-radius:8px; padding:10px 12px; }
+  .img-view { border-radius:8px; border:1px solid var(--border); padding:10px; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .img-ph { width:72%; aspect-ratio:16/9; border-radius:8px; background:linear-gradient(135deg,var(--chip) 25%,var(--chip-hover) 50%,var(--chip) 75%); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; }
+  .img-meta { font-size:10.5px; color:var(--muted); }
+
+  /* 下钻编辑抽屉 */
+  .drill-layer { position:absolute; inset:0; background:var(--surface); z-index:10; display:none; flex-direction:column; animation:drill .24s cubic-bezier(.32,.72,0,1); }
+  .drill-layer.open { display:flex; }
+  @keyframes drill { from { opacity:0; transform:translateY(14px);} to { opacity:1; transform:none;} }
+  .drill-head { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--border); font-size:12.5px; color:var(--muted); }
+  .drill-body { flex:1; overflow:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  .drill-body textarea { flex:1; min-height:120px; border:1px solid var(--border); border-radius:8px; padding:10px; font:inherit; font-size:12.5px; resize:none; background:var(--bg); color:var(--fg); }
+  .drill-body .tag-edit { display:flex; gap:4px; flex-wrap:wrap; }
+  .drill-foot { border-top:1px solid var(--border); padding:8px 12px; display:flex; gap:7px; }
+
+  .scenarios { max-width:1560px; margin:24px auto 0; }
+  .scenarios h3 { font-size:13px; font-weight:600; margin-bottom:10px; }
+  .scenarios table { width:100%; border-collapse:collapse; font-size:11.5px; }
+  .scenarios th, .scenarios td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; line-height:1.55; }
+  .scenarios th { color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; }
+  .scenarios td:first-child { white-space:nowrap; font-weight:600; }
+  .footnote { max-width:1560px; margin:16px auto 0; font-size:11px; color:var(--muted); line-height:1.7; }
+  .stage-pill { display:inline-flex; gap:0; border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-left:8px; }
+  .stage-pill button { font-size:10.5px; padding:3px 9px; border:none; background:var(--surface); color:var(--muted); cursor:pointer; }
+  .stage-pill button + button { border-left:1px solid var(--border); }
+  .stage-pill button.active { background:var(--accent); color:var(--accent-fg); }
+</style>
+</head>
+<body>
+<div class="page-head">
+  <h1>详情页 v2 vs v3 · 批注吸收 + AI 场景全演示</h1>
+  <p>v3 吸收三条批注：①「详情 · 文本」无意义 → 换「采集原数据」icon 入口 ②编辑不放下面 → 下钻页沉浸编辑 ③↓ 翻条目联动。右栏 AI 分析四态可完整演示。</p>
+  <div class="tabs">
+    <button class="tab active" data-type="text">文本条目</button>
+    <button class="tab" data-type="json">JSON 条目</button>
+    <button class="tab" data-type="image">图片条目</button>
+  </div>
+</div>
+
+<div class="cols">
+
+  <!-- ============ 左：v2（上一版，静态参照） ============ -->
+  <div class="col">
+    <div class="col-head"><h2>v2 · 上一版</h2><div class="stat">批注三条未吸收：标题文字无意义 · 编辑挤在动作区 · AI 未演示</div></div>
+    <div class="window">
+      <div class="crumb"><span class="back">←</span> 详情 · 文本 <span style="flex:1"></span>
+        <button class="icon-btn">↑</button><button class="icon-btn">↓</button><button class="icon-btn">⋯</button></div>
+      <div class="meta-line">
+        <span class="chip accent">文本</span><span class="chip">Safari</span>
+        <div class="tags-scroll"><span class="tag-btn">#链接</span><span class="tag-btn">#工作</span><span class="tag-btn">#Markdown</span><span class="tag-btn">#多行</span></div>
+        <span class="scroll-hint">›</span>
+      </div>
+      <div class="content">
+        <span class="title">ClipForge 开发纪要</span>
+        <p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。</p>
+        <p class="muted">（v2 痛点：crumb 标题「详情 · 文本」是死文字；编辑还是底部一个小钮，保存/取消没地方放；AI 演示缺失。）</p>
+        <div class="links-tail"><span class="link-chip">github.com</span><span class="link-chip">pi.dev</span></div>
+      </div>
+      <div class="action-bar">
+        <button class="btn primary">⧉ 复制</button><button class="btn">↵ 粘贴</button><button class="btn">✎ 编辑</button><button class="btn">⌕ AI</button>
+        <span class="spacer"></span><button class="btn ghost">＋</button><button class="icon-btn">⋯</button></div>
+    </div>
+  </div>
+
+  <!-- ============ 右：v3 ============ -->
+  <div class="col">
+    <div class="col-head"><h2>v3 · 本版</h2>
+      <div class="stat">ⓘ 采集原数据入口 · 下钻编辑 · AI 四态（右上 stage 切换）
+        <span class="stage-pill" id="stagePill">
+          <button class="active" data-stage="idle">分析前</button>
+          <button data-stage="thinking">生成中</button>
+          <button data-stage="result">结果</button>
+          <button data-stage="applied">已应用</button>
+          <button data-stage="error">失败</button>
+        </span>
+      </div>
+    </div>
+    <div class="window">
+      <!-- crumb：ⓘ 替换死标题；↓ 点击可翻条目 -->
+      <div class="crumb"><span class="back">←</span>
+        <button class="title-btn" id="v3Raw" title="采集原数据：来源应用 · bundle id · 进程 · 时间 · 上下文">ⓘ 采集原数据</button>
+        <span style="flex:1"></span>
+        <button class="icon-btn" id="v3Star" title="收藏 (F)">☆</button>
+        <button class="icon-btn" title="上一条 (↑)">↑</button><button class="icon-btn" id="v3Next" title="下一条 (↓)" style="color:var(--error)">↓</button><button class="icon-btn" title="溢出：来源 / 上下文 / 删除">⋯</button></div>
+      <div class="meta-line">
+        <span class="chip accent" id="v3Kind">文本</span><span class="chip" id="v3App">Safari</span>
+        <div class="tags-scroll">
+          <span class="tag-btn"><i class="src" style="background:var(--accent)"></i>#链接</span>
+          <span class="tag-btn"><i class="src" style="background:var(--accent)"></i>#工作</span>
+          <span class="tag-btn"><i class="src" style="background:var(--success)"></i>#Markdown</span>
+          <span class="tag-btn"><i class="src" style="background:var(--warning)"></i>#多行</span>
+        </div>
+        <button class="plus-tag">＋</button><span class="scroll-hint">›</span>
+      </div>
+      <div class="content" id="v3Content">
+        <div class="mini-bar" id="v3Mini">
+          <span class="count" id="v3Count">412 字</span>
+          <button class="icon-btn" id="v3MiniCopy">⧉</button>
+          <button class="icon-btn">≡</button>
+        </div>
+        <div id="v3Body"></div>
+        <!-- AI 区：stage 切换 -->
+        <div id="v3Ai"></div>
+        <div class="links-tail" id="v3Links"><span class="link-chip">github.com</span><span class="link-chip">pi.dev</span></div>
+
+        <!-- 采集原数据抽屉（ⓘ 点击） -->
+        <div class="drill-layer" id="v3RawLayer">
+          <div class="drill-head"><span class="back" id="v3RawClose" style="cursor:pointer">←</span> 采集原数据 · 全量字段</div>
+          <div class="drill-body"><div class="raw-json" id="v3RawJson"></div></div>
+        </div>
+
+        <!-- 下钻编辑层（E / 编辑入口） -->
+        <div class="drill-layer" id="v3EditLayer">
+          <div class="drill-head"><span class="back" id="v3EditClose" style="cursor:pointer">←</span> 编辑内容与标签 <span style="margin-left:auto;font-size:10.5px" class="muted">E 进入 · ⌘S 保存 · Esc 返回</span></div>
+          <div class="drill-body">
+            <textarea id="v3EditArea" spellcheck="false"></textarea>
+            <div class="tag-edit" id="v3EditTags"></div>
+          </div>
+          <div class="drill-foot">
+            <button class="btn primary" id="v3Save">保存 (⌘S)</button>
+            <button class="btn" id="v3Cancel">取消 (Esc)</button>
+            <span style="flex:1"></span>
+            <button class="btn" id="v3SavePaste">保存并粘贴</button>
+          </div>
+        </div>
+      </div>
+      <div class="plugin-zone" id="v3Plugin">◈ detail-section 插件位（空注册零高度）</div>
+      <div class="action-bar">
+        <button class="btn primary" id="v3Copy">⧉ 复制</button>
+        <button class="btn">↵ 粘贴</button>
+        <button class="btn" id="v3EditBtn">✎ 编辑 <span style="font-size:9.5px;color:var(--muted)">↩</span></button>
+        <button class="btn" id="v3AiBtn">⌕ AI 分析</button>
+        <span style="width:1px;height:18px;background:var(--border)"></span>
+        <span id="v3TypeSlot" style="display:flex;gap:7px"></span>
+        <span class="spacer"></span>
+        <button class="btn ghost">＋</button>
+        <button class="icon-btn">⋯</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="scenarios">
+  <h3>批注 → v3 吸收</h3>
+  <table>
+    <tr><th>批注</th><th>v3 落法</th></tr>
+    <tr><td>「详情 · 文本」没意义，点击应能看采集原数据</td><td>crumb 标题位换成「ⓘ 采集原数据」入口：点击原地展开下钻层，全量展示采集字段（source_app / bundle_id / process / 采集时间 / 事件上下文 / 完整 metadata），底部动作区不再挤采集上下文入口</td></tr>
+    <tr><td>直接进下钻页编辑，不放下面，更沉浸，保存等抽离到下钻页</td><td>编辑改为下钻层（原地覆盖内容区，slide-up 240ms）：整幅 textarea + tag 编辑行 + 底部「保存 ⌘S / 取消 Esc / 保存并粘贴」；底部动作区编辑钮只是入口（快捷键 E），保存/取消动作全部抽离到下钻页，动作区恒定 40px</td></tr>
+    <tr><td>↓ 箭头（翻条目）联动</td><td>crumb ↓ 即翻下一条（本演示里点击 ↓ 会切换到 JSON 条目再切回，演示方向感知过渡），键盘 ↑/↓/J·K 同源</td></tr>
+    <tr><td>AI 场景没有演示</td><td>右上 stage 切换器演示四态：分析前（动作区 AI 钮常态）→ 生成中（dashed 边框 + 呼吸点 + 可取消）→ 结果（内联摘要 + 建议 tag + 应用/钉住）→ 已应用（success 确认条 3s 自动收起 + chip 色点变绿）→ 失败（红条 + 重试）。中断演示：生成中切换条目，请求代际失效自动丢弃</td></tr>
+  </table>
+</div>
+
+<div class="footnote">
+  v3 相对 v2 只动三处：ⓘ 入口、下钻编辑、AI 演示补全；五区骨架 / meta 单行 / 类型槽位 / renderer registry / tag 四源全部不变。<br>
+  左栏 v2 保持静态参照；右栏可完整点：ⓘ 原数据、✎ 编辑下钻（改内容保存回写）、AI 四态、↓ 翻条目。
+</div>
+
+<script>
+  const bodies = {
+    text: { kind:'文本', app:'Safari', count:'412 字',
+      html:'<span class="title">ClipForge 开发纪要</span><p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。</p><p>v3：ⓘ 采集原数据入口替换死标题；编辑走下钻层，保存/取消抽离；AI 四态可演示。</p><p class="muted">（点击 crumb 的 ⓘ、✎ 编辑、右上 stage 切换器、↓ 箭头试试）</p>',
+      actions:['<button class="btn">◧ 智能格式</button>'], raw:'{\n  <span class="k">"source_app"</span>: "Safari",\n  <span class="k">"bundle_id"</span>: "com.apple.Safari",\n  <span class="k">"process"</span>: { "pid": 4821, "name": "Safari" },\n  <span class="k">"captured_at"</span>: "2026-10-12T19:42:07+08:00",\n  <span class="k">"trigger"</span>: "clipboard-change",\n  <span class="k">"event_context"</span>: { "frontmost": true, "selection_copy": true },\n  <span class="k">"content_hash"</span>: "sha256:9f2c…",\n  <span class="dim">… 其余 metadata 字段</span>\n}',
+      edit:'主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。\n\nv3：ⓘ 采集原数据入口替换死标题；编辑走下钻层，保存/取消抽离。',
+      tags:['#链接','#工作','#Markdown','#多行'] },
+    json: { kind:'JSON', app:'Raycast', count:'28 键',
+      html:'<span class="title">config.json</span><div class="json-view"><span class="k">"build"</span>: { "command": "pnpm build", "outDir": "dist" },<br><span class="k">"preview"</span>: { "port": 1420 },<br><span class="dim">… 24 键已折叠</span></div>',
+      actions:['<button class="btn">⊟ 折叠全部</button>','<button class="btn">⧉ 复制格式化</button>'], raw:'{\n  <span class="k">"kind"</span>: "json",\n  <span class="k">"source_app"</span>: "Raycast",\n  <span class="dim">…</span>\n}',
+      edit:'{ "build": { "command": "pnpm build" } }',
+      tags:['#config','#工作'] },
+    image: { kind:'图片', app:'PixelSnap', count:'1920×1080',
+      html:'<span class="title">screenshot-panel.png</span><div class="img-view"><div class="img-ph">图片预览（适缩 / 实际尺寸在右上迷你工具）</div><div class="img-meta">PNG · 1920×1080 · 384 KB · 采集于 19:42</div></div>',
+      actions:['<button class="btn">⤓ 另存为</button>','<button class="btn">⧉ 复制图片</button>'], raw:'{\n  <span class="k">"kind"</span>: "image",\n  <span class="k">"dimensions"</span>: "1920x1080",\n  <span class="dim">…</span>\n}',
+      edit:'', tags:['#截图'] },
+  };
+  let currentType='text', stage='idle', editOpen=false, rawOpen=false;
+
+  const $ = id => document.getElementById(id);
+  function apply(type){
+    currentType = type;
+    const d = bodies[type];
+    $('v3Kind').textContent = d.kind; $('v3App').textContent = d.app; $('v3Count').textContent = d.count;
+    $('v3Body').innerHTML = d.html;
+    $('v3TypeSlot').innerHTML = d.actions.join('');
+    $('v3RawJson').innerHTML = d.raw;
+    if(!$('v3EditArea').readOnly){ $('v3EditArea').value = d.edit; }
+    $('v3EditTags').innerHTML = d.tags.map(t=>`<span class="tag-btn">${t}<span class="src" style="background:var(--accent)"></span></span>`).join('');
+    document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.type===type));
+    renderAi();
+  }
+  function renderAi(){
+    const el = $('v3Ai'), btn = $('v3AiBtn');
+    if(stage==='idle'){ el.innerHTML=''; btn.classList.remove('thinking','done','primary'); btn.textContent='⌕ AI 分析'; return; }
+    if(stage==='thinking'){
+      el.innerHTML = '<div class="ai-thinking"><span class="dots"><i></i><i></i><i></i></span><span class="txt">正在生成摘要…（切换条目即取消）</span><button class="retry" id="aiCancel" style="margin-left:auto">取消</button></div>';
+      btn.classList.add('thinking'); btn.textContent='⌕ 分析中…';
+      $('aiCancel').onclick = ()=>setStage('idle');
+      return;
+    }
+    if(stage==='result'){
+      el.innerHTML = '<div class="ai-inline"><div class="hd">AI 摘要 · 内联展开（推挤内容不遮挡）<button class="pin" id="aiPin">📌 钉住</button></div><div class="sum">一条关于 ClipForge 开发计划的剪贴板纪要：性能修复、详情页重构、插件运行时。</div><div class="sug"><span class="tag-btn" style="background:var(--chip)">#开发</span><span class="tag-btn" style="background:var(--chip)">#纪要</span><button class="apply" id="aiApply">应用标签</button></div></div>';
+      btn.classList.remove('thinking'); btn.textContent='⌕ 收起';
+      $('aiPin').onclick = (e)=>{ const p=e.target; const on=p.classList.toggle('pinned'); p.textContent=on?'📌 已钉住':'📌 钉住'; el.querySelector('.ai-inline').classList.toggle('overlay',on); };
+      $('aiApply').onclick = ()=>setStage('applied');
+      return;
+    }
+    if(stage==='applied'){
+      el.innerHTML = '<div class="ai-applied">✓ 已应用 #开发 #纪要 <span style="color:var(--muted);font-size:10.5px">（chip 色点已变绿 · 3s 后收起）</span></div>';
+      btn.classList.add('done'); btn.textContent='✓ 已应用';
+      const ts = document.querySelectorAll('#v3Ai ~ * '); // noop
+      setTimeout(()=>{ if(stage==='applied') setStage('idle'); }, 3000);
+      return;
+    }
+    if(stage==='error'){
+      el.innerHTML = '<div class="ai-error">生成失败：provider 超时<button class="retry" id="aiRetry">重试</button></div>';
+      btn.classList.remove('thinking'); btn.textContent='⌕ AI 分析';
+      $('aiRetry').onclick = ()=>{ setStage('thinking'); setTimeout(()=>{ if(stage==='thinking') setStage('result'); },1200); };
+      return;
+    }
+  }
+  function setStage(s){ stage=s; document.querySelectorAll('#stagePill button').forEach(b=>b.classList.toggle('active',b.dataset.stage===s)); renderAi(); }
+  document.querySelectorAll('#stagePill button').forEach(b=>b.addEventListener('click',()=>setStage(b.dataset.stage)));
+  document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>apply(t.dataset.type)));
+
+  // 交互：ⓘ 原数据 / 编辑下钻 / 复制反馈 / 收藏 / ↓ 翻条目
+  $('v3Raw').onclick = ()=>{ rawOpen=!rawOpen; $('v3RawLayer').classList.toggle('open',rawOpen); };
+  $('v3RawClose').onclick = ()=>{ rawOpen=false; $('v3RawLayer').classList.remove('open'); };
+  $('v3EditBtn').onclick = openEdit; $('v3EditClose').onclick = closeEdit; $('v3Cancel').onclick = closeEdit;
+  function openEdit(){ editOpen=true; $('v3EditLayer').classList.add('open'); $('v3EditArea').focus(); }
+  function closeEdit(){ editOpen=false; $('v3EditLayer').classList.remove('open'); }
+  $('v3Save').onclick = ()=>{ bodies[currentType].edit = $('v3EditArea').value; flash($('v3Save'),'✓ 已保存'); setTimeout(closeEdit,500); };
+  $('v3SavePaste').onclick = ()=>{ flash($('v3SavePaste'),'✓ 已保存并粘贴'); setTimeout(closeEdit,600); };
+  function flash(btn,txt){ const o=btn.textContent; btn.textContent=txt; btn.style.color='var(--success)'; btn.style.borderColor='var(--success)'; setTimeout(()=>{btn.textContent=o;btn.style.color='';btn.style.borderColor='';},600); }
+  $('v3MiniCopy').onclick = ()=>flash($('v3MiniCopy'),'✓');
+  $('v3Copy').onclick = ()=>flash($('v3Copy'),'✓');
+  $('v3Star').onclick = ()=>{ const s=$('v3Star'); const on=s.textContent==='★'; s.textContent=on?'☆':'★'; s.classList.toggle('on',!on); };
+  $('v3Next').onclick = ()=>{ apply(currentType==='text'?'json':'text'); };
+  $('v3AiBtn').onclick = ()=>{ setStage(stage==='idle'?'thinking':stage==='thinking'?'idle':'idle'); if(stage==='thinking') setTimeout(()=>{ if(stage==='thinking') setStage('result'); },1200); };
+
+  apply('text');
+</script>
+</body>
+</html>

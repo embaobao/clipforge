@@ -235,6 +235,9 @@ ctx.register.tool({
 |---|---|---|
 | `quick-panel-button` | `{ title, icon(lucide 名), order?, action }` | `action: { tool: "<自有工具名>" }`(宿主代调)或 `{ url }`;禁止任意 JS 点击回调 |
 | `agent-tab` | `{ title, component: "readonly-list"|"form", props }` | 受控组件白名单(readonly-list/form);自定义组件二期 |
+| `detail-renderer` | `PluginRendererDeclaration`(见 detail-page-information-architecture 设计 §6) | `match` 仅纯数据(payloadKind/extensions/mimePrefix/order),宿主剔除函数 matcher;`payloadKind: "image"` 恒宿主渲染(信任边界) |
+| `detail-action` | `{ title, icon?, order?, tool }` | 注入详情页底部动作栏(`DetailActionBar` pluginActions 位);点击=宿主代调自有工具,产物按 §5 草稿路由进插件队列 |
+| `detail-section` | `{ title, component: "readonly-list", props }` | 详情页内容区只读区块(组件白名单同 agent-tab);无写入能力 |
 
 - 提示词模板是独立注册类型(`ctx.register.template`,§4),命名空间 `plugin.<id>.<名>`,不属 UI 插槽。
 

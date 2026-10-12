@@ -16,11 +16,15 @@ export type PiAnalysisBarProps = {
   onSearchTag: (tag: string) => void;
   /** 应用 AI 建议标签（既有 update_clip_record 写回通道）；缺省时不显示应用入口。 */
   onApplyTags?: (clipId: string, tags: string[]) => void;
+  /** 运行态回调：插件区队列角标接线（running=true 入队 / false 完成）。 */
+  onRunStateChange?: (running: boolean) => void;
   tr: WorkspaceTr;
+  /** 展示形态：bar=旧独立条（px-4 pt-2 留白），menu=插件下拉内嵌（零外距）。 */
+  variant?: "bar" | "menu";
 };
 
 /** AI 分析条：按钮触发 → 分析中 → 摘要与标签建议（标签点击走搜索，可一键应用）。 */
-export function PiAnalysisBar({ clip, agentProviders, onSearchTag, onApplyTags, tr }: PiAnalysisBarProps) {
+export function PiAnalysisBar({ clip, agentProviders, onSearchTag, onApplyTags, onRunStateChange, tr, variant = "bar" }: PiAnalysisBarProps) {
   const [analysis, setAnalysis] = useState<ClipPiAnalysis | null>(null);
   const [history] = useState(getPiHistory);
   const [analyzing, setAnalyzing] = useState(false);
@@ -33,6 +37,7 @@ export function PiAnalysisBar({ clip, agentProviders, onSearchTag, onApplyTags, 
     setAnalyzing(true);
     setError(null);
     setAppliedTags(false);
+    onRunStateChange?.(true);
     try {
       const providerConfig = await resolveDefaultPiProvider();
       if (!providerConfig) {
@@ -46,6 +51,7 @@ export function PiAnalysisBar({ clip, agentProviders, onSearchTag, onApplyTags, 
       setError(error instanceof Error ? error.message : String(error));
     } finally {
       setAnalyzing(false);
+      onRunStateChange?.(false);
     }
   };
 
@@ -58,7 +64,7 @@ export function PiAnalysisBar({ clip, agentProviders, onSearchTag, onApplyTags, 
   };
 
   return (
-    <div className="space-y-2 px-4 pt-2">
+    <div className={variant === "menu" ? "space-y-2" : "space-y-2 px-4 pt-2"}>
       <button
         aria-busy={analyzing}
         aria-label={tr("main.detail.pi.analyze")}

@@ -37,6 +37,7 @@ import {
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
 import { toDetailAgentProviders } from "./workspace/components/workspace-detail-shared";
+import { mergeAiProvenance, parseTagProvenance } from "./workspace/components/detail/tag-provenance";
 import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
@@ -1266,7 +1267,19 @@ function ClipForgeApp() {
                   onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
                   onSearchTag={searchByTag}
                   onUpdateContent={updateClipContent}
-                  onApplyTags={(clipId, tags) => updateClip(clipId, { tags })}
+                  onApplyTags={(clipId, tags) => {
+                    // AI 建议标签应用：merge 语义写入，新增 tag 在 provenance 标 ai（详情页提案 §5.3）。
+                    const source = clipsRef.current.find((item) => item.id === clipId);
+                    const previous = source ? parseTagProvenance(source) : {};
+                    const added = tags.filter((tag) => !(source?.tags ?? []).includes(tag));
+                    updateClip(clipId, {
+                      tags,
+                      metadata: {
+                        ...(source?.metadata ?? {}),
+                        tags_provenance: mergeAiProvenance(previous, added, "pi"),
+                      },
+                    });
+                  }}
                   agentProviders={toDetailAgentProviders(
                     settings.agent?.providers ?? settings.agentProviders,
                   )}

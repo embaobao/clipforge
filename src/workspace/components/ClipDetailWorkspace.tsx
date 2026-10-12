@@ -1,15 +1,11 @@
-import { ChevronDown, ChevronUp, Copy, ExternalLink, FileJson, Pencil, } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { RiArrowDownWideFill, RiArrowUpWideFill } from "react-icons/ri";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipItem } from "../../App";
-import { detectSensitiveEditorFields } from "../../editor/sensitive";
 import { formatCommandError } from "../../i18n";
 import type { FilePathStatus } from "../../services/clipboard";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WorkspaceCrumb } from "./WorkspaceCrumb";
-import { DetailMeta } from "./DetailMeta";
 import { DetailOverflowMenu } from "./DetailOverflowMenu";
-import { DetailQuickEditor } from "./DetailQuickEditor";
+import { PiAnalysisBar } from "./PiAnalysisBar";
 import {
   FileListPreview,
   HtmlPreview,
@@ -20,25 +16,38 @@ import {
   SmartFormatPanel,
   TruncatedPre,
 } from "./DetailPreview";
-import { PiAnalysisBar } from "./PiAnalysisBar";
 import {
   appendWorkspacePanelLog,
-  compactInlineText,
   droppedLinkLogKeys,
-  extractDetailHashTags,
   getApplicationContextSummary,
   getClipRenderDiagnostics,
   getDetailModeLabel,
   getImageOpenPath,
   getDetailSourceAddress,
-  isLikelyJson,
-  isLikelyMarkdown,
   normalizeDetailTags,
   safeHttpUrls,
   type DetailQuickAction,
-  type EditorVariableRow,
   type WorkspaceTr,
 } from "./workspace-detail-shared";
+import { DetailActionBar } from "./detail/detail-action-bar";
+import { DetailMetaRow } from "./detail/detail-meta-row";
+import { DetailPathRow } from "./detail/detail-path-row";
+import { CaptureOverlay } from "./detail/capture-overlay";
+import { DraftDiff } from "./detail/draft-diff";
+import { DetailLinkList } from "./detail/detail-link-list";
+import { PluginZone, type PluginQueueTask } from "./detail/plugin-zone";
+import {
+  buildSuggestedTags,
+  getDetailSourcePath,
+  hasRichRepresentation,
+  isEditableClip,
+  type DetailDraft,
+  type DetailMode,
+} from "./detail/detail-state";
+import { MdEditor } from "./detail/md-editor";
+import { buildManualProvenance, parseTagProvenance } from "./detail/tag-provenance";
+import { resolveDetailRenderer } from "./detail/renderer-registry";
+import { useDetailKeyboard } from "./detail/use-detail-keyboard";
 
 type ClipDetailWorkspaceProps = {
   clip: ClipItem | null;
@@ -59,7 +68,7 @@ type ClipDetailWorkspaceProps = {
     clip: ClipItem,
     content: string,
     tags?: string[],
-    context?: { sessionId: string; draftVersion: number },
+    context?: { sessionId: string; draftVersion: number; tagsProvenance?: Record<string, unknown> },
   ) => Promise<ClipItem | void>;
   quickActions?: DetailQuickAction[];
   /** Agent provider 配置（settings.agentProviders），用于 pi 底层 AI 分析；空数组时分析按钮禁用。 */
@@ -68,8 +77,9 @@ type ClipDetailWorkspaceProps = {
   onApplyTags?: (clipId: string, tags: string[]) => void;
 };
 
-/** 详情页外壳：只读态（工具条 + 元信息 + 内容/链接/采集上下文折叠区）与编辑态（快捷编辑器）切换。
- *  预览渲染、元信息、溢出菜单分别由 DetailPreview / DetailMeta / DetailOverflowMenu 承载（AI 分析随 pi-sdk 迁移待恢复）。 */
+/** 详情页外壳（提案 detail-page-information-architecture v8 定稿）：
+ *  五区编排（crumb / 路径行 / meta 单行 / 内容三态 / 底部动作区）+ 三态状态机（浏览/编辑/diff）。
+ *  AI 入口收敛到 tags 行右侧插件区（PiAnalysisBar 精简形态 + 队列角标）；弹窗仅采集原数据与 AI 配置两处。 */
 export function ClipDetailWorkspace({
   clip,
   filePathStatuses,
@@ -90,7 +100,7 @@ export function ClipDetailWorkspace({
   quickActions = [],
   agentProviders = [],
 }: ClipDetailWorkspaceProps) {
-  const [isEditing, setIsEditing] = useState(false);
+  const [mode, setMode] = useState<DetailMode>("view");
   const [draftContent, setDraftContent] = useState("");
   const [draftTags, setDraftTags] = useState<string[]>([]);
   const [editError, setEditError] = useState("");
@@ -99,18 +109,59 @@ export function ClipDetailWorkspace({
   const [imageActualSize, setImageActualSize] = useState(false);
   const [editorSessionId, setEditorSessionId] = useState("");
   const [draftVersion, setDraftVersion] = useState(1);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  const [pathCopied, setPathCopied] = useState(false);
+  const [draft, setDraft] = useState<DetailDraft | null>(null);
+  const [pluginQueue, setPluginQueue] = useState<PluginQueueTask[]>([]);
+  // 动效状态（设计 §7）：切条目 140ms 方向感知 / 切态 220ms；key 变化即重播动画。
+  // 用 ref 派生（render 期 setState 会连环重置，DOM 永远读不到 clip 值），200ms 后自动回落 state。
+  const lastNavRef = useRef<"prev" | "next">("next");
+  const goPrevious = () => {
+    lastNavRef.current = "prev";
+    onPrevious?.();
+  };
+  const goNext = () => {
+    lastNavRef.current = "next";
+    onNext?.();
+  };
+  const lastClipIdRef = useRef(clip?.id);
+  const pendingSwitchRef = useRef(false);
+  if (clip && lastClipIdRef.current !== clip.id) {
+    pendingSwitchRef.current = true;
+    lastClipIdRef.current = clip.id;
+  }
+  const switchKind = pendingSwitchRef.current ? "clip" : "state";
+  const switchDir = pendingSwitchRef.current ? lastNavRef.current : "";
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      pendingSwitchRef.current = false;
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [clip?.id]);
 
   useEffect(() => {
     setDraftContent(clip?.content ?? "");
     setDraftTags(normalizeDetailTags(clip?.tags ?? []));
     setEditorSessionId(clip ? `editor_${clip.id}_${Date.now().toString(36)}` : "");
     setDraftVersion(1);
-    setIsEditing(false);
+    setMode("view");
+    setDraft(null);
     setEditError("");
     setIsSaving(false);
     setImagePreviewOpen(false);
     setImageActualSize(false);
+    setCaptureOpen(false);
   }, [clip?.id, clip?.content, clip?.tags]);
+
+  const handlePiRunState = useCallback((running: boolean) => {
+    setPluginQueue((current) => {
+      const rest = current.filter((task) => task.id !== "pi.analyze");
+      return running
+        ? [...rest, { id: "pi.analyze", label: "AI 分析", status: "running" }]
+        : [...rest, { id: "pi.analyze", label: "AI 分析", status: "done" }];
+    });
+  }, []);
 
   if (!clip) {
     return (
@@ -121,115 +172,24 @@ export function ClipDetailWorkspace({
     );
   }
 
-  const mode = getDetailModeLabel(clip, tr);
+  const modeLabel = getDetailModeLabel(clip, tr);
   const sourceAddress = getDetailSourceAddress(clip);
   const applicationContextSummary = getApplicationContextSummary(clip);
-  const captureContextJson = JSON.stringify(clip.captureContext, null, 2);
-  const captureContextFieldCount = Object.keys(clip.captureContext).length;
   const imageOpenPath = getImageOpenPath(clip);
   const imageUrl = clip.analysis.attachment?.isImage && clip.analysis.attachment.targetType === "url"
     ? clip.analysis.attachment.target
     : null;
+  const sourcePath = mode === "view" ? getDetailSourcePath(clip) : "";
+  const canEdit = isEditableClip(clip);
+  const canCopyRich = hasRichRepresentation(clip);
   const hasDraftChanges =
     draftContent !== clip.content ||
     normalizeDetailTags(draftTags).join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
-  // 智能内容→tag：从 clip 类型/附件派生 tag，与文中 #tag 合并建议，去重已有 tag（镜像 App.tsx getTypeTags 语义）。
-  const kindTagMap: Record<string, string[]> = {
-    link: ["链接"],
-    command: ["命令"],
-    json: ["JSON"],
-    markdown: ["Markdown"],
-    code: ["代码"],
-  };
-  const smartTypeTags = clip.analysis.attachment
-    ? [clip.analysis.attachment.isImage ? "图片" : "资源"]
-    : kindTagMap[clip.kind] ?? [];
-  const suggestedTags = Array.from(
-    new Set([...extractDetailHashTags(draftContent), ...smartTypeTags]),
-  ).filter((tag) => !draftTags.some((current) => current.toLowerCase() === tag.toLowerCase()));
-  const editorVariableRows = useMemo<EditorVariableRow[]>(
-    () => [
-      { key: "clip.id", type: "string", example: clip.id },
-      { key: "clip.kind", type: "enum", example: clip.kind },
-      { key: "clip.payloadKind", type: "enum", example: clip.payloadKind },
-      { key: "clip.title", type: "string", example: compactInlineText(clip.analysis.title || tr("main.detail.clipContentFallback"), 44) },
-      { key: "clip.tags", type: "string[]", example: draftTags.length ? draftTags.join(", ") : "[]" },
-      { key: "editor.sessionId", type: "string", example: editorSessionId || `editor_${clip.id}` },
-      { key: "editor.draftVersion", type: "number", example: String(draftVersion) },
-      { key: "editor.content", type: "string", example: `${draftContent.length} chars` },
-      { key: "editor.suggestedTags", type: "string[]", example: suggestedTags.length ? suggestedTags.join(", ") : "[]" },
-      { key: "runtime.route", type: "string", example: "/clip/$clipId" },
-    ],
-    [clip, draftContent.length, draftTags, draftVersion, editorSessionId, suggestedTags],
-  );
+  const suggestedTags = buildSuggestedTags(clip, draftContent, draftTags);
+
   const safeLinks = safeHttpUrls(links);
   const droppedLinkCount = links.length - safeLinks.length;
   const droppedLinkLogKey = `${clip.id}:${links.length}:${safeLinks.length}`;
-  const confirmDiscardDraft = () => !hasDraftChanges || window.confirm(tr("main.detail.confirmDiscard"));
-  const handleBack = () => {
-    if (isEditing && !confirmDiscardDraft()) return;
-    onBack();
-  };
-  const handleCancelEdit = () => {
-    if (!confirmDiscardDraft()) return;
-    setDraftContent(clip.content);
-    setDraftTags(normalizeDetailTags(clip.tags));
-    setEditError("");
-    setIsEditing(false);
-  };
-
-  const saveDraftContent = async (
-    afterSave: "stay" | "copy" | "paste" = "stay",
-    override?: { content: string; tags: string[] },
-  ) => {
-    const nextContent = override?.content ?? draftContent;
-    const nextTags = normalizeDetailTags(override?.tags ?? draftTags);
-    const nextHasChanges =
-      nextContent !== clip.content ||
-      nextTags.join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
-    if (!nextContent.trim()) {
-      setEditError(tr("main.detail.emptyContent"));
-      return;
-    }
-    if (!nextHasChanges) {
-      setIsEditing(false);
-      return;
-    }
-    setIsSaving(true);
-    setEditError("");
-    try {
-      const savedClip = await onUpdateContent(clip, nextContent, nextTags, {
-        sessionId: editorSessionId || `editor_${clip.id}`,
-        draftVersion,
-      });
-      const postSaveClip = savedClip ?? { ...clip, content: nextContent, tags: nextTags };
-      setDraftContent(nextContent);
-      setDraftTags(nextTags);
-      setDraftVersion((current) => current + 1);
-      if (afterSave === "copy") {
-        appendWorkspacePanelLog("info", "detail-editor-save-and-copy", {
-          clipId: clip.id,
-          sessionId: editorSessionId,
-          draftVersion,
-        });
-        onCopy(postSaveClip);
-      }
-      if (afterSave === "paste") {
-        onPasteText(nextContent, "detail-editor:save-and-paste", {
-          businessChain: "detail -> compact-editor -> save_editor_draft -> paste",
-          clipId: clip.id,
-          sessionId: editorSessionId,
-          draftVersion,
-        });
-      }
-      setIsEditing(false);
-    } catch (error) {
-      setEditError(tr("main.detail.saveFailed", { error: formatCommandError(tr, error) }));
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   if (droppedLinkCount > 0 && !droppedLinkLogKeys.has(droppedLinkLogKey)) {
     droppedLinkLogKeys.add(droppedLinkLogKey);
     appendWorkspacePanelLog(
@@ -245,225 +205,292 @@ export function ClipDetailWorkspace({
 
   const menuActions = quickActions.filter((action) => action.id !== "open-target" && action.id !== "copy");
   const hasImageActions = clip.payloadKind === "image";
-  // 头部操作钮统一 28px ghost 圆角方形，与主面板工具栏同一命中语言（设计规范 §3）。
-  const toolButtonClass = "relative inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08] before:absolute before:-inset-0.5 before:content-['']";
-  const accordionTriggerClass = "gap-2 rounded-md px-1 py-2.5 text-[12px] font-normal hover:no-underline [&>em]:text-[11px] [&>em]:font-normal [&>em]:not-italic [&>em]:text-muted-foreground [&>svg:first-child]:shrink-0 [&>span]:truncate";
+  const toolButtonClass = "relative inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
 
-  return (
-    <section className="flex h-full flex-col overflow-auto bg-transparent" data-surface="workspace">
-      {!isEditing ? (
-        <>
-          <WorkspaceCrumb title={tr("main.detail.title")} subtitle={mode} onBack={handleBack} tr={tr}>
-            <button
-              aria-label={tr("main.detail.previous")}
-              className={toolButtonClass}
-              disabled={!onPrevious}
-              onClick={onPrevious}
-              title={tr("main.detail.previousShortcut")}
-              type="button"
-            >
-              <ChevronUp size={14} />
-            </button>
-            <button
-              aria-label={tr("main.detail.next")}
-              className={toolButtonClass}
-              disabled={!onNext}
-              onClick={onNext}
-              title={tr("main.detail.nextShortcut")}
-              type="button"
-            >
-              <ChevronDown size={14} />
-            </button>
-            <button
-              aria-label={tr("main.detail.editContent")}
-              className={toolButtonClass}
-              onClick={() => {
-                setDraftContent(clip.content);
-                setDraftTags(normalizeDetailTags(clip.tags));
-                setEditError("");
-                setIsEditing(true);
-              }}
-              title={tr("main.detail.quickEditTooltip")}
-              type="button"
-            >
-              <Pencil size={14} />
-            </button>
-            <DetailOverflowMenu
-              clip={clip}
-              hasImageActions={hasImageActions}
-              imageActualSize={imageActualSize}
-              imageOpenPath={imageOpenPath}
-              menuActions={menuActions}
-              tr={tr}
-              onCopyText={onCopyText}
-              onOpen={onOpen}
-              onOpenPath={onOpenPath}
-              onOpenImagePreview={() => setImagePreviewOpen(true)}
-              onToggleImageActualSize={() => setImageActualSize((current) => !current)}
-            />
-          </WorkspaceCrumb>
-          <PiAnalysisBar agentProviders={agentProviders} clip={clip} onApplyTags={onApplyTags} onSearchTag={onSearchTag} tr={tr} />
-          <DetailMeta
-            applicationContextSummary={applicationContextSummary}
+  const confirmDiscardDraft = () => !hasDraftChanges || window.confirm(tr("main.detail.confirmDiscard"));
+
+  const enterEdit = () => {
+    setDraftContent(clip.content);
+    setDraftTags(normalizeDetailTags(clip.tags));
+    setEditError("");
+    setMode("edit");
+  };
+
+  const handleExitEdit = () => {
+    if (mode === "diff") {
+      setDraft(null);
+      setMode("view");
+      return;
+    }
+    if (!confirmDiscardDraft()) return;
+    setDraftContent(clip.content);
+    setDraftTags(normalizeDetailTags(clip.tags));
+    setEditError("");
+    setMode("view");
+  };
+
+  const saveDraftContent = async (override?: { content: string; tags?: string[] }) => {
+    const nextContent = override?.content ?? draftContent;
+    const nextTags = normalizeDetailTags(override?.tags ?? draftTags);
+    const nextHasChanges =
+      nextContent !== clip.content ||
+      nextTags.join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
+    if (!nextContent.trim()) {
+      setEditError(tr("main.detail.emptyContent"));
+      return;
+    }
+    if (!nextHasChanges) {
+      setMode("view");
+      setDraft(null);
+      return;
+    }
+    setIsSaving(true);
+    setEditError("");
+    try {
+      // 人工保存 = 权威整组替换：tags_provenance 对最终 tags 重组，全部标 manual（§5.3）。
+      const nextProvenance = buildManualProvenance(parseTagProvenance(clip), nextTags);
+      await onUpdateContent(clip, nextContent, nextTags, {
+        sessionId: editorSessionId || `editor_${clip.id}`,
+        draftVersion,
+        tagsProvenance: nextProvenance,
+      });
+      setDraftContent(nextContent);
+      setDraftTags(nextTags);
+      setDraftVersion((current) => current + 1);
+      setDraft(null);
+      setMode("view");
+    } catch (error) {
+      setEditError(tr("main.detail.saveFailed", { error: formatCommandError(tr, error) }));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCopyPath = (path: string) => {
+    onCopyText(path, `detail:copy-source-path:${clip.id}`, {
+      businessChain: "workspace-router -> detail-route -> path-row -> copy",
+      clipId: clip.id,
+      sourcePath: path,
+    });
+    setPathCopied(true);
+    window.setTimeout(() => setPathCopied(false), 900);
+  };
+
+  const handleCopyPlain = () => {
+    onCopyPlain(clip);
+    setCopyFeedback(true);
+    window.setTimeout(() => setCopyFeedback(false), 600);
+  };
+
+  useDetailKeyboard({
+    mode,
+    canEdit,
+    hasPath: Boolean(sourcePath),
+    overlayOpen: captureOpen,
+    onEnterEdit: enterEdit,
+    onSave: () => void (mode === "diff" && draft ? saveDraftContent({ content: draft.content }) : saveDraftContent()),
+    onExit: handleExitEdit,
+    onCopyPath: () => handleCopyPath(sourcePath),
+    onPrevious: goPrevious,
+    onNext: goNext,
+  });
+
+  const renderer = resolveDetailRenderer(clip);
+  const runningCount = pluginQueue.filter((task) => task.status === "running").length;
+  const pluginZone = (
+    <PluginZone
+      aiSection={
+        <PiAnalysisBar
+          agentProviders={agentProviders}
+          clip={clip}
+          onApplyTags={onApplyTags}
+          onRunStateChange={handlePiRunState}
+          onSearchTag={onSearchTag}
+          tr={tr}
+          variant="menu"
+        />
+      }
+      queue={pluginQueue}
+      runningCount={runningCount}
+      tr={tr}
+    />
+  );
+
+  const contentBody = useMemo(() => {
+    if (mode === "edit") {
+      return (
+        <MdEditor
+          clip={clip}
+          error={editError}
+          isSaving={isSaving}
+          onChange={(value) => {
+            setDraftContent(value);
+            if (editError) setEditError("");
+          }}
+          onCancel={handleExitEdit}
+          onCopyCode={(text, source) => onCopyText(text, source)}
+          onPasteCode={(text, source) => onPasteText(text, source)}
+          onSave={() => void saveDraftContent()}
+          tr={tr}
+          value={draftContent}
+        />
+      );
+    }
+    if (mode === "diff" && draft) {
+      return <DraftDiff baseline={clip.content} draft={draft} tr={tr} />;
+    }
+    switch (renderer.component) {
+      case "readonly-image":
+        return (
+          <ImageFilePreview
+            actualSize={imageActualSize}
             clip={clip}
-            sourceAddress={sourceAddress}
+            onClosePreview={() => setImagePreviewOpen(false)}
+            onOpenPreview={() => setImagePreviewOpen(true)}
+            previewOpen={imagePreviewOpen}
             tr={tr}
-            onCopy={onCopy}
-            onCopyPlain={onCopyPlain}
-            onCopyText={onCopyText}
-            onSearchTag={onSearchTag}
           />
-        </>
-      ) : null}
-
-      {/* 详情主体：按类型渲染，保留内容与链接的分区折叠 */}
-      <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
-        {isEditing ? (
-          <DetailQuickEditor
-            content={draftContent}
-            draftVersion={draftVersion}
-            error={editError}
-            hasChanges={hasDraftChanges}
-            isSaving={isSaving}
-            sessionId={editorSessionId || `editor_${clip.id}`}
-            suggestedTags={suggestedTags}
-            tags={draftTags}
-            variableRows={editorVariableRows}
-            tr={tr}
-            onApplySuggestion={(content, tags) => {
-              setDraftContent(content);
-              setDraftTags(normalizeDetailTags(tags));
-              setDraftVersion((current) => current + 1);
-              setEditError("");
-            }}
-            onApplySuggestionAndSave={(content, tags) => void saveDraftContent("stay", { content, tags })}
-            onCancel={handleCancelEdit}
-            onChange={(value) => {
-              setDraftContent(value);
-              if (editError) setEditError("");
-            }}
-            onTagsChange={setDraftTags}
-            onVariableDrawerOpen={() => {
-              const sensitive = detectSensitiveEditorFields(draftContent);
-              appendWorkspacePanelLog("info", "editor-variable-snapshot", {
-                traceId: `editor_variable_${clip.id}_${Date.now().toString(36)}`,
-                contextSchema: "EditorVariableSnapshot.v1",
-                clipId: clip.id,
-                sessionId: editorSessionId || `editor_${clip.id}`,
-                draftVersion,
-                variableKeys: editorVariableRows.map((row) => row.key),
-                contentLength: draftContent.length,
-                tagCount: draftTags.length,
-                suggestedTagCount: suggestedTags.length,
-                sensitiveKinds: sensitive.map((finding) => finding.kind),
-              });
-            }}
-            onSave={() => void saveDraftContent()}
-            onSaveAndCopy={() => void saveDraftContent("copy")}
-            onSaveAndPaste={() => void saveDraftContent("paste")}
-          />
-        ) : (
-          /* 阅读态：内容预览直出（打开即见），链接为 chip 行，采集上下文默认折叠 */
-          <div className="flex min-h-0 flex-1 flex-col gap-3">
-            <div className="min-h-0 flex-1 overflow-auto">
-              {clip.payloadKind === "image" ? (
-                <ImageFilePreview
-                  actualSize={imageActualSize}
-                  clip={clip}
-                  onClosePreview={() => setImagePreviewOpen(false)}
-                  onOpenPreview={() => setImagePreviewOpen(true)}
-                  previewOpen={imagePreviewOpen}
-                  tr={tr}
-                />
-              ) : clip.payloadKind === "file" ? (
-                <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />
-              ) : imageUrl ? (
-                <img alt={clip.analysis.title} className="max-h-72 rounded-lg object-contain" src={imageUrl} />
-              ) : clip.payloadKind === "html" ? (
-                <HtmlPreview clip={clip} content={clip.content} onCopy={onCopy} tr={tr} />
-              ) : clip.analysis.url || clip.kind === "link" ? (
-                <LinkPreview clip={clip} links={links} onOpen={onOpen} tr={tr} />
-              ) : isLikelyJson(clip) ? (
-                <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
-              ) : isLikelyMarkdown(clip) ? (
-                <Tabs defaultValue="rendered">
-                  <TabsList className="inline-flex gap-1 rounded-lg bg-black/[0.04] p-0.5 dark:bg-white/[0.07]">
-                    <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="rendered">渲染后</TabsTrigger>
-                    <TabsTrigger className="h-7 rounded-[7px] px-2.5 text-[12px]" value="raw">原内容</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="rendered">
-                    <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
-                  </TabsContent>
-                  <TabsContent value="raw">
-                    <TruncatedPre clip={clip} />
-                  </TabsContent>
-                </Tabs>
-              ) : (
-                <>
-                  <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
-                  <TruncatedPre clip={clip} />
-                </>
-              )}
-            </div>
-
-            {safeLinks.length ? (
-              <div className="shrink-0">
-                <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                  <ExternalLink size={12} />
-                  {tr("main.detail.linkList")}
-                  <span className="mono">{safeLinks.length}</span>
-                </p>
-                <div className="flex flex-wrap gap-1.5" aria-label={tr("main.detail.linkList")}>
-                  {safeLinks.slice(0, 12).map((url) => (
-                    <button
-                      className="flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border border-black/[0.06] bg-black/[0.02] px-2 text-[12px] text-foreground transition-colors hover:bg-black/[0.05] dark:border-white/[0.09] dark:bg-white/[0.04] dark:hover:bg-white/[0.08]"
-                      key={url.href}
-                      onClick={() => window.open(url.href, "_blank", "noopener,noreferrer")}
-                      title={url.href}
-                      type="button"
-                    >
-                      <ExternalLink className="shrink-0" size={11} />
-                      <span className="truncate">{url.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* 采集上下文：默认折叠，点开看原始 JSON */}
-            <Accordion className="shrink-0" collapsible type="single">
-              <AccordionItem value="capture-context">
-                <AccordionTrigger className={accordionTriggerClass}>
-                  <FileJson size={14} />
-                  <span>{tr("main.detail.captureContext")}</span>
-                  <em>{tr("main.detail.captureContextFields", { count: captureContextFieldCount })}</em>
-                </AccordionTrigger>
-                <AccordionContent className="space-y-2 pt-2">
-                  <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                    <span className="min-w-0 truncate">{applicationContextSummary || tr("main.detail.captureContextUnavailable")}</span>
-                    <button
-                      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2.5 text-[12px] hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"
-                      onClick={() =>
-                        onCopyText(captureContextJson, `detail:capture-context:${clip.id}`, {
-                          businessChain: "workspace-router -> detail-route -> capture-context-json -> copy",
-                          clipId: clip.id,
-                          contextSchema: "ClipboardCaptureContext.v2",
-                          chars: captureContextJson.length,
-                        })
-                      }
-                      type="button"
-                    >
-                      <Copy size={11} />
-                      {tr("main.detail.copyCaptureContext")}
-                    </button>
-                  </div>
-                  <pre aria-label={tr("main.detail.captureContext")} className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/[0.03] p-3 text-[11px] leading-relaxed dark:bg-white/[0.05]"><code>{captureContextJson}</code></pre>
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
+        );
+      case "file-list":
+        return <FileListPreview clip={clip} filePathStatuses={filePathStatuses} tr={tr} onOpenPath={onOpenPath} />;
+      case "image-url":
+        return <img alt={clip.analysis.title} className="max-h-72 rounded-lg object-contain" src={imageUrl ?? ""} />;
+      case "html":
+        return <HtmlPreview clip={clip} content={clip.content} onCopy={onCopy} tr={tr} />;
+      case "link":
+        return <LinkPreview clip={clip} links={links} onOpen={onOpen} tr={tr} />;
+      case "json-tree":
+        return <JsonPreview clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />;
+      case "markdown":
+        return (
+          <div className="space-y-2">
+            <MarkdownPreview clip={clip} content={clip.content} onCopyCode={onCopyText} onPasteCode={onPasteText} />
+            <TruncatedPre clip={clip} />
           </div>
-        )}
+        );
+      default:
+        return (
+          <>
+            <SmartFormatPanel clip={clip} content={clip.content} onCopyText={onCopyText} tr={tr} />
+            <TruncatedPre clip={clip} />
+          </>
+        );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, draft, clip, renderer.component, draftContent, editError, isSaving, imageActualSize, imagePreviewOpen, filePathStatuses, imageUrl, links, onCopy, onCopyText, onOpen, onOpenPath, onPasteText, tr]);
+  return (
+    <section className="relative flex h-full flex-col overflow-hidden bg-transparent" data-surface="workspace">
+      {/* 层① crumb：返回 + 标题 + prev/next（remixicon，v8 指定）+ 溢出菜单 */}
+      <WorkspaceCrumb
+        onBack={() => {
+          if (mode === "edit" && !confirmDiscardDraft()) return;
+          onBack();
+        }}
+        subtitle={modeLabel}
+        title={tr("main.detail.title")}
+        tr={tr}
+      >
+        <button
+          aria-label={tr("main.detail.previous")}
+          className={toolButtonClass}
+          disabled={!onPrevious}
+          onClick={goPrevious}
+          title={tr("main.detail.previousShortcut")}
+          type="button"
+        >
+          <RiArrowUpWideFill size={14} />
+        </button>
+        <button
+          aria-label={tr("main.detail.next")}
+          className={toolButtonClass}
+          disabled={!onNext}
+          onClick={goNext}
+          title={tr("main.detail.nextShortcut")}
+          type="button"
+        >
+          <RiArrowDownWideFill size={14} />
+        </button>
+        <DetailOverflowMenu
+          clip={clip}
+          hasImageActions={hasImageActions}
+          imageActualSize={imageActualSize}
+          imageOpenPath={imageOpenPath}
+          menuActions={menuActions}
+          tr={tr}
+          onCopyText={onCopyText}
+          onOpen={onOpen}
+          onOpenPath={onOpenPath}
+          onOpenImagePreview={() => setImagePreviewOpen(true)}
+          onToggleImageActualSize={() => setImageActualSize((current) => !current)}
+        />
+      </WorkspaceCrumb>
+
+      {/* 层② 来源路径行：仅浏览态且条目有路径；层③ meta 单行 + 插件区 */}
+      {sourcePath ? <DetailPathRow onCopyPath={handleCopyPath} path={sourcePath} tr={tr} /> : null}
+      <DetailMetaRow
+        clip={clip}
+        draftTags={draftTags}
+        editing={mode === "edit"}
+        onOpenCaptureDialog={() => setCaptureOpen(true)}
+        onSearchTag={onSearchTag}
+        onTagsChange={setDraftTags}
+        pluginZone={pluginZone}
+        suggestedTags={suggestedTags}
+        provenance={parseTagProvenance(clip)}
+        tr={tr}
+      />
+      {/* 层④ 内容主体（三态）：E/双击进编辑，⌘S 保存，Esc 层层后退 */}
+      <div
+        className="detail-state-in flex min-h-0 flex-1 flex-col px-4 py-3"
+        data-detail-mode={mode}
+        data-dir={switchDir}
+        data-switch={switchKind}
+        key={`${clip.id}:${mode}`}
+        onDoubleClick={() => {
+          if (mode === "view" && canEdit) enterEdit();
+        }}
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          {contentBody}
+          {mode === "view" ? <DetailLinkList links={safeLinks} tr={tr} /> : null}
+        </div>
       </div>
+
+      {/* 层⑤ 底部动作区：随三态切换 */}
+      <DetailActionBar
+        canCopyRich={canCopyRich}
+        canEdit={canEdit}
+        copyFeedback={copyFeedback}
+        hasPath={Boolean(sourcePath)}
+        isSaving={isSaving}
+        mode={mode}
+        onCopy={handleCopyPlain}
+        onCopyPath={() => handleCopyPath(sourcePath)}
+        onCopyRich={() => onCopy(clip)}
+        onEdit={enterEdit}
+        onExit={handleExitEdit}
+        onPaste={() =>
+          onPasteText(clip.plainText || clip.content, "detail-action:paste", {
+            businessChain: "workspace-router -> detail-route -> action-bar -> paste",
+            clipId: clip.id,
+          })
+        }
+        onSave={() => void (mode === "diff" && draft ? saveDraftContent({ content: draft.content }) : saveDraftContent())}
+        pathCopied={pathCopied}
+        tr={tr}
+      />
+
+      {/* 弹窗（仅两处之一）：采集原数据 */}
+      {captureOpen ? (
+        <CaptureOverlay
+          applicationContextSummary={applicationContextSummary}
+          clip={clip}
+          onClose={() => setCaptureOpen(false)}
+          onCopyText={onCopyText}
+          sourceAddress={sourceAddress}
+          tr={tr}
+        />
+      ) : null}
     </section>
   );
 }

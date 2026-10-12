@@ -151,5 +151,5 @@ export const SETTINGS_FIELD_CATALOG = [
   { id: "updateActions", section: "update-distribution", tab: "update-flow", type: "action", labelKey: "settings.update.actions", order: 10 },
   { id: "buildInfo", section: "update-distribution", tab: "build", type: "readonly", labelKey: "settings.update.buildInfo", order: 10 },
   { id: "tagMode", section: "tag-rules", tab: "tag-mode", type: "segment", labelKey: "settings.tags.mode", order: 10 },
-  { id: "tagRules", section: "tag-rules", tab: "rules", type: "action", labelKey: "settings.tags.rules", order: 10 },
+  { id: "builtinTagRules", section: "tag-rules", tab: "tag-mode", type: "toggle", labelKey: "settings.tags.builtinHint", order: 20 },
 ] as const satisfies readonly SettingFieldConfig[];

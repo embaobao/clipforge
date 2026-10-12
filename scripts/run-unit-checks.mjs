@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -43,6 +44,20 @@ try {
   const suggestionsModule = await import(pathToFileURL(join(outDir, "editor/suggestions.js")).href);
   const editorActions = await import(pathToFileURL(join(outDir, "editor/actions.js")).href);
   const editorSensitive = await import(pathToFileURL(join(outDir, "editor/sensitive.js")).href);
+  // renderer-registry 走 Vite 无扩展名导入且依赖 app 侧共享模块，用 vite 内置 esbuild 打包成 CJS 再 require。
+  const registryOut = join(outDir, "registry.cjs");
+  execFileSync(
+    join(root, "node_modules/vite/node_modules/.bin/esbuild"),
+    [
+      join(root, "src/workspace/components/detail/renderer-registry.ts"),
+      "--bundle",
+      "--platform=node",
+      "--format=cjs",
+      `--outfile=${registryOut}`,
+    ],
+    { cwd: root, stdio: "inherit" },
+  );
+  const registry = createRequire(import.meta.url)(registryOut);
 
   const suggestions = [
     { id: "all", label: "全部内容", hint: "9", kind: "all", typeFilter: "all" },
@@ -218,7 +233,44 @@ try {
     assert.equal(refilled.animate, true, "空→非空恢复入场");
   }
 
-  console.log("[unit] search-query, smart-format, plugin-action, editor-suggestion, editor-action, sensitive, row-animation checks passed");
+  // ---------- 详情页渲染注册表 golden（迁移前后命中表零变化，提案 Phase 6） ----------
+  {
+    const mk = (patch) => ({
+      id: "c",
+      content: "",
+      kind: "text",
+      payloadKind: "text",
+      primaryFormat: "text/plain",
+      analysis: {},
+      ...patch,
+    });
+    const hit = (clip, renderers) => registry.resolveDetailRenderer(clip, renderers).component;
+    assert.equal(hit(mk({ payloadKind: "image" })), "readonly-image");
+    assert.equal(hit(mk({ payloadKind: "file" })), "file-list");
+    assert.equal(hit(mk({ payloadKind: "html" })), "html");
+    assert.equal(hit(mk({ kind: "link", analysis: { url: "https://x.dev" } })), "link");
+    assert.equal(hit(mk({ analysis: { attachment: { isImage: true, targetType: "url" } } })), "image-url");
+    assert.equal(hit(mk({ content: '{"a":1}' })), "json-tree");
+    assert.equal(hit(mk({ kind: "markdown", analysis: { isMarkdown: true } })), "markdown");
+    assert.equal(hit(mk({ content: "just plain text" })), "smart-format");
+    // 精确 payloadKind 压过 heuristic：html 条目带 url 仍渲染 html。
+    assert.equal(hit(mk({ payloadKind: "html", analysis: { url: "https://x.dev" } })), "html");
+    // 插件合入：image 恒宿主渲染（信任边界），插件命中以 order 200 参与排序。
+    const merged = registry.mergePluginRenderers([
+      { id: "p.image", match: { payloadKind: "image" }, component: "markdown" },
+      { id: "p.md-ext", match: { payloadKind: "text", extensions: [".md"] }, component: "markdown" },
+    ]);
+    assert.equal(hit(mk({ payloadKind: "image" }), merged), "readonly-image");
+    assert.equal(
+      hit(
+        mk({ payloadKind: "text", representations: [{ format: "application/file-list", fileName: "notes.md" }] }),
+        merged,
+      ),
+      "markdown",
+    );
+    assert.equal(hit(mk({ payloadKind: "file" }), merged), "file-list");
+  }
+  console.log("[unit] search-query, smart-format, plugin-action, editor-suggestion, editor-action, sensitive, row-animation, renderer-registry checks passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

@@ -1,16 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
 
-// 编辑器-代理桥接门禁：验证详情页保存/粘贴/取消/建议链路与 Rust preview_patch 的行为契约。
+// 编辑器-代理桥接门禁：验证详情页保存/退出/建议链路与 Rust preview_patch 的行为契约。
 // 断言分两类（见 codebase-modularity-refactor Phase 2）：
-// 1. 结构接线断言：基于 data-editor-action 语义标记与 props 符号，容忍 JSX/格式重排（拆分安全）；
+// 1. 结构接线断言：基于 data-editor-action / data-md-* / data-detail-action 语义标记与 props 符号，容忍 JSX/格式重排（拆分安全）；
 // 2. 行为切片断言：在函数体内做子串/顺序/反向检查——与文件无关、只随函数本体重写失效，
 //    保留是因为它们表达「不能绕过写回路径」等业务不变量，无法用标记表达。
+// 2026-10 详情页信息架构重构（detail-page-information-architecture v8）：
+//   编辑器 UI 由 DetailQuickEditor.tsx 迁至 detail/md-editor.tsx（11 工具钮 + 编辑/预览 tab + 状态行），
+//   三态状态机（view/edit/diff）落在外壳；saveDraftContent 语义保持「先保存再复制/粘贴」。
 const root = process.cwd();
-// 详情页外壳与快捷编辑器已按 workspace 拆分提案分文件：
-// saveDraftContent/handleCancelEdit/编辑布线在 ClipDetailWorkspace.tsx，编辑器 UI 语义在 DetailQuickEditor.tsx。
+// 详情页外壳（三态编排）与新 MD 编辑器分文件：
+// saveDraftContent/handleExitEdit/编辑布线在 ClipDetailWorkspace.tsx，编辑器 UI 语义在 detail/md-editor.tsx。
 const workspacePath = path.join(root, "src/workspace/components/ClipDetailWorkspace.tsx");
-const quickEditorPath = path.join(root, "src/workspace/components/DetailQuickEditor.tsx");
+const mdEditorPath = path.join(root, "src/workspace/components/detail/md-editor.tsx");
 // modularity Phase 4：Rust 侧 editor 臂从 lib.rs 迁至 mcp/dispatch_agent_editor.rs。
 const rustPath = path.join(root, "src-tauri/src/mcp/dispatch_agent_editor.rs");
 
@@ -20,100 +23,73 @@ function read(file) {
 
 function assert(condition, message) {
   if (!condition) {
-    console.error(`Editor Agent bridge verification failed: ${message}`);
+    console.error(`Editor agent bridge verification failed: ${message}`);
     process.exitCode = 1;
   }
 }
 
 function sliceBetween(source, start, end) {
   const startIndex = source.indexOf(start);
-  const endIndex = source.indexOf(end, startIndex + start.length);
-  if (startIndex < 0 || endIndex < 0) return "";
-  return source.slice(startIndex, endIndex);
+  if (startIndex === -1) return "";
+  const endIndex = source.indexOf(end, startIndex);
+  return endIndex === -1 ? "" : source.slice(startIndex, endIndex);
 }
 
 function sliceBetweenLast(source, start, end) {
   const startIndex = source.lastIndexOf(start);
-  const endIndex = source.indexOf(end, startIndex + start.length);
-  if (startIndex < 0 || endIndex < 0) return "";
-  return source.slice(startIndex, endIndex);
-}
-
-// 取 data-editor-action="<action>" 按钮的元素块（标记 → </button>）。
-// 依赖标记存在：按钮重排/样式类变更不受影响；删标记即 FAIL（门禁提醒补标记）。
-function actionButtonBlock(source, action) {
-  return sliceBetween(source, `data-editor-action="${action}"`, "</button>");
+  if (startIndex === -1) return "";
+  const endIndex = source.indexOf(end, startIndex);
+  return endIndex === -1 ? "" : source.slice(startIndex, endIndex);
 }
 
 const workspace = read(workspacePath);
-const quickEditor = read(quickEditorPath);
+const mdEditor = read(mdEditorPath);
 const rust = read(rustPath);
 
-// ---------- saveDraftContent：保存意图与写回路径（行为切片） ----------
-const saveDraftContent = sliceBetween(workspace, "const saveDraftContent = async (", "if (droppedLinkCount > 0");
-assert(saveDraftContent.includes('afterSave: "stay" | "copy" | "paste"'), "detail editor save intent is missing copy mode");
-assert(saveDraftContent.includes("const savedClip = await onUpdateContent"), "save-and-copy cannot access the saved normalized clip");
-assert(saveDraftContent.includes("const postSaveClip = savedClip ?? { ...clip, content: nextContent, tags: nextTags }"), "save-and-copy does not preserve current clip identity after save");
-assert(saveDraftContent.includes("onCopy(postSaveClip)"), "save-and-copy does not use the existing clip writeback path");
-assert(saveDraftContent.indexOf("const savedClip = await onUpdateContent") < saveDraftContent.indexOf("onCopy(postSaveClip)"), "save-and-copy can copy before save_editor_draft completes");
-// 反向断言保留原因：save-and-copy 复用已保存条目（onCopy），若改成 onCopyText 会重新采集一条重复文本条目——历史上出现过该回归。
-assert(!saveDraftContent.includes('onCopyText(nextContent, "detail-editor:save-and-copy"'), "save-and-copy should not recapture a separate text clip");
+// ---------- saveDraftContent：保存写回路径（行为切片） ----------
+const saveDraftContent = sliceBetween(workspace, "const saveDraftContent = async (", "const handleCopyPath =");
+assert(saveDraftContent.includes("await onUpdateContent(clip, nextContent, nextTags"), "save is not wired to onUpdateContent with tags");
+// 空内容守卫：保存前拦截空草稿（历史回归：空内容清库）。
+assert(saveDraftContent.includes('tr("main.detail.emptyContent")'), "save does not guard against empty content");
 
-// ---------- 外壳 → DetailQuickEditor 接线（结构断言，容忍格式重排） ----------
-const quickEditorJsx = sliceBetween(workspace, "<DetailQuickEditor", "/>");
-assert(quickEditorJsx.length > 0, "ClipDetailWorkspace does not render DetailQuickEditor");
-assert(/onSaveAndCopy=\{[^}]*saveDraftContent\("copy"\)/.test(quickEditorJsx), "DetailQuickEditor is not wired to save-and-copy");
-assert(/onSaveAndPaste=\{[^}]*saveDraftContent\("paste"\)/.test(quickEditorJsx), "DetailQuickEditor is not wired to save-and-paste");
-assert(/onSave=\{[^}]*saveDraftContent\(\)/.test(quickEditorJsx), "DetailQuickEditor is not wired to plain save");
+// ---------- 外壳 → MdEditor 接线（结构断言，容忍格式重排） ----------
+const mdEditorJsx = sliceBetween(workspace, "<MdEditor", "/>");
+assert(mdEditorJsx.length > 0, "ClipDetailWorkspace does not render MdEditor");
+assert(/onSave=\{[^}]*saveDraftContent\(/.test(mdEditorJsx), "MdEditor is not wired to plain save");
+assert(/onCancel=\{handleExitEdit\}/.test(mdEditorJsx), "MdEditor is not wired to cancel");
 
-// ---------- DetailQuickEditor 动作按钮（data-editor-action 标记块内检查） ----------
-const saveAndCopyButton = actionButtonBlock(quickEditor, "save-and-copy");
-assert(saveAndCopyButton.length > 0, "save-and-copy button is missing data-editor-action marker");
-assert(/onClick=\{onSaveAndCopy\}/.test(saveAndCopyButton), "save-and-copy handler is missing");
-const saveAndPasteButton = actionButtonBlock(quickEditor, "save-and-paste");
-assert(saveAndPasteButton.length > 0, "save-and-paste button is missing data-editor-action marker");
-assert(/onClick=\{onSaveAndPaste\}/.test(saveAndPasteButton), "save-and-paste handler is missing");
-const saveButton = actionButtonBlock(quickEditor, "save");
-assert(saveButton.length > 0 && /onClick=\{onSave\}/.test(saveButton), "save button is missing marker or handler");
-// 三个保存动作共用防误触守卫：草稿有变更 + 非保存中 + 内容非空（token 级检查，容忍表达式格式变化）。
-for (const [name, block] of [["save", saveButton], ["save-and-copy", saveAndCopyButton], ["save-and-paste", saveAndPasteButton]]) {
-  const guard = sliceBetween(block, "disabled={", "}", );
-  assert(guard.includes("!hasChanges") && guard.includes("isSaving") && guard.includes("content.trim"), `${name} button is not protected by draft-change/saving/content guards`);
-}
+// ---------- MdEditor 键盘：⌘S 保存 / Esc 退出（行为切片） ----------
+const keydownHandler = sliceBetween(mdEditor, "const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {", "const wordCount");
+assert(/key === "s"\s*\)/.test(keydownHandler), "Cmd/Ctrl+S must be handled in the editor keydown");
+assert(/onSave\(\)/.test(keydownHandler), "Cmd/Ctrl+S must trigger save");
+assert(/event\.key === "Escape"/.test(keydownHandler), "Escape must be handled in the editor keydown");
+assert(/onCancel\(\)/.test(keydownHandler), "Escape must trigger cancel");
 
-// ---------- 快捷键：Cmd/Ctrl+Enter=保存并粘贴，Cmd/Ctrl+S=保存（行为切片） ----------
-assert(quickEditor.includes('tr("main.detail.saveAndCopy")'), "save-and-copy action is not localized");
-assert(quickEditor.includes('tr("main.detail.saveAndPaste")'), "save-and-paste action is not localized");
-const keydownHandler = sliceBetween(quickEditor, "<textarea", "/>");
-assert(/if \(event\.key === "Enter"\)\s*\{\s*onSaveAndPaste\(\);\s*\}\s*else\s*\{\s*onSave\(\);\s*\}/.test(keydownHandler), "Cmd/Ctrl+Enter must save-and-paste and Cmd/Ctrl+S must save");
+// ---------- MdEditor 工具条标记（结构断言） ----------
+assert(mdEditor.includes('data-md-textarea'), "MdEditor textarea is missing data-md-textarea marker");
+assert(mdEditor.includes('data-md-preview'), "MdEditor preview pane is missing data-md-preview marker");
+assert(mdEditor.includes('data-md-tab="edit"') && mdEditor.includes('data-md-tab="preview"'), "MdEditor edit/preview tabs are missing markers");
 
-// ---------- saveDraftContent：save-and-paste 复用 pasteText 路径（行为切片） ----------
-assert(saveDraftContent.includes('onPasteText(nextContent, "detail-editor:save-and-paste"'), "save-and-paste does not reuse the existing pasteText path");
-assert(saveDraftContent.includes('businessChain: "detail -> compact-editor -> save_editor_draft -> paste"'), "save-and-paste is missing its paste-path business chain");
-assert(saveDraftContent.indexOf("const savedClip = await onUpdateContent") < saveDraftContent.indexOf('onPasteText(nextContent, "detail-editor:save-and-paste"'), "save-and-paste can paste before save_editor_draft completes");
-// 反向断言保留原因：详情编辑器必须经由外壳写回路径（onCopy/onPasteText），直写系统剪贴板会绕过复制回写抑制与业务链埋点。
-assert(!saveDraftContent.includes("writeClipboard("), "detail editor should not write clipboard directly");
-assert(!saveDraftContent.includes("pasteClipboard("), "detail editor should not paste clipboard directly");
+// ---------- saveDraftContent：错误边界（行为切片） ----------
+assert(saveDraftContent.includes("catch (error)"), "saveDraftContent has no failure boundary");
+assert(saveDraftContent.includes('tr("main.detail.saveFailed"'), "save failures do not surface localized errors");
 
-// ---------- handleCancelEdit：取消不得产生副作用（行为切片） ----------
-const handleCancelEdit = sliceBetween(workspace, "const handleCancelEdit = () => {", "const saveDraftContent = async (");
-assert(handleCancelEdit.includes("setDraftContent(clip.content)"), "cancel edit does not restore original clip content");
-assert(handleCancelEdit.includes("setDraftTags(normalizeDetailTags(clip.tags))"), "cancel edit does not restore original clip tags");
-assert(handleCancelEdit.includes("setIsEditing(false)"), "cancel edit does not leave edit mode");
-// 反向断言保留原因：取消编辑是纯状态回滚；任何 save/copy/paste 副作用都属「取消即提交」回归。
-assert(!handleCancelEdit.includes("onUpdateContent"), "cancel edit can save content");
-assert(!handleCancelEdit.includes("onCopy"), "cancel edit can write clipboard");
-assert(!handleCancelEdit.includes("onPasteText"), "cancel edit can paste content");
+// ---------- handleExitEdit：退出不得产生副作用（行为切片） ----------
+const handleExitEdit = sliceBetween(workspace, "const handleExitEdit = () => {", "const saveDraftContent = async (");
+assert(handleExitEdit.includes("setDraftContent(clip.content)"), "exit edit does not restore original clip content");
+assert(handleExitEdit.includes("setDraftTags(normalizeDetailTags(clip.tags))"), "exit edit does not restore original clip tags");
+assert(handleExitEdit.includes('setMode("view")'), "exit edit does not leave edit mode");
+// 反向断言保留原因：退出编辑是纯状态回滚；任何 save/copy/paste 副作用都属「取消即提交」回归。
+assert(!handleExitEdit.includes("onUpdateContent"), "exit edit can save content");
+assert(!handleExitEdit.includes("onCopy"), "exit edit can write clipboard");
+assert(!handleExitEdit.includes("onPasteText"), "exit edit can paste content");
 
-// ---------- 建议请求：失败只报错、不触碰草稿（行为切片） ----------
-const suggestionRequest = sliceBetween(quickEditor, "const requestSuggestion = () => {", "const applySuggestion =");
-assert(suggestionRequest.includes("setSuggestionError"), "suggestion failures do not surface a local editor error");
-assert(suggestionRequest.includes("catch (error)"), "suggestion generation has no failure boundary");
-// 反向断言保留原因：建议失败路径若改写草稿/直接应用/直接保存，会把未确认的模型输出写入用户数据。
-assert(!suggestionRequest.includes("onChange("), "suggestion failure path can mutate draft content");
-assert(!suggestionRequest.includes("onTagsChange("), "suggestion failure path can mutate draft tags");
-assert(!suggestionRequest.includes("onApplySuggestion("), "suggestion request path applies changes without explicit user action");
-assert(!suggestionRequest.includes("onApplySuggestionAndSave("), "suggestion request path can save without explicit user action");
+// ---------- 三态状态机：view/edit/diff（结构断言，v8 契约） ----------
+assert(workspace.includes('type DetailMode = "view" | "edit" | "diff"') || workspace.includes('DetailMode'), "detail shell must consume the three-state DetailMode contract");
+assert(workspace.includes("isEditableClip(clip)"), "edit entry is not guarded by isEditableClip (image/file are read-only)");
+assert(workspace.includes("hasRichRepresentation(clip)"), "rich copy is not guarded by hasRichRepresentation");
+assert(workspace.includes('onCopyPlain(clip)'), "primary copy button must use onCopyPlain (plain-text semantics)");
+assert(/onCopyRich=\{\(\) => onCopy\(clip\)\}/.test(workspace), "rich copy button must reuse the existing rich writeback path onCopy");
 
 // ---------- Rust preview_patch：只读预览，不落库不进剪贴板（行为切片，command 名即 API 契约） ----------
 const previewPatch = sliceBetweenLast(

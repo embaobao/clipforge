@@ -191,6 +191,74 @@
   animation: row-in var(--motion-surface) var(--ease-enter) both;
 }
 
+/* 详情页三态切换（设计 §7）：fade + translateY 6px，方向感知（进编辑向下/进 diff 向上/回浏览归零），220ms。
+   reduced-motion 退化为纯 crossfade（transform 归零仅留 opacity）。 */
+@keyframes detail-state-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--detail-state-from, 0px));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.detail-state-in {
+  animation: detail-state-in var(--motion-panel-in) var(--ease-enter) both;
+}
+.detail-state-in[data-detail-mode="edit"] {
+  --detail-state-from: 6px;
+}
+.detail-state-in[data-detail-mode="diff"] {
+  --detail-state-from: -6px;
+}
+.detail-state-in[data-switch="clip"] {
+  animation-duration: 140ms;
+}
+.detail-state-in[data-switch="clip"][data-dir="prev"] {
+  --detail-state-from: 6px;
+}
+.detail-state-in[data-switch="clip"][data-dir="next"] {
+  --detail-state-from: -6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .detail-state-in {
+    animation: row-in var(--motion-panel-in) linear both;
+  }
+}
+
+/* 详情页插件 popover（设计 §7）：触发钮 origin scale .96→1 + fade 120ms；reduced-motion 仅 fade。 */
+@keyframes plugin-popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.plugin-popover-in {
+  animation: plugin-popover-in 120ms var(--ease-enter) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-popover-in {
+    animation: row-in 120ms linear both;
+  }
+}
+
+/* 详情页草稿横幅（设计 §7）：顶部 translateY -8px + fade 160ms，先于 diff 内容进入；reduced-motion 仅 fade。 */
+@keyframes draft-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+.draft-banner-in {
+  animation: draft-banner-in 160ms var(--ease-enter) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .draft-banner-in {
+    animation: row-in 160ms linear both;
+  }
+}
+
 /* 滚动性能:透明窗口 + backdrop-filter(28px blur)下,列表每帧滚动都会强制
    WindowServer 重采 backdrop(整屏 blur 重栅格化),表现为滚动头 1s 顿挫。
    滚动中临时把 blur 半径降到 6px(视觉仍在,alpha 0.88 本就近乎不透),
