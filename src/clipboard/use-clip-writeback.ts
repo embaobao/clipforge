@@ -11,6 +11,7 @@ import { startPerfSpan } from "../performance-smoke";
 import { extractHashTags, normalizeTagList, truncateText } from "./clip-model";
 import { pasteClipboard, writeClipboard } from "../services/clipboard";
 import type { PasteMode } from "../services/clipboard";
+import { invalidateViewClipCache } from "./use-clip-cache-invalidation";
 
 type ExportTextFilesPayload = {
   directory: string;
@@ -64,6 +65,7 @@ export function useClipWriteback({
   function applyNormalizedToClips(payload: Partial<ClipItem>) {
     const normalized = normalizeClip(payload, settingsRef.current);
     if (normalized) {
+      invalidateViewClipCache();
       setClips((current) => {
         const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
         clipsRef.current = next;
@@ -80,6 +82,7 @@ export function useClipWriteback({
     setLastCopiedId(item.id);
     setNativeStatus(status);
     setSelectedId(item.id);
+    invalidateViewClipCache();
     setClips((current) => {
       const base = current.find((clip) => clip.id === item.id) ?? item;
       const updated = {
@@ -110,6 +113,7 @@ export function useClipWriteback({
         tags: Array.isArray(next.tags) ? next.tags : undefined,
       },
     }).catch((error) => logAppError("warn", "Update clip failed", String(error)));
+    invalidateViewClipCache();
     setClips((current) => {
       const updated = current.map((item) =>
         item.id === id ? { ...item, ...next, updatedAt } : item,
@@ -154,9 +158,12 @@ export function useClipWriteback({
       ),
     ).catch((error) => logAppError("warn", "Batch favorite failed", String(error)));
     const ids = new Set(items.map((item) => item.id));
-    setClips((current) =>
-      current.map((clip) => (ids.has(clip.id) ? { ...clip, favorite: targetFavorite } : clip)),
-    );
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.map((clip) => (ids.has(clip.id) ? { ...clip, favorite: targetFavorite } : clip));
+      clipsRef.current = next;
+      return next;
+    });
     toast.success(
       targetFavorite
         ? tr("main.toast.favoritedCount", { count: items.length })
@@ -198,8 +205,9 @@ export function useClipWriteback({
         logAppError("warn", "Update aggregated copied state failed", String(error)),
       );
     });
-    setClips((current) =>
-      current.map((clip) =>
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.map((clip) =>
         items.some((item) => item.id === clip.id)
           ? {
               ...clip,
@@ -208,8 +216,10 @@ export function useClipWriteback({
               updatedAt: now,
             }
           : clip,
-      ),
-    );
+      );
+      clipsRef.current = next;
+      return next;
+    });
     window.setTimeout(() => setLastCopiedId(null), 1400);
     setSelectedIds(new Set());
     setMultiSelectMode(false);

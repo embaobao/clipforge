@@ -30,6 +30,8 @@ export type QuickPastePanelProps = {
   onFavorite: (item: ClipItem) => void;
   onFavoriteSelected: () => void;
   onLoadMore: () => void;
+  onScrollTopChange?: (scrollTop: number) => void;
+  restoreScroll?: { top: number; token: string } | null;
   onOpen: (item: ClipItem) => void;
   onOpenAggregate: () => void;
   onPointerActive: () => void;
@@ -67,6 +69,8 @@ export function QuickPastePanel({
   onFavorite,
   onFavoriteSelected,
   onLoadMore,
+  onScrollTopChange,
+  restoreScroll,
   onOpen,
   onOpenAggregate,
   onPointerActive,
@@ -145,6 +149,8 @@ export function QuickPastePanel({
           groupSize={10}
           onActiveGroupChange={onActiveGroupChange}
           scrollToGroupStart={groupScrollTarget}
+          onScrollTopChange={onScrollTopChange}
+          restoreScroll={restoreScroll}
           renderItem={(item, index) => (
             <ClipboardRow
               activeGroupStart={activeGroupStart}

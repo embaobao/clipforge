@@ -30,6 +30,10 @@ export type VirtualListProps<T extends { id: string }> = {
   itemHeight?: number;
   onEndReached?: () => void;
   onUserScroll?: () => void;
+  /** 滚动位置连续回写(raf 节流后),供视图快照缓存记录 scrollTop。 */
+  onScrollTopChange?: (scrollTop: number) => void;
+  /** 外部命令式恢复滚动位置:token 变化时 scrollTo 到 top(视图切换回放快照用)。 */
+  restoreScroll?: { top: number; token: string } | null;
   renderItem: (item: T, index: number) => ReactNode;
   autoScroll?: boolean;
   groupSize?: number;
@@ -46,6 +50,8 @@ export function VirtualList<T extends { id: string }>({
   itemHeight = ROW_HEIGHT,
   onEndReached,
   onUserScroll,
+  onScrollTopChange,
+  restoreScroll,
   renderItem,
   autoScroll = true,
   groupSize,
@@ -178,7 +184,7 @@ export function VirtualList<T extends { id: string }>({
     onActiveGroupChange(groupStart);
   }, [scrollTop, height, itemHeight, groupSize, onActiveGroupChange]);
 
-  // 父级命令：滚动到某个分组起始（Cmd+↑/↓ 切组用）。
+  // 父级命令:滚动到某个分组起始（Cmd+↑/↓ 切组用）。
   useEffect(() => {
     if (scrollToGroupStart == null) return;
     const node = ref.current;
@@ -189,6 +195,17 @@ export function VirtualList<T extends { id: string }>({
     setFeedback(true);
     node.scrollTo({ top, behavior: "smooth" });
   }, [scrollToGroupStart, itemHeight, setFeedback]);
+
+  // 父级命令:视图切换回放快照时恢复滚动位置(token 变化才执行,避免重复 setState)。
+  // behavior:"auto" 即时定位;恢复触发的 onScroll 会回写同一 scrollTop,无抖动。
+  useEffect(() => {
+    if (!restoreScroll) return;
+    const node = ref.current;
+    if (!node) return;
+    setScrollTop(restoreScroll.top);
+    node.scrollTo({ top: restoreScroll.top, behavior: "auto" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreScroll?.token]);
 
   const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
   const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
@@ -244,6 +261,7 @@ export function VirtualList<T extends { id: string }>({
           scrollRafRef.current = window.requestAnimationFrame(() => {
             scrollRafRef.current = null;
             setScrollTop(pendingScrollTopRef.current);
+            onScrollTopChange?.(pendingScrollTopRef.current);
           });
         }
         setFeedback(true);

@@ -2159,9 +2159,21 @@ fn search_clip_records(input: SearchClipsRequest) -> Result<QueryClipPayload, St
     let bucket = input.bucket.unwrap_or_else(|| "all".to_string());
     let has_text = !text.trim().is_empty();
     let mut sql = if has_text {
-        "SELECT DISTINCT clips.id FROM clip_fts JOIN clips ON clips.id = clip_fts.id".to_string()
+        "SELECT DISTINCT clips.id, clips.content, clips.content_hash, clips.primary_format, clips.available_formats, clips.representations_json,
+                clips.plain_text, clips.search_text, clips.sub_kind, clips.width, clips.height, clips.size, clips.file_types, clips.thumbnail_path,
+                clips.image_file, clips.is_sensitive, clips.capture_context_json, clips.metadata_json, clips.agent_context_json,
+                clips.kind, clips.bucket, clips.source_label, clips.favorite, clips.tags, clips.copy_count,
+                clips.created_at, clips.updated_at, clips.last_seen_at, clips.last_copied_at, clips.title, clips.summary, clips.url, clips.host,
+                clips.source_app_name, clips.source_app_bundle, clips.source_app_executable, clips.source_app_icon, clips.payload_kind
+         FROM clip_fts JOIN clips ON clips.id = clip_fts.id".to_string()
     } else {
-        "SELECT DISTINCT clips.id FROM clips".to_string()
+        "SELECT DISTINCT clips.id, clips.content, clips.content_hash, clips.primary_format, clips.available_formats, clips.representations_json,
+                clips.plain_text, clips.search_text, clips.sub_kind, clips.width, clips.height, clips.size, clips.file_types, clips.thumbnail_path,
+                clips.image_file, clips.is_sensitive, clips.capture_context_json, clips.metadata_json, clips.agent_context_json,
+                clips.kind, clips.bucket, clips.source_label, clips.favorite, clips.tags, clips.copy_count,
+                clips.created_at, clips.updated_at, clips.last_seen_at, clips.last_copied_at, clips.title, clips.summary, clips.url, clips.host,
+                clips.source_app_name, clips.source_app_bundle, clips.source_app_executable, clips.source_app_icon, clips.payload_kind
+         FROM clips".to_string()
     };
     let mut clauses = Vec::new();
     let mut values: Vec<SqlValue> = Vec::new();
@@ -2217,12 +2229,13 @@ fn search_clip_records(input: SearchClipsRequest) -> Result<QueryClipPayload, St
     values.push(SqlValue::Integer(limit));
 
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    // 单次查询直出完整载荷(N+1 修复):此前先查 id 再逐条 load_clip,200 条 = 200 次行查询。
     let rows = stmt
-        .query_map(params_from_iter(values), |row| row.get::<_, String>(0))
+        .query_map(params_from_iter(values), clip_item_from_row)
         .map_err(|error| error.to_string())?;
     let mut items = Vec::new();
     for row in rows {
-        items.push(load_clip(&conn, &row.map_err(|error| error.to_string())?)?);
+        items.push(row.map_err(|error| error.to_string())?);
     }
     let next_cursor = if items.len() as i64 == limit {
         items
@@ -4975,6 +4988,100 @@ fn upsert_fts(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/** clips 表全列 → ClipItemPayload 的统一行映射(search_clip_records 与 load_clip 共用)。
+ *  列序必须与两处 SELECT 的列序一致:0-18 内容与上下文,19-28 分类与时间戳,29-37 分析与应用来源。 */
+fn clip_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClipItemPayload> {
+    let tags_raw: String = row.get(23)?;
+    let title: String = row.get(29)?;
+    let summary: String = row.get(30)?;
+    let url: Option<String> = row.get(31)?;
+    let host: Option<String> = row.get(32)?;
+    let source: String = row.get(21)?;
+    let source_app_name: String = row.get(33)?;
+    let source_app_bundle: String = row.get(34)?;
+    let source_app_executable: String = row.get(35)?;
+    let source_app_icon: Option<String> = row.get(36)?;
+    let primary_format: String = row.get(3)?;
+    let payload_kind_raw: String = row.get(37)?;
+    let payload_kind = payload_kind_from_primary_format(&primary_format, &payload_kind_raw);
+    let available_formats = parse_json_vec_string(row.get(4)?);
+    let representations = parse_representations(row.get(5)?);
+    let capture_context = serde_json::from_str::<CaptureContextPayload>(&row.get::<_, String>(16)?)
+        .unwrap_or_else(|_| CaptureContextPayload {
+            schema_version: 1,
+            surface: "clipboard".to_string(),
+            source_label: source.clone(),
+            source_app: None,
+            application_context: None,
+            collectors: json!({
+                "status": "not-requested",
+                "results": [],
+                "diagnostics": ["capture context was not readable"],
+            }),
+            observed_at: row.get::<_, i64>(27).unwrap_or_default(),
+            primary_format: primary_format.clone(),
+            available_formats: available_formats.clone(),
+            environment: json!({}),
+        });
+    let is_markdown = summary.contains("```") || payload_kind == "markdown";
+    let source_app = if source_app_name.is_empty() {
+        None
+    } else {
+        Some(SourceAppPayload {
+            name: source_app_name,
+            bundle_id: source_app_bundle,
+            executable_path: source_app_executable,
+            icon_base64: source_app_icon,
+        })
+    };
+    Ok(ClipItemPayload {
+        id: row.get(0)?,
+        content: row.get(1)?,
+        content_hash: row.get(2)?,
+        kind: row.get(19)?,
+        bucket: row.get(20)?,
+        source: source.clone(),
+        favorite: row.get::<_, i64>(22)? == 1,
+        tags: tags_raw
+            .split(',')
+            .filter(|tag| !tag.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        copy_count: row.get(24)?,
+        created_at: row.get(25)?,
+        updated_at: row.get(26)?,
+        last_seen_at: row.get(27)?,
+        last_copied_at: row.get(28)?,
+        analysis: ClipAnalysisPayload {
+            source_name: source,
+            badge: if url.is_some() { "URL" } else { "T" }.to_string(),
+            title,
+            summary,
+            url,
+            host,
+            is_markdown,
+        },
+        payload_kind,
+        primary_format,
+        available_formats,
+        representations,
+        plain_text: row.get(6)?,
+        search_text: row.get(7)?,
+        sub_kind: row.get(8)?,
+        width: row.get(9)?,
+        height: row.get(10)?,
+        size: row.get(11)?,
+        file_types: row.get(12)?,
+        thumbnail_path: row.get(13)?,
+        image_file: row.get(14)?,
+        is_sensitive: row.get::<_, i64>(15)? == 1,
+        capture_context,
+        metadata: parse_json_value(row.get(17)?),
+        agent_context: parse_json_value(row.get(18)?),
+        source_app,
+    })
+}
+
 fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
     conn.query_row(
         "SELECT id, content, content_hash, primary_format, available_formats, representations_json,
@@ -4985,97 +5092,7 @@ fn load_clip(conn: &Connection, id: &str) -> Result<ClipItemPayload, String> {
                 source_app_name, source_app_bundle, source_app_executable, source_app_icon, payload_kind
          FROM clips WHERE id = ?1",
         params![id],
-        |row| {
-            let tags_raw: String = row.get(23)?;
-            let title: String = row.get(29)?;
-            let summary: String = row.get(30)?;
-            let url: Option<String> = row.get(31)?;
-            let host: Option<String> = row.get(32)?;
-            let source: String = row.get(21)?;
-            let source_app_name: String = row.get(33)?;
-            let source_app_bundle: String = row.get(34)?;
-            let source_app_executable: String = row.get(35)?;
-            let source_app_icon: Option<String> = row.get(36)?;
-            let primary_format: String = row.get(3)?;
-            let payload_kind_raw: String = row.get(37)?;
-            let payload_kind = payload_kind_from_primary_format(&primary_format, &payload_kind_raw);
-            let available_formats = parse_json_vec_string(row.get(4)?);
-            let representations = parse_representations(row.get(5)?);
-            let capture_context = serde_json::from_str::<CaptureContextPayload>(&row.get::<_, String>(16)?)
-                .unwrap_or_else(|_| CaptureContextPayload {
-                    schema_version: 1,
-                    surface: "clipboard".to_string(),
-                    source_label: source.clone(),
-                    source_app: None,
-                    application_context: None,
-                    collectors: json!({
-                        "status": "not-requested",
-                        "results": [],
-                        "diagnostics": ["capture context was not readable"],
-                    }),
-                    observed_at: row.get::<_, i64>(27).unwrap_or_default(),
-                    primary_format: primary_format.clone(),
-                    available_formats: available_formats.clone(),
-                    environment: json!({}),
-                });
-            let is_markdown = summary.contains("```") || payload_kind == "markdown";
-            let source_app = if source_app_name.is_empty() {
-                None
-            } else {
-                Some(SourceAppPayload {
-                    name: source_app_name,
-                    bundle_id: source_app_bundle,
-                    executable_path: source_app_executable,
-                    icon_base64: source_app_icon,
-                })
-            };
-            Ok(ClipItemPayload {
-                id: row.get(0)?,
-                content: row.get(1)?,
-                content_hash: row.get(2)?,
-                kind: row.get(19)?,
-                bucket: row.get(20)?,
-                source: source.clone(),
-                favorite: row.get::<_, i64>(22)? == 1,
-                tags: tags_raw
-                    .split(',')
-                    .filter(|tag| !tag.is_empty())
-                    .map(ToString::to_string)
-                    .collect(),
-                copy_count: row.get(24)?,
-                created_at: row.get(25)?,
-                updated_at: row.get(26)?,
-                last_seen_at: row.get(27)?,
-                last_copied_at: row.get(28)?,
-                analysis: ClipAnalysisPayload {
-                    source_name: source,
-                    badge: if url.is_some() { "URL" } else { "T" }.to_string(),
-                    title,
-                    summary,
-                    url,
-                    host,
-                    is_markdown,
-                },
-                payload_kind,
-                primary_format,
-                available_formats,
-                representations,
-                plain_text: row.get(6)?,
-                search_text: row.get(7)?,
-                sub_kind: row.get(8)?,
-                width: row.get(9)?,
-                height: row.get(10)?,
-                size: row.get(11)?,
-                file_types: row.get(12)?,
-                thumbnail_path: row.get(13)?,
-                image_file: row.get(14)?,
-                is_sensitive: row.get::<_, i64>(15)? == 1,
-                capture_context,
-                metadata: parse_json_value(row.get(17)?),
-                agent_context: parse_json_value(row.get(18)?),
-                source_app,
-            })
-        },
+        clip_item_from_row,
     )
     .map_err(|error| match error {
         rusqlite::Error::QueryReturnedNoRows => {
@@ -5985,7 +6002,14 @@ fn dev_env_truthy(name: &str) -> bool {
 
 #[cfg(debug_assertions)]
 fn dev_quick_probe_enabled() -> bool {
-    dev_env_truthy("CLIPFORGE_DEV_QUICK_PROBE")
+    dev_env_truthy("CLIPFORGE_DEV_QUICK_PROBE") || dev_quick_probe_scroll_only()
+}
+
+#[cfg(debug_assertions)]
+fn dev_quick_probe_scroll_only() -> bool {
+    std::env::var("CLIPFORGE_DEV_QUICK_PROBE")
+        .map(|value| value.trim().eq_ignore_ascii_case("scroll"))
+        .unwrap_or(false)
 }
 
 #[cfg(debug_assertions)]
@@ -6010,7 +6034,8 @@ fn dev_quick_probe_requires_textedit_target() -> bool {
 
 #[cfg(debug_assertions)]
 fn dev_quick_probe_can_run() -> bool {
-    dev_quick_probe_enabled() && DEV_QUICK_PROBE_TARGET_READY.load(Ordering::Relaxed)
+    dev_quick_probe_enabled()
+        && (dev_quick_probe_scroll_only() || DEV_QUICK_PROBE_TARGET_READY.load(Ordering::Relaxed))
 }
 
 #[cfg(debug_assertions)]
@@ -6469,37 +6494,48 @@ fn cleanup_dev_quick_probe_target<R: tauri::Runtime>(_app: tauri::AppHandle<R>) 
 
 #[cfg(debug_assertions)]
 fn dev_quick_probe_script(probe_index: u32) -> String {
+    // 选择器随 tailwind-v3 重构更新:列表容器=VirtualList 的 .thin-scroll,行=面板行 <article>。
+    // scroll 模式只驱动滚动采样(quick.scroll),不需要受控粘贴目标——重编译后新 adhoc 签名
+    // cdHash 变化会丢 TCC 信任,前台识别失败导致 target 永不 ready,滚动采样不应被连坐。
+    // 完整模式(truthy)仍要求 target ready,防误粘贴到无关前台应用。
+    let interaction = if dev_quick_probe_scroll_only() {
+        String::new()
+    } else {
+        r#"
+  row.focus();
+  const copyEvent = new KeyboardEvent("keydown", {
+    key: "c",
+    code: "KeyC",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true
+  });
+  row.dispatchEvent(copyEvent);
+  window.setTimeout(() => {
+    const pasteEvent = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      bubbles: true,
+      cancelable: true
+    });
+    row.dispatchEvent(pasteEvent);
+  }, 80);
+"#
+        .to_string()
+    };
     format!(
         r#"
 (() => {{
   const perf = window.__clipforgePerf;
-  const list = document.querySelector(".quick-menu");
-  const rows = Array.from(document.querySelectorAll(".quick-row"));
+  const list = document.querySelector(".thin-scroll");
+  const rows = list ? Array.from(list.querySelectorAll("article")) : [];
   if (!perf || !list || rows.length === 0) {{
     return {{ ok: false, reason: "missing-elements", hasPerf: Boolean(perf), hasList: Boolean(list), rows: rows.length }};
   }}
   const row = rows[{probe_index} % rows.length];
   list.scrollTop = Math.min(list.scrollHeight, ({probe_index} + 1) * 36);
   list.dispatchEvent(new Event("scroll", {{ bubbles: true }}));
-  row.focus();
-  const copyEvent = new KeyboardEvent("keydown", {{
-    key: "c",
-    code: "KeyC",
-    metaKey: true,
-    bubbles: true,
-    cancelable: true
-  }});
-  row.dispatchEvent(copyEvent);
-  window.setTimeout(() => {{
-    const pasteEvent = new KeyboardEvent("keydown", {{
-      key: "Enter",
-      code: "Enter",
-      bubbles: true,
-      cancelable: true
-    }});
-    row.dispatchEvent(pasteEvent);
-  }}, 80);
-  return {{ ok: true, rows: rows.length, index: {probe_index} % rows.length }};
+{interaction}  return {{ ok: true, rows: rows.length, index: {probe_index} % rows.length }};
 }})()
 "#
     )
@@ -7777,10 +7813,7 @@ pub fn run() {
                     log_to_file(
                         "debug",
                         "panel-focus",
-                        &format!(
-                            "window-event blurred {}",
-                            focus_context_snapshot(window)
-                        ),
+                        &format!("window-event blurred {}", focus_context_snapshot(window)),
                     );
                 }
             }
@@ -8164,8 +8197,12 @@ fn is_phantom_blur(now_ms: i64) -> Option<bool> {
     // 1.2s 太窄会漏掉;用户操作型失焦(点击/Cmd-Tab)都会在 0.35s 内留下输入事件,不会误判。
     const USER_INPUT_WINDOW_S: f64 = 0.35;
     const PHANTOM_WINDOW_MS: i64 = 3000;
-    let since_input =
-        unsafe { CGEventSourceSecondsSinceLastEventType(0 /* kCGEventSourceStateCombinedSessionState */, -1) };
+    let since_input = unsafe {
+        CGEventSourceSecondsSinceLastEventType(
+            0, /* kCGEventSourceStateCombinedSessionState */
+            -1,
+        )
+    };
     if !since_input.is_finite() {
         return None;
     }

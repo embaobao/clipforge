@@ -200,18 +200,21 @@ try {
   // ---------- 行入场动画 epoch 判定（滚动回填静默化，Phase 1 / M1-M2 验收） ----------
   const rowAnim = await import(pathToFileURL(join(outDir, "clipboard/row-animation.js")).href);
   {
-    const items = [1, 2, 3];
+    const items = [{ id: "a" }, { id: "b" }, { id: "c" }];
     const first = rowAnim.advanceRowAnimEpoch(rowAnim.initialRowAnimEpoch, items);
     assert.equal(first.animate, true, "首帧挂载的行播放入场（首屏 stagger 保留）");
     const scrolled = rowAnim.advanceRowAnimEpoch(first.state, items);
     assert.equal(scrolled.animate, false, "items 引用不变（纯滚动回填）静默");
     assert.equal(scrolled.state.epoch, first.state.epoch, "epoch 不因滚动递增");
-    const pasted = rowAnim.advanceRowAnimEpoch(scrolled.state, [0, ...items]);
+    const refreshed = rowAnim.advanceRowAnimEpoch(scrolled.state, [...items]);
+    assert.equal(refreshed.animate, false, "同 id 集合新引用（后台刷新/缓存回放）静默");
+    assert.equal(refreshed.state.epoch, scrolled.state.epoch, "epoch 不因同集刷新递增");
+    const pasted = rowAnim.advanceRowAnimEpoch(scrolled.state, [{ id: "z" }, ...items]);
     assert.equal(pasted.animate, true, "数据集变化恢复入场（粘贴/筛选保留 stagger）");
     assert.equal(pasted.state.epoch, scrolled.state.epoch + 1, "epoch 随数据变化递增");
     const cleared = rowAnim.advanceRowAnimEpoch(pasted.state, []);
     assert.equal(cleared.animate, true, "清空列表也是数据集变化");
-    const refilled = rowAnim.advanceRowAnimEpoch(cleared.state, [9]);
+    const refilled = rowAnim.advanceRowAnimEpoch(cleared.state, [{ id: "z" }]);
     assert.equal(refilled.animate, true, "空→非空恢复入场");
   }
 

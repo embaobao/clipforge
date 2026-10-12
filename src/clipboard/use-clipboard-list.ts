@@ -8,6 +8,7 @@ import type { AppSettings } from "../App";
 import { readClipboard } from "../services/clipboard";
 import type { TranslationKey } from "../i18n";
 import { logAppError } from "./panel-shared";
+import { updateViewClipEntryData } from "./view-clip-cache";
 
 export type QueryClipPayload = {
   items: ClipItem[];
@@ -44,6 +45,11 @@ function isPlainListRequest(request: Record<string, unknown>): boolean {
   );
 }
 
+/** 视图快照缓存的 key:必须与 App.tsx 的 searchRequestKey 同源(JSON.stringify(request))。 */
+function viewCacheKey(request: Record<string, unknown>): string {
+  return JSON.stringify(request);
+}
+
 export type ClipboardListOptions = {
   isSettingsWindow: boolean;
   setClips: React.Dispatch<React.SetStateAction<ClipItem[]>>;
@@ -53,7 +59,6 @@ export type ClipboardListOptions = {
   setIsLoadingMore: (loading: boolean) => void;
   isLoadingMore: boolean;
   setSelectedId: (id: string) => void;
-  setActiveView: (view: "history" | "favorites" | "trash") => void;
   setNativeStatus: (status: string) => void;
   setIsReadingClipboard: (reading: boolean) => void;
   searchRequestRef: { current: Record<string, unknown> };
@@ -78,7 +83,6 @@ export function useClipboardList({
   setIsLoadingMore,
   isLoadingMore,
   setSelectedId,
-  setActiveView,
   setNativeStatus,
   setIsReadingClipboard,
   searchRequestRef,
@@ -121,6 +125,8 @@ export function useClipboardList({
         .map((item) => normalizeClip(item, settingsRef.current))
         .filter((item): item is ClipItem => Boolean(item));
       appendLoadedClips(items, payload.nextCursor ?? null);
+      // 分页结果同步进视图快照(游标前进,items 全量替换)。
+      updateViewClipEntryData(viewCacheKey(searchRequestRef.current), clipsRef.current, payload.nextCursor ?? null);
       setNativeStatus(
         payload.nextCursor
           ? tr("main.status.loadMoreComplete", { count: clipsRef.current.length })
@@ -142,17 +148,24 @@ export function useClipboardList({
     // 原因：① 每次复制都全量刷新 200 行 ≈ Rust 70ms + 2MB IPC + 全列表重渲染，是复制卡顿尖峰；
     // ② 全量刷新 limit=200 会把用户已分页加载的列表截断回 200 条（「丢数据」根因）。
     if (isPlainListRequest(searchRequestRef.current)) {
+      // 快照守卫:库内最新条目与列表首条一致(id+hash)时跳过 setClips——
+      // 开面板 500ms 内 mergeTopClip/manual 采集/视图 effect 至多三次刷新,此守卫收敛后两次。
+      const head = clipsRef.current[0];
+      if (head && head.id === nextClip.id && head.contentHash === nextClip.contentHash) {
+        setSelectedId(nextClip.id);
+        return payload.status;
+      }
       const current = clipsRef.current.filter((item) => item.id !== nextClip.id);
       const next = [nextClip, ...current].slice(0, settingsRef.current.maxStoredItems);
       clipsRef.current = next;
       setClips(next);
+      updateViewClipEntryData(viewCacheKey(searchRequestRef.current), next);
       logAppError("info", "clipboard-promote: local merge", {
         promotedId: nextClip.id,
         status: payload.status,
         itemCount: next.length,
       });
       setSelectedId(nextClip.id);
-      setActiveView("history");
       return payload.status;
     }
     try {
@@ -171,6 +184,7 @@ export function useClipboardList({
       clipsRef.current = items;
       setClips(items);
       setNextCursor(result.nextCursor ?? null);
+      updateViewClipEntryData(viewCacheKey(searchRequestRef.current), items, result.nextCursor ?? null);
       logAppError("info", "clipboard-promote: refreshed full list", {
         promotedId: nextClip.id,
         status: payload.status,
@@ -184,7 +198,6 @@ export function useClipboardList({
       setClips(next);
     }
     setSelectedId(nextClip.id);
-    setActiveView("history");
     return payload.status;
   };
 
@@ -201,12 +214,15 @@ export function useClipboardList({
         .map((item) => normalizeClip(item, settingsRef.current))
         .find((item): item is ClipItem => Boolean(item));
       if (!topClip) return;
+      // 快照守卫:首条未变(id+hash)时零 setClips——开面板路径三连刷新的收敛点。
+      const head = clipsRef.current[0];
+      if (head && head.id === topClip.id && head.contentHash === topClip.contentHash) return;
       const current = clipsRef.current.filter((item) => item.id !== topClip.id);
       const next = [topClip, ...current].slice(0, settingsRef.current.maxStoredItems);
       clipsRef.current = next;
       setClips(next);
+      updateViewClipEntryData(viewCacheKey(searchRequestRef.current), next);
       setSelectedId(topClip.id);
-      setActiveView("history");
     } catch (error) {
       console.error("[CLIPBOARD] incremental refresh failed:", error);
     }
@@ -282,9 +298,9 @@ export function useClipboardList({
           clipsRef.current = items;
           setClips(items);
           setNextCursor(result.nextCursor ?? null);
+          updateViewClipEntryData(viewCacheKey(request), items, result.nextCursor ?? null);
           if (items.length > 0) {
             setSelectedId(items[0].id);
-            setActiveView("history");
           }
           if (payload.preview) {
             lastSeenClipboard.current = payload.preview.trim();

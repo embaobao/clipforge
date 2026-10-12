@@ -26,32 +26,35 @@ static STARTED_AT: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Insta
 /// 否则栈溢出。SDK 变更时编译期大小断言先失败(task_info 只在字段尾部增长,偏移稳定)。
 #[repr(C)]
 struct TaskVmInfo {
-    virtual_size: u64,                    // 0
-    region_count: i32,                    // 8
-    page_size: i32,                       // 12
-    resident_size: u64,                   // 16
-    resident_size_peak: u64,              // 24
-    device: u64,                          // 32
-    device_peak: u64,                     // 40
-    internal: u64,                        // 48
-    internal_peak: u64,                   // 56
-    external: u64,                        // 64
-    external_peak: u64,                   // 72
-    reusable: u64,                        // 80
-    reusable_peak: u64,                   // 88
-    purgeable_volatile_pmap: u64,         // 96
-    purgeable_volatile_resident: u64,     // 104
-    purgeable_volatile_virtual: u64,      // 112
-    compressed: u64,                      // 120
-    compressed_peak: u64,                 // 128
-    compressed_lifetime: u64,             // 136
-    phys_footprint: u64,                  // 144
+    virtual_size: u64,                                // 0
+    region_count: i32,                                // 8
+    page_size: i32,                                   // 12
+    resident_size: u64,                               // 16
+    resident_size_peak: u64,                          // 24
+    device: u64,                                      // 32
+    device_peak: u64,                                 // 40
+    internal: u64,                                    // 48
+    internal_peak: u64,                               // 56
+    external: u64,                                    // 64
+    external_peak: u64,                               // 72
+    reusable: u64,                                    // 80
+    reusable_peak: u64,                               // 88
+    purgeable_volatile_pmap: u64,                     // 96
+    purgeable_volatile_resident: u64,                 // 104
+    purgeable_volatile_virtual: u64,                  // 112
+    compressed: u64,                                  // 120
+    compressed_peak: u64,                             // 128
+    compressed_lifetime: u64,                         // 136
+    phys_footprint: u64,                              // 144
     _tail: [u8; TASK_VM_INFO_STRUCT_BYTES - 152 + 4], // 对齐到 8 字节后 376,≥372 足够容纳 93 字回写
 }
 
 /// 本机 SDK（macOS 26）struct task_vm_info 总字节数；编译期断言防漂移。
 const TASK_VM_INFO_STRUCT_BYTES: usize = 372;
-const _: () = assert!(std::mem::size_of::<TaskVmInfo>() >= TASK_VM_INFO_STRUCT_BYTES, "TaskVmInfo 缓冲区小于 SDK 结构,需校准");
+const _: () = assert!(
+    std::mem::size_of::<TaskVmInfo>() >= TASK_VM_INFO_STRUCT_BYTES,
+    "TaskVmInfo 缓冲区小于 SDK 结构,需校准"
+);
 /// TASK_VM_INFO_COUNT = 372/4 = 93 个 natural_t 字。
 const TASK_VM_INFO_COUNT_WORDS: u32 = (std::mem::size_of::<TaskVmInfo>() / 4) as u32;
 
@@ -98,7 +101,9 @@ fn uptime_ms() -> i64 {
 }
 
 fn file_size(path: &Path) -> i64 {
-    std::fs::metadata(path).map(|meta| meta.len() as i64).unwrap_or(0)
+    std::fs::metadata(path)
+        .map(|meta| meta.len() as i64)
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

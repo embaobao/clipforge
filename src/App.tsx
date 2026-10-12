@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { ErrorInfo, ReactNode, UIEvent } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import {
   formatCommandError,
   resolveAppLocale,
@@ -50,6 +50,8 @@ import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isQueryClipPayload, useClipboardList, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { useClipWriteback } from "./clipboard/use-clip-writeback";
+import { invalidateViewClipCache } from "./clipboard/use-clip-cache-invalidation";
+import { peekViewClipEntry, saveViewScrollTop, setViewClipEntry } from "./clipboard/view-clip-cache";
 import { usePanelKeyboard } from "./clipboard/use-panel-keyboard";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
 import { usePanelUiStore } from "./clipboard/panel-shared";
@@ -273,9 +275,10 @@ function ClipForgeApp() {
   // 否则动画在 webview 隐藏的首启阶段就开始并被冻结在 from{opacity:0}，面板永久不可见。
   // 浏览器预览没有唤起事件，初始 true 保持加载即播放入场。
   const [isPanelEntering, setIsPanelEntering] = useState(() => !isTauriRuntime());
-  const [, setScrollOffset] = useState(0);
-  const [, setSearchCompact] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // 视图切换滚动恢复(panel-list-perf):token 单调递增驱动 VirtualList 恢复,同 key 再进也生效。
+  const [restoreScroll, setRestoreScroll] = useState<{ top: number; token: string } | null>(null);
+  const restoreScrollTokenRef = useRef(0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 120);
   usePanelEnvironmentEffects({ activeView, setNativeStatus, tr });
@@ -340,7 +343,6 @@ function ClipForgeApp() {
     setIsLoadingMore,
     isLoadingMore,
     setSelectedId,
-    setActiveView,
     setNativeStatus,
     setIsReadingClipboard,
     searchRequestRef,
@@ -352,12 +354,6 @@ function ClipForgeApp() {
     normalizeClip,
     createClip,
   });
-
-  const handleScroll = useCallback((event: UIEvent<HTMLElement>) => {
-    const top = event.currentTarget.scrollTop;
-    setScrollOffset(top);
-    setSearchCompact(top > 18);
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -462,9 +458,8 @@ function ClipForgeApp() {
   );
 
   const effectiveQuery = parsedSearchCommand.handled ? parsedSearchCommand.queryText : debouncedQuery;
-  // 必须稳定引用：filteredClips 的 memo 依赖它们，而 row-animation epoch 按 items 引用
-  // 判定「数据变化帧」。裸新建数组会让每次 App 重渲都换 items 引用，虚拟窗口回填行
-  // 被误判为数据帧而重放 row-in（T22 暴露的闪烁回归）。
+  // 必须稳定引用：filteredClips 的 memo 依赖它们,裸新建数组会让每次 App 重渲都重算过滤。
+  // row-in epoch 已改为按 id 序列摘要判定「数据变化帧」(见 row-animation.ts),引用抖动不再重放动画。
   const effectiveTypeFilters = useMemo(
     () => (activeTypeFilter !== "all" ? [activeTypeFilter] : parsedSearchCommand.ast.types),
     [activeTypeFilter, parsedSearchCommand.ast],
@@ -487,6 +482,11 @@ function ClipForgeApp() {
     [activeTag, activeTypeFilter, activeView, filterFavorite, parsedSearchCommand.ast],
   );
   const searchRequestKey = useMemo(() => JSON.stringify(searchRequest), [searchRequest]);
+  // 列表滚动位置连续回写快照:切走再切回即恢复,不依赖快照重建。
+  const handleListScrollTop = useCallback(
+    (top: number) => saveViewScrollTop(searchRequestKey, top),
+    [searchRequestKey],
+  );
 
   useEffect(() => {
     searchRequestRef.current = searchRequest;
@@ -497,6 +497,25 @@ function ClipForgeApp() {
     let cancelled = false;
     const request = JSON.parse(searchRequestKey) as SearchClipsRequest;
     searchRequestRef.current = request;
+    // SWR(panel-list-perf):先回放缓存快照——命中即零 IPC,列表/游标/选中/滚动一次到位,
+    // 消除切视图时「在途期间旧数据被新视图过滤成空态」的闪烁;随后后台拉新校验。
+    const cached = peekViewClipEntry(searchRequestKey);
+    if (cached) {
+      clipsRef.current = cached.items;
+      setClips(cached.items);
+      setNextCursor(cached.nextCursor);
+      setSelectedId(
+        cached.selectedId && cached.items.some((item) => item.id === cached.selectedId)
+          ? cached.selectedId
+          : (cached.items[0]?.id ?? null),
+      );
+    } else {
+      // 未命中(首次进视图/写操作已失效):游标先清零,防止旧视图游标冒充新视图的 hasMore。
+      setNextCursor(null);
+    }
+    // 每次视图切换都驱动一次滚动恢复:命中用快照 scrollTop,未命中回顶。
+    restoreScrollTokenRef.current += 1;
+    setRestoreScroll({ top: cached?.scrollTop ?? 0, token: String(restoreScrollTokenRef.current) });
     invoke<QueryClipPayload>("search_clip_records", { input: request })
       .then((payload) => {
         if (cancelled) return;
@@ -504,10 +523,24 @@ function ClipForgeApp() {
         const items = payload.items
           .map((item) => normalizeClip(item, settingsRef.current))
           .filter((item): item is ClipItem => Boolean(item));
-        clipsRef.current = items;
-        setClips(items);
+        // 快照守卫:服务端首条与当前列表首条一致(id+hash)时跳过 setClips——
+        // 同时保住快照里已分页加载的条数(整表替换会被 limit 截断回 200)。
+        const head = clipsRef.current[0];
+        if (!head || head.id !== items[0]?.id || head.contentHash !== items[0]?.contentHash) {
+          clipsRef.current = items;
+          setClips(items);
+        }
         setNextCursor(payload.nextCursor ?? null);
-        setSelectedId((current) => (current && items.some((item) => item.id === current) ? current : (items[0]?.id ?? null)));
+        setSelectedId((current) =>
+          current && items.some((item) => item.id === current) ? current : (items[0]?.id ?? null),
+        );
+        // 回写快照:items 取 clipsRef(守卫跳过时保留分页态);scrollTop 沿用快照对象的最新值。
+        setViewClipEntry(searchRequestKey, {
+          items: clipsRef.current,
+          nextCursor: payload.nextCursor ?? null,
+          scrollTop: cached?.scrollTop ?? 0,
+          selectedId: selectedIdRef.current,
+        });
       })
       .catch((error) => {
         if (!cancelled) {
@@ -958,10 +991,14 @@ function ClipForgeApp() {
       setNativeStatus(formatNativeError(error));
       return;
     }
-    // 软删除后保留在 clips 中以支持垃圾箱视图，仅设置 deletedAt 标记
-    setClips((current) =>
-      current.map((item) => (ids.includes(item.id) ? { ...item, deletedAt: now } : item)),
-    );
+    // 软删除后保留在 clips 中以支持垃圾箱视图，仅设置 deletedAt 标记；
+    // 快照里没有这层标记(拍摄于删除前),不清缓存会在切回时复活已删条目。
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.map((item) => (ids.includes(item.id) ? { ...item, deletedAt: now } : item));
+      clipsRef.current = next;
+      return next;
+    });
     setSelectedIds(new Set());
     setMultiSelectMode(false);
     if (shouldReselect) setSelectedId(nextSelectedId);
@@ -976,11 +1013,14 @@ function ClipForgeApp() {
       setNativeStatus(formatNativeError(error));
       return;
     }
-    setClips((current) =>
-      current.map((item) =>
-        ids.includes(item.id) ? { ...item, deletedAt: null, bucket: "history" } : item,
-      ),
-    );
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.map((item) =>
+        ids.includes(item.id) ? { ...item, deletedAt: null, bucket: "history" as const } : item,
+      );
+      clipsRef.current = next;
+      return next;
+    });
     setSelectedIds(new Set());
     setMultiSelectMode(false);
   }
@@ -1001,7 +1041,12 @@ function ClipForgeApp() {
       setNativeStatus(formatNativeError(error));
       return;
     }
-    setClips((current) => current.filter((item) => !ids.includes(item.id)));
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.filter((item) => !ids.includes(item.id));
+      clipsRef.current = next;
+      return next;
+    });
     setSelectedIds(new Set());
     setMultiSelectMode(false);
     if (shouldReselect) setSelectedId(nextSelectedId);
@@ -1074,7 +1119,7 @@ function ClipForgeApp() {
         />
       )}
 
-      <section className="min-w-0 overflow-hidden" onScroll={handleScroll}>
+      <section className="min-w-0 overflow-hidden">
         <PanelContentBoundary
           copy={errorBoundaryCopy}
           resetKey={`workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}
@@ -1104,9 +1149,11 @@ function ClipForgeApp() {
                   onDeleteSelected={() => hardDeleteClips(selectedInList.map((item) => item.id))}
                   onHardDelete={(item) => hardDeleteClips([item.id])}
                   onLoadMore={loadMoreClips}
+                  onScrollTopChange={handleListScrollTop}
                   onPointerActive={() => setKeyboardNavigating(false)}
                   onRestore={(item) => restoreClips([item.id])}
                   onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
+                  restoreScroll={restoreScroll}
                   onSelect={(item) => {
                     setSelectedId(item.id);
                   }}
@@ -1129,7 +1176,6 @@ function ClipForgeApp() {
                 />
               ) : (
                 <QuickPastePanel
-                  key={`quick:${activeView}`}
                   activeId={selectedClip?.id ?? null}
                   autoScroll={keyboardNavigating}
                   clips={filteredClips}
@@ -1149,6 +1195,8 @@ function ClipForgeApp() {
                     void favoriteSelectedClips(selectedInList);
                   }}
                   onLoadMore={loadMoreClips}
+                  onScrollTopChange={handleListScrollTop}
+                  restoreScroll={restoreScroll}
                   onOpen={(item) => {
                     void runPrimaryOpenAction(item, "click");
                   }}
