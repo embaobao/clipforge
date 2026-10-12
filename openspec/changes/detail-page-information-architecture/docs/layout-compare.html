@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>详情页新旧布局对比 · ClipForge 提案示意</title>
+<style>
+  :root {
+    --bg: #fafafa; --surface: #ffffff; --fg: #0a0a0a; --muted: #737373;
+    --border: #e5e5e5; --accent: #0a0a0a; --accent-fg: #ffffff;
+    --success: #16a34a; --warning: #d97706; --error: #dc2626;
+    --chip: #f4f4f5; --chip-hover: #ebebeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0a0a; --surface: #141414; --fg: #fafafa; --muted: #a3a3a3;
+      --border: #262626; --accent: #fafafa; --accent-fg: #0a0a0a;
+      --chip: #1e1e1e; --chip-hover: #262626;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--fg); padding: 32px; font-size: 14px;
+  }
+  .page-head { max-width: 1520px; margin: 0 auto 24px; }
+  .page-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .page-head p { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend { display: flex; gap: 16px; font-size: 11px; color: var(--muted); margin-top: 10px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1520px; margin: 0 auto; }
+  @media (max-width: 1080px) { .compare { grid-template-columns: 1fr; } }
+  .col-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+  .col-head h2 { font-size: 14px; font-weight: 600; }
+  .col-head .stat { font-size: 11px; color: var(--muted); }
+  .col-head .stat b { font-weight: 600; }
+  .new .stat b { color: var(--success); }
+  .old .stat b { color: var(--error); }
+
+  /* 模拟 720x600 主窗口详情页 */
+  .window {
+    width: 100%; max-width: 760px; aspect-ratio: 760/640;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04);
+  }
+  .zone { position: relative; padding: 10px 16px; }
+  .zone-tag {
+    position: absolute; font-size: 9px; line-height: 1; padding: 3px 6px; border-radius: 4px;
+    color: #fff; font-weight: 600; letter-spacing: .02em; pointer-events: none;
+  }
+
+  /* ---------- 公共控件语言（对齐现有 shadcn token） ---------- */
+  .crumb { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
+  .crumb .back { font-size: 13px; }
+  .icon-btn {
+    width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center;
+    border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px;
+    transition: background .1s ease-out, transform .1s ease-out;
+  }
+  .icon-btn:hover { background: var(--chip-hover); color: var(--fg); }
+  .icon-btn:active { transform: scale(.94); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 999px;
+    background: var(--chip); font-size: 10.5px; color: var(--muted); white-space: nowrap;
+  }
+  .chip.accent { color: var(--fg); }
+  .tag-btn {
+    display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 5px;
+    border: none; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; white-space: nowrap;
+  }
+  .tag-btn:hover { background: var(--chip-hover); color: var(--fg); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 12px;
+    border-radius: 7px; font-size: 12px; cursor: pointer; border: 1px solid var(--border);
+    background: transparent; color: var(--fg); white-space: nowrap;
+    transition: background .1s ease-out, transform .1s ease-out;
+  }
+  .btn:hover { background: var(--chip); }
+  .btn:active { transform: scale(.97); }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  .btn.ghost { color: var(--muted); border-style: dashed; }
+
+  .content-preview {
+    flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .content-preview .title { font-size: 12.5px; font-weight: 600; }
+  .content-preview p { font-size: 12.5px; line-height: 1.65; color: var(--fg); }
+  .content-preview .muted { color: var(--muted); font-size: 11.5px; }
+  .link-chip {
+    display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--surface); font-size: 11.5px; color: var(--fg); cursor: pointer;
+  }
+  .link-chip:hover { background: var(--chip); }
+  .link-chip svg { width: 11px; height: 11px; stroke: var(--muted); }
+
+  /* ---------- 旧布局 ---------- */
+  .old .ai-bar { padding: 8px 14px; display: flex; flex-direction: column; gap: 7px; }
+  .ai-btn {
+    align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+    border-radius: 7px; border: 1px solid var(--border); font-size: 11.5px; cursor: pointer; background: var(--surface);
+  }
+  .ai-card { border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; font-size: 11px; }
+  .ai-card .label { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 4px; }
+  .ai-card .sum { line-height: 1.5; margin-bottom: 6px; font-size: 11.5px; }
+  .ai-card .hist { border-top: 1px solid var(--border); margin-top: 7px; padding-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+  .ai-card .hist div { font-size: 10.5px; color: var(--muted); display: flex; gap: 8px; }
+  .old .meta-rows { border-bottom: 1px solid var(--border); }
+  .old .meta-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 14px; gap: 8px; }
+  .old .meta-row + .meta-row { border-top: 1px solid var(--border); }
+  .old .addr { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .old .more-tags { font-size: 11px; color: var(--muted); }
+  .old .content-preview { flex: 0 1 auto; max-height: 30%; }
+  .old .bottom { border-top: 1px solid var(--border); padding: 8px 14px; display: flex; flex-direction: column; gap: 7px; }
+  .old .links-label { font-size: 10.5px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .old .accordion { font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .old .zone-block { outline: 1px dashed var(--error); outline-offset: -3px; }
+
+  /* ---------- 新布局 ---------- */
+  .new .meta-line { display: flex; align-items: center; gap: 6px; padding: 7px 14px; border-bottom: 1px solid var(--border); }
+  .new .tags-scroll { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
+  .new .tags-scroll::-webkit-scrollbar { display: none; }
+  .new .scroll-hint { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .new .content-preview { position: relative; }
+  .new .links-tail { margin-top: auto; padding-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .new .plugin-section {
+    border-top: 1px dashed var(--warning); color: var(--warning); font-size: 10.5px;
+    padding: 5px 14px; display: none;
+  }
+  .new .plugin-section.visible { display: block; }
+  .new .action-bar {
+    border-top: 1px solid var(--border); padding: 8px 12px; display: flex; align-items: center; gap: 7px;
+    background: var(--surface);
+  }
+  .new .action-bar .spacer { flex: 1; }
+  .new .ai-panel {
+    position: absolute; left: 12px; right: 12px; bottom: 10px;
+    border: 1px solid var(--accent); border-radius: 10px; background: var(--surface);
+    padding: 10px 12px; box-shadow: 0 6px 24px rgba(0,0,0,.10);
+    transform-origin: bottom center; animation: slide-up .22s cubic-bezier(.32,.72,0,1);
+  }
+  @keyframes slide-up { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .new .ai-panel { animation: fade .12s ease; }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  }
+  .new .ai-panel .sum { font-size: 12px; line-height: 1.55; margin: 4px 0 8px; }
+  .new .ai-panel .sug { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+  .new .ai-panel .apply { font-size: 11px; color: var(--accent); background: none; border: none; cursor: pointer; font-weight: 600; }
+
+  .footnote { max-width: 1520px; margin: 20px auto 0; font-size: 11.5px; color: var(--muted); line-height: 1.7; }
+  .toggle-row { display: flex; gap: 10px; margin-top: 8px; }
+  .switch {
+    font-size: 11px; color: var(--muted); border: 1px solid var(--border); background: var(--surface);
+    padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  }
+  .switch:hover { background: var(--chip); }
+</style>
+</head>
+<body>
+<div class="page-head">
+  <h1>详情页布局对比 · 旧 vs 新</h1>
+  <p>模拟 720×600 主窗口 · 同一条剪贴板条目 · 新方案 = 内容优先 + 底部动作区 + 插件插槽预留（提案 detail-page-information-architecture）</p>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--error)"></i>挡在内容前面的层（旧布局问题）</span>
+    <span><i class="dot" style="background:var(--success)"></i>内容主体（新布局占满）</span>
+    <span><i class="dot" style="background:var(--warning)"></i>插件插槽预留</span>
+    <span><i class="dot" style="background:var(--accent)"></i>高频动作区</span>
+  </div>
+  <div class="toggle-row">
+    <button class="switch" onclick="togglePlugin(this)">显示插件插槽占位</button>
+    <button class="switch" onclick="toggleAi(this)">新布局：切换 AI 结果面板</button>
+  </div>
+</div>
+
+<div class="compare">
+
+  <!-- ================= 旧布局 ================= -->
+  <div class="col old">
+    <div class="col-head">
+      <h2>现状</h2>
+      <div class="stat">内容首屏占比 <b>~55%</b> · 元信息 3 行 · AI 常驻内容上方</div>
+    </div>
+    <div class="window">
+      <!-- crumb -->
+      <div class="crumb">
+        <span class="back">←</span> 详情 · 文本
+        <span style="flex:1"></span>
+        <button class="icon-btn">↑</button><button class="icon-btn">↓</button>
+        <button class="icon-btn">✎</button><button class="icon-btn">⋯</button>
+      </div>
+
+      <!-- AI 条：挡在内容前 -->
+      <div class="ai-bar zone-block">
+        <span class="zone-tag" style="background:var(--error); top:6px; right:8px;">低频却占黄金位</span>
+        <button class="ai-btn">⌕ AI 分析</button>
+        <div class="ai-card">
+          <div class="label">AI 分析</div>
+          <div class="sum">剪贴板工具的开发计划，包含插件运行时与详情页重构……</div>
+          <div style="display:flex; gap:4px; margin-bottom:2px;">
+            <span class="tag-btn">#提案</span><span class="tag-btn">#设计</span>
+          </div>
+          <div class="hist">
+            <div><span>10:24</span><span>上一条摘要……</span></div>
+            <div><span>09:11</span><span>再上一条摘要……</span></div>
+            <div><span>08:03</span><span>历史摘要……</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- meta 三行 -->
+      <div class="meta-rows zone-block">
+        <div class="meta-row">
+          <div style="display:flex; gap:5px; align-items:center;">
+            <span class="chip">📄 文本</span><span class="chip">🪟 Safari</span>
+          </div>
+          <div style="display:flex; gap:2px;">
+            <span class="tag-btn">#链接</span><span class="tag-btn">#工作</span><span class="tag-btn">#Markdown</span>
+            <span class="more-tags">+2</span>
+          </div>
+        </div>
+        <div class="meta-row">
+          <span class="addr">🔗 safari://clipforge/detail/clip_9f2…</span>
+          <div style="display:flex; gap:2px;">
+            <button class="icon-btn" title="复制">⧉</button>
+            <button class="icon-btn" title="复制纯文本">≡</button>
+            <button class="icon-btn" title="复制地址">↗</button>
+          </div>
+        </div>
+        <div class="meta-row"><span class="addr">▦ App 上下文摘要：Safari · 标签页 3 · 选区复制</span></div>
+      </div>
+
+      <!-- 内容（被压缩） -->
+      <div class="content-preview">
+        <span class="zone-tag" style="background:var(--error); top:8px; right:8px;">第四层才开始</span>
+        <span class="title">ClipForge 开发纪要</span>
+        <p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容……</p>
+        <p class="muted">（内容区高度被上方 AI 条与三行元信息压缩，长内容需要内部滚动）</p>
+      </div>
+
+      <!-- 底部：链接 + 采集上下文 -->
+      <div class="bottom">
+        <div class="links-label">↗ 链接 (2)</div>
+        <div style="display:flex; gap:6px;">
+          <span class="link-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M10 14 L21 3 M15 3h6v6 M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>github.com</span>
+          <span class="link-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M10 14 L21 3 M15 3h6v6 M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>pi.dev</span>
+        </div>
+        <div class="accordion">▸ 采集上下文（14 字段）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 新布局 ================= -->
+  <div class="col new">
+    <div class="col-head">
+      <h2>新方案</h2>
+      <div class="stat">内容首屏占比 <b>~70%</b> · 元信息 1 行 · 低频全收纳 · 插件位预留</div>
+    </div>
+    <div class="window">
+      <!-- ① crumb：back + prev/next + 溢出 -->
+      <div class="crumb">
+        <span class="back">←</span> 详情 · 文本
+        <span style="flex:1"></span>
+        <button class="icon-btn">↑</button><button class="icon-btn">↓</button><button class="icon-btn">⋯</button>
+      </div>
+
+      <!-- ② meta 单行：类型 + 来源 + tags 全量横滚 -->
+      <div class="meta-line">
+        <span class="chip accent">📄 文本</span>
+        <span class="chip">🪟 Safari</span>
+        <div class="tags-scroll">
+          <span class="tag-btn">#链接</span><span class="tag-btn">#工作</span><span class="tag-btn">#Markdown</span>
+          <span class="tag-btn">#多行</span><span class="tag-btn">#收藏</span><span class="tag-btn">#剪贴板</span>
+        </div>
+        <span class="scroll-hint">›</span>
+      </div>
+
+      <!-- ③ 内容主体占满 -->
+      <div class="content-preview">
+        <span class="title">ClipForge 开发纪要</span>
+        <p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。</p>
+        <p>布局原则按访问频次分层：内容本体与复制/粘贴是 P0，元信息扫一眼，AI 分析与采集上下文等低频能力收进动作区，需要时展开。</p>
+        <p>插件插槽为 agent-plugin-runtime 预留：底部动作区右段可挂 detail-action 按钮，内容尾部可挂 detail-section 受控渲染区，空注册零开销。</p>
+        <p class="muted">（文本 / 图片 / JSON / Markdown / HTML / 链接预览组件全部复用，本提案不动 DetailPreview）</p>
+
+        <!-- AI 结果面板：底部滑入（点击上方开关可切换） -->
+        <div class="ai-panel" id="aiPanel">
+          <div class="label" style="font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">AI 摘要 · 底部滑入（damping 1.0 · 可打断 · 进出同路径）</div>
+          <div class="sum">一条关于 ClipForge 开发计划的剪贴板纪要，涉及性能修复、详情页重构与插件运行时。</div>
+          <div class="sug">
+            <span class="tag-btn" style="background:var(--chip)">#开发</span>
+            <span class="tag-btn" style="background:var(--chip)">#纪要</span>
+            <span class="tag-btn" style="background:var(--chip)">#P1</span>
+            <button class="apply">应用标签</button>
+          </div>
+        </div>
+
+        <!-- 链接 chips 并入内容尾部 -->
+        <div class="links-tail" id="linksTail">
+          <span class="link-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M10 14 L21 3 M15 3h6v6 M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>github.com</span>
+          <span class="link-chip"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M10 14 L21 3 M15 3h6v6 M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>pi.dev</span>
+        </div>
+      </div>
+
+      <!-- ④ detail-section 插件位（默认隐藏，开关演示） -->
+      <div class="plugin-section" id="pluginZone">◈ 插件扩展区 detail-section · 空注册零 DOM 不占高度 · 超过 3 个折叠为「扩展 (N)」</div>
+
+      <!-- ⑤ 底部动作区 -->
+      <div class="action-bar">
+        <span class="zone-tag" style="background:var(--accent); top:-8px; left:12px; color:var(--accent-fg)">P0 动作区</span>
+        <button class="btn primary">⧉ 复制</button>
+        <button class="btn">↵ 粘贴</button>
+        <button class="btn">✎ 编辑</button>
+        <button class="btn" onclick="toggleAi(null)">⌕ AI 分析</button>
+        <span class="spacer"></span>
+        <!-- detail-action 插件按钮位 -->
+        <button class="btn ghost" id="pluginBtn" title="插件按钮预留位">＋</button>
+        <button class="icon-btn" title="溢出菜单：来源地址 / 应用上下文 / 采集上下文">⋯</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footnote">
+  框架不变：路由 / 面包屑 / DetailPreview 预览组件 / DetailQuickEditor 编辑器全部复用，只重排层序 + 收纳低频层。编辑态与多选聚合视图不在本期。<br>
+  上方两个开关可演示插件插槽占位与 AI 结果面板的底部滑入效果（可打断、reduced-motion 退化为 crossfade）。
+</div>
+
+<script>
+  // 演示开关：插件插槽占位显隐（模拟空注册 vs 已注册）
+  function togglePlugin(btn) {
+    const zone = document.getElementById('pluginZone');
+    const on = zone.classList.toggle('visible');
+    btn.textContent = on ? '隐藏插件插槽占位' : '显示插件插槽占位';
+  }
+  // 演示开关：AI 结果面板（底部滑入 / 收起）
+  let aiOpen = true;
+  function toggleAi(btn) {
+    const panel = document.getElementById('aiPanel');
+    aiOpen = !aiOpen;
+    panel.style.display = aiOpen ? '' : 'none';
+    const links = document.getElementById('linksTail');
+    links.style.opacity = aiOpen ? '.35' : '1';
+    if (btn) btn.textContent = aiOpen ? '⌕ 收起分析' : '⌕ AI 分析';
+    const sw = document.querySelector('.switch:nth-of-type(2)');
+    sw.textContent = aiOpen ? '新布局：切换 AI 结果面板（当前：展开）' : '新布局：切换 AI 结果面板（当前：收起）';
+  }
+</script>
+</body>
+</html>

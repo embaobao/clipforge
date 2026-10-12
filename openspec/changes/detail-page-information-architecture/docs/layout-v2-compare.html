@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>详情页 v1 vs v2 · 真实场景预演对比</title>
+<style>
+  :root {
+    --bg: #fafafa; --surface: #ffffff; --fg: #0a0a0a; --muted: #737373;
+    --border: #e5e5e5; --accent: #0a0a0a; --accent-fg: #ffffff;
+    --success: #16a34a; --warning: #d97706; --error: #dc2626;
+    --chip: #f4f4f5; --chip-hover: #ebebeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0a0a0a; --surface:#141414; --fg:#fafafa; --muted:#a3a3a3; --border:#262626; --accent:#fafafa; --accent-fg:#0a0a0a; --chip:#1e1e1e; --chip-hover:#262626; }
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:28px; font-size:14px; }
+  .page-head { max-width:1560px; margin:0 auto 20px; }
+  .page-head h1 { font-size:18px; font-weight:600; }
+  .page-head p { font-size:12px; color:var(--muted); margin-top:6px; }
+  .tabs { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; align-items:center; }
+  .tab { font-size:12px; padding:5px 12px; border-radius:7px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--muted); }
+  .tab:hover { background:var(--chip); }
+  .tab.active { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  .tabs .hint { font-size:11px; color:var(--muted); margin-left:6px; }
+
+  .compare { display:grid; grid-template-columns:1fr 1fr; gap:22px; max-width:1560px; margin:0 auto; }
+  @media (max-width:1100px){ .compare { grid-template-columns:1fr; } }
+  .col-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; }
+  .col-head h2 { font-size:14px; font-weight:600; }
+  .col-head .stat { font-size:11px; color:var(--muted); }
+
+  .window { width:100%; max-width:760px; aspect-ratio:760/640; background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04); }
+  .crumb { display:flex; align-items:center; gap:8px; padding:9px 14px; border-bottom:1px solid var(--border); font-size:12.5px; color:var(--muted); flex-shrink:0; }
+  .crumb .back { font-size:13px; }
+  .icon-btn { width:26px; height:26px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; transition:background .1s,transform .1s; flex-shrink:0; }
+  .icon-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .icon-btn:active { transform:scale(.94); }
+  .icon-btn.on { color:var(--warning); }
+  .kbd { font-size:9.5px; color:var(--muted); border:1px solid var(--border); border-radius:4px; padding:1px 4px; margin-left:2px; }
+  .chip { display:inline-flex; align-items:center; gap:4px; height:20px; padding:0 8px; border-radius:999px; background:var(--chip); font-size:10.5px; color:var(--muted); white-space:nowrap; }
+  .chip.accent { color:var(--fg); }
+  .tag-btn { display:inline-flex; align-items:center; gap:3px; height:20px; padding:0 7px; border-radius:5px; border:none; background:transparent; color:var(--muted); font-size:11px; cursor:pointer; white-space:nowrap; }
+  .tag-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .tag-btn .src { width:5px; height:5px; border-radius:50%; display:inline-block; }
+  .tag-btn .del { display:none; color:var(--muted); font-size:10px; margin-left:1px; }
+  .tag-btn:hover .del { display:inline; color:var(--error); }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:5px; height:28px; padding:0 11px; border-radius:7px; font-size:12px; cursor:pointer; border:1px solid var(--border); background:transparent; color:var(--fg); white-space:nowrap; transition:background .1s,transform .1s; flex-shrink:0; }
+  .btn:hover { background:var(--chip); }
+  .btn:active { transform:scale(.97); }
+  .btn.primary { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  .btn.ghost { color:var(--muted); border-style:dashed; }
+  .btn.done { background:var(--success); border-color:var(--success); color:#fff; }
+
+  .meta-line { display:flex; align-items:center; gap:6px; padding:7px 14px; border-bottom:1px solid var(--border); height:34px; flex-shrink:0; }
+  .tags-scroll { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; flex:1; min-width:0; }
+  .tags-scroll::-webkit-scrollbar { display:none; }
+  .scroll-hint { color:var(--muted); font-size:10px; flex-shrink:0; }
+  .plus-tag { color:var(--muted); font-size:12px; width:20px; height:20px; border-radius:5px; border:none; background:transparent; cursor:pointer; flex-shrink:0; }
+  .plus-tag:hover { background:var(--chip); color:var(--fg); }
+
+  .content { flex:1; min-height:0; overflow:auto; padding:12px 16px; display:flex; flex-direction:column; gap:8px; position:relative; }
+  .content .title { font-size:12.5px; font-weight:600; }
+  .content p { font-size:12.5px; line-height:1.65; }
+  .content .muted { color:var(--muted); font-size:11.5px; }
+  .mini-bar { position:sticky; top:0; z-index:5; align-self:flex-end; display:flex; gap:2px; padding:2px; border-radius:8px; background:color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter:blur(6px); border:1px solid var(--border); float:right; margin:-2px -2px 0 8px; }
+  .mini-bar .icon-btn { width:24px; height:24px; font-size:11px; }
+  .mini-bar .count { font-size:10px; color:var(--muted); align-self:center; padding:0 6px; }
+  .links-tail { margin-top:auto; padding-top:10px; display:flex; gap:6px; flex-wrap:wrap; }
+  .link-chip { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 10px; border-radius:7px; border:1px solid var(--border); background:var(--surface); font-size:11.5px; cursor:pointer; }
+  .link-chip:hover { background:var(--chip); }
+
+  .ai-inline { border:1px solid var(--accent); border-radius:10px; padding:10px 12px; background:var(--surface); margin-top:6px; animation:expand .22s cubic-bezier(.32,.72,0,1); }
+  @keyframes expand { from { opacity:0; transform:translateY(8px);} to { opacity:1; transform:none;} }
+  @media (prefers-reduced-motion:reduce){ .ai-inline { animation:fade .12s ease; } @keyframes fade { from{opacity:0;} to{opacity:1;} } }
+  .ai-inline .hd { display:flex; align-items:center; gap:8px; font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:5px; }
+  .ai-inline .sum { font-size:12px; line-height:1.55; margin-bottom:8px; }
+  .ai-inline .sug { display:flex; gap:5px; align-items:center; flex-wrap:wrap; }
+  .ai-inline .apply { font-size:11px; color:var(--accent); background:none; border:none; cursor:pointer; font-weight:600; }
+  .ai-inline .pin { margin-left:auto; font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; }
+  .ai-inline .pin.pinned { color:var(--warning); }
+  .ai-overlay { position:absolute; left:12px; right:12px; bottom:10px; border:1px solid var(--accent); border-radius:10px; background:var(--surface); padding:10px 12px; box-shadow:0 6px 24px rgba(0,0,0,.10); animation:expand .22s cubic-bezier(.32,.72,0,1); }
+  .ai-overlay .sum { font-size:12px; margin:4px 0 8px; }
+
+  .action-bar { border-top:1px solid var(--border); padding:8px 12px; display:flex; align-items:center; gap:7px; flex-shrink:0; }
+  .action-bar .spacer { flex:1; }
+  .plugin-zone { border-top:1px dashed var(--warning); color:var(--warning); font-size:10.5px; padding:5px 14px; display:none; }
+  .plugin-zone.visible { display:block; }
+
+  .json-view { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; line-height:1.7; background:var(--chip); border-radius:8px; padding:10px 12px; }
+  .json-view .k { color:var(--accent); font-weight:600; }
+  .json-view .fold { color:var(--muted); cursor:pointer; }
+  .img-view { border-radius:8px; border:1px solid var(--border); padding:10px; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .img-ph { width:72%; aspect-ratio:16/9; border-radius:8px; background:linear-gradient(135deg,var(--chip) 25%,var(--chip-hover) 50%,var(--chip) 75%); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; }
+  .img-meta { font-size:10.5px; color:var(--muted); }
+
+  .scenarios { max-width:1560px; margin:24px auto 0; }
+  .scenarios h3 { font-size:13px; font-weight:600; margin-bottom:10px; }
+  .scenarios table { width:100%; border-collapse:collapse; font-size:11.5px; }
+  .scenarios th, .scenarios td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; line-height:1.55; }
+  .scenarios th { color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; }
+  .scenarios .pain { color:var(--error); }
+  .scenarios .fix { color:var(--success); }
+  .scenarios td:first-child { white-space:nowrap; font-weight:600; }
+  .footnote { max-width:1560px; margin:16px auto 0; font-size:11px; color:var(--muted); line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="page-head">
+  <h1>详情页 v1 vs v2 · 真实场景预演对比</h1>
+  <p>v1 = 已确认的五区布局（内容优先 + 底部动作区）· v2 = 场景预演后的强化版 · 顶部类型页签可切换演示（仅右栏 v2 响应）</p>
+  <div class="tabs">
+    <button class="tab active" data-type="text">文本条目</button>
+    <button class="tab" data-type="json">JSON 条目</button>
+    <button class="tab" data-type="image">图片条目</button>
+    <span class="hint">v2 动作区「类型槽位」与内容迷你工具随类型联动；星标/AI 内联展开可直接点。</span>
+  </div>
+</div>
+
+<div class="compare">
+
+  <!-- ============ v1 ============ -->
+  <div class="col">
+    <div class="col-head"><h2>v1 · 新方案（已确认骨架）</h2><div class="stat">五区布局 · 底部动作区 · AI overlay 滑入</div></div>
+    <div class="window">
+      <div class="crumb"><span class="back">←</span> 详情 · 文本 <span style="flex:1"></span>
+        <button class="icon-btn">↑</button><button class="icon-btn">↓</button><button class="icon-btn">⋯</button></div>
+      <div class="meta-line">
+        <span class="chip accent">文本</span><span class="chip">Safari</span>
+        <div class="tags-scroll"><span class="tag-btn">#链接</span><span class="tag-btn">#工作</span><span class="tag-btn">#Markdown</span><span class="tag-btn">#多行</span></div>
+        <span class="scroll-hint">›</span>
+      </div>
+      <div class="content">
+        <span class="title">ClipForge 开发纪要</span>
+        <p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。</p>
+        <p>布局原则按访问频次分层：内容本体与复制/粘贴是 P0，元信息扫一眼，AI 分析与采集上下文等低频能力收进动作区。</p>
+        <p class="muted">（v1 痛点：复制要跳视线到底部；AI 摘要 overlay 盖住内容底部，对照阅读要来回开关；无收藏/删除/键盘翻条目入口）</p>
+        <div class="ai-overlay" id="v1Ai">AI 摘要 · 底部滑入（遮挡内容尾部）…… <button class="apply" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer">应用标签</button></div>
+        <div class="links-tail" style="opacity:.4"><span class="link-chip">github.com</span><span class="link-chip">pi.dev</span></div>
+      </div>
+      <div class="action-bar">
+        <button class="btn primary">⧉ 复制</button><button class="btn">↵ 粘贴</button><button class="btn">✎ 编辑</button><button class="btn">⌕ AI</button>
+        <span class="spacer"></span><button class="btn ghost">＋</button><button class="icon-btn">⋯</button></div>
+    </div>
+  </div>
+
+  <!-- ============ v2 ============ -->
+  <div class="col">
+    <div class="col-head"><h2>v2 · 场景强化版</h2><div class="stat">＋收藏/删除/键盘 · 内容区迷你工具 · AI 内联展开 · 类型槽位动作</div></div>
+    <div class="window">
+      <div class="crumb"><span class="back">←</span> <span id="v2Title">详情 · 文本</span> <span style="flex:1"></span>
+        <button class="icon-btn" id="v2Star" title="收藏 (F)">☆</button>
+        <button class="icon-btn" title="上一条 (↑)">↑</button><button class="icon-btn" title="下一条 (↓)">↓</button><button class="icon-btn" title="溢出：来源/上下文/删除">⋯</button></div>
+      <div class="meta-line">
+        <span class="chip accent" id="v2Kind">文本</span><span class="chip" id="v2App">Safari</span>
+        <div class="tags-scroll">
+          <span class="tag-btn"><i class="src" style="background:var(--accent)"></i>#链接</span>
+          <span class="tag-btn"><i class="src" style="background:var(--accent)"></i>#工作</span>
+          <span class="tag-btn"><i class="src" style="background:var(--success)"></i>#Markdown<span class="del">✕</span></span>
+          <span class="tag-btn"><i class="src" style="background:var(--warning)"></i>#多行<span class="del">✕</span></span>
+        </div>
+        <button class="plus-tag" title="快速加标签">＋</button><span class="scroll-hint">›</span>
+      </div>
+      <div class="content" id="v2Content">
+        <div class="mini-bar" id="v2Mini">
+          <span class="count" id="v2Count">412 字</span>
+          <button class="icon-btn" id="v2MiniCopy" title="复制 (⌘C)">⧉</button>
+          <button class="icon-btn" title="全选">≡</button>
+        </div>
+
+        <div id="v2Body">
+          <span class="title">ClipForge 开发纪要</span>
+          <p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。</p>
+          <p>v2 强化：复制就地（内容右上悬浮 + ⌘C），视线不离开内容；键盘 ↑↓ 翻条目、F 收藏、E 编辑。</p>
+          <p class="muted">hover tag 可见 ✕ 快速删；色点 = 来源（黑=人工 绿=AI 橙=插件）。</p>
+        </div>
+
+        <div class="ai-inline" id="v2Ai" style="display:none">
+          <div class="hd">AI 摘要 · 内联展开（推挤内容，不遮挡）<button class="pin" id="v2Pin" title="钉住为 overlay 对照阅读">📌 钉住</button></div>
+          <div class="sum">一条关于 ClipForge 开发计划的剪贴板纪要：性能修复、详情页重构、插件运行时。</div>
+          <div class="sug"><span class="tag-btn" style="background:var(--chip)">#开发</span><span class="tag-btn" style="background:var(--chip)">#纪要</span><button class="apply">应用标签</button></div>
+        </div>
+        <div class="links-tail" id="v2Links"><span class="link-chip">github.com</span><span class="link-chip">pi.dev</span></div>
+      </div>
+      <div class="plugin-zone" id="v2Plugin">◈ detail-section 插件位（空注册零高度）</div>
+      <div class="action-bar" id="v2Actions">
+        <button class="btn primary" id="v2Copy">⧉ 复制</button>
+        <button class="btn" title="⌘V">↵ 粘贴</button>
+        <button class="btn" title="E">✎ 编辑</button>
+        <button class="btn" id="v2AiBtn">⌕ AI</button>
+        <span style="width:1px;height:18px;background:var(--border)"></span>
+        <span id="v2TypeSlot" style="display:flex;gap:7px"></span>
+        <span class="spacer"></span>
+        <button class="btn ghost" title="detail-action 插件位">＋</button>
+        <button class="icon-btn" title="溢出：来源 / 采集上下文 / 删除（危险区红字）">⋯</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="scenarios">
+  <h3>真实场景预演 → v1 痛点 → v2 对策</h3>
+  <table>
+    <tr><th>场景</th><th>v1 预演结果</th><th>v2 对策</th></tr>
+    <tr><td>S1 看完即复制</td><td class="pain">复制钮在底部，视线从内容跳到窗口底端再回来</td><td class="fix">内容右上 sticky 迷你工具（复制/全选/字数）＋ 详情页聚焦时 ⌘C 直接复制回写</td></tr>
+    <tr><td>S2 键盘翻最近几条</td><td class="pain">无键盘翻条目；切条目内容高度跳变、滚动位置丢失</td><td class="fix">↑/↓（或 J/K）翻条目，140ms 方向感知过渡；meta 行高度锁定 + 每条目滚动位置记忆</td></tr>
+    <tr><td>S3 收藏常用片段</td><td class="pain">详情页无收藏入口（现状 favorite 只在列表层）</td><td class="fix">crumb 右侧 ☆ toggle（F 键），收藏态高亮</td></tr>
+    <tr><td>S4 删除错剪条目</td><td class="pain">详情页无删除入口，需回列表</td><td class="fix">溢出菜单底部「删除」红字危险区（与来源/上下文分组隔离）</td></tr>
+    <tr><td>S5 摘要与内容对照</td><td class="pain">AI 摘要 overlay 从底部滑入，盖住内容尾部；来回开关打断阅读</td><td class="fix">默认内联展开（推挤内容不遮挡）；需要钉住对照时一键转 overlay 并保留</td></tr>
+    <tr><td>S6 不同类型不同动作</td><td class="pain">底部动作区 4 钮固定，图片/JSON 特有动作无位</td><td class="fix">类型槽位：图片→另存为/复制图片；JSON→折叠全部/复制格式化；与插件 detail-action 同一套 match 声明</td></tr>
+    <tr><td>S7 顺手清 tag</td><td class="pain">改 tag 必须进整页编辑器</td><td class="fix">chip 悬停显 ✕ 单删；行尾 ＋ 快速加；provenance 色点显示来源</td></tr>
+    <tr><td>S8 大图查看</td><td class="pain">图片只能被动适配</td><td class="fix">图片态迷你工具切换 适缩/实际尺寸；动作区出「另存为」</td></tr>
+  </table>
+</div>
+
+<div class="footnote">
+  v2 未动 v1 骨架：五区布局、meta 单行、底部动作区、renderer registry、tag 四源全部保留；只做场景层强化。<br>
+  键盘位注记：⌘C 复制回写 / ↑↓ 翻条目 / F 收藏 / E 编辑 / Esc 返回列表——以按钮 tooltip 形式可见可发现。
+</div>
+
+<script>
+  const bodies = {
+    text: { title:'详情 · 文本', kind:'文本', app:'Safari', count:'412 字',
+      html:'<span class="title">ClipForge 开发纪要</span><p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。</p><p>v2 强化：复制就地（内容右上悬浮 + ⌘C），视线不离开内容；键盘 ↑↓ 翻条目、F 收藏、E 编辑。</p><p class="muted">hover tag 可见 ✕ 快速删；色点 = 来源（黑=人工 绿=AI 橙=插件）。</p>',
+      actions:['<button class="btn">◧ 智能格式</button>'] },
+    json: { title:'详情 · JSON', kind:'JSON', app:'Raycast', count:'28 键',
+      html:'<span class="title">config.json</span><div class="json-view"><span class="k">"build"</span>: { "command": "pnpm build", "outDir": "dist" },<br><span class="k">"preview"</span>: { "port": 1420 },<br><span class="fold">… 24 键已折叠（点击展开）</span></div>',
+      actions:['<button class="btn">⊟ 折叠全部</button>','<button class="btn">⧉ 复制格式化</button>'] },
+    image: { title:'详情 · 图片', kind:'图片', app:'PixelSnap', count:'1920×1080 · 384KB',
+      html:'<span class="title">screenshot-panel.png</span><div class="img-view"><div class="img-ph">图片预览（适缩 / 实际尺寸切换在右上迷你工具）</div><div class="img-meta">PNG · 1920×1080 · 384 KB · 采集于 19:42</div></div>',
+      actions:['<button class="btn">⤓ 另存为</button>','<button class="btn">⧉ 复制图片</button>'] },
+  };
+  const slot = document.getElementById('v2TypeSlot');
+  const body = document.getElementById('v2Body');
+  function apply(type){
+    const d = bodies[type];
+    document.getElementById('v2Title').textContent = d.title;
+    document.getElementById('v2Kind').textContent = d.kind;
+    document.getElementById('v2App').textContent = d.app;
+    document.getElementById('v2Count').textContent = d.count;
+    body.innerHTML = d.html;
+    slot.innerHTML = d.actions.join('');
+    document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active', t.dataset.type===type));
+  }
+  document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>apply(t.dataset.type)));
+  apply('text');
+
+  // 收藏 toggle
+  const star = document.getElementById('v2Star');
+  star.addEventListener('click',()=>{ const on = star.textContent==='★'; star.textContent = on?'☆':'★'; star.classList.toggle('on',!on); });
+  // AI 内联展开（v2）与 v1 overlay 对照
+  const ai = document.getElementById('v2Ai'), aiBtn = document.getElementById('v2AiBtn');
+  aiBtn.addEventListener('click',()=>{ const open = ai.style.display!=='none'; ai.style.display = open?'none':''; aiBtn.classList.toggle('primary',!open); document.getElementById('v2Links').style.opacity = open?'1':'.4'; });
+  const pin = document.getElementById('v2Pin');
+  pin.addEventListener('click',()=>{ const pinned = pin.classList.toggle('pinned'); pin.textContent = pinned?'📌 已钉住':'📌 钉住'; ai.style.position = pinned?'absolute':''; ai.style.bottom = pinned?'10px':''; ai.style.boxShadow = pinned?'0 6px 24px rgba(0,0,0,.12)':''; ai.style.zIndex = pinned?'6':''; });
+  // 迷你复制反馈
+  const mc = document.getElementById('v2MiniCopy');
+  mc.addEventListener('click',()=>{ flashCopy(mc); });
+  const bc = document.getElementById('v2Copy');
+  bc.addEventListener('click',()=>{ flashCopy(bc); });
+  function flashCopy(btn){ const old=btn.textContent; btn.textContent='✓'; btn.style.color='var(--success)'; setTimeout(()=>{btn.textContent=old;btn.style.color='';},600); }
+</script>
+</body>
+</html>
