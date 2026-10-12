@@ -106,7 +106,7 @@ export function TopToolbar({
 
   return (
     <header
-      className="grid h-11 min-w-0 cursor-grab grid-cols-[1fr_auto] items-center gap-2 px-3 active:cursor-grabbing"
+      className="grid min-h-11 min-w-0 cursor-grab grid-cols-[1fr_auto] items-start gap-2 px-3 py-0 active:cursor-grabbing"
       data-dev-probe="top-toolbar"
       data-tauri-drag-region
       onKeyDownCapture={handleToolbarKeyDownCapture}
@@ -121,7 +121,7 @@ export function TopToolbar({
       </div>
 
       <div
-        className="flex cursor-default items-center gap-1.5"
+        className="flex h-11 cursor-default items-center gap-1.5"
         data-dev-probe="top-action-slot"
         onPointerDown={(event) => event.stopPropagation()}
       >
