@@ -1,5 +1,29 @@
 # ClipForge 视觉重构 · 交接摘要
 
+## 2026-10-10 会话增量（panel-list-perf 全量落地 + 沙箱自动验收）
+
+### ① panel-list-perf 编码完成 ✅（未提交，22/25）
+- **Rust**（lib.rs）：`search_clip_records` N+1→单次 38 列 JOIN 直出（FTS/非 FTS 两分支，行映射抽 `clip_item_from_row` 与 `load_clip` 共用）；探针基建修复（`dev_quick_probe_script` 选择器 `.quick-menu/.quick-row`→`.thin-scroll/article`，tailwind 重构后已烂尾；新增 `CLIPFORGE_DEV_QUICK_PROBE=scroll` 纯滚动模式）。
+- **前端**：`view-clip-cache.ts`（按 searchRequestKey SWR 快照：items/游标/选中/滚动，512 LRU）+ App 搜索 effect 改「回放缓照→后台拉新+头部守卫（id+contentHash，保住分页）」；`VirtualList` 增 `onScrollTopChange`/`restoreScroll(token)`；移除 `quick:${activeView}` remount key 与 4 处 `setActiveView` yank；`row-animation.ts` epoch 改 id 摘要；`normalizeClip` 按 contentHash memo；写操作全路径失效+clipsRef 同步；死代码清理。
+- **门禁**：build:web / cargo check+fmt / test:unit / test:boundaries / openspec validate 33/33 全绿。
+- **实现与设计偏差**（已写进 design.md 修订说明）：SWR per-key（非 bucket:"all" 合并——收藏是服务端 favorite:true 过滤）；contentHash memo（非 trustAnalysis——Rust 无 attachment 列）；restoreScroll token（非受控 scrollTop prop）。
+- **缓议 3 项**（tasks.md `[~]`）：payload 瘦身/Rust analysis 落库/类型适配——根因「列表态即详情态」（复制/详情都读列表 state），需先解耦详情读取路径，降级为后续提案。
+
+### ② 沙箱自动验收 ✅（692 条生产数据拷入沙箱实测）
+- `quick.scroll` P95=**1ms**（200 行挂载，预算 300ms）；`panel.open` P95=182ms 且 16 条/692 条库完全一致→固定开销非数据路径；`clipboard-promote: local merge` 守卫实机命中。
+- 窗口级 `perf-panel-probe`：hide 5ms ✓；show 超时/幻影 blur FAIL 是**环境问题**——改 lib.rs→重编译→新 adhoc 签名 cdHash→TCC Accessibility 信任丢失→`universalAccessAuthWarn` 抢焦点。需用户重新授权后复测。
+- blur-keep/pin 逻辑实机正确（pinned 后多次 `blur hide cancelled`）。
+
+### ③ 视觉走查半自动化 ⏳（.work/panel_visual_probe.py）
+- 截图驱动：合成滚轮滚动+区域截图已跑通；NSPanel 是 nonactivating panel（show 不改 frontmost，判定「面板在屏」要用 CGWindowList layer 25 而非 frontmost）。
+- Tab 切视图验证被 keyWindow 抢占阻断（Ghostty/通知中心抢 key，合成键打进前台终端）；脚本已加 rekey（点搜索框重新置 key），待 dev 实例重启复跑。判定标准：`04-history-back.png` 滚动位置 == `02-history-scrolled.png`。
+
+### ④ 待办（可交付前）
+1. 视觉走查复跑（重启 `pnpm dev:sandbox` + 跑 .work/panel_visual_probe.py，或肉眼走查）。
+2. TCC 重新授权后复跑 `python3 scripts/perf-panel-probe.py --sandbox`（窗口级 show/幻影 blur）。
+3. 对抗 review workflow 补跑（5 维 find→3 refute 投票，脚本已存 session workflows 目录；上轮因 5h 配额 403 全灭，lead 已逐点自审兜底）。
+4. 提交本批改动。
+
 ## 2026-10-09 会话增量（收起丝滑化 + 面板"点不开"诊断）
 
 ### ① 面板收起丝滑化 ✅（未提交）

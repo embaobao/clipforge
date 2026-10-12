@@ -36,6 +36,7 @@ P1。盟哥 2026-09-11 拍板：pi sdk 确立为 ClipForge 的 Agent 能力基�
 - **pi sdk API 稳定性**：Phase 0 锁定版本与最小依赖面，适配层隔离。
 - **API Key 管理**：复用 settings 的 redaction 与 keyRef 机制，不落盘前端。
 - **删除旧 AI 侧车的回归风险**：删除手术分批进行（前端/Rust/配置），每批全套验证 + grep 无残留；`CLIPFORGE_DISABLE_CAPTURE` 冒烟规范照旧。
+- **依赖 scope 迁移**：旧 scope `@mariozechner/*` 已 5 个月未发版，疑似冻结；pi 主仓已迁到 `@earendil-works/*` 1.1.0。迁移工作独立为 backlog 任务，不归入本提案归档范围，避免延迟收官。
 
 ## 成功标准
 
@@ -48,3 +49,4 @@ P1。盟哥 2026-09-11 拍板：pi sdk 确立为 ClipForge 的 Agent 能力基�
 - 替代：deepseek-harness-embedding（产品意图承接方）。
 - 解除：旧 AI 侧车「文件上下文对话」「右键系统菜单」两提案的排期冻结（其场景待 pi 落地后重新评估，或并入本提案后续 Phase）。
 - 关联：codebase-modularity-refactor（旧 AI 侧车删除会同步缩减 lib.rs 体量）。
+- 后续：pi sdk 依赖迁移至 `@earendil-works/*` 1.1.0，见 `backlog/tasks/task-4 - pi-sdk-依赖迁移至-earendil-works-1.1.0.md`。

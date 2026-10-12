@@ -41,6 +41,15 @@ L2 与 L3 暴露的每个剪贴板领域能力 SHALL 消费同一 Rust 域层 di
 - **WHEN** 回收站删除与恢复事件在满载期被部分丢弃
 - **THEN** 订阅方执行全量对账后状态与数据库一致(trash/restore 成对语义保持)
 
+### Requirement: 事件载荷信封 schema
+
+域事件载荷 SHALL 采用统一版本信封:`{ v, type, clipId, tsMs, bytes, payloadKind }`。`v` 为契约版本(当前 `1`);`type` 为事件名;`clipId` 为受影响剪贴板条目 id;`tsMs` 为事件时间戳(毫秒);`bytes` 为条目正文字节数;`payloadKind` 为内容类型摘要(如 text/richtext/image-uri)。`bytes`/`payloadKind` SHALL 使消费方在不读取全文的前提下预过滤;字段集与 agent-plugin-runtime 的消费预期对齐,后续差异走契约版本演进。
+
+#### Scenario: 消费方凭信封预过滤
+
+- **WHEN** 订阅方收到 `capture.finished` 信封且 `bytes` 超出其处理阈值
+- **THEN** 订阅方可直接跳过该条目而不发起全文读取,事件面热路径语义不受影响
+
 ### Requirement: dormant 维持
 
 三项转实施判据(W1 收口、第二订阅方出现、第 3 处同源重复)未全部满足前,SHALL NOT 实现注册表路由改造、事件 bus 或清单生成脚本;现有 MCP 静态 specs 与 pi 工具实现保持不变。

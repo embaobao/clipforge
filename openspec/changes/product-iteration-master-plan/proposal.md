@@ -36,6 +36,7 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 - `onboarding-standalone-page`(25/52):正式 .app 验证开机启动、Accessibility 权限引导只弹一次、托盘/快捷键不阻塞。
 - `interaction-animation-polish`(25/25):完成,走归档流程。
 - `tailwind-v3-style-refactor`(21/25):盟哥三 surface 人工走查 + 走查修复。
+- `panel-list-perf`(新建):主面板列表性能修复——视图切换缓存去闪烁、列表 key 稳定、批量 JOIN + payload 瘦身、写回刷新收敛,支撑 W1 性能基线 P95 ≤ 300ms。
 - 退出条件:实机矩阵全绿 + 两个格式提案归档;性能基线 `quick.scroll/select/copy/paste` P95 ≤ 300ms(`window.__clipforgePerf.summary()`)。
 
 ### W2 搜索与语义检索(P1,W1 收口后启动)

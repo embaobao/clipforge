@@ -17,8 +17,9 @@
 
 - **同源注册表**:Rust 每域导出 `tool_specs()` + `dispatch()`,`mcp/mod.rs` 只路由与 preview/confirm 门禁;`McpToolSpec` 增 `version`、`tools/list` 按名稳定排序、schema additive-only;confirm 令牌绑定参数哈希 + TTL;L2 TS 清单由 Rust specs 生成(check-in + test:unit 漂移断言,不引构建期 codegen)。
 - **异步事件钩子**:域层在 DB 提交成功后发布 `capture.finished`/`clip.updated`/`clip.trashed`/`clip.restored`;有界 channel,发布 <1ms,消费在后台线程;满载丢弃 + 分类型×订阅者计数 + 限速告警日志 + 全量对账兜底命令;订阅者失败静默降级。AI 调用永不进热路径。
-- **可测试性**:域文件分纯函数层(`&Connection`)+ command 薄壳;事件 bus trait 注入;跨进程(Block A)载荷加版本信封。
+- **可测试性**:域文件分纯函数层(`&Connection`)+ command 薄壳;事件 bus trait 注入;跨进程(Block A)载荷加版本信封,字段为 `{ v, type, clipId, tsMs, bytes, payloadKind }`,与 agent-plugin-runtime 的消费预期对齐——`bytes`/`payloadKind` 供消费方不读全文先做预过滤。
 - **不做**:插件沙箱、动态加载、Block B 写侧解冻(external-hook-plugin-runtime 冻结线不变)。
+- **边界(2026-10-10 与 agent-plugin-runtime 划定)**:插件(第三方动态)工具走该提案的动态注册口(`plugin.<包名>.<工具名>`,装包注册/卸包注销),**不并入**本提案的宿主同源注册表,也**不消耗**同源重复计数——本提案的同源计数只针对宿主域工具(MCP 面 / pi 面)的手写重复;powerpack.* 管理工具为宿主自有工具,无 pi 侧对偶,同样不计。插件事件订阅消费本提案的事件面契约,构成其触发判据 2 的合格「第二个订阅方」候选。
 
 ## 判据(dormant → 实施,三项全满足)
 

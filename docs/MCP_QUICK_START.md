@@ -199,3 +199,12 @@ use clipf.analyze content="https://github.com/embaobao/clipforge"
 ```
 
 ClipForge 会在应用日志中记录 `tool`、`sourceLabel`、`requestId`，并在返回值中带 `traceId`。后续增量更新、详情扩展、草稿维护都应沿用这组字段。
+
+## 规划中：插件工具面(powerpack.* / plugin.*，未实施)
+
+以下命名空间随 [agent-plugin-runtime](../openspec/changes/agent-plugin-runtime/proposal.md) 提案落地，当前**尚不存在于 `tools/list`**，Agent 不应调用：
+
+- `powerpack.*`：宿主固有工具——插件脚手架/校验/打包/安装/卸载/列举/日志/配置/自检（scaffold、validate、pack、install、uninstall、list、logs、config.get、config.set、doctor）。`install` 与 `config.set` 需用户逐次确认。
+- `plugin.<包名>.<工具名>`：已安装插件注册的动态工具，`tools/list` 聚合时带 `source: "plugin:<id>"` 来源标记；坏插件可单独禁用，不影响宿主契约。
+
+错误面：插件桥错误用 `PLUGIN_<域>_<原因>` 稳定前缀，`data` 带插件 id / JSON Pointer / JS 栈。完整契约见提案 [docs/API_REFERENCE.md](../openspec/changes/agent-plugin-runtime/docs/API_REFERENCE.md)。

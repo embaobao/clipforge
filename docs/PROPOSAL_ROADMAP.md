@@ -2,6 +2,10 @@
 
 更新时间:2026-10-01(波次化重构,单一事实源移交 [product-iteration-master-plan](../openspec/changes/product-iteration-master-plan/proposal.md);本文件转为文档视图 + 历史决策记录)。
 
+2026-10-10 新增 `panel-list-perf` 性能修复 change:经性能评审确认主面板列表存在 N+1 查询、2MB IPC、视图切换全量重查、列表 key 强制重挂载、开面板多次 setClips 等瓶颈,归入 W1 作为核心闭环收口支撑项,与现有 W1 四项并行推进,优先保证 `quick.scroll/select/copy/paste` P95 ≤ 300ms 退出条件达成。
+
+2026-10-10 插件化 Agent 能力运行时立项:[agent-plugin-runtime](../openspec/changes/agent-plugin-runtime/proposal.md)(前身 agent-self-evolution 经 grilling 评审重构,已归档)。选型拍板:cordis-rs `=0.11.1` 生命周期骨架 + rquickjs 0.14 引擎(一插件一线程一 Runtime);双层工具口(宿主 specs.rs 40 条不动,插件走 `plugin.<包名>.*` 动态注册口);与 agent-extension-seams 划定边界(插件工具不消耗同源计数)。design 20 节含错误码契约/开发调试/发布分发/内存细则/全链路预演;配套 [插件开发指南](../openspec/changes/agent-plugin-runtime/docs/PLUGIN_DEV_GUIDE.md)与 [API 参考](../openspec/changes/agent-plugin-runtime/docs/API_REFERENCE.md)。入口任务:backlog TASK-3(Phase 1 桥接 spike,时间盒 1 周,失败降级门面内自研)。
+
 2026-09-11 重大方向决策（盟哥拍板）：
 
 1. **pi sdk 确立为 Agent 能力基础**：选定 github.com/earendil-works/pi（TS Agent 工具箱 + 可编程 SDK，npm @mariozechner/pi-coding-agent），新建 [pi-sdk-agent-foundation](../openspec/changes/pi-sdk-agent-foundation/proposal.md) 提案承接全部 Agent 能力（条目分析/智能标签/未来助手面板），validate --strict ✓。
@@ -102,6 +106,7 @@
 | W1 | `clipboard-multi-format-fidelity` | 22/26 | 系统剪贴板多 representation 写回与监听去重实机矩阵 |
 | W1 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、Accessibility 引导只弹一次、完成/跳过、托盘与全局快捷键不阻塞 |
 | W1 | `tailwind-v3-style-refactor` | 21/25 | 盟哥三 surface(详情/聚合/onboarding)人工走查 + 走查修复 |
+| W1 | `panel-list-perf` | 22/25 | 编码+自动验收完成(批量 JOIN/SWR 视图快照/key 稳定/刷新收敛,门禁全绿;692 条实机 quick.scroll P95=1ms、panel.open P95=182ms 与数据量无关;探针基建修复);payload 瘦身 3 项缓议;剩视觉走查+copy/paste span(待 TCC 重新授权) |
 | W2 | (未开工,见总纲) | — | 基于 `clip_semantic_index`(local-keyword 已建)的语义检索,先服务 pi/MCP 工具面 |
 | W3 | `pi-sdk-agent-foundation` | 24/26 | Phase 4 全量回归 + 真机冒烟(盟哥视觉/功能验收)后归档 |
 | W3 | `ai-model-plugin-productization` | 65/76 | scope 复审后按 L1/L2 归位并入 pi 线,不并行开工 |
