@@ -28,10 +28,9 @@ const FALLBACK_GLOBAL_SHORTCUT: &str = "Control+V";
 fn normalize_global_shortcut_value(raw: Option<&str>) -> String {
     let shortcut = raw.unwrap_or_default().trim();
     if shortcut.is_empty() || shortcut.eq_ignore_ascii_case(LEGACY_DEFAULT_GLOBAL_SHORTCUT) {
-        DEFAULT_GLOBAL_SHORTCUT.to_string()
-    } else {
-        shortcut.to_string()
+        return DEFAULT_GLOBAL_SHORTCUT.to_string();
     }
+    shortcut.to_string()
 }
 
 /// 读取当前生效的全局快捷键（托盘菜单展示用；从 lib.rs 迁入，Phase 3）。
@@ -454,12 +453,26 @@ pub fn emit_settings_changed<R: tauri::Runtime>(
         }),
     );
 }
+/// 沙箱/开发实例判定：CLIPFORGE_DATA_DIR 已设置且非空即隔离实例（dev:sandbox 用）。
+fn is_sandbox_data_dir() -> bool {
+    match std::env::var("CLIPFORGE_DATA_DIR") {
+        Ok(value) => !value.trim().is_empty(),
+        Err(_) => false,
+    }
+}
 
 pub fn sync_launch_at_login_from_settings<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     settings: &Value,
     reason: &str,
 ) {
+    // 沙箱实例（CLIPFORGE_DATA_DIR 隔离）绝不注册开机自启：autostart 插件按「当前运行
+    // 二进制」写 LaunchAgents plist，沙箱一旦 sync 会把 target/debug 开发二进制注册成登录项。
+    if is_sandbox_data_dir() {
+        let skipped = format!("sync reason={reason} skipped: sandbox (CLIPFORGE_DATA_DIR set)");
+        log_to_file("info", "autostart", &skipped);
+        return;
+    }
     let desired = desired_launch_at_login(settings);
     match set_launch_at_login_native(app, desired) {
         Ok(status) => log_to_file(
@@ -477,13 +490,10 @@ pub fn sync_launch_at_login_from_settings<R: tauri::Runtime>(
         ),
     }
 }
-
+/// 慢操作告警(300ms 硬预算):超限写 warn 日志,供性能回归排查定位,不阻断流程。
 pub fn log_slow_settings_operation(operation: &str, duration_ms: i64) {
     if duration_ms > 300 {
-        log_to_file(
-            "warn",
-            "settings-service",
-            &format!("slow {operation} durationMs={duration_ms} > 300"),
-        );
+        let entry = format!("slow {operation} durationMs={duration_ms} > 300");
+        log_to_file("warn", "settings-service", &entry);
     }
 }
