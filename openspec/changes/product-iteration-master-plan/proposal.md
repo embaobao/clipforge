@@ -34,9 +34,13 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 - `file-image-clipboard-support`(75/83):文本/HTML/图片/文件 复制-展示-粘贴-磁盘清理实机矩阵。
 - `clipboard-multi-format-fidelity`(22/26):多 representation 写回 + 监听去重实机矩阵。
 - `onboarding-standalone-page`(25/52):正式 .app 验证开机启动、Accessibility 权限引导只弹一次、托盘/快捷键不阻塞。
-- `interaction-animation-polish`(25/25):完成,走归档流程。
+- `interaction-animation-polish`(25/25):已归档(2026-10-08)。
 - `tailwind-v3-style-refactor`(21/25):盟哥三 surface 人工走查 + 走查修复。
-- `panel-list-perf`(新建):主面板列表性能修复——视图切换缓存去闪烁、列表 key 稳定、批量 JOIN + payload 瘦身、写回刷新收敛,支撑 W1 性能基线 P95 ≤ 300ms。
+- `panel-list-perf`:主面板列表性能修复——已 22/22 完成并归档(2026-10-13,新建 capability `panel-list-performance`;692 条实机 quick.scroll P95=1ms、panel.open P95=182ms;payload 瘦身 3 项缓议降级为后续提案)。
+- `clipboard-data-integrity`(3/11):去重 promote 落库实现完成;剩实机验证+文档记录+归档。
+- `detail-page-information-architecture`(24/31):v8 三态状态机+MD 编辑器+类型渲染注册表主体已落地;剩验证+终验。
+- `settings-status-bar-and-dead-ai-cleanup`(6/15,W1/W5 横切):状态栏主体已落地;剩 i18n 死键专项+待定决策+验收。
+- **2026-10-13 收口备注**:W1 编码侧全部完成,剩余项为实机验收/走查(四批推进计划见 PROPOSAL_ROADMAP「后续开发计划」);全绿后批量归档并关波。
 - 退出条件:实机矩阵全绿 + 两个格式提案归档;性能基线 `quick.scroll/select/copy/paste` P95 ≤ 300ms(`window.__clipforgePerf.summary()`)。
 
 ### W2 搜索与语义检索(P1,W1 收口后启动)
@@ -45,8 +49,10 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 - 语义能力先服务 L2 pi 工具与 L3 MCP `clipboard.search`,UI 增强其次。
 
 ### W3 Agent 能力补全(P1,依赖 W1 的稳定性基线)
-- `pi-sdk-agent-foundation` 收尾:API Key redaction/keyRef、provider 极简 UI、智能标签建议(onApplyTags/onApplyFolder 通道)、Phase 4 验收。
+- `pi-sdk-agent-foundation`(25/26)收尾:Phase 4 全量回归 + 盟哥视觉/功能验收后归档。
 - `ai-model-plugin-productization`(65/76):scope 复审后按 L1/L2 归位,重叠能力并入 pi 线,不并行开工。
+- `agent-plugin-runtime`(0/23):dormant,插件化 Agent 能力运行时(cordis 生命周期+rquickjs);入口任务 Phase 1 桥接 spike 待排期。
+- `agent-extension-seams`(1/11):dormant,同源工具第 3 处重复实现即触发实施(计数规则见 AGENTS.md)。
 - 助手面板形态评估结论(做/不做/以何形态)写入 pi-sdk tasks。
 
 ### W4 运行时与外部接口决策(P2)
@@ -55,9 +61,14 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 - L3 MCP 工具面按 W2/W3 产物扩展(语义检索工具、标签写回工具走 preview/confirm)。
 
 ### W5 治理与演示(横切,不阻塞)
-- `codebase-modularity-refactor`(11/26):随功能触碰渐进,豁免清单只减不增。
+- `codebase-modularity-refactor`(25/31):随功能触碰渐进,豁免清单只减不增。
+- `debug-mode-performance-observability`(11/16):v1 已落地(调试模式实时指标面板);剩实时采集后续项与验收。
 - `framer-motion-adoption-eval`:dormant,按其提案信号表触发。
 - `project-demo-gif-pipeline`(0/30):W1 稳定后启动录制。
+
+### 插队:snipaste-parity(2026-10-12 立项,待用户放行)
+- `snipaste-parity`(0/27):Snipaste 级截图+贴图能力,四阶段(截屏取色/标注/贴图窗/输出自动化)逐段放行。
+- 前置铁律:剪贴板主链路优先级不变,开工前置= W1 关波;全部工作不碰热路径(采集/回写/面板显隐),新 Rust command 域文件 ≤500 行。
 
 ## 交互区域矩阵
 

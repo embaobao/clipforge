@@ -2,6 +2,8 @@
 
 更新时间:2026-10-01(波次化重构,单一事实源移交 [product-iteration-master-plan](../openspec/changes/product-iteration-master-plan/proposal.md);本文件转为文档视图 + 历史决策记录)。
 
+2026-10-13 归档 `panel-list-perf`:22/22 完成归档为 `archive/2026-10-13-panel-list-perf/`,spec delta 合入新建 `openspec/specs/panel-list-performance/spec.md`(批量 JOIN 直出/SWR 视图快照/key 稳定/刷新收敛;payload 瘦身 3 项缓议降级为后续提案 design.md §4.2-4.3)。同日 active 表对账(`openspec list` 实数):补入 detail-page-information-architecture、clipboard-data-integrity、settings-status-bar-and-dead-ai-cleanup、debug-mode-performance-observability、agent-plugin-runtime、agent-extension-seams、snipaste-parity 七个 2026-10-08 后新增 change。
+
 2026-10-10 新增 `panel-list-perf` 性能修复 change:经性能评审确认主面板列表存在 N+1 查询、2MB IPC、视图切换全量重查、列表 key 强制重挂载、开面板多次 setClips 等瓶颈,归入 W1 作为核心闭环收口支撑项,与现有 W1 四项并行推进,优先保证 `quick.scroll/select/copy/paste` P95 ≤ 300ms 退出条件达成。
 
 2026-10-10 插件化 Agent 能力运行时立项:[agent-plugin-runtime](../openspec/changes/agent-plugin-runtime/proposal.md)(前身 agent-self-evolution 经 grilling 评审重构,已归档)。选型拍板:cordis-rs `=0.11.1` 生命周期骨架 + rquickjs 0.14 引擎(一插件一线程一 Runtime);双层工具口(宿主 specs.rs 40 条不动,插件走 `plugin.<包名>.*` 动态注册口);与 agent-extension-seams 划定边界(插件工具不消耗同源计数)。design 20 节含错误码契约/开发调试/发布分发/内存细则/全链路预演;配套 [插件开发指南](../openspec/changes/agent-plugin-runtime/docs/PLUGIN_DEV_GUIDE.md)与 [API 参考](../openspec/changes/agent-plugin-runtime/docs/API_REFERENCE.md)。入口任务:backlog TASK-3(Phase 1 桥接 spike,时间盒 1 周,失败降级门面内自研)。
@@ -93,10 +95,11 @@
 | `quick-panel-visual-regression-recovery` | `openspec/changes/archive/2026-08-05-quick-panel-visual-regression-recovery/` | 以 22/30 归档；交互与性能验收转入统一前端架构提案，未合并旧 spec |
 | `interaction-animation-polish` | `openspec/changes/archive/2026-10-08-interaction-animation-polish/` | 25/25 完成；motion token/交互契约已随交付落地，verification.md 随归档保留，无 spec delta(`--skip-specs`) |
 | `frontend-surface-architecture-refactor` | `openspec/changes/archive/2026-10-08-frontend-surface-architecture-refactor/` | 以 36/84 归档(2026-10-01 已裁决移出 active 队列)；剩余样式拆分任务随 W1/W5 功能触碰渐进执行，未合并旧 spec，组件知识库附件见 `docs/COMPONENT_REFERENCE.md` |
+| `panel-list-perf` | `openspec/changes/archive/2026-10-13-panel-list-perf/` | 22/22 完成；批量 JOIN/SWR 视图快照/key 稳定/刷新收敛，692 条实机 quick.scroll P95=1ms、panel.open P95=182ms；spec delta 合入新建 `openspec/specs/panel-list-performance/spec.md`；payload 瘦身 3 项缓议降级为后续提案 |
 
 ## 当前 active change
 
-> 2026-10-08 对账(数据源 `openspec list` 实数);推进顺序由 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次表单点解释,本表是其文档视图。
+> 2026-10-13 对账(数据源 `openspec list` 实数);推进顺序由 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次表单点解释,本表是其文档视图。
 
 > **2026-10-09 会话增量**：① 面板收起丝滑化落地(原生 alpha 淡出替代 CSS panel-out,`hide_panel_with_native_fade` + `use-panel-blur-hide` 改造,cargo check/build:web/tauri dev 实测过,**未提交**);② 淡出 160ms 竞态修复(`PANEL_FADE_ACTIVE` + `PANEL_FADE_GENERATION`,淡出中再按=唤起,**未提交**);③ 「Ctrl+V 点不开」定性为 macOS 登录会话全局热键派发故障(独立 Carbon 探针回调 0 次 + 物理按键无反应,与 app 无关,**待用户注销重登/重启恢复**;恢复后需复测快捷键链路)。见 [HANDOFF](HANDOFF.md) 2026-10-09 节。
 
@@ -106,24 +109,51 @@
 | W1 | `clipboard-multi-format-fidelity` | 22/26 | 系统剪贴板多 representation 写回与监听去重实机矩阵 |
 | W1 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、Accessibility 引导只弹一次、完成/跳过、托盘与全局快捷键不阻塞 |
 | W1 | `tailwind-v3-style-refactor` | 21/25 | 盟哥三 surface(详情/聚合/onboarding)人工走查 + 走查修复 |
-| W1 | `panel-list-perf` | 22/25 | 编码+自动验收完成(批量 JOIN/SWR 视图快照/key 稳定/刷新收敛,门禁全绿;692 条实机 quick.scroll P95=1ms、panel.open P95=182ms 与数据量无关;探针基建修复);payload 瘦身 3 项缓议;剩视觉走查+copy/paste span(待 TCC 重新授权) |
+| W1 | `clipboard-data-integrity` | 3/11 | 实现已完成(去重 promote 落库,3af0e6a);剩实机验证(条目复活场景+watcher 指纹开销实测)、重复行为文档记录、门禁+盟哥确认后归档 |
+| W1 | `detail-page-information-architecture` | 24/31 | v8 三态状态机+MD 编辑器+类型渲染注册表已落地(cdfcbcb);剩各阶段验证+终验(test:unit/test:boundaries + 沙箱六类条目×三态×键盘动线走查) |
+| W1/W5 | `settings-status-bar-and-dead-ai-cleanup` | 6/15 | 状态栏与死残留主体已落地(44203a6);剩 i18n 死键簇专项、3 处过期注释、multiSelect 跨唤起保留待定决策、沙箱实测+盟哥验收 |
 | W2 | (未开工,见总纲) | — | 基于 `clip_semantic_index`(local-keyword 已建)的语义检索,先服务 pi/MCP 工具面 |
 | W3 | `pi-sdk-agent-foundation` | 24/26 | Phase 4 全量回归 + 真机冒烟(盟哥视觉/功能验收)后归档 |
 | W3 | `ai-model-plugin-productization` | 65/76 | scope 复审后按 L1/L2 归位并入 pi 线,不并行开工 |
+| W3 | `agent-plugin-runtime` | 0/23 | dormant:插件化 Agent 能力运行时(cordis 生命周期骨架+rquickjs);入口任务 Phase 1 桥接 spike 待排期 |
+| W3 | `agent-extension-seams` | 1/11 | dormant:同源工具第 3 处重复实现即触发实施(计数规则见 AGENTS.md) |
 | W4 | `vercel-ai-sdk-integration` | 30/38 | 与 mastra/local-model 三案统一取舍,结论前不动 |
 | W4 | `mastra-agent-runtime-evaluation` | 11/25 | 同上 |
 | W4 | `local-model-quick-integration` | 4/16 | 同上 |
 | W4 | `external-hook-plugin-runtime` | 0/67 | 只推进 Block A 读取侧;Block B 写入侧维持冻结 |
-| W5 | `codebase-modularity-refactor` | 11/26 | 随功能触碰渐进,豁免清单只减不增 |
+| W5 | `codebase-modularity-refactor` | 25/31 | 随功能触碰渐进,豁免清单只减不增 |
+| W5 | `debug-mode-performance-observability` | 11/16 | v1 已落地(调试模式实时指标面板,8de1b0e);剩实时采集后续项与验收 |
 | W5 | `framer-motion-adoption-eval` | dormant | 按其提案信号表触发,当前四信号均未出现 |
 | W3 后置 | `automated-tagging-eval` | dormant | 自动打标调研:规则/MCP/LLM 三层边界已裁决,pi-sdk L3 smart-tag 已完成,待真实批量回填诉求 + MCP 集成方三判据齐后转实施 |
 | W5 | `project-demo-gif-pipeline` | 0/30 | W1 稳定后录制 |
+| 插队 | `snipaste-parity` | 0/27 | 方案已评审**待用户放行**;前置=剪贴板主链路收口(W1 关波);四阶段逐段放行,不碰热路径 |
 
 已归档:旧 AI 侧车三提案(2026-09-11,`a020068` 拍板废弃,pi 接管)、`settings-service-unified-protocol` 等见上表「已归档」节。
 
 ## 后续开发计划
 
 > 已并入 [product-iteration-master-plan](../changes/product-iteration-master-plan/proposal.md) 五波次(W1 核心收口 → W2 搜索语义 → W3 Agent 补全 → W4 运行时决策 → W5 治理演示),以该提案为单一事实源。下方原迭代 A-E(2026-09-07)保留作历史语境,与波次表的映射:A≈W1(onboarding/交互基线),B≈W1(格式闭环),C≈W5(架构拆分随触),D≈W4(runtime 取舍),E≈W5(演示资产)。原 C 提到的 `frontend-surface-architecture-refactor`(36/84)已于 2026-10-08 归档(见上节),其剩余样式拆分任务随 W1/W5 功能触碰渐进执行。
+
+### 2026-10-13 推进计划(当前有效)
+
+**里程碑 M1:W1 关波(唯一关键路径)。** W1 七提案的编码侧已完成,剩余项几乎全是实机验收/走查,无新功能编码。按依赖分四批:
+
+1. **自动门禁批(本机即可,无外部依赖)**:`clipboard-data-integrity` 4.1 门禁、`detail-page-information-architecture` 各阶段验证(1.6/2.4/4.4/6.5,build+cargo+test:unit+test:boundaries+沙箱走查)、`settings-status-bar` 5.1 门禁、`tailwind-v3-style-refactor` 走查前自查。
+2. **沙箱实测批(`pnpm dev:sandbox`)**:`clipboard-data-integrity` 1.3 条目复活场景 + 2.1/2.2 watcher 指纹开销实测、`detail-page` 2.4/3.4/5.4 沙箱实测、`settings-status-bar` 1.5/2.2/5.2 沙箱实测。
+3. **盟哥配合批(预约一次走查窗口集中清)**:`tailwind` 三 surface 走查+修复、`pi-sdk-agent-foundation` 全量回归+视觉/功能验收、`settings-status-bar` 5.3、`clipboard-data-integrity` 4.3、`detail-page` 7.4 终验;file-image × multi-format 两张实机验收矩阵(7 场景)同窗口附带过。
+4. **正式 .app 批**:`onboarding-standalone-page` 剩余 27 项(开机启动/AX 权限只弹一次/托盘不阻塞)——依赖 `pnpm tauri build` 部署新版本后实测。
+
+全绿后批量归档 W1 七提案 → W1 关波,复核性能退出条件(`quick.scroll/select/copy/paste` P95 ≤ 300ms)。
+
+**并行卫生项(不阻塞 M1)**:工作区 `lib.rs` pin 语义修复待提交(pin 态一刀切拦截导致 toggle/Esc 无法收起面板的 bug);本地 26 个提交待推送 origin/main。
+
+**M1 关波后放行点(按序)**:
+
+1. `snipaste-parity` Phase 1 放行决策(截屏+取色;提案前置=主链路收口,逐阶段放行,不碰热路径)。
+2. W2 语义检索立项(基于 `clip_semantic_index`,local-keyword 已建;先服务 pi/MCP 工具面)。
+3. `ai-model-plugin-productization` scope 复审(65/76,按 L1/L2 归位并入 pi 线)。
+4. W4 三案取舍文档(`vercel-ai-sdk-integration`/`mastra`/`local-model`):产出引入/裁剪/归档结论,结论前不新增重型依赖。
+5. W5 `project-demo-gif-pipeline` 启动录制;`codebase-modularity-refactor`/`debug-mode` 随功能触碰渐进。
 
 ## 2026-07-16 active 快照（已失效）
 
