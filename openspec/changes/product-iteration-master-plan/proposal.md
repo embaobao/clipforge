@@ -49,7 +49,7 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 - 语义能力先服务 L2 pi 工具与 L3 MCP `clipboard.search`,UI 增强其次。
 
 ### W3 Agent 能力补全(P1,依赖 W1 的稳定性基线)
-- `pi-sdk-agent-foundation`(25/26)收尾:Phase 4 全量回归 + 盟哥视觉/功能验收后归档。
+- `pi-sdk-agent-foundation`(25/30)收尾:自动门禁+沙箱功能验证+盟哥验收后归档;L2 助手承载面形态评估(候选 A 详情侧栏/B 独立面板窗口/C 仅 MCP,不嵌 pi-web)结论写入其 tasks。
 - `ai-model-plugin-productization`(65/76):scope 复审后按 L1/L2 归位,重叠能力并入 pi 线,不并行开工。
 - `agent-plugin-runtime`(0/23):dormant,插件化 Agent 能力运行时(cordis 生命周期+rquickjs);入口任务 Phase 1 桥接 spike 待排期。
 - `agent-extension-seams`(1/11):dormant,同源工具第 3 处重复实现即触发实施(计数规则见 AGENTS.md)。

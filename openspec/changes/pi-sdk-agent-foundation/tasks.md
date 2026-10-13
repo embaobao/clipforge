@@ -45,7 +45,14 @@
 
 ## Phase 4：验证与收尾 🟡
 
-- [ ] 全量回归 + CLIPFORGE_DISABLE_CAPTURE=1 冒烟 + 盟哥视觉/功能验收
+- [ ] 自动门禁：`pnpm build` + `cd src-tauri && cargo check` + `pnpm test:unit` + `pnpm test:boundaries`
+- [ ] 沙箱功能验证（`pnpm dev:sandbox`；前置：设置页 agentProviders 配置至少一个可用 API Key）：
+  - L1 主链：任意条目 → 详情页 AI 分析 → 出摘要 + 标签建议 → 点建议标签 = 主列表按 tag 过滤 → 「应用标签」后刷新 provenance 保持、chip 带 ai 色点
+  - 边界：无 Key 时按钮禁用并提示；Key 错误降级为错误条不崩溃；分析进行中主面板搜索/滚动/复制零卡顿（热路径红线，verify-hot-path 否定断言兜底）
+  - 历史：成功分析后最近 3 条可见，超 20 条裁剪
+- [ ] CLIPFORGE_DISABLE_CAPTURE=1 冒烟（双实例隔离开关回归）
+- [ ] 盟哥视觉/功能验收（L1 分析条交互与视觉走查）
+- [ ] L2 助手承载面形态评估结论（做/不做/以何形态；候选 A 详情页侧栏 / B 独立面板窗口 / C 仅 MCP 暴露,见 proposal「产品能力落位」节;pi-web 仅作交互参考不嵌入）写入本 tasks,并同步总纲 W3 行
 - [x] docs/HANDOFF.md 与 PROPOSAL_ROADMAP.md 收官更新 --2026-10-09:HANDOFF 增 4c+(L2/L3 收官)与 2026-10-09 会话增量节;ROADMAP 增当日增量注记与 W3 行 24/26 对账
 
 ## 注意事项

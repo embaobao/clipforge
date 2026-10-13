@@ -113,7 +113,7 @@
 | W1 | `detail-page-information-architecture` | 24/31 | v8 三态状态机+MD 编辑器+类型渲染注册表已落地(cdfcbcb);剩各阶段验证+终验(test:unit/test:boundaries + 沙箱六类条目×三态×键盘动线走查) |
 | W1/W5 | `settings-status-bar-and-dead-ai-cleanup` | 6/15 | 状态栏与死残留主体已落地(44203a6);剩 i18n 死键簇专项、3 处过期注释、multiSelect 跨唤起保留待定决策、沙箱实测+盟哥验收 |
 | W2 | (未开工,见总纲) | — | 基于 `clip_semantic_index`(local-keyword 已建)的语义检索,先服务 pi/MCP 工具面 |
-| W3 | `pi-sdk-agent-foundation` | 24/26 | Phase 4 全量回归 + 真机冒烟(盟哥视觉/功能验收)后归档 |
+| W3 | `pi-sdk-agent-foundation` | 25/30 | Phase 4 已拆细(2026-10-13):自动门禁+沙箱功能验证清单+冒烟+盟哥验收+L2 承载面形态评估(proposal 新增「产品能力落位」节:不嵌 pi-web,候选 A 详情侧栏/B 独立面板窗口/C 仅 MCP) |
 | W3 | `ai-model-plugin-productization` | 65/76 | scope 复审后按 L1/L2 归位并入 pi 线,不并行开工 |
 | W3 | `agent-plugin-runtime` | 0/23 | dormant:插件化 Agent 能力运行时(cordis 生命周期骨架+rquickjs);入口任务 Phase 1 桥接 spike 待排期 |
 | W3 | `agent-extension-seams` | 1/11 | dormant:同源工具第 3 处重复实现即触发实施(计数规则见 AGENTS.md) |

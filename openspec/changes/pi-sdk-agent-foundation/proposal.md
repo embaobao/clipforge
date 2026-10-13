@@ -31,6 +31,28 @@ P1。盟哥 2026-09-11 拍板：pi sdk 确立为 ClipForge 的 Agent 能力基�
 - LLM provider 复用设置页已有的 agentProviders 配置结构与 API Key 管理。
 - 前端消费：详情页「AI 分析」入口与右键菜单保持现有交互不变，底层从旧 AI 侧车切换到 pi。
 
+## 产品能力落位(2026-10-13 对账:pi 能力在哪被看见)
+
+| 层 | 产品体现 | 状态 |
+|---|---|---|
+| L1 嵌入式分析 | 详情页 PiAnalysisBar(插件区 menu 形态):一键分析 → 摘要 + 标签建议 chip(点击即主列表检索)+ 一键应用标签(合并去重走 `update_clip_record`)+ 最近 3 条历史(localStorage 上限 20);无 provider 时禁用提示 | ✅ 已可见 |
+| L2 工具化助手 | `createClipForgeAgent` + `clipboard_search`/`clipboard_read_latest` 工具 + `piStream` 骨架在位,**零 UI 接线,产品上不可见**;承载面形态见下节 | 🟡 待评估 |
+| L3 MCP 外部接口 | `run_mcp_stdio` + `clipf.*` 工具族,外部 Agent/宿主可调用(非产品 UI) | ✅ 已可见 |
+
+### 助手承载面形态评估(L2 唯一缺口)
+
+结论先行:**不需要也不应该嵌入 pi-web**。pi-web 是 pi coding agent(终端编码 agent)的本地会话工作台,管理 pi CLI 的项目代码会话文件/provider 登录;ClipForge 的 pi 集成是库级(import SDK 自建 agent),会话域是剪贴板条目,两者不共享数据模型。pi-web 仅作交互参考(会话列表、工具调用卡片渲染、成本展示)。
+
+形态候选(M1 关波后裁决,总纲 W3 预留项):
+
+| 形态 | 适配场景 | 代价/风险 |
+|---|---|---|
+| A 详情页展开区/侧栏 | 单条目追问(翻译/解释) | 空间受限,跨条目检索任务放不下 |
+| B 独立助手面板窗口(快捷键唤起) | 跨条目任务(「帮我找刚才复制的报价」),`clipboard_search` 工具直接服务 | 新窗口生命周期/焦点/热键预算;对齐 AGENTS.md「主交互独立窗口」原则 |
+| C 不做 UI,L2 仅经 L3 MCP 暴露 | 外部宿主消费 | 产品内零感知,pi 投入可见价值低 |
+
+推荐:B 为主、A 为辅。裁决判据:①工具调用交互(clipboard_search 结果卡片)在详情页内放不放得下;②独立窗口的焦点/快捷键冲突(全局热键预算已紧);③盟哥实际使用意愿。
+
 ## 风险与对策
 
 - **pi sdk API 稳定性**：Phase 0 锁定版本与最小依赖面，适配层隔离。
