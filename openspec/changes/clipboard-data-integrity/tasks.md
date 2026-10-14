@@ -14,7 +14,7 @@
 
 ## 3. 缺口 3/4：感知重复（先文档化，不改哈希口径）
 
-- [ ] 3.1 在 docs/BUSINESS_INDEX.md 或设置页「采集与内容」说明区记录：富文本格式漂移/HTML vs plain/文件按路径 三类已知重复行为
+- [x] 3.1 在 docs/BUSINESS_INDEX.md 或设置页「采集与内容」说明区记录：富文本格式漂移/HTML vs plain/文件按路径 三类已知重复行为 --2026-10-13:BUSINESS_INDEX 新增「采集去重语义」行（promote 实现在 lib.rs capture 路径,content_hash 指纹;三类行为+合并缓议注记）
 - [ ] 3.2 「同 plain_text 多格式合并」单独立项评估（哈希口径变更，需单独提案+回归矩阵，本期不做）
 
 ## 4. 收尾

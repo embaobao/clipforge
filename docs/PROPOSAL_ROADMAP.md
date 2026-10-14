@@ -107,11 +107,11 @@
 | --- | --- | --- | --- |
 | W1 | `file-image-clipboard-support` | 75/83 | 文本/HTML/图片/文件 复制、展示、粘贴与磁盘清理实机矩阵 |
 | W1 | `clipboard-multi-format-fidelity` | 22/26 | 系统剪贴板多 representation 写回与监听去重实机矩阵 |
-| W1 | `onboarding-standalone-page` | 25/52 | 正式 `.app` 验证开机启动、Accessibility 引导只弹一次、完成/跳过、托盘与全局快捷键不阻塞 |
+| W1 | `onboarding-standalone-page` | 40/52 | Phase 4-6 编码已落地(2026-10-13:侧栏常驻/四态兜底/错误条重试/窗口日志+perf);剩托盘不阻塞、tauri dev 全链、正式 .app 权限项等实机验证 |
 | W1 | `tailwind-v3-style-refactor` | 21/25 | 盟哥三 surface(详情/聚合/onboarding)人工走查 + 走查修复 |
-| W1 | `clipboard-data-integrity` | 3/11 | 实现已完成(去重 promote 落库,3af0e6a);剩实机验证(条目复活场景+watcher 指纹开销实测)、重复行为文档记录、门禁+盟哥确认后归档 |
+| W1 | `clipboard-data-integrity` | 4/11 | 重复行为已记入 BUSINESS_INDEX「采集去重语义」行(3.1);剩实机验证(条目复活+watcher 开销)、门禁+盟哥确认后归档 |
 | W1 | `detail-page-information-architecture` | 24/31 | v8 三态状态机+MD 编辑器+类型渲染注册表已落地(cdfcbcb);剩各阶段验证+终验(test:unit/test:boundaries + 沙箱六类条目×三态×键盘动线走查) |
-| W1/W5 | `settings-status-bar-and-dead-ai-cleanup` | 6/15 | 状态栏与死残留主体已落地(44203a6);剩 i18n 死键簇专项、3 处过期注释、multiSelect 跨唤起保留待定决策、沙箱实测+盟哥验收 |
+| W1/W5 | `settings-status-bar-and-dead-ai-cleanup` | 9/15 | 死键簇专项(76 键)与过期注释已清(2026-10-13),DESIGN_SYSTEM §7.2 已对齐;剩 multiSelect 待定决策、沙箱实测+盟哥验收 |
 | W2 | (未开工,见总纲) | — | 基于 `clip_semantic_index`(local-keyword 已建)的语义检索,先服务 pi/MCP 工具面 |
 | W3 | `pi-sdk-agent-foundation` | 25/30 | Phase 4 已拆细(2026-10-13):自动门禁+沙箱功能验证清单+冒烟+盟哥验收+L2 承载面形态评估(proposal 新增「产品能力落位」节:不嵌 pi-web,候选 A 详情侧栏/B 独立面板窗口/C 仅 MCP) |
 | W3 | `ai-model-plugin-productization` | 65/76 | scope 复审后按 L1/L2 归位并入 pi 线,不并行开工 |
@@ -122,7 +122,7 @@
 | W4 | `local-model-quick-integration` | 4/16 | 同上 |
 | W4 | `external-hook-plugin-runtime` | 0/67 | 只推进 Block A 读取侧;Block B 写入侧维持冻结 |
 | W5 | `codebase-modularity-refactor` | 25/31 | 随功能触碰渐进,豁免清单只减不增 |
-| W5 | `debug-mode-performance-observability` | 11/16 | v1 已落地(调试模式实时指标面板,8de1b0e);剩实时采集后续项与验收 |
+| W5 | `debug-mode-performance-observability` | 12/16 | 索引/设计文档对账完成(4.3,现有行覆盖);剩调研结论汇总、诊断包形态确认、沙箱实测+盟哥验收 |
 | W5 | `framer-motion-adoption-eval` | dormant | 按其提案信号表触发,当前四信号均未出现 |
 | W3 后置 | `automated-tagging-eval` | dormant | 自动打标调研:规则/MCP/LLM 三层边界已裁决,pi-sdk L3 smart-tag 已完成,待真实批量回填诉求 + MCP 集成方三判据齐后转实施 |
 | W5 | `project-demo-gif-pipeline` | 0/30 | W1 稳定后录制 |

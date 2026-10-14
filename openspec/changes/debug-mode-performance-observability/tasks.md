@@ -25,5 +25,5 @@
 
 - [x] 4.1 门禁：`pnpm build` + `cargo check` + `cargo test --lib`（36 全过，含 FFI 不变量单测）+ `pnpm test:unit`
 - [ ] 4.2 沙箱实测（需机器解锁后）：开关调试模式 → 采样数值合理（与活动监视器对照 RSS 误差 <20%）→ 导出诊断包可打开 → 关闭后零采样开销（采样线程退出/空转）
-- [ ] 4.3 更新 `docs/BUSINESS_INDEX.md`（新 surface/模块行）与 `docs/DESIGN_SYSTEM.md`（调试面板视觉规范，如有新形态）
+- [x] 4.3 更新 `docs/BUSINESS_INDEX.md`（新 surface/模块行）与 `docs/DESIGN_SYSTEM.md`（调试面板视觉规范，如有新形态） --2026-10-13 对账:调试指标面板挂设置 sections（CaptureStorageSections.tsx）,已被「设置 sections」索引行覆盖无新 surface;§7.2 本次随侧栏常驻化重写已对齐,调试面板无新视觉形态不补规范
 - [ ] 4.4 盟哥人工验收后按 openspec 流程归档

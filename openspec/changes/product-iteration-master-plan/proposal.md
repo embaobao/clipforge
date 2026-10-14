@@ -33,13 +33,13 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 ### W1 剪贴板核心闭环收口(P0,当前主战场)
 - `file-image-clipboard-support`(75/83):文本/HTML/图片/文件 复制-展示-粘贴-磁盘清理实机矩阵。
 - `clipboard-multi-format-fidelity`(22/26):多 representation 写回 + 监听去重实机矩阵。
-- `onboarding-standalone-page`(25/52):正式 .app 验证开机启动、Accessibility 权限引导只弹一次、托盘/快捷键不阻塞。
+- `onboarding-standalone-page`(40/52):Phase 4-6 编码已落地(侧栏常驻/四态兜底/日志+perf);剩实机验证项。
 - `interaction-animation-polish`(25/25):已归档(2026-10-08)。
 - `tailwind-v3-style-refactor`(21/25):盟哥三 surface 人工走查 + 走查修复。
 - `panel-list-perf`:主面板列表性能修复——已 22/22 完成并归档(2026-10-13,新建 capability `panel-list-performance`;692 条实机 quick.scroll P95=1ms、panel.open P95=182ms;payload 瘦身 3 项缓议降级为后续提案)。
-- `clipboard-data-integrity`(3/11):去重 promote 落库实现完成;剩实机验证+文档记录+归档。
+- `clipboard-data-integrity`(4/11):去重 promote 落库实现完成,重复行为已记录;剩实机验证+归档。
 - `detail-page-information-architecture`(24/31):v8 三态状态机+MD 编辑器+类型渲染注册表主体已落地;剩验证+终验。
-- `settings-status-bar-and-dead-ai-cleanup`(6/15,W1/W5 横切):状态栏主体已落地;剩 i18n 死键专项+待定决策+验收。
+- `settings-status-bar-and-dead-ai-cleanup`(9/15,W1/W5 横切):死键/过期注释已清;剩 multiSelect 待定决策+验收。
 - **2026-10-13 收口备注**:W1 编码侧全部完成,剩余项为实机验收/走查(四批推进计划见 PROPOSAL_ROADMAP「后续开发计划」);全绿后批量归档并关波。
 - 退出条件:实机矩阵全绿 + 两个格式提案归档;性能基线 `quick.scroll/select/copy/paste` P95 ≤ 300ms(`window.__clipforgePerf.summary()`)。
 
@@ -62,7 +62,7 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 
 ### W5 治理与演示(横切,不阻塞)
 - `codebase-modularity-refactor`(25/31):随功能触碰渐进,豁免清单只减不增。
-- `debug-mode-performance-observability`(11/16):v1 已落地(调试模式实时指标面板);剩实时采集后续项与验收。
+- `debug-mode-performance-observability`(12/16):v1 已落地,文档对账完成;剩沙箱实测+验收。
 - `framer-motion-adoption-eval`:dormant,按其提案信号表触发。
 - `project-demo-gif-pipeline`(0/30):W1 稳定后启动录制。
 

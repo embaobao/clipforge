@@ -168,9 +168,11 @@
 
 结构：
 - 标题栏：系统原生提供（红绿灯、拖拽、窗口标题），webview 顶部即为侧栏 + 内容区
-- 侧栏（200px）：黑 2% 底，右侧发丝线
-- 内容区：行式表单（label 13px + desc 11.5px muted，控件居右）
-- 底部：版本号 + 恢复默认/导出数据
+- 侧栏（172px 固定常驻，icon + 文案）：黑 2% 底，与内容区以背景色差分隔，不画竖线；选中项黑 6% 底
+- 内容区：行式表单（label 13px + desc 11.5px muted，控件居右），滚动区外固定底部状态条
+- 底部状态条（`SettingsStickyStatusBar`）：保存反馈出现 2.5s 后回落为 section 名，错误态常驻；位于滚动区外，内容再短也贴底
+- 底栏：版本号 + 更新状态徽标 + 恢复默认/导出数据
+- 兜底：section 异常由 `SettingsErrorBoundary` 隔离（error 态重试）；loading/error/permission-missing/empty 四态统一用 `SettingsSectionFallback`（居中图标 + 标题 + 描述 + 可选动作）
 
 ### 7.3 行悬浮预览卡（hover tooltip）
 

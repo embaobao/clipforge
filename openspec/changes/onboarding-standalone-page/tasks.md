@@ -15,7 +15,7 @@
 - [x] 新增 `onboarding.html` 入口（仿 `settings.html`）
 - [x] 新增 `src/onboarding-main.tsx`（仿 `settings-main.tsx`）挂载 `OnboardingApp`
 - [x] 新增 `src/onboarding/OnboardingApp.tsx`，复用引导步骤逻辑并去掉设置页框架依赖
-- [ ] 新增 `src/onboarding/OnboardingStepper.tsx`（分步指示器与切换）
+- [x] 新增 `src/onboarding/OnboardingStepper.tsx`（分步指示器与切换）--2026-10-13:从 OnboardingWizard 内联 stepper 抽为独立受控组件（onStepClick 上抛、aria-current/ dev-probe 保留）;Wizard 三处 setStepIndex 收敛为 goToStep 统一入口（与 onStepChange 日志同源）
 - [x] 新增 `src/onboarding/onboarding.css`（Eco 风格，surface scoped）
 - [x] 固定 `640x560` 窗口下由引导 shell 承担纵向滚动，并新增 `verify-onboarding-surface.mjs` 回归门禁
 - [x] `tauri.conf.json` 新增 `onboarding` 窗口配置（`640x560`，`resizable:false`，`center`）
@@ -39,26 +39,26 @@
 
 ## Phase 4：后续 B - sidebar 全量常驻
 
-- [ ] `SettingsSidebar.tsx` 默认 `collapsible` 从 `"icon"` 改为 `"none"`
-- [ ] `settings.tsx` 移除 sidebar 的 `!absolute !inset-y-0 !h-full` 浮动 className
-- [ ] 移除 `SettingsSectionHeader` 里的 `SidebarTrigger`（或确认保留为无折叠占位）
-- [ ] sidebar 固定宽度常驻；内容区 `SidebarInset` 保持滚动
-- [ ] `settings.css` 调整 sidebar 全量样式与过窄响应式降级
+- [x] `SettingsSidebar.tsx` 默认 `collapsible` 从 `"icon"` 改为 `"none"` --〔实现修订 2026-10-13〕Tailwind v3 迁移后设置页已无 shadcn Sidebar,由自研 `SettingsShell.tsx` 承担:删除收起/展开切换（aside 固定 `w-[172px]` 常驻,icon+文案恒显）,等效达成「不折叠」意图
+- [x] `settings.tsx` 移除 sidebar 的 `!absolute !inset-y-0 !h-full` 浮动 className --〔实现修订〕自研 Shell 无浮动定位问题;随常驻化删除 `navCollapsed` 状态、localStorage 持久化与 collapse/expand i18n 键（2×2）
+- [x] 移除 `SettingsSectionHeader` 里的 `SidebarTrigger`（或确认保留为无折叠占位）--Phase 0 边界冻结时已删（「SidebarTrigger:删除」）,2026-10-13 复核无残留
+- [x] sidebar 固定宽度常驻；内容区 `SidebarInset` 保持滚动 --aside `w-[172px] shrink-0` + main `min-w-0 flex-1 overflow-auto`
+- [x] `settings.css` 调整 sidebar 全量样式与过窄响应式降级 --〔实现修订〕Tailwind v3 迁移后 settings.css 已删,样式走 Tailwind 语义类;过窄降级=侧栏固定宽不可压 + 内容区 `min-w-0` 收缩滚动,无需额外断点
 
 ## Phase 5：后续 C - 显示与兜底
 
-- [ ] 新增 `src/settings/components/SettingsSectionFallback.tsx`（loading/error/permission-missing/empty 四态）
-- [ ] 各 section 接入兜底状态判定
-- [ ] 为设置页与引导页各包 React Error Boundary，捕获渲染异常
-- [ ] 窗口过窄的 CSS 媒体/容器查询降级（sidebar 最小可读宽度 + 内容横向滚动）
-- [ ] 引导权限检测失败 / 设置保存失败的步骤内错误条 + 重试
+- [x] 新增 `src/settings/components/SettingsSectionFallback.tsx`（loading/error/permission-missing/empty 四态）--2026-10-13:四态统一组件（tone→默认图标/语义色,文案与动作由调用方注入,dev 探针 data-fallback-tone）
+- [x] 各 section 接入兜底状态判定 --〔实现修订〕引导窗口 loading/error 态已接 SettingsSectionFallback（错误条含重试,替换原纯文本 status）;设置页 sections 为 catalog 静态渲染无异步加载态,error 由 SettingsErrorBoundary 按页签隔离,permission-missing 由引导/设置的权限卡承担——判定面已覆盖,不另造窗口级 loading
+- [x] 为设置页与引导页各包 React Error Boundary，捕获渲染异常 --此前批次已落地:SettingsErrorBoundary 挂 settings-main/onboarding-main/settings.tsx 页签层三处,本次补 fallback.shown 事件日志
+- [x] 窗口过窄的 CSS 媒体/容器查询降级（sidebar 最小可读宽度 + 内容横向滚动）--〔实现修订〕侧栏固定 172px（shrink-0 不可压）即「最小可读宽度」,内容区 min-w-0 + overflow-auto 收缩滚动,固定窗口宽度下无需断点
+- [x] 引导权限检测失败 / 设置保存失败的步骤内错误条 + 重试 --2026-10-13:OnboardingApp 错误态与权限提示行分离,error=SettingsSectionFallback（title=设置页兜底文案,message=原始错误,action=重试,重试闭包捕获原操作）
 
 ## Phase 6：后续 C - 标准化日志
 
-- [ ] `onboarding-window` 模块：`onboarding.open` / `onboarding.step` / `onboarding.complete` / `permission.check`
-- [ ] `settings-window` 模块：`settings.section` / `settings.changed` / `fallback.shown` / `render-error`
-- [ ] 确认日志只记摘要（key 名、状态、耗时、计数），不记设置值原文/权限 token/剪贴板正文
-- [ ] 性能采样复用 `window.__clipforgePerf`（`onboarding.open` / `settings.section` / `settings.changed`）
+- [x] `onboarding-window` 模块：`onboarding.open` / `onboarding.step` / `onboarding.complete` / `permission.check` --2026-10-13:新建 `src/onboarding/onboarding-log.ts`（四事件 info 摘要,失败静默）;接线:挂载→open(+perf)、Wizard goToStep→step、完成→complete、权限检测→permission.check(status 摘要)
+- [x] `settings-window` 模块：`settings.section` / `settings.changed` / `fallback.shown` / `render-error` --〔实现修订〕settings.section/changed 的 perf 采样此前已有;2026-10-13 新建 `src/settings/settings-log.ts` 补事件流水:settings.changed（patch 成功,记路径数/revision）、settings.fallback.shown（ErrorBoundary 兜底渲染）;render-error 由既有 `Settings surface failed` error 日志承担
+- [x] 确认日志只记摘要（key 名、状态、耗时、计数），不记设置值原文/权限 token/剪贴板正文 --两个 log 模块头注释明确边界;meta 仅 step key/权限 status/路径计数/revision
+- [x] 性能采样复用 `window.__clipforgePerf`（`onboarding.open` / `settings.section` / `settings.changed`）--2026-10-13 新增 onboarding.open（挂载→初始数据就绪）;settings.section/changed 此前已有（performance-smoke 为独立模块,每窗口各自 collector）
 
 ## Phase 7：文档与开发者体验
 
