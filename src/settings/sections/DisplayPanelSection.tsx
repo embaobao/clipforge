@@ -108,18 +108,16 @@ export function DisplayPanelSection({
     ),
     position: (
       <SettingGroup>
-        <div className="flex items-center justify-between gap-8 py-3">
-          <span>{tr("settings.display.positionStrategy")}</span>
-          <SegmentSetting
-            label={tr("settings.display.positionStrategy")}
-            options={(["trayCenter", "followCursor", "center", "windowCenter", "lastPosition", "focusInput"] as AppSettings["positionStrategy"][]).map((v) => ({
-              value: v,
-              label: positionStrategyCopy[v],
-            }))}
-            selected={settings.positionStrategy}
-            onChange={(positionStrategy) => updateSettings({ positionStrategy })}
-          />
-        </div>
+        {/* 直接用 SegmentSetting 自带 label 行；勿再手写外层 div+span 双重包装（8648e1a 引入过双 label + ToggleGroup 被挤压竖排的排版事故） */}
+        <SegmentSetting
+          label={tr("settings.display.positionStrategy")}
+          options={(["trayCenter", "followCursor", "center", "windowCenter", "lastPosition", "focusInput"] as AppSettings["positionStrategy"][]).map((v) => ({
+            value: v,
+            label: positionStrategyCopy[v],
+          }))}
+          selected={settings.positionStrategy}
+          onChange={(positionStrategy) => updateSettings({ positionStrategy })}
+        />
       </SettingGroup>
     ),
     test: (
