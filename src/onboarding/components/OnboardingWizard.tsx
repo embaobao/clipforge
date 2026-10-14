@@ -4,6 +4,7 @@ import { useId, useMemo, useState } from "react";
 import { ToggleSetting } from "../../settings/controls";
 import { OnboardingFeatureCard } from "./OnboardingFeatureCard";
 import { OnboardingStep } from "./OnboardingStep";
+import { OnboardingStepper } from "../OnboardingStepper";
 import {
   CAPTURE_FIELDS,
   FEATURE_CARDS,
@@ -27,6 +28,7 @@ export function OnboardingWizard({
   accessibility,
   openAccessibilitySettings,
   refreshAccessibilityStatus,
+  onStepChange,
   tr,
 }: OnboardingWizardProps) {
   const [stepIndex, setStepIndex] = useState(0);
@@ -45,12 +47,19 @@ export function OnboardingWizard({
     [settings.globalShortcut],
   );
 
+  /** 统一步骤切换入口：setStepIndex 与 onStepChange 回调同源，避免日志漏记。 */
+  function goToStep(next: number) {
+    const clamped = Math.min(Math.max(next, 0), STEPS.length - 1);
+    setStepIndex(clamped);
+    onStepChange?.((STEPS[clamped] ?? STEPS[0]).key);
+  }
+
   function markCompleted() {
     updateSettings({ onboardingCompleted: true });
   }
 
   function skipWizard() {
-    setStepIndex(STEPS.length - 1);
+    goToStep(STEPS.length - 1);
     markCompleted();
   }
 
@@ -59,7 +68,7 @@ export function OnboardingWizard({
       markCompleted();
       return;
     }
-    setStepIndex((current) => Math.min(current + 1, STEPS.length - 1));
+    goToStep(stepIndex + 1);
   }
 
   function handleWizardKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -71,7 +80,7 @@ export function OnboardingWizard({
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      setStepIndex((current) => Math.max(current - 1, 0));
+      goToStep(stepIndex - 1);
       return;
     }
     if (event.key === "Enter" && event.target === event.currentTarget) {
@@ -220,21 +229,7 @@ export function OnboardingWizard({
         </div>
       ) : null}
 
-      <div aria-label={tr("settings.onboarding.stepperLabel")} className="flex gap-1.5" data-dev-probe="onboarding-stepper">
-        {STEPS.map((item, index) => (
-          <button
-            aria-label={`${index + 1}. ${tr(item.titleKey)}`}
-            aria-current={index === stepIndex ? "step" : undefined}
-            className={`relative flex h-7 w-7 items-center justify-center rounded-full border text-[11px] transition-[color,background-color,border-color,transform] active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 before:absolute before:-inset-0.5 before:content-[''] ${index === stepIndex ? "border-foreground bg-foreground text-background" : "border-border text-muted-foreground hover:bg-black/[0.05] dark:hover:bg-white/[0.08]"}`}
-            data-dev-probe={`onboarding-step:${item.key}`}
-            key={item.key}
-            onClick={() => setStepIndex(index)}
-            type="button"
-          >
-            <span>{index + 1}</span>
-          </button>
-        ))}
-      </div>
+      <OnboardingStepper onStepClick={goToStep} stepIndex={stepIndex} tr={tr} />
 
       <OnboardingStep
         descriptionKey={step.descriptionKey}
@@ -249,7 +244,7 @@ export function OnboardingWizard({
         <button
           className={secondaryButtonClass}
           disabled={isFirstStep}
-          onClick={() => setStepIndex((current) => Math.max(current - 1, 0))}
+          onClick={() => goToStep(stepIndex - 1)}
           type="button"
         >
           {tr("settings.onboarding.action.back")}

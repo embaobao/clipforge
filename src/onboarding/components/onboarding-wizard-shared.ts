@@ -28,6 +28,8 @@ export interface OnboardingWizardProps {
   accessibility: OnboardingAccessibility | null;
   openAccessibilitySettings: () => void | Promise<void>;
   refreshAccessibilityStatus: () => void | Promise<void>;
+  /** 步骤切换回调（点击/键盘/跳过统一触发），供调用方记 onboarding.step 日志。 */
+  onStepChange?: (stepKey: OnboardingStepKey) => void;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 

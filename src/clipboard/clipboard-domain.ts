@@ -1,5 +1,5 @@
 // 剪贴板领域纯函数与类型（frontend-surface-architecture-refactor Phase B）
-// 从 src/App.tsx 迁出的「剪贴板内容展示」相关纯逻辑：行文案截断、显示文本、文件路径、tooltip 内容、AI 摘要状态文案。
+// 从 src/App.tsx 迁出的「剪贴板内容展示」相关纯逻辑：行文案截断、显示文本、文件路径、tooltip 内容。
 // 纯函数无副作用、不依赖 React/DOM，供主面板行组件（ClipboardContentPreview / ClipboardRowActions / ClipboardRow）和 App.tsx 共用。
 // TODO: ClipItem 当前 type-only 从 ../App 引入；后续 App.tsx 拆分时迁到共享 types 模块。
 import type { TranslationKey } from "../i18n";

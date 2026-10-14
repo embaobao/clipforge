@@ -1,8 +1,8 @@
-// 设置窗口外壳：系统原生标题栏 + 可收起侧栏 + 内容区 + 底部栏。
+// 设置窗口外壳：系统原生标题栏 + 常驻侧栏 + 内容区 + 底部栏。
 // 仅负责布局，不承载业务状态；红绿灯、拖拽和窗口标题由原生标题栏（decorations: true）提供。
 // 视觉契约：内部不画竖向/底部分割线，侧栏与内容用背景色差分隔，底部用留白分隔。
 import type { ComponentType, ReactNode } from "react";
-import { Download, PanelLeftClose, PanelLeftOpen, RotateCcw } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface SettingsNavItem {
@@ -18,10 +18,6 @@ export interface SettingsShellProps {
   items: SettingsNavItem[];
   /** 导航点击回调。 */
   onSelect: (id: string) => void;
-  /** 侧栏是否收起（仅显示 icon）；状态由调用方持久化。 */
-  collapsed: boolean;
-  /** 切换侧栏收起状态。 */
-  onToggleCollapsed: () => void;
   /** 版本号字符串，显示在底部左侧。 */
   version: string;
   /** 版本补充信息（发布渠道等），跟在版本号后以 · 分隔。 */
@@ -40,20 +36,14 @@ export interface SettingsShellProps {
   resetLabel?: string;
   /** 导出数据按钮文案。 */
   exportLabel?: string;
-  /** 收起侧栏按钮的无障碍文案。 */
-  collapseLabel?: string;
-  /** 展开侧栏按钮的无障碍文案。 */
-  expandLabel?: string;
   className?: string;
 }
 
-/** 设置窗口外壳：原生标题栏 + 收起式侧栏 + 留白分隔的内容区。 */
+/** 设置窗口外壳：原生标题栏 + 固定宽度常驻侧栏 + 留白分隔的内容区。 */
 export function SettingsShell({
   activeId,
   items,
   onSelect,
-  collapsed,
-  onToggleCollapsed,
   version,
   versionMeta,
   updateBadge,
@@ -63,8 +53,6 @@ export function SettingsShell({
   onExport,
   resetLabel,
   exportLabel,
-  collapseLabel = "收起侧栏",
-  expandLabel = "展开侧栏",
   className,
 }: SettingsShellProps) {
   return (
@@ -76,23 +64,8 @@ export function SettingsShell({
       data-surface="settings"
     >
       <div className="flex min-h-0 flex-1">
-        {/* 侧栏：收起时仅显示 icon，宽度过渡 200ms；与内容区用背景色差分隔，不画竖线 */}
-        <aside
-          className={cn(
-            "shrink-0 space-y-0.5 bg-black/[0.02] p-2 transition-[width] duration-200 ease-out dark:bg-white/[0.03]",
-            collapsed ? "w-[52px]" : "w-[172px]",
-          )}
-          data-sidebar-collapsed={collapsed || undefined}
-        >
-          <button
-            aria-label={collapsed ? expandLabel : collapseLabel}
-            className="mb-1 flex h-8 w-full items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/[0.06]"
-            onClick={onToggleCollapsed}
-            title={collapsed ? expandLabel : collapseLabel}
-            type="button"
-          >
-            {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
-          </button>
+        {/* 侧栏：固定宽度常驻（icon + 文案），与内容区用背景色差分隔，不画竖线 */}
+        <aside className="w-[172px] shrink-0 space-y-0.5 bg-black/[0.02] p-2 dark:bg-white/[0.03]">
           {items.map(({ id, label, icon: Icon }) => {
             const active = id === activeId;
             return (
@@ -100,8 +73,7 @@ export function SettingsShell({
                 key={id}
                 aria-label={label}
                 className={cn(
-                  "flex h-8 w-full items-center whitespace-nowrap rounded-md transition-colors active:scale-[0.98]",
-                  collapsed ? "justify-center" : "gap-2 px-2.5 text-[12.5px]",
+                  "flex h-8 w-full items-center gap-2 whitespace-nowrap rounded-md px-2.5 text-[12.5px] transition-colors active:scale-[0.98]",
                   active
                     ? "bg-black/[0.06] font-medium text-foreground dark:bg-white/[0.1]"
                     : "text-muted-foreground hover:bg-black/[0.03] dark:hover:bg-white/[0.05]",
@@ -111,7 +83,7 @@ export function SettingsShell({
                 type="button"
               >
                 {Icon ? <Icon className="h-[14px] w-[14px] flex-shrink-0" size={14} /> : null}
-                {!collapsed ? <span className="truncate">{label}</span> : null}
+                <span className="truncate">{label}</span>
               </button>
             );
           })}
