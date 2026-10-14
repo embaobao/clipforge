@@ -33,7 +33,7 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 ### W1 剪贴板核心闭环收口(P0,当前主战场)
 - `file-image-clipboard-support`(75/83):文本/HTML/图片/文件 复制-展示-粘贴-磁盘清理实机矩阵。
 - `clipboard-multi-format-fidelity`(22/26):多 representation 写回 + 监听去重实机矩阵。
-- `onboarding-standalone-page`(40/52):Phase 4-6 编码已落地(侧栏常驻/四态兜底/日志+perf);剩实机验证项。
+- `onboarding-standalone-page`(35/52):Phase 5-6 编码已落地(四态兜底/日志+perf);Phase 4 侧栏常驻作废(2026-10-14 用户裁决,收起/展开为成品保留);剩实机验证项。
 - `interaction-animation-polish`(25/25):已归档(2026-10-08)。
 - `tailwind-v3-style-refactor`(21/25):盟哥三 surface 人工走查 + 走查修复。
 - `panel-list-perf`:主面板列表性能修复——已 22/22 完成并归档(2026-10-13,新建 capability `panel-list-performance`;692 条实机 quick.scroll P95=1ms、panel.open P95=182ms;payload 瘦身 3 项缓议降级为后续提案)。

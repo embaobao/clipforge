@@ -383,6 +383,8 @@
   "settings.language.current": "Current language",
   "settings.navigation.label": "Settings categories",
   "settings.navigation.toggle": "Collapse or expand settings categories",
+  "settings.action.collapseSidebar": "Collapse sidebar",
+  "settings.action.expandSidebar": "Expand sidebar",
   "settings.action.copy": "Copy",
   "settings.section.shortcut": "Shortcuts",
   "settings.section.onboarding": "Onboarding",

@@ -87,6 +87,25 @@ export function SettingsApp() {
   const initialNavigation = useRef(getInitialNavigationFromUrl());
   const [section, setSection] = useState<SectionKey>(() => initialNavigation.current.section);
   const [recording, setRecording] = useState(false);
+  // 侧栏收起状态：默认收起（仅显示 icon），持久化在 localStorage，跨会话保持。
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("clipforge.settings.navCollapsed") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleNavCollapsed = () => {
+    setNavCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("clipforge.settings.navCollapsed", next ? "1" : "0");
+      } catch {
+        /* localStorage 不可用时仅内存态生效 */
+      }
+      return next;
+    });
+  };
   const [dangerConfirmation, setDangerConfirmation] = useState<"cleanupLogs" | "cleanupData" | "resetAccessibility" | null>(null);
   const [logActionStatus, setLogActionStatus] = useState<{ message: string; state: SettingsStatusPanelState }>({
     message: "",
@@ -672,12 +691,16 @@ export function SettingsApp() {
     <TooltipProvider delayDuration={300}>
       <SettingsShell
         activeId={section}
+        collapsed={navCollapsed}
+        collapseLabel={tr("settings.action.collapseSidebar")}
+        expandLabel={tr("settings.action.expandSidebar")}
         exportLabel={tr("settings.action.exportData")}
         items={SECTIONS.map((item) => ({
           id: item.key,
           label: tr(item.labelKey),
           icon: item.icon,
         }))}
+        onToggleCollapsed={toggleNavCollapsed}
         resetLabel={tr("settings.action.resetDefaults")}
         onSelect={(nextSection) => {
           const typedSection = nextSection as SectionKey;

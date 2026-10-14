@@ -17,7 +17,7 @@
 
 - [x] 3.1 删 ClipContextMenu「AI 分析」菜单项（ClipContextMenu.tsx:170-177）+ props 接口两行（:43,:69-70）+ 解构一行；确认全仓无 onAnalyzeClipboard 传值后不留死 prop
 - [x] 3.2 删 Onboarding Agent 功能卡片（onboarding-wizard-shared.ts:98-104）+ i18n 两键（settings.onboarding.feature.agent.title/body）+ Bot 图标 import（如无其他引用）
-- [x] 3.3 清理 i18n 死键簇（部分完成:onboarding agent 键已删;sceneAi/detail.aiSummary 等旧键簇待专项）--2026-10-13 专项完成:zh/en 对称删 38×2 键（sceneAi.*/detail.aiSummary.*/detail.aiRecommend.*/status.aiSummary*/toast.aiSummaryReady/list.aiSummary*/joyride.*）+ sidebar 收起键 2×2（collapseSidebar/expandSidebar,随 SettingsShell 常驻化废弃）;逐键 grep 确认零引用,JSON 合法
+- [x] 3.3 清理 i18n 死键簇（部分完成:onboarding agent 键已删;sceneAi/detail.aiSummary 等旧键簇待专项）--2026-10-13 专项完成:zh/en 对称删 38×2 键（sceneAi.*/detail.aiSummary.*/detail.aiRecommend.*/status.aiSummary*/toast.aiSummaryReady/list.aiSummary*/joyride.*）;另曾删 sidebar 收起键 2×2,后因 2026-10-14 用户裁决保留收起/展开已恢复,详见 onboarding-standalone-page Phase 4 作废注记;逐键 grep 确认零引用,JSON 合法
 - [x] 3.4 修正过期注释：panel-shared.ts:1「AI 分析入口」、ClipDetailWorkspace.tsx:72「AI 分析随 pi-sdk 迁移待恢复」、clipboard-domain.ts:2「AI 摘要状态文案」--2026-10-13:panel-shared.ts:1 改「模块级日志、窗口拖拽与 UI store」、clipboard-domain.ts:2 删「AI 摘要状态文案」;ClipDetailWorkspace.tsx 一处经先前 pi-sdk 插件区收敛批次已修,grep 无残留
 
 ## 4. 多选状态（待用户拍板，未确认不动）

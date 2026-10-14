@@ -107,7 +107,7 @@
 | --- | --- | --- | --- |
 | W1 | `file-image-clipboard-support` | 75/83 | 文本/HTML/图片/文件 复制、展示、粘贴与磁盘清理实机矩阵 |
 | W1 | `clipboard-multi-format-fidelity` | 22/26 | 系统剪贴板多 representation 写回与监听去重实机矩阵 |
-| W1 | `onboarding-standalone-page` | 40/52 | Phase 4-6 编码已落地(2026-10-13:侧栏常驻/四态兜底/错误条重试/窗口日志+perf);剩托盘不阻塞、tauri dev 全链、正式 .app 权限项等实机验证 |
+| W1 | `onboarding-standalone-page` | 35/52 | Phase 5-6 编码已落地(四态兜底/错误条重试/窗口日志+perf);Phase 4 侧栏常驻经 2026-10-14 用户裁决作废(保留收起/展开成品,任务转缓议);剩托盘不阻塞、tauri dev 全链、正式 .app 权限项等实机验证 |
 | W1 | `tailwind-v3-style-refactor` | 21/25 | 盟哥三 surface(详情/聚合/onboarding)人工走查 + 走查修复 |
 | W1 | `clipboard-data-integrity` | 4/11 | 重复行为已记入 BUSINESS_INDEX「采集去重语义」行(3.1);剩实机验证(条目复活+watcher 开销)、门禁+盟哥确认后归档 |
 | W1 | `detail-page-information-architecture` | 24/31 | v8 三态状态机+MD 编辑器+类型渲染注册表已落地(cdfcbcb);剩各阶段验证+终验(test:unit/test:boundaries + 沙箱六类条目×三态×键盘动线走查) |

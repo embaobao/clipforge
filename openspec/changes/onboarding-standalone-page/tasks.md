@@ -39,11 +39,11 @@
 
 ## Phase 4：后续 B - sidebar 全量常驻
 
-- [x] `SettingsSidebar.tsx` 默认 `collapsible` 从 `"icon"` 改为 `"none"` --〔实现修订 2026-10-13〕Tailwind v3 迁移后设置页已无 shadcn Sidebar,由自研 `SettingsShell.tsx` 承担:删除收起/展开切换（aside 固定 `w-[172px]` 常驻,icon+文案恒显）,等效达成「不折叠」意图
-- [x] `settings.tsx` 移除 sidebar 的 `!absolute !inset-y-0 !h-full` 浮动 className --〔实现修订〕自研 Shell 无浮动定位问题;随常驻化删除 `navCollapsed` 状态、localStorage 持久化与 collapse/expand i18n 键（2×2）
-- [x] 移除 `SettingsSectionHeader` 里的 `SidebarTrigger`（或确认保留为无折叠占位）--Phase 0 边界冻结时已删（「SidebarTrigger:删除」）,2026-10-13 复核无残留
-- [x] sidebar 固定宽度常驻；内容区 `SidebarInset` 保持滚动 --aside `w-[172px] shrink-0` + main `min-w-0 flex-1 overflow-auto`
-- [x] `settings.css` 调整 sidebar 全量样式与过窄响应式降级 --〔实现修订〕Tailwind v3 迁移后 settings.css 已删,样式走 Tailwind 语义类;过窄降级=侧栏固定宽不可压 + 内容区 `min-w-0` 收缩滚动,无需额外断点
+- [~] `SettingsSidebar.tsx` 默认 `collapsible` 从 `"icon"` 改为 `"none"` --**2026-10-14 用户裁决作废**:收起/展开是盟哥已完成的成品能力（SettingsShell collapsed 52px icon 态 + localStorage 持久化）,2026-10-13 曾按本任务误删,已全量恢复（Shell/状态/持久化/i18n 键）;Phase 4「全量常驻」与现状演进冲突,不再执行
+- [~] `settings.tsx` 移除 sidebar 的 `!absolute !inset-y-0 !h-full` 浮动 className --随上条作废（自研 Shell 无此问题,无需改动）
+- [x] 移除 `SettingsSectionHeader` 里的 `SidebarTrigger`（或确认保留为无折叠占位）--Phase 0 边界冻结时已删（「SidebarTrigger:删除」）,2026-10-13 复核无残留;注意:侧栏收起/展开 toggle 在 Shell 内保留,与本条不同物
+- [~] sidebar 固定宽度常驻；内容区 `SidebarInset` 保持滚动 --随用户裁决作废:侧栏保持「展开 172px / 收起 52px」可切换;内容区滚动现状已满足
+- [~] `settings.css` 调整 sidebar 全量样式与过窄响应式降级 --作废:settings.css 已随 Tailwind v3 迁移删除,侧栏样式走 Tailwind 语义类且现状完整
 
 ## Phase 5：后续 C - 显示与兜底
 

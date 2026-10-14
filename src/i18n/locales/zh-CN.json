@@ -383,6 +383,8 @@
   "settings.language.current": "当前语言",
   "settings.navigation.label": "设置分类",
   "settings.navigation.toggle": "收起或展开设置分类",
+  "settings.action.collapseSidebar": "收起侧栏",
+  "settings.action.expandSidebar": "展开侧栏",
   "settings.action.copy": "复制",
   "settings.section.shortcut": "快捷键",
   "settings.section.onboarding": "初次引导",
