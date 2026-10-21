@@ -8114,12 +8114,9 @@ fn hide_panel<R: tauri::Runtime>(
         .get_webview_window("main")
         .ok_or_else(|| "main window is not available".to_string())?;
 
-    // 面板已固定时，尊重用户意图：不隐藏（失焦/外部点击/切换 App 都保持可见）。
-    if is_panel_pinned() {
-        log_to_file("debug", "panel-pin", "hide skipped: panel is pinned");
-        return Ok(panel_trigger_payload(&window, reason, "pinned", ""));
-    }
-
+    // 固定(pin)语义只拦「自动隐藏」：失焦隐藏(前端 is_panel_pinned_command 门控)与
+    // 粘贴前隐藏(hide_panel_before_paste 自查)各自已按 pin 放行;此处若一刀切拦截,
+    // 全局快捷键 toggle / Esc / 显式 hide 命令在 pin 态下全部失效,面板将无法收起。
     save_panel_position(&window);
 
     #[cfg(target_os = "macos")]
