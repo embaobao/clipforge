@@ -5,7 +5,7 @@ import { formatCommandError } from "../../i18n";
 import type { FilePathStatus } from "../../services/clipboard";
 import { WorkspaceCrumb } from "./WorkspaceCrumb";
 import { DetailOverflowMenu } from "./DetailOverflowMenu";
-import { PiAnalysisBar } from "./PiAnalysisBar";
+import { PROMPT_OPTIMIZER_DRAFT_SRC } from "./PromptOptimizerBar";
 import {
   FileListPreview,
   HtmlPreview,
@@ -35,7 +35,8 @@ import { DetailPathRow } from "./detail/detail-path-row";
 import { CaptureOverlay } from "./detail/capture-overlay";
 import { DraftDiff } from "./detail/draft-diff";
 import { DetailLinkList } from "./detail/detail-link-list";
-import { PluginZone, type PluginQueueTask } from "./detail/plugin-zone";
+import { DetailPluginZone } from "./detail/detail-plugin-zone";
+import type { PluginQueueTask } from "./detail/plugin-zone";
 import {
   buildSuggestedTags,
   getDetailSourcePath,
@@ -154,13 +155,16 @@ export function ClipDetailWorkspace({
     setCaptureOpen(false);
   }, [clip?.id, clip?.content, clip?.tags]);
 
-  const handlePiRunState = useCallback((running: boolean) => {
-    setPluginQueue((current) => {
-      const rest = current.filter((task) => task.id !== "pi.analyze");
-      return running
-        ? [...rest, { id: "pi.analyze", label: "AI 分析", status: "running" }]
-        : [...rest, { id: "pi.analyze", label: "AI 分析", status: "done" }];
-    });
+  // 提示词优化器产出：内存草稿 + 切 diff 态，确认后走既有 saveDraftContent 写回。
+  const handlePromptOptimizerDraft = useCallback((content: string) => {
+    setDraft({ content, srcId: PROMPT_OPTIMIZER_DRAFT_SRC, ts: Date.now() });
+    setDraftContent(content);
+    setMode("diff");
+  }, []);
+
+  // 插件队列（AI 分析 / 提示词优化共用）：任务级幂等增删由 DetailPluginZone 负责。
+  const handleQueueChange = useCallback((next: PluginQueueTask[]) => {
+    setPluginQueue(next);
   }, []);
 
   if (!clip) {
@@ -298,18 +302,13 @@ export function ClipDetailWorkspace({
   const renderer = resolveDetailRenderer(clip);
   const runningCount = pluginQueue.filter((task) => task.status === "running").length;
   const pluginZone = (
-    <PluginZone
-      aiSection={
-        <PiAnalysisBar
-          agentProviders={agentProviders}
-          clip={clip}
-          onApplyTags={onApplyTags}
-          onRunStateChange={handlePiRunState}
-          onSearchTag={onSearchTag}
-          tr={tr}
-          variant="menu"
-        />
-      }
+    <DetailPluginZone
+      agentProviders={agentProviders}
+      clip={clip}
+      onApplyTags={onApplyTags}
+      onDraft={handlePromptOptimizerDraft}
+      onQueueChange={handleQueueChange}
+      onSearchTag={onSearchTag}
       queue={pluginQueue}
       runningCount={runningCount}
       tr={tr}

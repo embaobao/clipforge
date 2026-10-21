@@ -34,9 +34,9 @@
 | 设置控件 | `src/settings/controls.tsx` | Switch / Slider / ToggleGroup / Input 语义控件 |
 | 设置 sections | `src/settings/sections/` | 各分类内容（ShortcutLanguage、DisplayPanel、CaptureStorage、AgentUpdateTag、AgentProviderManager：provider 增删改表单，key 只写不回显） |
 | 设置状态条 | `src/settings/components/SettingsStickyStatusBar.tsx` | 底部保存状态 |
-| 详情 / 聚合工作区 | `src/workspace/components/ClipDetailWorkspace.tsx`、`src/workspace/components/detail/` | 详情页三态（浏览/编辑/diff）编排壳 + 子组件：`detail-state.ts` 状态机纯函数、`md-editor.tsx` MD 编辑器、`renderer-registry.ts` 类型渲染注册表（含 golden 测试）、`detail-meta-row.tsx` tags 四源 provenance、`plugin-zone.tsx` 插件区、`draft-diff.tsx` 草稿对比；聚合视图/PiAnalysisBar 在 `src/workspace/components/` |
+| 详情 / 聚合工作区 | `src/workspace/components/ClipDetailWorkspace.tsx`、`src/workspace/components/detail/` | 详情页三态（浏览/编辑/diff）编排壳 + 子组件：`detail-state.ts` 状态机纯函数、`md-editor.tsx` MD 编辑器、`renderer-registry.ts` 类型渲染注册表（含 golden 测试）、`detail-meta-row.tsx` tags 四源 provenance、`detail-plugin-zone.tsx` 插件区装配（AI 分析 + 提示词优化共用插件队列）、`draft-diff.tsx` 草稿对比；聚合视图/PiAnalysisBar/PromptOptimizerBar 在 `src/workspace/components/` |
 | 内置标签规则 / tag provenance | `src-tauri/src/lib.rs`（`builtin_tag_rules_enabled`、`default_tags`）、`src/workspace/components/detail/tag-provenance.ts`、设置页 tag-rules 分区 | 链接/Markdown/#话题 三开关（settings.builtinTagRules）；tags 四源色点存 `clips.metadata.tags_provenance` |
-| Agent / pi-sdk | `src/agent/pi/` | agent、analysis、tools、provider-config、stream；默认 provider 经 `agent_resolve_pi_provider` 运行时解析（设置态无明文 key） |
+| Agent / pi-sdk | `src/agent/pi/` | agent、analysis、tools、provider-config、stream、prompt-optimizer（提示词单次 AI 重写，产出草稿进 diff 态写回）；默认 provider 经 `agent_resolve_pi_provider` 运行时解析（设置态无明文 key） |
 | 编辑器域 | `src/editor/` | 敏感信息、建议、动作 |
 | 智能格式 / 插件动作 | `src/smart-format.ts`、`src/plugin-actions.ts` | 内容智能格式化与动作解析 |
 | 服务契约 | `src/services/contracts.ts`、`src/services/contracts/` | 前后端契约类型 |
