@@ -32,6 +32,7 @@ mod context_collector_system;
 mod context_collectors;
 mod diagnostics;
 mod mcp;
+mod plugin_runtime;
 mod settings_service;
 
 use agent::{

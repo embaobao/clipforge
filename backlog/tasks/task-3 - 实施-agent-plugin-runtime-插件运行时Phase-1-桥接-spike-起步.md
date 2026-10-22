@@ -1,9 +1,10 @@
 ---
 id: TASK-3
 title: 实施 agent-plugin-runtime 插件运行时(Phase 1 桥接 spike 起步)
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-10 05:46'
+updated_date: '2026-10-22 05:09'
 labels:
   - feature
   - agent
