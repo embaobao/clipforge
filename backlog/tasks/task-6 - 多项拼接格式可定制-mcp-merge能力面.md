@@ -1,18 +1,21 @@
 ---
 id: TASK-6
 title: 多项拼接格式可定制+MCP merge能力面
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-10-21 22:00'
+updated_date: '2026-10-22 02:54'
 labels:
   - feature
-dependencies: ['TASK-4']
+dependencies:
+  - TASK-4
 priority: high
 ordinal: 6000
 ---
 
 ## Description
 
+<!-- SECTION:DESCRIPTION:BEGIN -->
 ## Scope / Changes
 
 多条剪贴板内容拼接：前端链路已 90%（多选/⌘C 聚合复制/`copySelectedClips` join/聚合工作区），
@@ -28,13 +31,6 @@ ordinal: 6000
 - 范围红线：富格式（RTF/HTML）合并不做（依赖多格式保真线，另立提案）；
   文件/图片条目拼接明确降级为路径字符串并在 UI 说明。
 
-## Acceptance Criteria
-
-- [ ] 多选 ≥2 条 → 格式菜单改分隔符/编号 → 复制结果与预览一致。
-- [ ] `clipboard.merge` MCP 冒烟：真实调用返回拼接文本，golden/verify 脚本全绿。
-- [ ] `pnpm build:web` + `cargo check` + `pnpm test:unit` 绿。
-- [ ] 拼接顺序在 UI 与 helper 中显式一致（点击序/时间序二选一可见）。
-
 ## Risks
 
 - B 动 specs.rs，与 TASK-3 Phase 2（同文件登记）存在排队冲突：TASK-6 先行则 TASK-3
@@ -44,6 +40,21 @@ ordinal: 6000
 ## Dependencies
 
 - 前置：无硬依赖，但与 TASK-5 排队（都动 src/）；A 可与 TASK-5 同批派给 omp。
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 多选 ≥2 条 → 格式菜单改分隔符/编号 → 复制结果与预览一致。
+- [ ] #2 `clipboard.merge` MCP 冒烟：真实调用返回拼接文本，golden/verify 脚本全绿。
+- [ ] #3 `pnpm build:web` + `cargo check` + `pnpm test:unit` 绿。
+- [x] #4 拼接顺序在 UI 与 helper 中显式一致（点击序/时间序二选一可见）。
+<!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+TASK-6-A 监工验收通过(commit aaee18f): pnpm build:web 绿、pnpm test:unit 全绿(监工复跑)、formatAggregate 8例冒烟PASS、复制/预览同源。AC1 复制==预览未做真实UI端到端(待解锁手测); TASK-6-B(clipboard.merge MCP)与本任务书AC2/3相关, 已派单进行中。
+<!-- SECTION:NOTES:END -->
 
 ## Notes
 
