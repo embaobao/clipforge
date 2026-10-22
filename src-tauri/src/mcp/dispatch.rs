@@ -13,6 +13,7 @@ use super::dispatch_agent_editor::{
     dispatch_plugin_call, dispatch_plugin_list, dispatch_skill_list, dispatch_skill_run,
     dispatch_skill_save_draft,
 };
+use super::dispatch_merge::dispatch_clipboard_merge;
 use super::dispatch_write::{
     dispatch_clipboard_copy, dispatch_clipboard_update, dispatch_clipf_delete,
     dispatch_clipf_export, dispatch_clipf_import,
@@ -111,6 +112,7 @@ pub(crate) fn call_mcp_tool(params: Value) -> Result<Value, (i64, String)> {
         "clipf.delete" => dispatch_clipf_delete(&args)?,
         "clipf.export" => dispatch_clipf_export(&args)?,
         "clipf.import" => dispatch_clipf_import(&args)?,
+        "clipboard.merge" => dispatch_clipboard_merge(&args)?,
         // ===== B3：MCP 设置/Agent 工具分发（复用统一 SettingsService 底层函数；实现见 settings_service/mcp.rs）=====
         "clipf.settings.get" => settings_service::mcp::call_settings_agent_tool(name, &args)?,
         "clipf.settings.patch" => settings_service::mcp::call_settings_agent_tool(name, &args)?,

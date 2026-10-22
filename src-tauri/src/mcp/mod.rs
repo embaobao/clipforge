@@ -1,11 +1,12 @@
 //! MCP stdio 运行时与门面（从 lib.rs 迁入，modularity Phase 4）：run_mcp_stdio 主循环、
 //! JSON-RPC envelope（initialize/tools/list/tools/call）、mcp_status 命令与 call_mcp_tool 路由
-//! 壳。工具规格在 specs.rs（40 条，golden 断言见本文件测试），上下文辅助在 context.rs，
+//! 壳。工具规格在 specs.rs（41 条，golden 断言见本文件测试），上下文辅助在 context.rs，
 //! 各工具臂实现在 dispatch*.rs；子进程句柄 MCP_CHILD 为本模块私有。
 
 pub mod context;
 pub mod dispatch;
 pub mod dispatch_agent_editor;
+pub mod dispatch_merge;
 pub mod dispatch_write;
 pub mod envelope;
 mod specs;
@@ -286,11 +287,11 @@ pub fn get_mcp_status() -> Result<McpStatusPayload, String> {
 mod golden_tests {
     use super::*;
 
-    /// specs 稳定性：40 条工具、名称序列与顺序完全冻结（前端 tools/list 契约）。
+    /// specs 稳定性：41 条工具、名称序列与顺序完全冻结（前端 tools/list 契约）。
     #[test]
     fn mcp_tool_specs_are_frozen() {
         let specs = mcp_tool_specs();
-        assert_eq!(specs.len(), 40);
+        assert_eq!(specs.len(), 41);
         let names: Vec<&str> = specs.iter().map(|spec| spec.name).collect();
         assert_eq!(
             names,
@@ -335,6 +336,7 @@ mod golden_tests {
                 "clipf.delete",
                 "clipf.export",
                 "clipf.import",
+                "clipboard.merge",
             ]
         );
     }
@@ -343,7 +345,7 @@ mod golden_tests {
     #[test]
     fn mcp_tools_payload_shape_is_stable() {
         let tools = mcp_tools();
-        assert_eq!(tools.len(), 40);
+        assert_eq!(tools.len(), 41);
         for tool in &tools {
             assert!(tool.get("name").is_some_and(Value::is_string));
             assert!(tool.get("description").is_some_and(Value::is_string));

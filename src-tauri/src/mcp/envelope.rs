@@ -102,6 +102,10 @@ pub(crate) fn mcp_next_actions(tool: &str) -> Vec<&'static str> {
             "clipboard.copy id=<item id>",
         ],
         "clipboard.copy" => vec!["paste in target app", "clipboard.update id=<item id>"],
+        "clipboard.merge" => vec![
+            "clipboard.copy text=<merged text>",
+            "clipboard.search text=<keyword>",
+        ],
         "clipboard.update" => vec!["clipboard.context.get id=<item id>"],
         "clipboard.editor.context" => vec![
             "clipboard.editor.preview_patch id=<item id>",

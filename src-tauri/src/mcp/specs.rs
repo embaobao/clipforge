@@ -205,9 +205,7 @@ pub(super) fn mcp_tool_specs() -> Vec<McpToolSpec> {
             description: "Check readiness for the default or selected Agent provider without blocking the quick panel.",
             input_schema: || json!({
                 "type": "object",
-                "properties": {
-                    "providerId": { "type": "string" }
-                }
+                "properties": { "providerId": { "type": "string" } }
             }),
         },
         McpToolSpec {
@@ -215,9 +213,7 @@ pub(super) fn mcp_tool_specs() -> Vec<McpToolSpec> {
             description: "List available models for the default or selected OpenAI-compatible Agent provider.",
             input_schema: || json!({
                 "type": "object",
-                "properties": {
-                    "providerId": { "type": "string" }
-                }
+                "properties": { "providerId": { "type": "string" } }
             }),
         },
         McpToolSpec {
@@ -243,10 +239,7 @@ pub(super) fn mcp_tool_specs() -> Vec<McpToolSpec> {
             description: "Prepare a private skill run with explicit context scope and permission trimming.",
             input_schema: || json!({
                 "type": "object",
-                "properties": {
-                    "skillId": { "type": "string" },
-                    "contextSet": { "type": "object" }
-                }
+                "properties": { "skillId": { "type": "string" }, "contextSet": { "type": "object" } }
             }),
         },
         McpToolSpec {
@@ -349,10 +342,7 @@ pub(super) fn mcp_tool_specs() -> Vec<McpToolSpec> {
             description: "Render a simple editor template against safe variables.",
             input_schema: || json!({
                 "type": "object",
-                "properties": {
-                    "template": { "type": "string" },
-                    "variables": { "type": "object" }
-                },
+                "properties": { "template": { "type": "string" }, "variables": { "type": "object" } },
                 "required": ["template"]
             }),
         },
@@ -376,10 +366,7 @@ pub(super) fn mcp_tool_specs() -> Vec<McpToolSpec> {
             description: "Capture current text into ClipForge history.",
             input_schema: || json!({
                 "type": "object",
-                "properties": {
-                    "content": { "type": "string" },
-                    "sourceLabel": { "type": "string" }
-                }
+                "properties": { "content": { "type": "string" }, "sourceLabel": { "type": "string" } }
             }),
         },
         McpToolSpec {
@@ -489,6 +476,20 @@ pub(super) fn mcp_tool_specs() -> Vec<McpToolSpec> {
                 "type": "object",
                 "properties": { "items": { "type": "array", "items": { "type": "object" } } },
                 "required": ["items"]
+            }),
+        },
+        McpToolSpec {
+            name: "clipboard.merge",
+            description: "Merge multiple ClipForge items by ids into plain text with separator, numbering and order. Read-only: no history or clipboard writes.",
+            input_schema: || json!({
+                "type": "object",
+                "properties": {
+                    "ids": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 50 },
+                    "separator": { "type": "string", "description": "Literal separator; supports \\n, \\t and \\r escapes. Defaults to a blank line." },
+                    "numbered": { "type": "boolean" },
+                    "order": { "type": "string", "enum": ["click", "time"], "description": "click keeps ids order, time sorts createdAt descending." }
+                },
+                "required": ["ids"]
             }),
         },
     ]
