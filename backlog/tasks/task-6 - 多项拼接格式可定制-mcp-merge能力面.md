@@ -1,10 +1,10 @@
 ---
 id: TASK-6
 title: 多项拼接格式可定制+MCP merge能力面
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-10-21 22:00'
-updated_date: '2026-10-22 02:54'
+updated_date: '2026-10-22 05:02'
 labels:
   - feature
 dependencies:
@@ -45,8 +45,8 @@ ordinal: 6000
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 多选 ≥2 条 → 格式菜单改分隔符/编号 → 复制结果与预览一致。
-- [ ] #2 `clipboard.merge` MCP 冒烟：真实调用返回拼接文本，golden/verify 脚本全绿。
-- [ ] #3 `pnpm build:web` + `cargo check` + `pnpm test:unit` 绿。
+- [x] #2 `clipboard.merge` MCP 冒烟：真实调用返回拼接文本，golden/verify 脚本全绿。
+- [x] #3 `pnpm build:web` + `cargo check` + `pnpm test:unit` 绿。
 - [x] #4 拼接顺序在 UI 与 helper 中显式一致（点击序/时间序二选一可见）。
 <!-- AC:END -->
 
@@ -54,6 +54,8 @@ ordinal: 6000
 
 <!-- SECTION:NOTES:BEGIN -->
 TASK-6-A 监工验收通过(commit aaee18f): pnpm build:web 绿、pnpm test:unit 全绿(监工复跑)、formatAggregate 8例冒烟PASS、复制/预览同源。AC1 复制==预览未做真实UI端到端(待解锁手测); TASK-6-B(clipboard.merge MCP)与本任务书AC2/3相关, 已派单进行中。
+
+TASK-6-B 监工验收通过(commit 5f0bc02): cargo check/golden/43 单测/真机 stdio 冒烟均监工复跑或 diff 核实; pnpm build:web+test:unit 全绿(41 工具); 红线零写通道 grep 核实。报告笔误: merge 单测实为 7 条(非 8)。AC1(复制==预览 UI 端到端)仍待盟哥解锁手测。
 <!-- SECTION:NOTES:END -->
 
 ## Notes
