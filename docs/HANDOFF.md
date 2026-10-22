@@ -1,5 +1,25 @@
 # ClipForge 视觉重构 · 交接摘要
 
+## 2026-10-22 增量（omp 夜间 step-5 监工派开发：TASK-4/5/6 收官，TASK-3 中途停机）
+
+### ① 开发模式
+盟哥指示：omp 直接开发（newapi/step-5-preview 夜间免费通道），监工 cron `cd600f4e1566` 每 40 分钟巡验收。10-22 盟哥令停止跟进，cron 已 paused，omp 会话已终止。任务书/报告/事故记录全在 `.work/supervisor/`（git 跟踪）。
+
+### ② 已完成并验收 ✅（门禁真跑，监工复核后勾 Done）
+- **TASK-4 pi sdk 迁移**（commit `d6f5e42` 验收）：`src/agent/pi/` 全切 `@earendil-works/pi-agent-core|pi-ai@1.1.0`，旧 `@mariozechner/*` 清零；build:web + test:unit 绿。
+- **TASK-5 提示词快速优化器**（`4a313a3`）：`prompt-optimizer.ts` 5-slot 元提示 + piComplete 单次重写 + diff 确认写回链路走通。
+- **TASK-6A 拼接格式可定制**（`b44771b`）：`formatAggregate` helper 消两处硬编码 join，多选底栏/聚合工作区加分隔符/编号/顺序格式菜单，i18n 对齐。
+- **TASK-6B clipboard.merge MCP**（`5f0bc02`）：41 条工具面 + specs.rs/mod.rs golden/verify 三处同步；cargo check + test:unit 绿。**注意：TASK-3 任务书写的 40 条计数已过期，续作按 41。**
+
+### ③ TASK-3 插件运行时 spike：中断在飞 ⚠️（status In Progress）
+- 工作区未提交：`src-tauri/src/plugin_runtime/{mod,budget,spike}.rs`（~600 行：cordis+rquickjs 依赖、四组 ctx 桥、64KB 超限中断、回收探针、bridge_spike_gate 测试）。
+- 已知卡点：`spike.rs` 用未声明的 tokio（E0433×6 处，集中在 81/85/187/188/335/397 行）；修复授权见 `.work/supervisor/task3-resume.md`（dev-dependencies 加 tokio 或自建 block_on 二选一）。主构建链其余部分干净。
+- 事故记录：run1 死于 tee 管道 EPIPE（非限流），见 `task3-incident.md`；对策=日志改进程直写文件。run2（pid 51578）续作中被本次停机令终止。
+- **续作入口**：任务书 `.work/supervisor/task3-spike.md` + `task3-resume.md`，先修 tokio 卡点 → cargo check 绿 → 跑 spike 测试 → report → 验收。
+
+### ④ 遗留脏文件说明
+`src-tauri/Cargo.{toml,lock}`、`lib.rs`（+`mod plugin_runtime;`）改动均属 TASK-3 在飞产物，勿单独 revert；基线 checkpoint 在 `2258b51`。
+
 ## 2026-10-10 会话增量（panel-list-perf 全量落地 + 沙箱自动验收）
 
 ### ① panel-list-perf 编码完成 ✅（未提交，22/25）
