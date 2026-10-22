@@ -5,9 +5,7 @@ import { checkAnimFreeze } from "./clipboard/anim-freeze-guard";
 import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
 import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
 import { SurfaceFade } from "./components/surface-fade";
-import {
-  getShortcutModLabel,
-} from "./clipboard/clipboard-domain";
+import { getShortcutModLabel, formatAggregate } from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -630,10 +628,6 @@ function ClipForgeApp() {
     setActiveSuggestionIndex(0);
   }, [searchSuggestions]);
 
-  const aggregatePreview = useMemo(() => {
-    return selectedInList.map((item) => item.content.trim()).filter(Boolean).join("\n\n");
-  }, [selectedInList]);
-
   const focusSearch = useCallback(() => {
     setSearchActive(true);
     window.setTimeout(() => searchRef.current?.focus(), 0);
@@ -787,7 +781,7 @@ function ClipForgeApp() {
     window.setTimeout(() => searchRef.current?.focus(), 0);
   };
 
-  const { captureStandardTextClip, copyClip, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent } = useClipWriteback({
+  const { captureStandardTextClip, copyClip, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent, aggregateFormat, setAggregateFormat } = useClipWriteback({
     setClips,
     clipsRef,
     settingsRef,
@@ -806,6 +800,9 @@ function ClipForgeApp() {
     openPath,
     openUrl,
   });
+
+  // 聚合预览与 copySelectedClips 共用 formatAggregate + 同一份格式配置：预览即复制结果。
+  const aggregatePreview = useMemo(() => formatAggregate(selectedInList, aggregateFormat), [selectedInList, aggregateFormat]);
 
   const togglePanelPinned = useCallback(() => {
     const nextPinned = !settingsRef.current.panelPinned;
@@ -1324,7 +1321,9 @@ function ClipForgeApp() {
               <MultiAggregateWorkspace
                 aggregatePreview={aggregatePreview}
                 items={selectedInList}
+                format={aggregateFormat}
                 tr={tr}
+                onFormatChange={setAggregateFormat}
                 onBack={() => {
                   setMultiPreviewOpen(false);
                   setMultiSelectMode(selectedInList.length > 0);

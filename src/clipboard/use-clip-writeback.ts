@@ -1,4 +1,4 @@
-/** 剪贴板写回域 hook · 首批（从 App.tsx 切出）：已复制标记、条目字段更新、选中项导出文本文件。
+/** 剪贴板写回域 hook · 首批（从 App.tsx 切出）：已复制标记、条目字段更新、选中项导出文本文件、聚合复制。
  *  边界：完整写回链（copyClip/copyText/pasteClip/updateClipContent 等）仍在主体，后续批次按域迁入。 */
 import { useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -12,6 +12,8 @@ import { extractHashTags, normalizeTagList, truncateText } from "./clip-model";
 import { pasteClipboard, writeClipboard } from "../services/clipboard";
 import type { PasteMode } from "../services/clipboard";
 import { invalidateViewClipCache } from "./use-clip-cache-invalidation";
+import { formatAggregate } from "./clipboard-domain";
+import { useAggregateFormat } from "./use-aggregate-format";
 
 type ExportTextFilesPayload = {
   directory: string;
@@ -59,6 +61,9 @@ export function useClipWriteback({
   openPath,
   openUrl,
 }: ClipWritebackOptions) {
+  /** 聚合拼接格式：ref 供异步复制链路读最新值，state 驱动聚合工作区菜单。 */
+  const { format: aggregateFormat, setFormat: setAggregateFormat, formatRef: aggregateFormatRef } = useAggregateFormat();
+
   /** 命令回包归一化后合并回列表:按 id 原地替换并同步 clipsRef。
    *  写回族(copyClip/pasteText/pasteClip/聚合复制)共用同一回写形态,抽出来避免
    *  六处复制粘贴;失败由调用方 try/catch 承接。 */
@@ -148,7 +153,6 @@ export function useClipWriteback({
     }
   }
 
-
   async function favoriteSelectedClips(items: ClipItem[]) {
     if (!items.length) return;
     const targetFavorite = !items.every((item) => item.favorite);
@@ -171,13 +175,13 @@ export function useClipWriteback({
     );
   }
 
-
   async function copySelectedClips(items: ClipItem[]) {
     if (!items.length) {
       setNativeStatus(tr("main.status.selectBeforeAggregate"));
       return;
     }
-    const text = items.map((item) => item.content).join("\n\n");
+    // 与聚合工作区预览共用 formatAggregate 与同一格式配置：复制结果即预览。
+    const text = formatAggregate(items, aggregateFormatRef.current);
     try {
       const aggregate = await captureStandardTextClip(
         text,
@@ -374,6 +378,8 @@ export function useClipWriteback({
     openClipTarget,
     openSystemPath,
     updateClipContent,
+    // 聚合格式（TASK-6-A）：state 驱动菜单，ref 供异步复制链路读最新值。
+    aggregateFormat, setAggregateFormat,
   };
 
   /** 复制条目到剪贴板（rich/plain/filesAsPaths 三种模式）。
@@ -489,6 +495,5 @@ export function useClipWriteback({
       finishCopyPerf({ status: perfStatus });
     }
   }
-
 }
 

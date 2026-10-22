@@ -26,6 +26,7 @@
 | 列表 / 虚拟滚动 | `src/clipboard/use-clipboard-list.ts`、`src/clipboard/components/VirtualList.tsx` | 主列表数据与渲染 |
 | 搜索 | `src/clipboard/clip-search.ts`、`src/search-query.ts`、`src/clipboard/components/GlassSearchBar.tsx` | 搜索请求构建与查询语法 |
 | 复制回写 | `src/clipboard/use-clip-writeback.ts`、`src/services/clipboard.ts` | 粘贴写回抑制，避免回环采集 |
+| 聚合拼接格式 | `src/clipboard/clipboard-domain.ts`、`src/clipboard/use-aggregate-format.ts`、`src/clipboard/aggregate-format-storage.ts`、`src/workspace/components/AggregateFormatMenu.tsx` | 多选聚合的分隔符/编号/顺序，复制与预览共用 formatAggregate |
 | 行视觉 / 动画 | `src/clipboard/row-animation.ts`、`src/clipboard/anim-freeze-guard.ts` | 行入场动画、WKWebView 动画冻结守卫 |
 | 快速预览 | `src/clipboard/components/QuickPreviewCard.tsx`、`src/clipboard/components/ClipboardContentPreview.tsx` | hover 预览卡（规格见 DESIGN_SYSTEM 7.3） |
 | 多选 / 回收站 | `src/clipboard/components/MultiSelectBottomBar.tsx`、`src/clipboard/components/TrashPanel.tsx` | 批量删除、回收站视图 |
