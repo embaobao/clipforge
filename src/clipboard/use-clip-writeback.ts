@@ -9,8 +9,9 @@ import type { TranslationKey } from "../i18n";
 import { waitForPasteTriggerRelease, logAppError } from "./panel-shared";
 import { startPerfSpan } from "../performance-smoke";
 import { extractHashTags, normalizeTagList, truncateText } from "./clip-model";
-import { pasteClipboard, writeClipboard } from "../services/clipboard";
-import type { PasteMode } from "../services/clipboard";
+import { ocrExtractAndCopy as ocrExtract } from "./use-ocr-extract";
+import { pasteClipboard, writeClipboard, type PasteMode } from "../services/clipboard";
+
 import { invalidateViewClipCache } from "./use-clip-cache-invalidation";
 import { formatAggregate } from "./clipboard-domain";
 import { useAggregateFormat } from "./use-aggregate-format";
@@ -230,7 +231,6 @@ export function useClipWriteback({
     setMultiPreviewOpen(false);
   }
 
-
   async function openClipTarget(item: ClipItem, targetUrlOverride?: string) {
     const attachment = item.analysis.attachment;
     if (!targetUrlOverride && attachment?.targetType === "path") {
@@ -255,7 +255,6 @@ export function useClipWriteback({
     }
   }
 
-
   async function openSystemPath(path: string) {
     if (!path) return;
     try {
@@ -266,7 +265,6 @@ export function useClipWriteback({
       setNativeStatus(tr("main.status.openPathFailed"));
     }
   }
-
 
   async function updateClipContent(
     item: ClipItem,
@@ -303,7 +301,6 @@ export function useClipWriteback({
     });
     return normalized;
   }
-
 
   // pasteClip 的日志用到 selectedId；经 ref 读取（与 clipsRef 同惯例）使回调依赖
   // 全部为 setter/ref/tr——引用稳定是 App 行回调与 ClipboardRow memo 的前提。
@@ -369,6 +366,7 @@ export function useClipWriteback({
     markClipCopied,
     captureStandardTextClip,
     copyClip,
+    ocrExtractAndCopy: (item: ClipItem) => ocrExtract(item, { captureStandardTextClip, setNativeStatus, tr }), // 实现在 use-ocr-extract.ts(门禁拆分), 此处仅绑定依赖
     copyText,
     updateClip,
     exportSelectedTextFiles,
@@ -378,8 +376,7 @@ export function useClipWriteback({
     openClipTarget,
     openSystemPath,
     updateClipContent,
-    // 聚合格式（TASK-6-A）：state 驱动菜单，ref 供异步复制链路读最新值。
-    aggregateFormat, setAggregateFormat,
+    aggregateFormat, setAggregateFormat, // 聚合格式（TASK-6-A）：state 驱动菜单，ref 供异步复制链路读最新值
   };
 
   /** 复制条目到剪贴板（rich/plain/filesAsPaths 三种模式）。
@@ -462,7 +459,6 @@ export function useClipWriteback({
     });
     return normalized;
   }
-
 
   async function copyText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
     const finishCopyPerf = startPerfSpan("quick.copy", { source });

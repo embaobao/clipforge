@@ -781,7 +781,7 @@ function ClipForgeApp() {
     window.setTimeout(() => searchRef.current?.focus(), 0);
   };
 
-  const { captureStandardTextClip, copyClip, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent, aggregateFormat, setAggregateFormat } = useClipWriteback({
+  const { captureStandardTextClip, copyClip, ocrExtractAndCopy, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent, aggregateFormat, setAggregateFormat } = useClipWriteback({
     setClips,
     clipsRef,
     settingsRef,
@@ -1210,6 +1210,9 @@ function ClipForgeApp() {
                   onCopyMode={(item, mode) => {
                     void copyClip(item, mode);
                   }}
+                  onOcrExtract={(item) => {
+                    void ocrExtractAndCopy(item);
+                  }}
                   onDelete={(item) => {
                     void deleteClips([item.id]);
                   }}
@@ -1257,6 +1260,9 @@ function ClipForgeApp() {
                   onCopy={copyClip}
                   onCopyPlain={(item) => copyClip(item, "plain")}
                   onCopyText={copyText}
+                  onOcrExtract={(clip) => {
+                    void ocrExtractAndCopy(clip);
+                  }}
                   onOpen={openClipTarget}
                   onOpenPath={openSystemPath}
                   onPasteText={pasteText}

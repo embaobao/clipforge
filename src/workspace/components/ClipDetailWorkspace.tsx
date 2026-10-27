@@ -59,6 +59,7 @@ type ClipDetailWorkspaceProps = {
   onCopy: (clip: ClipItem) => void;
   onCopyPlain: (clip: ClipItem) => void;
   onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
+  onOcrExtract: (clip: ClipItem) => void;
   onOpen: (clip: ClipItem) => void;
   onOpenPath?: (path: string) => void;
   onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
@@ -90,6 +91,7 @@ export function ClipDetailWorkspace({
   onCopy,
   onCopyPlain,
   onCopyText,
+  onOcrExtract,
   onOpen,
   onOpenPath,
   onPasteText,
@@ -417,6 +419,7 @@ export function ClipDetailWorkspace({
           menuActions={menuActions}
           tr={tr}
           onCopyText={onCopyText}
+          onOcrExtract={onOcrExtract}
           onOpen={onOpen}
           onOpenPath={onOpenPath}
           onOpenImagePreview={() => setImagePreviewOpen(true)}

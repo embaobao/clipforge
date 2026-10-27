@@ -9,8 +9,8 @@
 ## Phase 2:前端入口与结果落库
 
 - [ ] 2.1 图片条目右键菜单 + 详情页「提取文字」动作：loading 态防重复、失败 toast 带 `OCR_*` 错误码提示
-- [ ] 2.2 结果展示与复制：详情页文本块 + 一键复制（走现有 writeClipboard）
-- [ ] 2.3 「保存为文本条目」：新建 text clip，metadata 记 `sourceImageId`，入 FTS 索引
+- [ ] 2.2 结果展示与复制：详情页文本块 + 一键复制（走现有 writeClipboard）——复制+toast 已落地(右键/详情同一动作链),详情页内嵌文本块展示待下一切片
+- [ ] 2.3 「保存为文本条目」：新建 text clip，metadata 记 `sourceImageId`，入 FTS 索引——已落地 text clip 入库(source=ocr,入 FTS,走 capture_clip_record);metadata.sourceImageId 待补(capture_clip_record 不收 context,需换 capture 路径)
 
 ## Phase 3:验收与门禁
 

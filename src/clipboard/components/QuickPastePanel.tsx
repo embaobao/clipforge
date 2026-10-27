@@ -38,6 +38,7 @@ export type QuickPastePanelProps = {
   onPaste: (item: ClipItem, source?: string) => void;
   onCopySelected: () => void;
   onCopyMode: (item: ClipItem, mode: PasteMode) => void;
+  onOcrExtract: (item: ClipItem) => void;
   onDelete: (item: ClipItem) => void;
   onDeleteSelected: () => void;
   onSelect: (item: ClipItem) => void;
@@ -77,6 +78,7 @@ export function QuickPastePanel({
   onPaste,
   onCopySelected,
   onCopyMode,
+  onOcrExtract,
   onDelete,
   onDeleteSelected,
   onSelect,
@@ -187,6 +189,7 @@ export function QuickPastePanel({
             onOpenAggregate={onOpenAggregate}
             onPaste={onPaste}
             onCopyMode={(mode) => onCopyMode(contextMenu.item, mode)}
+            onOcrExtract={onOcrExtract}
             onCopySelected={onCopySelected}
             onStartMultiSelect={onStartMultiSelect}
             onClearSelection={onClearSelection}

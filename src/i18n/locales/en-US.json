@@ -852,5 +852,11 @@
   "settings.content.ocr.detect": "Auto-detect local endpoints",
   "settings.content.ocr.detecting": "Detecting…",
   "settings.content.ocr.none": "No local endpoint found",
-  "settings.content.ocr.found": "Found {count} endpoint(s), click to adopt"
+  "settings.content.ocr.found": "Found {count} endpoint(s), click to adopt",
+  "main.context.ocrExtract": "Extract text & copy",
+  "main.context.ocrTitle": "Extract text from image via local OCR and copy",
+  "main.context.ocrImageOnly": "Available for image items only",
+  "main.toast.ocrCopied": "Text extracted and copied",
+  "main.status.ocrCopied": "Image text extracted and copied",
+  "main.toast.ocrFailed": "Image text extraction failed"
 }

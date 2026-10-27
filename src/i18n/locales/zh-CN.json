@@ -852,5 +852,11 @@
   "settings.content.ocr.detect": "自动发现本地端点",
   "settings.content.ocr.detecting": "探测中…",
   "settings.content.ocr.none": "未发现本地端点",
-  "settings.content.ocr.found": "发现 {count} 个端点，点击采用"
+  "settings.content.ocr.found": "发现 {count} 个端点，点击采用",
+  "main.context.ocrExtract": "提取文字并复制",
+  "main.context.ocrTitle": "调本地 OCR 提取图内文字并复制",
+  "main.context.ocrImageOnly": "仅图片条目可用",
+  "main.toast.ocrCopied": "已提取文字并复制",
+  "main.status.ocrCopied": "已提取图片文字并复制",
+  "main.toast.ocrFailed": "图片文字提取失败"
 }
