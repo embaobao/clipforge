@@ -57,3 +57,4 @@ artifacts/
 # 临时文件（命令残留）
 _tmp_*
 .work/
+.work/

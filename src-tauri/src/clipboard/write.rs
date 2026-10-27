@@ -66,7 +66,15 @@ pub fn build_clipboard_write_plan(
 ) -> Result<ClipboardWritePlan, String> {
     let mode = paste_mode.unwrap_or("rich");
     if matches!(mode, "plain" | "filesAsPaths" | "files-as-paths") {
-        let text = plain_text_for_item(item);
+        // filesAsPaths 的语义是复制完整路径：file-list 条目的 search_text 存的是
+        // 展示用文件名，完整路径在 file-list 表示与 content 里（ingest 写入约定）。
+        let text = if matches!(mode, "filesAsPaths" | "files-as-paths")
+            && item.primary_format == "application/file-list"
+        {
+            full_paths_for_item(item)
+        } else {
+            plain_text_for_item(item)
+        };
         return Ok(ClipboardWritePlan::new(
             ClipboardWriteMode::PlainText,
             vec![text_entry("text/plain", text.clone())],
@@ -295,6 +303,19 @@ fn plain_text_for_item(item: &ClipItemPayload) -> String {
         })
 }
 
+/// file-list 条目的完整路径文本：优先取 application/file-list 表示内容，
+/// 回退 content（ingest 写入的 content 即换行连接的完整路径）。
+fn full_paths_for_item(item: &ClipItemPayload) -> String {
+    item.representations
+        .iter()
+        .find(|r| r.format == "application/file-list")
+        .and_then(|r| r.content.clone())
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| item.content.clone())
+        .trim()
+        .to_string()
+}
+
 fn clip_err<E: std::fmt::Display>(err: E) -> String {
     err.to_string()
 }
@@ -471,9 +492,10 @@ mod tests {
             build_clipboard_write_plan(&item, Some("filesAsPaths")).expect("path write plan");
         assert_eq!(paths.mode, ClipboardWriteMode::PlainText);
         assert_eq!(paths.written_formats(), vec!["text/plain"]);
+        // 复制为路径必须给完整路径（search_text 存的展示文件名不是路径语义）。
         assert_eq!(
             entry_text(&paths, "text/plain"),
-            Some("a.txt\nb.md".to_string())
+            Some("/tmp/a.txt\n/tmp/b.md".to_string())
         );
     }
 

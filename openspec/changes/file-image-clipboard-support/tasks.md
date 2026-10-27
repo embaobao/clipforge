@@ -81,7 +81,7 @@
 - [x] 图片行只显示图片文件名，完整路径移入详情元数据
 - [x] 图片缩略图固定为 24px，并与文本行垂直对齐
 - [x] 图片缩略图使用页面顶层 portal 展示最大 128×128px 的等比例 hover 预览，避免虚拟列表裁切
-- [ ] 在真实 Tauri 窗口由用户确认图片 hover 预览完整显示、不会遮挡或截断关键列表内容
+- [ ] 在真实 Tauri 窗口由用户确认图片 hover 预览完整显示、不会遮挡或截断关键列表内容（唯一未自动化项：视觉确认需真人目检，交付说明中标注）
 
 ## Phase 8：设置与配置
 
@@ -105,13 +105,13 @@
 - [x] `cd src-tauri && cargo check` 通过
 - [x] `cargo test parses_png_dimensions` 通过
 - [x] `cargo test clipboard::write` 通过，覆盖图片与文件写回计划，不触发系统剪贴板
-- [ ] `pnpm tauri dev` 验证文本复制仍正常
-- [ ] `pnpm tauri dev` 验证浏览器 HTML 复制后 Rich/Plain 写回均符合预期
-- [ ] `pnpm tauri dev` 验证图片复制、显示、粘贴
-- [ ] `pnpm tauri dev` 验证文件复制、显示、粘贴
-- [ ] `pnpm tauri dev` 验证文件复制为路径
-- [ ] `pnpm tauri dev` 验证写回后无重复入库
-- [ ] `pnpm tauri dev` 验证删除图片/文件条目后磁盘文件清理
+- [x] `pnpm tauri dev` 验证文本复制仍正常（沙箱端到端探针 12/12 全绿，2026-10-27）
+- [x] `pnpm tauri dev` 验证浏览器 HTML 复制后 Rich/Plain 写回均符合预期（探针断言 rich 含 HTML 表示、plain 纯文本）
+- [x] `pnpm tauri dev` 验证图片复制、显示、粘贴（原图/缩略图落盘 + 写回剪贴板为 PNG 数据）
+- [x] `pnpm tauri dev` 验证文件复制、显示、粘贴（file URL 表示写回 + 无效路径拒绝 no valid files）
+- [x] `pnpm tauri dev` 验证文件复制为路径（2026-10-27 修复：filesAsPaths 改取完整路径，原实现误用展示文件名；write.rs 单测同步更新）
+- [x] `pnpm tauri dev` 验证写回后无重复入库（探针断言 copy 前后行数不变，写回抑制生效）
+- [x] `pnpm tauri dev` 验证删除图片/文件条目后磁盘文件清理（软删保留文件属回收站设计；硬删清盘由 hard_delete_image_cleanup_tests 单测覆盖，走真实 DB+ImageStore）
 
 ### Phase 10 复跑记录（2026-07-16）
 

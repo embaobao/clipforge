@@ -2334,7 +2334,7 @@ fn restore_clip_records(ids: Vec<String>) -> Result<RestoreClipPayload, String> 
     Ok(RestoreClipPayload { restored_ids: ids })
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct HardDeleteClipPayload {
     hard_deleted_ids: Vec<String>,
@@ -9449,5 +9449,96 @@ fn get_strategy_for_source(source: &str) -> PanelPositionStrategy {
         "shortcut" => PanelPositionStrategy::FollowCursor,
         "command" => PanelPositionStrategy::Center,
         _ => PanelPositionStrategy::FollowCursor,
+    }
+}
+
+#[cfg(test)]
+mod hard_delete_image_cleanup_tests {
+    use super::*;
+
+    /// Phase 10 验收：硬删除图片条目后磁盘原图与缩略图必须清理。
+    /// 走真实 open_clip_db + ImageStore 路径，数据目录经 CLIPFORGE_DATA_DIR 隔离到
+    /// 临时目录（测试进程内其他测试不依赖该环境变量）。
+    #[test]
+    fn hard_delete_removes_image_files_on_disk() {
+        use clipboard::payload::ImagePayload;
+
+        let root = std::env::temp_dir().join(format!(
+            "clipforge-hard-delete-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&root).expect("create data dir");
+        std::env::set_var("CLIPFORGE_DATA_DIR", &root);
+
+        init_clip_database().expect("init db");
+
+        // image 库真实编码的 PNG（store 会做真实解码，手拼字节过不了 CRC 校验）
+        let img = image::ImageBuffer::from_pixel(2, 2, image::Rgba([255u8, 0, 0, 255]));
+        let mut png_bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .expect("test png encode");
+        let image = ImagePayload {
+            bytes: png_bytes,
+            width: 2,
+            height: 2,
+        };
+        let store = clipboard::ImageStore::new(
+            image_storage_path().expect("image storage path"),
+        );
+        let stored = store.store(&image).expect("store image");
+        assert!(stored.origin_path.exists());
+        assert!(stored.thumbnail_path.exists());
+
+        let conn = open_clip_db().expect("open db");
+        let id = "clip_hard_delete_test_row".to_string();
+        conn.execute(
+            "INSERT INTO clips (id, content, content_hash, primary_format, kind, bucket,
+                 source, source_label, payload_kind, image_file, thumbnail_path,
+                 created_at, updated_at, last_seen_at)
+             VALUES (?1, ?2, 'test-hash', 'image/png', 'media', 'all', 'test', 'test',
+                 'image', ?3, ?4, 1, 1, 1)",
+            rusqlite::params![
+                id,
+                stored.file_name,
+                stored.origin_path.to_string_lossy().to_string(),
+                stored.thumbnail_path.to_string_lossy().to_string(),
+            ],
+        )
+        .expect("insert image row");
+
+        let payload = hard_delete_clip_records(vec![id])
+            .expect("hard delete should succeed");
+        assert!(
+            payload
+                .hard_deleted_ids
+                .contains(&"clip_hard_delete_test_row".to_string()),
+            "delete payload should report the row: {payload:?}"
+        );
+
+        assert!(
+            !stored.origin_path.exists(),
+            "origin image file should be removed: {}",
+            stored.origin_path.display()
+        );
+        assert!(
+            !stored.thumbnail_path.exists(),
+            "thumbnail should be removed: {}",
+            stored.thumbnail_path.display()
+        );
+        let left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM clips WHERE id = 'clip_hard_delete_test_row'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count row");
+        assert_eq!(left, 0, "row should be gone after hard delete");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
