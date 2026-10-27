@@ -64,20 +64,24 @@
 
 - [x] 更新 `docs/PROPOSAL_ROADMAP.md`（本提案进度与依赖）
 - [x] 更新 `openspec/project.md`（如需要）
-- [ ] 在设置页与引导页相关文档标注 surface 边界与样式分层
+- [x] 在设置页与引导页相关文档标注 surface 边界与样式分层（2026-10-27:BUSINESS_INDEX Surface 表下补「独立窗口互不阻塞 + 样式分层契约 + 跨 surface 只走 command/事件」条目）
 - [ ] 提供 Eco 风格视觉与兜底态的截图/录屏验证记录（实机）
 
 ## Phase 8：验证与发布门禁
 
-- [ ] `pnpm openspec validate onboarding-standalone-page --strict`
-- [ ] `pnpm openspec validate --changes --strict`
-- [ ] `pnpm build`
-- [ ] `cd src-tauri && cargo check`
+- [x] `pnpm openspec validate onboarding-standalone-page --strict`（2026-10-27 绿,--changes --strict 23/23 绿）
+- [x] `pnpm openspec validate --changes --strict`（同上 23/23）
+- [x] `pnpm build`（2026-10-27 成功,含 release DMG）
+- [x] `cd src-tauri && cargo check`（同日 clean 0 warning）
 - [ ] `pnpm tauri dev` 验证：首启动自动弹引导、引导窗口五步可用、完成/跳过、设置页触发按钮、sidebar 全量、兜底四态、日志输出
 - [ ] 验证托盘与全局快捷键唤起主面板不被阻塞
 - [ ] 验证 `onboarding.open` / `settings.section` P95 <= 300ms
-- [ ] 验证日志不含敏感值（设置原文/token/剪贴板正文）
-- [ ] 记录未完成的真实桌面权限与实机验证项，不虚报完成
+- [x] 验证日志不含敏感值（设置原文/token/剪贴板正文）（2026-10-27:当日沙箱 clipforge.jsonl 审计——无 cf-e2e 剪贴板标记泄漏、无 token/secret 值,仅环境快照路径与工具名）
+- [x] 记录未完成的真实桌面权限与实机验证项，不虚报完成（见下「2026-10-27 未验证项」）
+
+### 2026-10-27 未验证项（实机受阻,不虚报）
+
+- 会话后段机器进入锁屏,CGEvent 探针/实机截图全部失效（AGENTS.md 已明示锁屏下必然超时）。受阻项:①托盘/快捷键唤起主面板不被引导窗口阻塞的实机操作记录(38/77)——功能面证据:引导为独立窗口 surface,面板 show 探针在解锁时段实测 3-34ms、动画可打断、无透明鬼影;②Eco 视觉与兜底态截图/录屏(68);③`onboarding.open`/`settings.section` P95≤300ms 需解锁后从 `window.__clipforgePerf` 采样(78)。解锁后按 `pnpm test:perf-panel -- --sandbox` + 首启重置流程补录。附:perf-panel 探针在锁屏时段的 hide/blur 读数已判定为污染样本并落账 backlog TASK-7（待解锁重测）。
 
 ## 分阶段验收说明
 

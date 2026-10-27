@@ -13,6 +13,8 @@
 | 设置 | `settings` | `settings.html` | `src/settings-main.tsx` → `src/settings.tsx` | `src/settings/components/SettingsShell.tsx`（系统原生标题栏，页面内不画红绿灯） | `src/settings/` |
 | 引导 | `onboarding` | `onboarding.html` | `src/onboarding-main.tsx` → `src/onboarding/OnboardingApp.tsx` | `src/onboarding/components/OnboardingWizard.tsx` | `src/onboarding/` |
 
+- Surface 边界与样式分层（引导/设置独立窗口）:引导（onboarding）与设置（settings）是独立窗口 surface,与主面板（main）互不阻塞——引导窗口常驻不挡托盘/全局快捷键唤起主面板;样式分层遵守「全局 token 只在 `src/index.css` 的 `:root`,组件只消费 Tailwind 语义类,不重定义、不新建组件级 CSS」(契约见 docs/DESIGN_SYSTEM.md);各 surface 独立 HTML 入口 + 独立根组件,跨 surface 只经 Tauri command/事件通信,不共享 React 状态。
+
 - 窗口属性（decorations / transparent / 尺寸 / hiddenTitle）唯一来源：`src-tauri/tauri.conf.json`。窗口 chrome 类问题（双标题栏、拖拽、圆角）先查这里，再看对应 Shell 根类名。
 - Rust 入口：`src-tauri/src/main.rs` → `src-tauri/src/lib.rs`。
 
