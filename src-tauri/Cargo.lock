@@ -582,6 +582,7 @@ dependencies = [
  "core-foundation",
  "core-graphics",
  "file_icon_provider",
+ "futures",
  "image",
  "json5",
  "rquickjs",
@@ -596,6 +597,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-positioner",
  "tauri-plugin-updater",
+ "tokio",
 ]
 
 [[package]]

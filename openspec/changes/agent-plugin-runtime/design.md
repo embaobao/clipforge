@@ -289,7 +289,7 @@ ctx.register.tool({
 
 **校验与落盘**:写入前宿主 Rust 侧 JSON Schema 校验,非法拒绝并返回 JSON Pointer 错误路径(如 `/rules/0/tag`);通过后原子写(temp+rename,同 settings_service 纪律)。
 
-**生效**:写入成功 → `dispose + spawn` 重启该插件,新 Runtime 读新 config。update 语义核实(cordis-rs 0.11.1 源码):`FiberHandle::update(PreparedChange)` = 同 Fiber 身份换输入重跑 apply,precommit 可 veto;但提交后 apply 失败(`UpdateError::Apply`)无法经 update 策略恢复。v1 仍走 dispose→spawn 重启;二期若换 update,失败兜底仍是 dispose+重 spawn。Phase 1 spike 顺带验证桥接可行性,结论回写本节。
+**生效**:写入成功 → `dispose + spawn` 重启该插件,新 Runtime 读新 config。update 语义核实(cordis-rs 0.11.1 源码):`FiberHandle::update(PreparedChange)` = 同 Fiber 身份换输入重跑 apply,precommit 可 veto;但提交后 apply 失败(`UpdateError::Apply`)无法经 update 策略恢复。v1 仍走 dispose→spawn 重启;二期若换 update,失败兜底仍是 dispose+重 spawn。**spike 实测回写(2026-10-27,过闸)**:`update(PreparedChange::from_input::<P>(input))` API 可用——同 Fiber 身份换代成功,换代后 Fiber 收敛 `Active`,再 `dispose` 收敛 `Disposed`;但 apply 失败不可经 update 恢复的源码结论不变,**v1 配置变更维持 dispose→spawn 重启语义**(update 只作二期可选优化)。
 
 **自愈**:config.json 丢失/损坏/不合 schema → 以 schema default 启动,记 warn 日志,不拒绝插件启动。
 
@@ -476,6 +476,7 @@ rquickjs 0.14(绑定 quickjs-ng)文档/源码核实语义落成的执行细则;P
 ### 18.1 实例与线程模型
 
 - **一插件 = 一线程 + 一 AsyncRuntime + 一 Context**:默认(不开 parallel feature)所有句柄 !Send,单线程钉死由类型系统强制;跨线程只走消息通道(桥的 JSON 边界)。
+- **spike 实测补充(2026-10-27)**:cordis 内部 `tokio::spawn` 要求 `apply` future 是 `Send`,与 rquickjs 句柄 `!Send` 直接组合不过编译。落位方式 = **QuickJS episode 在 apply 内 `futures::executor::block_on` 单次 poll 同步收敛**(!Send 状态不跨 await 点存活,全部创建/销毁发生在同一次 poll 的栈帧内);Phase 2 生产实现沿用该模式,插件自有线程承载 tokio current_thread runtime。
 - `parallel` feature 实验性且全局锁串行化,**禁用**;feature 集取 `loader` + `futures` + `classes` + `properties`(serde 互操作用独立 crate `rquickjs-serde`,版本与 rquickjs 锁齐)。
 - AsyncRuntime 常驻驱动任务(插件线程内 `spawn_local(rt.drive())`),否则空闲 job 不推进。
 - **销毁纪律**:Context 必须先于 Runtime drop(`JS_FreeRuntime` 遇存活 context 直接 abort 进程);全部销毁发生在插件自有线程。
@@ -487,7 +488,7 @@ rquickjs 0.14(绑定 quickjs-ng)文档/源码核实语义落成的执行细则;P
 3. 超限处置 = **强制回收**:Fiber 收敛 Failed → 宿主 dispose → Runtime 销毁,插件停 `failed`(状态语义单一化见 §3);不尝试恢复 JS 状态,无自动重建循环。重启决策归用户/Agent 显式发起(重新启用=新 spawn)。
 
 - GC:QuickJS 以引用计数为主,`run_gc()`/`set_gc_threshold` 只收循环引用;dispose 时整 Runtime 连根拔,不做细粒度回收。
-- 每实例固定开销无公开数字:Phase 1 spike 用 `memory_usage()` 实测基线回写本节,8MB 默认值以此为据复核。
+- 每实例固定开销实测基线(spike 回写,2026-10-27):空 `AsyncRuntime` 的 `memory_usage().malloc_size` = **27808 字节(约 27KB,macOS arm64,rquickjs 0.14/quickjs-ng)**,远低于 8MB——**8MB 默认值维持不变**。另两条实测约束:①裸 QuickJS Context 创建分配 >64KB,`set_memory_limit` 必须在 Context 建成**之后**设置(语义也更准:上限管插件运行期分配);②64KB 量级上限下桥接对象分配即触顶,limit 随 manifest 走、宿主桥接自有对象不计入插件预算。
 
 ### 18.3 双层看门狗(超时完整机制)
 

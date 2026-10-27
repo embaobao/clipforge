@@ -15,18 +15,19 @@
 //!
 //! # 线程模型（design §18.1）
 //! 一插件 = 一线程 + 一 AsyncRuntime + 一 Context。spike 用一个 `std::thread` 承载
-//! QuickJS（rquickjs 默认不开 `parallel` feature，句柄 !Send，钉死单线程），跨线程只走
-//! 消息通道把 `SpikeOutcome` 送回测试线程。
+//! tokio current_thread runtime；cordis 内部 `tokio::spawn` 要求 apply future 是 Send，
+//! 而 rquickjs 句柄（不开 parallel feature）是 !Send，因此 QuickJS episode 在 apply
+//! 内用 `futures::executor::block_on` 单次 poll 同步收敛；跨线程只走消息通道把
+//! `SpikeOutcome` 送回测试线程。
 
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use rquickjs::{
-    function::{Async, MutFn},
-    AsyncContext, AsyncRuntime, Ctx, Exception, Function, Object, Value,
+    function::MutFn, AsyncContext, AsyncRuntime, Ctx, Exception, Function, Object, Value,
 };
 
-use super::budget::FIXTURE_MEMORY_LIMIT_BYTES;
+use super::budget::{DEFAULT_MEMORY_LIMIT_BYTES, FIXTURE_MEMORY_LIMIT_BYTES};
 use crate::plugin_runtime::SpikeOutcome;
 
 /// JS fixture：activate 语义入口。四组接口各调一次，返回桥接观测值。
@@ -37,16 +38,16 @@ const SPIKE_JS: &str = r#"
 (function activateSpike(ctx) {
   var search = ctx.clipf.search({ q: "spike" });
   var read = ctx.clipf.read({ id: "1" });
-  ctx.on("clip.updated", function (envelope) { ctx.__probe_listener_hits.push(envelope); });
-  ctx.register.tool({ name: "spike-tool", description: "spike", handler: function () { return 1; } });
-  ctx.register.template({ name: "spike-tpl", text: "hi" });
-  ctx.log.info("spike activate");
+  ctx.on("clip.updated", function (envelope) { __probe_listener_hits.push(envelope); });
+  var toolName = ctx.register.tool({ name: "spike-tool", description: "spike", handler: function () { return 1; } });
+  var templateName = ctx.register.template({ name: "spike-tpl", text: "hi" });
+  var logged = ctx.log.info("spike activate");
   return {
     search: search,
     read: read,
-    toolName: ctx.__probe_tool_name,
-    templateName: ctx.__probe_template_name,
-    logged: ctx.__probe_logged
+    toolName: toolName,
+    templateName: templateName,
+    logged: logged
   };
 })
 "#;
@@ -66,6 +67,8 @@ struct BridgeProbes {
     log_calls: u32,
     event_dispatches: u32,
     listener_drops: u32,
+    /// `ctx.on` 注册的事件名清单：dispose 等价观测时清空并计数（design §3）。
+    listeners: Vec<String>,
     tool_name: String,
     template_name: String,
     logged: bool,
@@ -94,8 +97,8 @@ pub fn run_bridge_spike() -> Result<SpikeOutcome, String> {
         .map_err(|_| "spike thread dropped result".to_owned())?
 }
 
-/// 在 LocalSet 上跑 spike：rquickjs 的 Async 闭包要求 `!Send` 上下文（默认不开
-/// parallel feature），cordis apply future 要求 Send，两者通过线程边界组合。
+/// 在 LocalSet 上跑 spike：cordis 的 spawn/apply 走 tokio 任务，QuickJS episode 已在
+/// apply 内 block_on 收敛，这里的 LocalSet 只承载外层编排 future。
 async fn spike_on_local_set() -> Result<SpikeOutcome, String> {
     let probes = Arc::new(Mutex::new(BridgeProbes::default()));
 
@@ -143,54 +146,12 @@ async fn run_fiber_bridge(probes: Arc<Mutex<BridgeProbes>>) -> Result<bool, Stri
             Ok(())
         }
 
+        // cordis 内部 tokio::spawn 要求 apply future 是 Send，而 rquickjs 句柄（不开
+        // parallel feature）是 !Send：整个 QuickJS episode 用 block_on 在 apply 的
+        // 单次 poll 内同步跑完，!Send 状态不跨 await 点存活（design §18.1 的 spike
+        // 等价实现，回写 design §12 备案）。
         async fn apply(&self, _ctx: Context, _: &()) -> Result<(), std::io::Error> {
-            let runtime = AsyncRuntime::new()
-                .map_err(|e| std::io::Error::other(format!("AsyncRuntime::new: {e}")))?;
-            runtime
-                .set_memory_limit(FIXTURE_MEMORY_LIMIT_BYTES)
-                .await;
-            let js_ctx = AsyncContext::full(&runtime)
-                .await
-                .map_err(|e| std::io::Error::other(format!("AsyncContext::full: {e}")))?;
-
-            // 桥接与 JS 调用都在同一 async_with 内完成：Ctx 生命周期钉在 'js 内。
-            let ok = js_ctx
-                .async_with(async |ctx| bridge_and_call(ctx, self.probes.clone()).await)
-                .await
-                .map_err(|e| std::io::Error::other(format!("bridge_and_call: {e}")))?;
-            if !ok {
-                return Err(std::io::Error::other("js side rejected the bridge"));
-            }
-
-            // 事件分发一次，验证 ctx.on 监听真实可达（JS 回调被调用）。
-            js_ctx
-                .with(|ctx| {
-                    let hits: rquickjs::Array = match ctx.globals().get("__probe_listener_hits") {
-                        Ok(a) => a,
-                        Err(_) => return,
-                    };
-                    let payload = match ctx.json_parse(r#"{"event":"clip.updated","bytes":2}"#) {
-                        Ok(v) => v,
-                        Err(_) => return,
-                    };
-                    for i in 0..hits.len() {
-                        if let Ok(cb) = hits.get::<Function<'_>>(i) {
-                            let _: rquickjs::Result<()> = cb.call((payload.clone(),));
-                            self.probes.lock().unwrap().event_dispatches += 1;
-                        }
-                    }
-                })
-                .await;
-
-            // 监听回收：清空桥侧 Vec 并计数（dispose 语义的 spike 等价观测）。
-            let mut p = self.probes.lock().unwrap();
-            p.listener_drops += p.listeners.len() as u32;
-            p.listeners.clear();
-
-            // 清理顺序（design §18.1）：Context 先于 Runtime drop。
-            drop(js_ctx);
-            drop(runtime);
-            Ok(())
+            quickjs_episode(self.probes.clone())
         }
     }
 
@@ -206,12 +167,73 @@ async fn run_fiber_bridge(probes: Arc<Mutex<BridgeProbes>>) -> Result<bool, Stri
         .map_err(|e| format!("spawn bridge plugin: {e}"))?;
 
     let state = handle.state();
+
+    // 1.3 附带验证：cordis update(输入替换)可行性——同 Fiber 身份换一代输入重跑
+    // apply。结论回写 design §12（v1 配置变更是否维持 dispose→spawn 重启语义）。
+    let update_ok = match handle
+        .update(cordis::PreparedChange::from_input::<BridgePlugin>(()))
+        .await
+    {
+        Ok(_) => matches!(handle.state(), FiberState::Active),
+        Err(e) => {
+            let _ = handle.dispose().await;
+            return Err(format!("update bridge plugin: {e}"));
+        }
+    };
+
     handle
         .dispose()
         .await
         .map_err(|e| format!("dispose bridge plugin: {e}"))?;
     let final_state = handle.state();
-    Ok(matches!(state, FiberState::Active) && matches!(final_state, FiberState::Disposed))
+    Ok(matches!(state, FiberState::Active)
+        && update_ok
+        && matches!(final_state, FiberState::Disposed))
+}
+
+/// QuickJS episode：建 Runtime/Context、桥四组接口、跑 fixture、分发事件、回收。
+///
+/// 本函数整体在 `futures::executor::block_on` 内同步执行（由 [`BridgePlugin::apply`]
+/// 在宿主线程的单次 poll 中驱动），内部 future 是 !Send，绝不跨线程传递。
+fn quickjs_episode(probes: Arc<Mutex<BridgeProbes>>) -> Result<(), std::io::Error> {
+    futures::executor::block_on(async {
+        let runtime = AsyncRuntime::new()
+            .map_err(|e| std::io::Error::other(format!("AsyncRuntime::new: {e}")))?;
+        // 顺序约束：裸 QuickJS Context 的创建分配即超过 64KB fixture 上限，
+        // 必须先建 Context 再设限——语义也更贴近真实宿主（限制插件运行期分配）。
+        // 桥接 Fiber 用默认 8MB（桥接对象+fixture 的分配量远超 64KB）；64KB 留给
+        // 烧内存用例（run_memory_limit_case）验证上限强制。
+        let js_ctx = AsyncContext::full(&runtime)
+            .await
+            .map_err(|e| std::io::Error::other(format!("AsyncContext::full: {e}")))?;
+        runtime
+            .set_memory_limit(DEFAULT_MEMORY_LIMIT_BYTES)
+            .await;
+
+        // 桥接与 JS 调用都在同一 async_with 内完成：Ctx 生命周期钉在 'js 内。
+        let ok = js_ctx
+            .async_with(async |ctx| bridge_and_call(ctx, probes.clone()).await)
+            .await
+            .map_err(|e| std::io::Error::other(format!("bridge_and_call: {e}")))?;
+        if !ok {
+            return Err(std::io::Error::other("js side rejected the bridge"));
+        }
+
+        // 事件分发一次，验证 ctx.on 监听真实可达（JS 回调被调用）。
+        js_ctx.with(|ctx| dispatch_probe_event(ctx, &probes)).await;
+
+        // 监听回收：清空桥侧 Vec 并计数（dispose 语义的 spike 等价观测）。
+        {
+            let mut p = probes.lock().unwrap();
+            p.listener_drops += p.listeners.len() as u32;
+            p.listeners.clear();
+        }
+
+        // 清理顺序（design §18.1）：Context 先于 Runtime drop。
+        drop(js_ctx);
+        drop(runtime);
+        Ok(())
+    })
 }
 
 /// 在给定 Ctx 上桥四组接口并执行 JS fixture。
@@ -227,6 +249,8 @@ async fn bridge_and_call(
     let ctx_obj = Object::new(ctx.clone())?;
 
     // ---- 组 1：ctx.clipf.* 能力对象（stub 假数据）----
+    // 同步闭包即可：stub 返回字符串本身（Async 存根会返回 Promise，fixture 拿不到
+    // 字符串结果）；参数收 Object 再取字段，对齐 design §4 的「spec 对象入参」形状。
     let clipf = Object::new(ctx.clone())?;
     {
         let p = probes.clone();
@@ -234,12 +258,11 @@ async fn bridge_and_call(
             "search",
             Function::new(
                 ctx.clone(),
-                Async(move |q: String| {
-                    let p = p.clone();
-                    async move {
-                        p.lock().unwrap().search_calls += 1;
-                        Ok::<_, rquickjs::Error>(format!("stub-search:{q}"))
-                    }
+                MutFn::new(move |spec: Object<'_>| {
+                    let q: String = spec.get("q").unwrap_or_default();
+                    let mut g = p.lock().unwrap();
+                    g.search_calls += 1;
+                    Ok::<_, rquickjs::Error>(format!("stub-search:{q}"))
                 }),
             )?,
         )?;
@@ -248,12 +271,11 @@ async fn bridge_and_call(
             "read",
             Function::new(
                 ctx.clone(),
-                Async(move |id: String| {
-                    let p = p.clone();
-                    async move {
-                        p.lock().unwrap().read_calls += 1;
-                        Ok::<_, rquickjs::Error>(format!("stub-read:{id}"))
-                    }
+                MutFn::new(move |spec: Object<'_>| {
+                    let id: String = spec.get("id").unwrap_or_default();
+                    let mut g = p.lock().unwrap();
+                    g.read_calls += 1;
+                    Ok::<_, rquickjs::Error>(format!("stub-read:{id}"))
                 }),
             )?,
         )?;
@@ -261,21 +283,26 @@ async fn bridge_and_call(
     ctx_obj.set("clipf", clipf)?;
 
     // ---- 组 2：ctx.on（事件订阅，仅已声明事件名生效）----
+    // MutFn/闭包要求 'static，不能捕获 'js 的 Array：JS 回调容器的维护放到 JS shim
+    // （push 进 __probe_listener_hits），Rust 侧只留订阅计数钩子（捕获 'static Arc）。
     {
         let p = probes.clone();
-        let hits = rquickjs::Array::new(ctx.clone())?;
-        let on = Function::new(
+        let on_subscribe = Function::new(
             ctx.clone(),
-            MutFn::new(move |name: String, cb: Function<'_>| {
-                // spike 只桥已声明事件名（design §4：未声明静默忽略）。
-                if name != "clip.updated" {
-                    return Ok(());
-                }
-                p.lock().unwrap().on_subscribes += 1;
-                // 把 JS 回调挂到全局数组，dispatch 时逐个调用。
-                let _ = hits.set(hits.len(), cb);
+            MutFn::new(move |name: String| {
+                let mut g = p.lock().unwrap();
+                g.on_subscribes += 1;
+                g.listeners.push(name);
                 Ok::<_, rquickjs::Error>(())
             }),
+        )?;
+        globals.set("__probe_on_subscribe", on_subscribe)?;
+        let on: Function<'_> = ctx.eval(
+            r#"(function (name, cb) {
+                 if (name !== "clip.updated") { return; }
+                 __probe_on_subscribe(name);
+                 __probe_listener_hits.push(cb);
+               })"#,
         )?;
         ctx_obj.set("on", on)?;
     }
@@ -290,8 +317,9 @@ async fn bridge_and_call(
                 let name: String = spec.get("name").unwrap_or_default();
                 let mut g = p.lock().unwrap();
                 g.tool_registers += 1;
-                g.tool_name = name;
-                Ok::<_, rquickjs::Error>(())
+                g.tool_name = name.clone();
+                // 回传注册名，fixture 借返回值验证桥接往返。
+                Ok::<_, rquickjs::Error>(name)
             }),
         )?;
         register.set("tool", tool)?;
@@ -302,8 +330,8 @@ async fn bridge_and_call(
                 let name: String = spec.get("name").unwrap_or_default();
                 let mut g = p.lock().unwrap();
                 g.template_registers += 1;
-                g.template_name = name;
-                Ok::<_, rquickjs::Error>(())
+                g.template_name = name.clone();
+                Ok::<_, rquickjs::Error>(name)
             }),
         )?;
         register.set("template", template)?;
@@ -321,7 +349,7 @@ async fn bridge_and_call(
                 g.log_calls += 1;
                 g.logged = true;
                 let _ = msg;
-                Ok::<_, rquickjs::Error>(())
+                Ok::<_, rquickjs::Error>(true)
             }),
         )?;
         log.set("info", info)?;
@@ -330,9 +358,11 @@ async fn bridge_and_call(
 
     globals.set("ctx", ctx_obj)?;
 
-    // JS 侧 fixture：activate 语义入口，四组各调一次。
+    // JS 侧 fixture：activate 语义入口，四组各调一次。Ctx 本体不是 JS 值，
+    // 传回桥接好的 ctx 对象（globals 里那份）。
     let activate: Function<'_> = ctx.eval(SPIKE_JS)?;
-    let result: Value = activate.call((ctx.clone(),))?;
+    let ctx_arg: Object = globals.get("ctx")?;
+    let result: Value = activate.call((ctx_arg,))?;
     let obj = result
         .into_object()
         .ok_or_else(|| Exception::throw_message(&ctx, "spike fixture did not return an object"))?;
@@ -358,7 +388,7 @@ async fn bridge_and_call(
 }
 
 /// 分发一次探针事件：调 `ctx.on` 注册进来的 JS 回调，验证监听真实可达。
-async fn dispatch_probe_event(ctx: Ctx<'_>, probes: Arc<Mutex<BridgeProbes>>) {
+fn dispatch_probe_event(ctx: Ctx<'_>, probes: &Arc<Mutex<BridgeProbes>>) {
     let hits: rquickjs::Array = match ctx.globals().get("__probe_listener_hits") {
         Ok(a) => a,
         Err(_) => return,
@@ -373,6 +403,31 @@ async fn dispatch_probe_event(ctx: Ctx<'_>, probes: Arc<Mutex<BridgeProbes>>) {
             probes.lock().unwrap().event_dispatches += 1;
         }
     }
+}
+
+/// 内存上限 episode：64KB limit 下烧内存，超限异常转成 apply 失败。
+fn memory_burn_episode() -> Result<(), std::io::Error> {
+    futures::executor::block_on(async {
+        let runtime = AsyncRuntime::new()
+            .map_err(|e| std::io::Error::other(format!("AsyncRuntime::new: {e}")))?;
+        // 同 quickjs_episode：先建 Context（其自身分配超 64KB），再设运行期上限。
+        let js_ctx = AsyncContext::full(&runtime)
+            .await
+            .map_err(|e| std::io::Error::other(format!("AsyncContext::full: {e}")))?;
+        runtime
+            .set_memory_limit(FIXTURE_MEMORY_LIMIT_BYTES)
+            .await;
+
+        // 超限即 apply 失败（模拟宿主把引擎 OOM 当插件失败处理，design §18.2-3）。
+        let outcome = js_ctx.async_with(async |ctx| burn_memory(ctx).await).await;
+        drop(js_ctx);
+        drop(runtime);
+        match outcome {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(std::io::Error::other("memory limit not enforced")),
+            Err(e) => Err(std::io::Error::other(format!("memory burn: {e}"))),
+        }
+    })
 }
 
 /// 内存上限用例：64KB limit 下反复分配大数组，断言超限中断、宿主不崩、
@@ -394,25 +449,10 @@ async fn run_memory_limit_case() -> Result<(bool, bool), String> {
             Ok(())
         }
 
+        // 与 BridgePlugin 同理：QuickJS episode 在 apply 单次 poll 内 block_on 收敛，
+        // 满足 cordis 对 apply future 的 Send 约束。
         async fn apply(&self, _: Context, _: &()) -> Result<(), std::io::Error> {
-            let runtime = AsyncRuntime::new()
-                .map_err(|e| std::io::Error::other(format!("AsyncRuntime::new: {e}")))?;
-            runtime
-                .set_memory_limit(FIXTURE_MEMORY_LIMIT_BYTES)
-                .await;
-            let js_ctx = AsyncContext::full(&runtime)
-                .await
-                .map_err(|e| std::io::Error::other(format!("AsyncContext::full: {e}")))?;
-
-            // 超限即 apply 失败（模拟宿主把引擎 OOM 当插件失败处理，design §18.2-3）。
-            let outcome = js_ctx.async_with(async |ctx| burn_memory(ctx).await).await;
-            drop(js_ctx);
-            drop(runtime);
-            match outcome {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(std::io::Error::other("memory limit not enforced")),
-                Err(e) => Err(std::io::Error::other(format!("memory burn: {e}"))),
-            }
+            memory_burn_episode()
         }
     }
 

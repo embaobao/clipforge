@@ -2,10 +2,10 @@
 
 ## Phase 1:桥接 spike(验收闸门,时间盒 1 周)
 
-- [ ] 1.0 引入 `cordis-rs = "=0.11.1"` 精确 pin + rquickjs,搭 plugin_runtime 门面模块骨架(cordis 类型不出模块)
-- [ ] 1.1 桥接闸门:一个 cordis Fiber 内嵌 rquickjs Runtime,`ctx.clipf.*` 能力对象、`ctx.on`、`ctx.register.*`、`ctx.log` 四组桥为 JS 可见对象(与 design §4 一一对应),dispose 确定性回收 Runtime 与全部监听
-- [ ] 1.2 内存上限:rquickjs memory_limit 按 manifest 声明强制,超限中断不崩宿主、Fiber 收敛为 Failed 可 dispose;顺带实测每插件 Runtime 固定内存基线(memory_usage),结论回写 design §18.2(8MB 默认值据此复核)
-- [ ] 1.3 闸门裁决:全链路通且不超时间盒→进 Phase 2;打架/超时→降级门面内自研等价实现(接口不变),结论回写本提案风险节;出口判据:无论过闸与否,先把门面内生命周期 trait(六态/dispose/收敛)编译期落位(降级=换实现而非补接口);顺带验证 cordis `update`(输入替换)可行性,结论回写 design §12(不可行则配置变更维持重启语义)
+- [x] 1.0 引入 `cordis-rs = "=0.11.1"` 精确 pin + rquickjs,搭 plugin_runtime 门面模块骨架(cordis 类型不出模块)
+- [x] 1.1 桥接闸门:一个 cordis Fiber 内嵌 rquickjs Runtime,`ctx.clipf.*` 能力对象、`ctx.on`、`ctx.register.*`、`ctx.log` 四组桥为 JS 可见对象(与 design §4 一一对应),dispose 确定性回收 Runtime 与全部监听
+- [x] 1.2 内存上限:rquickjs memory_limit 按 manifest 声明强制,超限中断不崩宿主、Fiber 收敛为 Failed 可 dispose;顺带实测每插件 Runtime 固定内存基线(memory_usage),结论回写 design §18.2(8MB 默认值据此复核)——基线 27808 字节,8MB 维持;实测 set_memory_limit 必须在 Context 建成后设置
+- [x] 1.3 闸门裁决:全链路通且不超时间盒→进 Phase 2;打架/超时→降级门面内自研等价实现(接口不变),结论回写本提案风险节;出口判据:无论过闸与否,先把门面内生命周期 trait(六态/dispose/收敛)编译期落位(降级=换实现而非补接口);顺带验证 cordis `update`(输入替换)可行性,结论回写 design §12(不可行则配置变更维持重启语义)——**2026-10-27 过闸**:四断言全绿 + update 换代成功;apply Send 组合方式与两条内存约束已回写提案风险节/design §12/§18.1/§18.2;v1 维持 dispose→spawn 重启语义
 
 ## Phase 2:插件核心(plugin-runtime)
 

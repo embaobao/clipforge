@@ -16,12 +16,18 @@
 //! 内存三层强制链见 design §18.2；线程模型（一插件一线程 + AsyncRuntime + Context）
 //! 见 design §18.1。
 
+// Phase 1 的 spike/budget 仅由测试闸门调用，生产接线（manifest 校验、registry、
+// MCP 工具面）属 Phase 2+：普通构建（不含 test cfg）下显式豁免 dead_code，
+// 不删改闸门代码。
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod budget;
+#[cfg_attr(not(test), allow(dead_code))]
 pub mod spike;
 
 /// 门面对外暴露的 spike 运行结果：无论过闸与否，调用方只依赖本结构，不接触
 /// cordis/rquickjs 类型。
 #[derive(Debug, Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct SpikeOutcome {
     /// 是否四组接口全部桥通且 JS 侧调用成功。
     pub bridge_ok: bool,
