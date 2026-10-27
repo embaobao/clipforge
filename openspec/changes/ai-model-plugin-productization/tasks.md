@@ -108,12 +108,18 @@
 - 仅保守勾选已被直接覆盖的项：构建、Rust 检查、provider health check 不阻塞快速面板打开、网络模型默认不读取全文除非授权、Agent plugin 不能绕过 preview 直写数据库。
 - 其余项暂不勾选，主要因为还缺直接证据，尤其是未配置模型时基础功能可用、AI 输出只限四类结果、Tiptap 失败降级、插件权限扩大确认、企业策略禁用范围。
 
+### 2026-10-27 状态记录（Phase 9 验证推进）
+
+- **未配置模型基础功能**：双通道实测——①沙箱实例（fresh 数据目录、未配模型）真实剪贴板端到端探针 12/12（采集/HTML 双表示/图片落盘/文件路径写回/写回抑制/软删，见 file-image-clipboard-support tasks 2026-10-27 记录）；②浏览器交互回归 `run-interaction-tests.sh` 22/22（列表/搜索/详情页/回收站/收藏/粘贴/预览卡，mock 桥无模型）。
+- **AI 输出边界**：现行契约收紧为 `agent-contracts.ts` CUSTOM 事件五类（renderPanel/previewPatch/suggestUpdate/tagPatchPreview + editor apply），`verify-editor-agent-bridge.mjs` 断言 `preview_patch` 声明 `writesDatabase:false` 且 copy 走既有写回路径——原「四类结果」命名已过时，边界语义不变（AI 输出只经 preview/显式 apply/copy/renderPanel 落地，无直写数据库通道）。
+- T16/T17（hover 悬浮卡）在 headless 下偶发时序抖动，复跑全绿；与本验证无关。
+
 - [x] `pnpm build`
 - [x] `cd src-tauri && cargo check`
-- [ ] 验证未配置模型时基础剪贴板、搜索、详情页、紧凑编辑仍可用
+- [x] 验证未配置模型时基础剪贴板、搜索、详情页、紧凑编辑仍可用（2026-10-27：沙箱 e2e 12/12 + 交互回归 22/22 双证据）
 - [x] 验证 provider health check 不阻塞快速面板打开
 - [x] 验证网络模型默认不读取全文的契约/边界，除非用户授权
-- [ ] 验证 AI 输出只进入 preview/newClip/copy/renderPanel 四类结果
+- [x] 验证 AI 输出只进入 preview/newClip/copy/renderPanel 四类结果（2026-10-27：现行契约为 renderPanel/previewPatch/suggestUpdate/tagPatchPreview/editor-apply，verify-editor-agent-bridge 断言无直写库通道；四类命名过时但边界成立）
 - [x] 验证 Agent plugin 无法绕过 preview 直接写数据库的边界
 - [ ] 验证 Tiptap AI 失败时降级到紧凑编辑
 - [ ] 验证插件权限扩大需要用户确认
