@@ -126,6 +126,7 @@ export const SETTINGS_FIELD_CATALOG = [
   { id: "captureHtmlEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.html", order: 20 },
   { id: "captureRtfEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.rtf", order: 30 },
   { id: "captureImageEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.image", order: 40 },
+  { id: "ocrEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.content.ocr.enable", order: 45 },
   { id: "captureFileEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.file", order: 50 },
   { id: "captureSensitiveEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.sensitive", order: 60 },
   { id: "captureApplicationContext", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.capture.applicationContext", order: 70 },

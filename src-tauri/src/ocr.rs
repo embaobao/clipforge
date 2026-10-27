@@ -187,9 +187,124 @@ pub async fn ocr_extract(id: String) -> Result<OcrExtractPayload, String> {
     ocr_extract_inner(&id).await
 }
 
+/// 从 `/v1/models` 响应提取模型 id 列表，兼容两种形状：
+/// OpenAI 标准 `data[].id` 与 llama-server 的 `models[].name`。
+pub fn parse_models_from_listing(parsed: &serde_json::Value) -> Vec<String> {
+    for (container, id_key) in [("data", "id"), ("models", "name")] {
+        if let Some(items) = parsed.get(container).and_then(serde_json::Value::as_array) {
+            let models: Vec<String> = items
+                .iter()
+                .filter_map(|item| item.get(id_key).and_then(serde_json::Value::as_str))
+                .map(ToString::to_string)
+                .collect();
+            if !models.is_empty() {
+                return models;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// 读响应里的多模态自报：llama-server `models[].capabilities` / `capabilities` 含
+/// "multimodal" → Some(true)；有 capabilities 数组但不含 → Some(false)；无字段 → None。
+pub fn parse_vision_capability(parsed: &serde_json::Value) -> Option<bool> {
+    let check = |value: &serde_json::Value| -> Option<bool> {
+        let caps = value.get("capabilities")?.as_array()?;
+        Some(caps
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|cap| cap.eq_ignore_ascii_case("multimodal")))
+    };
+    if let Some(flag) = check(parsed) {
+        return Some(flag);
+    }
+    parsed
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|models| models.first())
+        .and_then(check)
+}
+
+/// 本地视觉端点候选：探测结果 + 来源说明，设置页「图片文字识别」分区展示用。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrEndpointCandidate {
+    /// 端点根 URL（不含 /v1）。
+    pub url: String,
+    /// `/v1/models` 返回的模型 id 列表（Ollama/LM Studio/llama-server 均兼容该端点）。
+    pub models: Vec<String>,
+    /// 候选来源：端口惯例推断（vision 能力在提取时以 OCR_* 错误码兜底验证）。
+    pub source: String,
+    /// 端点是否自报多模态能力（llama-server capabilities 含 "multimodal"）；
+    /// None = 响应未声明，不能断定不支持。
+    pub vision: Option<bool>,
+}
+
+/// 探测本地视觉端点候选（Tauri command，设置页「自动发现」按钮）。
+///
+/// 扫描常见本地推理端口（llama-server 8491/8080、Ollama 11434、LM Studio 1234）的
+/// `/v1/models`（1s 超时/个，并发打完），可达者即候选。视觉能力（mmproj）不在
+/// `/v1/models` 暴露，提取时若端点不支持图片输入会返回 `OCR_*` 错误码兜底。
+#[tauri::command]
+pub async fn ocr_detect_endpoints() -> Result<Vec<OcrEndpointCandidate>, String> {
+    let probes = [
+        ("http://127.0.0.1:8491", "llama-server 常例端口"),
+        ("http://127.0.0.1:8080", "llama-server 默认端口"),
+        ("http://127.0.0.1:11434", "Ollama"),
+        ("http://127.0.0.1:1234", "LM Studio"),
+    ];
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1))
+        .build()
+        .map_err(|error| format!("OCR_CLIENT_BUILD_FAILED: {error}"))?;
+    let jobs = probes.iter().map(|(url, source)| {
+        let client = client.clone();
+        let url = url.to_string();
+        let source = source.to_string();
+        async move {
+            let response = client.get(format!("{url}/v1/models")).send().await.ok()?;
+            if !response.status().is_success() {
+                return None;
+            }
+            let parsed: serde_json::Value = response.json().await.ok()?;
+            let vision = parse_vision_capability(&parsed);
+            let models = parse_models_from_listing(&parsed);
+            Some(OcrEndpointCandidate {
+                url,
+                models,
+                source,
+                vision,
+            })
+        }
+    });
+    let candidates: Vec<OcrEndpointCandidate> = futures::future::join_all(jobs)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+    Ok(candidates)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `/v1/models` 兼容解析：OpenAI data[].id 与 llama-server models[].name 两种形状，
+    /// vision 自报读 capabilities（2026-10-27 llama-server 实测响应形状）。
+    #[test]
+    fn parses_both_models_listing_shapes() {
+        let openai = serde_json::json!({"data": [{"id": "gpt-x"}, {"id": "b"}]});
+        assert_eq!(parse_models_from_listing(&openai), vec!["gpt-x", "b"]);
+        assert_eq!(parse_vision_capability(&openai), None);
+        let llama = serde_json::json!({"models": [{
+            "name": "OvisOCR3-Q8_0.gguf",
+            "capabilities": ["completion", "multimodal"]
+        }]});
+        assert_eq!(parse_models_from_listing(&llama), vec!["OvisOCR3-Q8_0.gguf"]);
+        assert_eq!(parse_vision_capability(&llama), Some(true));
+        let no_vision = serde_json::json!({"models": [{"name": "m", "capabilities": ["completion"]}]});
+        assert_eq!(parse_vision_capability(&no_vision), Some(false));
+    }
 
     /// 请求体契约：data URL 前缀、plain-OCR 提示、temperature=0（提案 spec 与 README 配方一致）。
     #[test]

@@ -7863,6 +7863,7 @@ pub fn run() {
             setup_app(app)
         })
         .invoke_handler(tauri::generate_handler![
+            ocr::ocr_detect_endpoints,
             ocr::ocr_extract,
             write_clipboard_item,
             paste_clipboard_item,

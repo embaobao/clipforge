@@ -80,6 +80,10 @@ export interface AppSettings {
   logAutoCleanup: boolean;
   logCleanupIntervalMin: number;
   debugLogsEnabled: boolean;
+  /** 图片文字识别(OCR)开关:仅本地视觉端点,默认开。 */
+  ocrEnabled: boolean;
+  /** OCR 端点 URL(OpenAI-compatible),默认 llama-server 惯例端口。 */
+  ocrEndpointUrl: string;
   captureTextEnabled: boolean;
   captureHtmlEnabled: boolean;
   captureRtfEnabled: boolean;
@@ -278,6 +282,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   logAutoCleanup: true,
   logCleanupIntervalMin: 1440,
   debugLogsEnabled: false,
+  ocrEnabled: true,
+  ocrEndpointUrl: "http://127.0.0.1:8491",
   captureTextEnabled: true,
   captureHtmlEnabled: true,
   captureRtfEnabled: true,

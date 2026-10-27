@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { TranslationKey } from "../../i18n";
 import { CheckItem, NumberSetting, ReadonlyField, SettingGroup, ToggleSetting } from "../controls";
 import { LogsDataTables } from "../components/LogsDataTables";
+import { OcrEndpointCard } from "../components/OcrEndpointCard";
 import { SettingsFieldRow } from "../components/SettingsFieldRow";
 import { SettingsStatusPanel } from "../components/SettingsStatusPanel";
 import type { SettingsStatusPanelState } from "../components/SettingsStatusPanel";
@@ -78,6 +79,12 @@ export function CaptureContentSection({ settings, tr, updateSettings, renderTabs
           onChange={(key, value) => updateSettings({ [key]: value } as Partial<AppSettings>)}
           tr={tr}
           extraNodes={[
+            <OcrEndpointCard
+              endpointUrl={settings.ocrEndpointUrl}
+              key="ocr-endpoint-card"
+              onEndpointChange={(ocrEndpointUrl) => updateSettings({ ocrEndpointUrl })}
+              tr={tr}
+            />,
             <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]" key="capture-multi-type">
               <span>{tr("settings.capture.multiType.title")}</span>
               <strong>{tr("settings.capture.multiType.summary")}</strong>

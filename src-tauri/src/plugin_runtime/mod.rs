@@ -21,6 +21,7 @@
 // 不删改闸门代码。
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod budget;
+pub mod spike_bridge;
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod spike;
 

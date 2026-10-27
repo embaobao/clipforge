@@ -844,5 +844,13 @@
   "main.detail.tag.source.heuristic": "Capture rule",
   "main.detail.tag.source.manual": "Manual",
   "main.detail.tag.source.ai": "AI suggested",
-  "main.detail.tag.source.plugin": "Plugin"
+  "main.detail.tag.source.plugin": "Plugin",
+  "settings.content.ocr.title": "Image text recognition (OCR)",
+  "settings.content.ocr.enable": "Enable image text recognition",
+  "settings.content.ocr.endpoint": "OCR endpoint URL",
+  "settings.content.ocr.endpointHint": "Local OpenAI-compatible vision endpoint (llama-server / Ollama / LM Studio); never sent to cloud",
+  "settings.content.ocr.detect": "Auto-detect local endpoints",
+  "settings.content.ocr.detecting": "Detecting…",
+  "settings.content.ocr.none": "No local endpoint found",
+  "settings.content.ocr.found": "Found {count} endpoint(s), click to adopt"
 }

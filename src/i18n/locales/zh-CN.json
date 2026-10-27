@@ -844,5 +844,13 @@
   "main.detail.tag.source.heuristic": "采集规则",
   "main.detail.tag.source.manual": "手动",
   "main.detail.tag.source.ai": "AI 建议",
-  "main.detail.tag.source.plugin": "插件"
+  "main.detail.tag.source.plugin": "插件",
+  "settings.content.ocr.title": "图片文字识别（OCR）",
+  "settings.content.ocr.enable": "启用图片文字识别",
+  "settings.content.ocr.endpoint": "OCR 端点 URL",
+  "settings.content.ocr.endpointHint": "本地 OpenAI-compatible 视觉端点（llama-server / Ollama / LM Studio）；不会发送到云端",
+  "settings.content.ocr.detect": "自动发现本地端点",
+  "settings.content.ocr.detecting": "探测中…",
+  "settings.content.ocr.none": "未发现本地端点",
+  "settings.content.ocr.found": "发现 {count} 个端点，点击采用"
 }
