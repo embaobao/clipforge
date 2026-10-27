@@ -11,12 +11,12 @@
 
 ## Phase 1：文档与调研补齐
 
-- [ ] Context7 额度恢复后，重新执行 `npx ctx7@latest library Tiptap "<完整问题>"`
-- [ ] 拉取 Tiptap Content AI / AI Toolkit 当前 install、provider、tool calling、React integration 文档
-- [ ] 拉取 AI SDK provider registry / tool calling / UIMessage 当前文档
-- [ ] 拉取 Tauri secure storage / plugin / updater 当前文档
-- [ ] 拉取 MCP tools schema / authorization 当前文档
-- [ ] 更新本提案的“调研依据”，删除任何未确认的版本假设
+- [x] Context7 额度恢复后，重新执行 `npx ctx7@latest library Tiptap "<完整问题>"`（2026-10-27:额度仍超限,改经官方文档直拉替代,产出同等覆盖,见 doc-pull-2026-10-27.md）
+- [x] 拉取 Tiptap Content AI / AI Toolkit 当前 install、provider、tool calling、React integration 文档（2026-10-27,纪要 §1;注:产品线已重组,旧 Content AI=Basic AI Generation,AI Toolkit 为付费私有 registry）
+- [x] 拉取 AI SDK provider registry / tool calling / UIMessage 当前文档（2026-10-27,纪要 §2,ai@7.0.154 实查）
+- [x] 拉取 Tauri secure storage / plugin / updater 当前文档（2026-10-27,纪要 §3;结论:无官方 keyring 插件,官方方案 Stronghold 2.4.0）
+- [x] 拉取 MCP tools schema / authorization 当前文档（2026-10-27,纪要 §4,spec 2025-11-25）
+- [x] 更新本提案的“调研依据”，删除任何未确认的版本假设（2026-10-27:Context7 阻塞节替换为完成记录+五组结论;@tiptap-pro/* 版本假设收敛到「≥3.12.0」粒度并注明私有 registry 不可查）
 
 ## Phase 2：模型配置契约
 
