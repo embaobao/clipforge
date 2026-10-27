@@ -125,6 +125,10 @@ mod tests {
     /// collect_metrics 在隔离数据目录下应返回完整字段(数据/日志/uptime 三类不依赖内存 FFI)。
     #[test]
     fn collect_metrics_shape_is_stable() {
+        // CLIPFORGE_DATA_DIR 是进程级全局：与 lib.rs hard_delete / ocr 域测试同锁串行。
+        let _guard = crate::hard_delete_image_cleanup_tests::TEST_DATA_DIR_LOCK
+            .lock()
+            .expect("test data dir lock");
         let dir = std::env::temp_dir().join(format!("clipforge-diag-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("CLIPFORGE_DATA_DIR", &dir);

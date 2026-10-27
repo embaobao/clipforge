@@ -22,6 +22,7 @@
 
 | 业务域 | 入口 / 核心文件 | 说明 |
 | --- | --- | --- |
+| 图片文字识别（OCR） | `src-tauri/src/ocr.rs`（`ocr_extract` command）、`openspec/changes/ocr-image-text-extraction/` | 本地视觉端点（llama-server/Ollama）调用；`OCR_*` 错误码；端点设置键 `ocrEnabled`/`ocrEndpointUrl` |
 | 面板生命周期 | `src/clipboard/use-panel-bootstrap.ts`、`src/clipboard/use-panel-environment.ts` | 启动引导、环境副作用 |
 | 面板显隐 / 失焦 | `src/clipboard/use-panel-blur-hide.ts` | 失焦隐藏 180ms 窗口约束 |
 | 键盘交互 | `src/clipboard/use-panel-keyboard.ts` | 全局键位、快捷键分发；effect deps 是历史 bug 高发区 |

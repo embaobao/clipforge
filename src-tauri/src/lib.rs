@@ -32,6 +32,7 @@ mod context_collector_system;
 mod context_collectors;
 mod diagnostics;
 mod mcp;
+mod ocr;
 mod plugin_runtime;
 mod settings_service;
 
@@ -7862,6 +7863,7 @@ pub fn run() {
             setup_app(app)
         })
         .invoke_handler(tauri::generate_handler![
+            ocr::ocr_extract,
             write_clipboard_item,
             paste_clipboard_item,
             init_clip_database,
@@ -9456,12 +9458,18 @@ fn get_strategy_for_source(source: &str) -> PanelPositionStrategy {
 mod hard_delete_image_cleanup_tests {
     use super::*;
 
+    /// 并发测试间 CLIPFORGE_DATA_DIR 是进程级全局，凡改它的测试必须持锁串行
+    /// （ocr 域 live 测试同锁，见 src/ocr.rs tests）。
+    pub(crate) static TEST_DATA_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Phase 10 验收：硬删除图片条目后磁盘原图与缩略图必须清理。
     /// 走真实 open_clip_db + ImageStore 路径，数据目录经 CLIPFORGE_DATA_DIR 隔离到
     /// 临时目录（测试进程内其他测试不依赖该环境变量）。
     #[test]
     fn hard_delete_removes_image_files_on_disk() {
         use clipboard::payload::ImagePayload;
+
+        let _guard = TEST_DATA_DIR_LOCK.lock().expect("test data dir lock");
 
         let root = std::env::temp_dir().join(format!(
             "clipforge-hard-delete-test-{}-{}",

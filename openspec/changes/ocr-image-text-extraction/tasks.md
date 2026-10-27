@@ -3,7 +3,7 @@
 ## Phase 1:端点发现与提取 command
 
 - [ ] 1.1 provider 检测扩展：本地视觉端点探测（llama-server/Ollama/LM Studio，`/v1/models` + 视觉能力标记），复用现有 agent_detect_candidates 体系，结果进设置页模型分组
-- [ ] 1.2 `ocr_extract` Tauri command：图片条目 id → `image_file` 读取（8MB 上限）→ base64 → POST 视觉端点（官方 plain-OCR prompt、temperature=0）→ 纯文本返回；60s 超时、取消、`OCR_*` 错误码（含中文注释与 BUSINESS_INDEX 登记）
+- [x] 1.2 `ocr_extract` Tauri command（2026-10-27:src-tauri/src/ocr.rs 域模块,8MB 上限/60s 超时/OCR_* 错误码/plain-OCR 契约;live 测试 ocr_extract_live_end_to_end 走真实 llama-server+OvisOCR3 全链路 2.76s 提取全对,常规门禁 #[ignore] 隔离）：图片条目 id → `image_file` 读取（8MB 上限）→ base64 → POST 视觉端点（官方 plain-OCR prompt、temperature=0）→ 纯文本返回；60s 超时、取消、`OCR_*` 错误码（含中文注释与 BUSINESS_INDEX 登记）
 - [ ] 1.3 设置页「图片文字识别」分区：启用开关（默认开）+ 端点选择（自动发现 + 手动 URL），仅本地端点可选中
 
 ## Phase 2:前端入口与结果落库
