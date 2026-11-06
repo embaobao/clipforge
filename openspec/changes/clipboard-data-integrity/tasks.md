@@ -11,10 +11,12 @@
 
 - [ ] 2.1 实测 watcher 指纹命中也走 promote 的写库开销（单次 UPDATE 耗时）
 - [ ] 2.2 若开销可接受（<2ms）：指纹命中时补一次 promote（仅刷 last_seen_at）；否则记录为已知行为
+  - 2026-11-06 RS-51（clipboard-listener-reliability）注记：缺口 2 取证能力已补齐——watcher `detected change` 现同时打 raw/processed 指纹、抑制窗口起止带序号、watcher 退出/重连有日志；「重复复制相同内容短路不置顶」裁决不变，本任务的开销实测仍待做。
 
 ## 3. 缺口 3/4：感知重复（先文档化，不改哈希口径）
 
 - [x] 3.1 在 docs/BUSINESS_INDEX.md 或设置页「采集与内容」说明区记录：富文本格式漂移/HTML vs plain/文件按路径 三类已知重复行为 --2026-10-13:BUSINESS_INDEX 新增「采集去重语义」行（promote 实现在 lib.rs capture 路径,content_hash 指纹;三类行为+合并缓议注记）
+  - 2026-11-06 RS-51 注记：指纹口径反证（311/311 raw==processed）现可持续复核（detected 双指纹日志）；B4 回归项（同一可见文本富文本/纯文本双来源为已知行为）已列入 RS-51 tasks 5.2；合并口径仍缓议。
 - [ ] 3.2 「同 plain_text 多格式合并」单独立项评估（哈希口径变更，需单独提案+回归矩阵，本期不做）
 
 ## 4. 收尾

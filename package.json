@@ -11,7 +11,7 @@
     "check:i18n": "node scripts/check-i18n-keys.mjs && node scripts/scan-hardcoded-copy.mjs",
     "locate": "node scripts/locate.mjs",
     "check:i18n-runtime": "node scripts/verify-i18n-runtime.mjs",
-    "test:unit": "node scripts/run-unit-checks.mjs && node scripts/verify-editor-agent-bridge.mjs && node scripts/verify-settings-surface.mjs && node scripts/verify-onboarding-surface.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-hot-path.mjs && node scripts/verify-mcp-dispatch.mjs && node scripts/verify-file-size.mjs && node scripts/verify-surface-boundaries.mjs && node scripts/locate.mjs --check-index",
+    "test:unit": "node scripts/run-unit-checks.mjs && node scripts/verify-editor-agent-bridge.mjs && node scripts/verify-settings-surface.mjs && node scripts/verify-onboarding-surface.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-hot-path.mjs && node scripts/verify-mcp-dispatch.mjs && node scripts/verify-clipboard-listener.mjs && node scripts/verify-file-size.mjs && node scripts/verify-surface-boundaries.mjs && node scripts/locate.mjs --check-index",
     "test:interaction": "bash scripts/run-interaction-tests.sh",
     "test:boundaries": "node scripts/verify-hot-path.mjs && node scripts/verify-runtime-boundaries.mjs && node scripts/verify-file-size.mjs && node scripts/verify-surface-boundaries.mjs",
     "test:perf": "node scripts/perf-smoke.mjs",

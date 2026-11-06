@@ -189,7 +189,8 @@ const FOCUS_PREFETCH_INTERVAL_MS: u64 = 250;
 const FOCUS_CACHE_MAX_AGE_MS: i64 = 600;
 const PASTE_TARGET_CACHE_MAX_AGE_MS: i64 = 12_000;
 static LAST_NATIVE_POSITION_FAILURE_MS: AtomicI64 = AtomicI64::new(0);
-static WRITEBACK_SUPPRESS: AtomicBool = AtomicBool::new(false);
+// （RS-51 P1 4.2）写回抑制已迁移到 clipboard::suppress：截止时间戳 + 代际序号，
+// 修复 450ms/700ms 重叠窗口被先到期线程提前解除的缺陷；旧 static 已删除。
 static ACCESSIBILITY_PROMPTED: AtomicBool = AtomicBool::new(false);
 static ACCESSIBILITY_FIRST_USE_PROMPT_CHECKED: AtomicBool = AtomicBool::new(false);
 static ACCESSIBILITY_STALE_RESET: AtomicBool = AtomicBool::new(false);
@@ -553,6 +554,9 @@ struct DiagnosticsExportPayload {
     summary: String,
 }
 
+/// clipboard-changed 事件载荷。change_count 是进程内单调递增事件序号
+/// （RS-51 P0 3.5，旧语义是毫秒时间戳，同毫秒多事件无法去重排序），
+/// 前端据 `seq <= lastSeq` 丢弃乱序/重复事件。
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ClipboardChangePayload {
@@ -1249,12 +1253,25 @@ fn capture_clip_record(
         observed_at,
     )
 }
-
 #[tauri::command]
 fn capture_current_clipboard(
     source_label: Option<String>,
     observed_at: i64,
 ) -> Result<CaptureClipPayload, String> {
+    // S3（RS-51 P1 4.5）：manual/startup 采集与 watcher 统一判定——暂停时拒绝；
+    // 写回抑制窗口内拒绝，避免把刚写回/粘贴的内容立刻采回来（事件回环）。
+    if is_listen_paused() {
+        return Err(command_error(
+            "CLIPBOARD_LISTEN_PAUSED",
+            "clipboard listen is paused",
+        ));
+    }
+    if should_skip_writeback() {
+        return Err(command_error(
+            "CLIPBOARD_WRITEBACK_SUPPRESSED",
+            "clipboard writeback suppression window is active",
+        ));
+    }
     let raw_payload = clipboard::read_clipboard_payload()
         .map_err(|error| preserve_command_error("CLIPBOARD_READ_FAILED", error))?
         .ok_or_else(|| command_error("CLIPBOARD_EMPTY", "clipboard is empty"))?;
@@ -1276,7 +1293,11 @@ fn capture_current_clipboard(
             observed_at
         ),
     );
-    capture_clip_payload(payload, source_label, observed_at)
+    let captured = capture_clip_payload(payload, source_label, observed_at)?;
+    // S5：成功后提交共享去重指纹，watcher 下一轮不再对同一内容重复 promote/emit
+    //（dev 取证：每次 promoted 前后紧跟 manual capture，即两路径未共享状态）。
+    clipboard::dedup::remember_fingerprint(&raw_fingerprint);
+    Ok(captured)
 }
 
 /// 采集当前前台应用的实时上下文；该命令不写入剪贴板历史，外部脚本必须显式开启。
@@ -5291,17 +5312,10 @@ fn read_command(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-fn suppress_writeback_for(duration: Duration) {
-    WRITEBACK_SUPPRESS.store(true, Ordering::SeqCst);
-    thread::spawn(move || {
-        thread::sleep(duration);
-        WRITEBACK_SUPPRESS.store(false, Ordering::SeqCst);
-    });
-}
-
-fn should_skip_writeback() -> bool {
-    WRITEBACK_SUPPRESS.load(Ordering::SeqCst)
-}
+// 写回抑制统一入口（RS-51 P1 4.2）：实现收敛到 clipboard::suppress，
+// 此处 re-export 保持 crate::suppress_writeback_for / crate::should_skip_writeback
+// 既有调用路径（watcher、open_panel 补采、mcp/dispatch_write）零改动。
+pub(crate) use clipboard::suppress::{should_skip_writeback, suppress_writeback_for};
 
 #[cfg(target_os = "macos")]
 fn paste_accessibility_status_for_log() -> String {
@@ -5852,16 +5866,8 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             }
             "toggle_listen" => {
                 let next_paused = !is_listen_paused();
-                set_listen_paused(next_paused);
-                log_to_file(
-                    "info",
-                    "clipboard-monitor",
-                    if next_paused {
-                        "listen paused (toggle from tray)"
-                    } else {
-                        "listen resumed (toggle from tray)"
-                    },
-                );
+                // 统一入口：状态日志 + listen-paused-changed 事件都在 set_listen_paused 内
+                set_listen_paused(app, next_paused);
                 if let Some(tray) = app.tray_by_id(TRAY_ID) {
                     match build_tray_menu(app) {
                         Ok(new_menu) => {
@@ -7887,6 +7893,8 @@ pub fn run() {
             agent_restore_session,
             capture_clip_record,
             capture_current_clipboard,
+            get_clipboard_listen_paused,
+            set_clipboard_listen_paused,
             capture_live_application_context,
             dev_read_clipboard_text,
             query_clip_records,
@@ -7977,19 +7985,26 @@ fn open_panel<R: tauri::Runtime>(
     // 在唤起热路径可接受。
     if !is_listen_paused() && !should_skip_writeback() {
         if let Ok(Some(raw_payload)) = clipboard::read_clipboard_payload() {
-            if let Ok(Some(payload)) = apply_capture_settings(raw_payload) {
-                let now = now_millis().unwrap_or(0);
-                if let Err(error) = capture_clip_payload_with_options(
-                    payload,
-                    Some("Clipboard".to_string()),
-                    now,
-                    false,
-                ) {
-                    log_to_file(
-                        "debug",
-                        "panel-open-perf",
-                        &format!("open_panel: pre-show capture skipped: {}", error),
-                    );
+            let raw_fingerprint = clipboard_payload_fingerprint(&raw_payload);
+            // S5（RS-51 P1 4.7）：补采与 watcher 共享去重指纹——同一内容不再
+            // 重复 promote；面板反复打开（内容不变）不再产生额外采集/时间戳扰动。
+            if raw_fingerprint != clipboard::dedup::last_fingerprint() {
+                if let Ok(Some(payload)) = apply_capture_settings(raw_payload) {
+                    let now = now_millis().unwrap_or(0);
+                    if let Err(error) = capture_clip_payload_with_options(
+                        payload,
+                        Some("Clipboard".to_string()),
+                        now,
+                        false,
+                    ) {
+                        log_to_file(
+                            "debug",
+                            "panel-open-perf",
+                            &format!("open_panel: pre-show capture skipped: {}", error),
+                        );
+                    } else {
+                        clipboard::dedup::remember_fingerprint(&raw_fingerprint);
+                    }
                 }
             }
         }
@@ -8287,18 +8302,55 @@ fn set_panel_pinned_command(pinned: bool) -> Result<bool, String> {
 fn is_panel_pinned_command() -> bool {
     is_panel_pinned()
 }
-
 /// 剪贴板「监听暂停」标志：true 时后台监听线程跳过采集（对齐 EcoPaste 托盘暂停监听）。
 /// 仅影响读取入库；写回抑制、粘贴模拟、面板交互不受影响。进程内状态，重启重置。
+/// RS-51 S2/P0 3.1：暂停/恢复走统一入口，落状态日志并向所有窗口 emit
+/// `listen-paused-changed`；并暴露 get/set command 供前端查询与设置。
 static LISTEN_PAUSED: AtomicBool = AtomicBool::new(false);
+
+/// 前端「监听暂停」状态同步事件载荷。
+#[derive(Serialize, Clone)]
+struct ListenPausedPayload {
+    paused: bool,
+}
 
 fn is_listen_paused() -> bool {
     LISTEN_PAUSED.load(Ordering::Relaxed)
 }
 
-fn set_listen_paused(paused: bool) -> bool {
+/// 暂停/恢复统一入口（托盘菜单与 command 共用）：日志 + 前端状态事件。
+fn set_listen_paused<R: tauri::Runtime>(app: &tauri::AppHandle<R>, paused: bool) -> bool {
     LISTEN_PAUSED.store(paused, Ordering::Relaxed);
+    log_to_file(
+        "info",
+        "clipboard-monitor",
+        if paused {
+            "listen paused"
+        } else {
+            "listen resumed"
+        },
+    );
+    if let Err(error) = app.emit("listen-paused-changed", ListenPausedPayload { paused }) {
+        log_to_file(
+            "warn",
+            "clipboard-monitor",
+            &format!("emit listen-paused-changed failed: {}", error),
+        );
+    }
     paused
+}
+
+/// 查询剪贴板监听暂停状态（S2：暴露给前端）。
+#[tauri::command]
+fn get_clipboard_listen_paused() -> bool {
+    is_listen_paused()
+}
+#[tauri::command]
+fn set_clipboard_listen_paused<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    paused: bool,
+) -> bool {
+    set_listen_paused(&app, paused)
 }
 
 fn panel_trigger_payload<R: tauri::Runtime>(

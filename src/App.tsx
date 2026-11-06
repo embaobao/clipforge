@@ -342,6 +342,7 @@ function ClipForgeApp() {
     setIsLoadingMore,
     isLoadingMore,
     setSelectedId,
+    selectedIdRef,
     setNativeStatus,
     setIsReadingClipboard,
     searchRequestRef,

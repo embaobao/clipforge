@@ -26,7 +26,7 @@
 | 面板生命周期 | `src/clipboard/use-panel-bootstrap.ts`、`src/clipboard/use-panel-environment.ts` | 启动引导、环境副作用 |
 | 面板显隐 / 失焦 | `src/clipboard/use-panel-blur-hide.ts` | 失焦隐藏 180ms 窗口约束 |
 | 键盘交互 | `src/clipboard/use-panel-keyboard.ts` | 全局键位、快捷键分发；effect deps 是历史 bug 高发区 |
-| 列表 / 虚拟滚动 | `src/clipboard/use-clipboard-list.ts`、`src/clipboard/components/VirtualList.tsx` | 主列表数据与渲染 |
+| 列表 / 虚拟滚动 | `src/clipboard/use-clipboard-list.ts`、`src/clipboard/clipboard-event-gate.ts`、`src/clipboard/components/VirtualList.tsx` | 主列表数据与渲染；clipboard-changed 事件闸门（序号去重 + in-flight 合并） |
 | 搜索 | `src/clipboard/clip-search.ts`、`src/search-query.ts`、`src/clipboard/components/GlassSearchBar.tsx` | 搜索请求构建与查询语法 |
 | 复制回写 | `src/clipboard/use-clip-writeback.ts`、`src/services/clipboard.ts` | 粘贴写回抑制，避免回环采集 |
 | 聚合拼接格式 | `src/clipboard/clipboard-domain.ts`、`src/clipboard/use-aggregate-format.ts`、`src/clipboard/aggregate-format-storage.ts`、`src/workspace/components/AggregateFormatMenu.tsx` | 多选聚合的分隔符/编号/顺序，复制与预览共用 formatAggregate |
@@ -57,7 +57,7 @@
 | command 主体 | `src-tauri/src/lib.rs` | 剪贴板/面板命令 + 托盘 + 窗口管理；设置命令下沉 `settings_service/`、Agent 命令下沉 `agent/`、MCP 命令下沉 `mcp/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
 | Agent 域 | `src-tauri/src/agent/` | `agent_*` 命令与 provider 探测/健康检查/模型清单：`mod.rs` 门面（payload 结构体 + 命令薄壳）、`provider.rs` 探测/预览（redaction/keyRef）、`pi.rs` pi 运行时 provider 解析（key 只在调用时解出）、`check.rs` 健康检查、`context.rs` 上下文/prompt 组装、`events.rs` 事件/输出流、`run.rs` run 状态机、`runs.rs` run 存储 + 私有写锁 |
 | MCP 运行时 | `src-tauri/src/mcp/` | `--mcp` stdio JSON-RPC 与 41 工具：`mod.rs` 运行时门面（run_mcp_stdio + 状态命令）、`specs.rs` 工具规格表、`dispatch.rs` 路由壳、`dispatch_write.rs` 写库臂、`dispatch_merge.rs` clipboard.merge 只读拼接臂、`dispatch_agent_editor.rs` skill/plugin/agent/editor 臂、`context.rs` 上下文快照、`envelope.rs` 响应封装 |
-| 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听、`ingest.rs` 入库、`read.rs` 读取、`write.rs` 写回、`storage.rs` 存储、`detect.rs` 检测、`payload.rs` 载荷 |
+| 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听（监督循环重连 + 启动 priming）、`suppress.rs` 写回抑制窗口（截止时间戳）、`dedup.rs` 跨采集路径共享指纹、`ingest.rs` 入库、`read.rs` 读取、`write.rs` 写回、`storage.rs` 存储、`detect.rs` 检测、`payload.rs` 载荷 |
 | 采集去重语义 | `src-tauri/src/lib.rs`（capture 入库路径，`status=promoted`） | 同 content_hash 指纹命中走 promote：软删行复活回列表、刷 last_seen_at 与来源上下文，favorite/copy_count 保留。三类已知重复行为（clipboard-data-integrity 3.1）：① 富文本条目格式漂移（RTF/HTML 变体各自成条）；② HTML 与 plain 同源分条（哈希口径按 plain_text）；③ 文件复制按路径集合为键，同文件不同路径各成条。「同 plain_text 多格式合并」需哈希口径变更，单独立项评估，本期不做 |
 | 设置服务 | `src-tauri/src/settings_service/` | `settings_service_*` 统一协议（唯一服务入口，供设置窗口 / MCP 复用）：`mod.rs` 门面（写事务/校验/redact）、`write.rs` 原子写 + 写锁 + redacted 占位符按 id 回填、`commands.rs` 命令 + 快捷键/托盘同步、`mcp.rs` MCP 分发 |
 | 上下文采集 | `src-tauri/src/context_collectors.rs`、`src-tauri/src/context_collectors/`、`src-tauri/src/context_collector_runtime.rs`、`src-tauri/src/context_collector_system.rs` | Agent 上下文收集器 |
@@ -70,6 +70,7 @@
 | 前端任意 | `pnpm build:web` |
 | Rust 任意 | `cd src-tauri && cargo check` |
 | 设置页 | `node scripts/verify-settings-surface.mjs`（已含在 `pnpm test:unit`） |
+| 剪贴板监听事件闸门 | `node scripts/verify-clipboard-listener.mjs`（已含在 `pnpm test:unit`） |
 | 主面板交互 | `pnpm test:interaction` |
 | i18n 文案 | `pnpm check:i18n` |
 | 动效 token | `pnpm verify:motion` |

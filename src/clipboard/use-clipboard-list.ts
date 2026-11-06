@@ -8,6 +8,7 @@ import type { AppSettings } from "../App";
 import { readClipboard } from "../services/clipboard";
 import type { TranslationKey } from "../i18n";
 import { logAppError } from "./panel-shared";
+import { createClipboardEventGate } from "./clipboard-event-gate";
 import { updateViewClipEntryData } from "./view-clip-cache";
 
 export type QueryClipPayload = {
@@ -28,6 +29,15 @@ export function isQueryClipPayload(payload: unknown): payload is QueryClipPayloa
 export function isCaptureClipPayload(payload: unknown): payload is CaptureClipPayload {
   const item = payload && typeof payload === "object" ? (payload as Partial<CaptureClipPayload>).item : null;
   return Boolean(item && typeof item === "object" && typeof (item as Partial<ClipItem>).content === "string");
+}
+
+/** clipboard-changed 事件载荷（Rust ClipboardChangePayload）。
+ *  changeCount 是进程内单调递增事件序号（RS-51 P0 3.5），用于前端去重。 */
+export type ClipboardChangedEvent = {
+  changeCount: number;
+  hasChange: boolean;
+  preview?: string;
+  previewLen?: number;
 }
 
 /** 判断当前请求是否为「纯列表」（无搜索词/类型/标签/收藏过滤，且不在回收站）：
@@ -59,6 +69,8 @@ export type ClipboardListOptions = {
   setIsLoadingMore: (loading: boolean) => void;
   isLoadingMore: boolean;
   setSelectedId: (id: string) => void;
+  /** 当前选中条目（可选注入）：后台事件刷新搜索视图时保留选中态（U2）。 */
+  selectedIdRef?: { current: string | null };
   setNativeStatus: (status: string) => void;
   setIsReadingClipboard: (reading: boolean) => void;
   searchRequestRef: { current: Record<string, unknown> };
@@ -83,6 +95,7 @@ export function useClipboardList({
   setIsLoadingMore,
   isLoadingMore,
   setSelectedId,
+  selectedIdRef,
   setNativeStatus,
   setIsReadingClipboard,
   searchRequestRef,
@@ -270,47 +283,72 @@ export function useClipboardList({
   useEffect(() => {
     if (isSettingsWindow) return;
     let unlisten: (() => void) | null = null;
+    // U1（RS-51 P1 4.6）：changeCount 已是 Rust 端单调递增序号。闸门按序号丢
+    // 乱序/重复事件；处理中的并发事件只保留最新一条排队补跑——事件风暴下
+    // search_clip_records 调用收敛，不再每个事件一次全量刷新。
+    const gate = createClipboardEventGate<ClipboardChangedEvent>();
+    const handleChangedEvent = async (payload: ClipboardChangedEvent) => {
+      const request = searchRequestRef.current;
+      // 纯列表视图：只取最新 1 条做增量合并（置顶/按 id 去重），不全量刷新 200 行。
+      // 解决「每次复制一次 70ms+2MB IPC 的卡顿尖峰」和「分页后列表被截断回 200 条」。
+      if (isPlainListRequest(request)) {
+        await mergeTopClip();
+        if (payload.preview) {
+          lastSeenClipboard.current = payload.preview.trim();
+        }
+        setNativeStatus(tr("main.status.clipboardCapturedNew"));
+        return;
+      }
+      // 搜索/过滤/回收站视图：后端已入库，按当前请求全量刷新（保留已加载条数，不截断）。
+      try {
+        const result = await invoke<QueryClipPayload>("search_clip_records", {
+          input: { ...request, limit: Math.max(200, clipsRef.current.length), cursor: null },
+        });
+        if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
+        const items = result.items
+          .map((item) => normalizeClip(item, settingsRef.current))
+          .filter((item): item is ClipItem => Boolean(item));
+        clipsRef.current = items;
+        setClips(items);
+        setNextCursor(result.nextCursor ?? null);
+        updateViewClipEntryData(viewCacheKey(request), items, result.nextCursor ?? null);
+        // U2：后台事件刷新不劫持选中态——当前选中仍在列表内时保留；
+        // 列表为空或选中项已被过滤掉时才回落到首条。
+        const keepId = selectedIdRef?.current ?? null;
+        if (!(keepId && items.some((item) => item.id === keepId)) && items.length > 0) {
+          setSelectedId(items[0].id);
+        }
+        if (payload.preview) {
+          lastSeenClipboard.current = payload.preview.trim();
+        }
+        setNativeStatus(tr("main.status.clipboardCapturedNew"));
+      } catch (error) {
+        console.error("[CLIPBOARD] refresh failed:", error);
+      }
+    };
+    const dispatchChangedEvent = (payload: ClipboardChangedEvent) => {
+      const decision = gate.submit(payload.changeCount, payload);
+      // queued 的事件由正在跑的处理循环经 finish() 接管，这里不得再起一个循环
+      if (decision !== "run") return;
+      let current = payload;
+      void (async () => {
+        for (;;) {
+          try {
+            await handleChangedEvent(current);
+          } catch (error) {
+            console.error("[CLIPBOARD] change event handling failed:", error);
+          }
+          const next = gate.finish();
+          if (!next) return;
+          current = next.data;
+        }
+      })();
+    };
     const setup = async () => {
-      unlisten = await listen<{ changeCount: number; hasChange: boolean; preview?: string; previewLen?: number }>("clipboard-changed", async (event) => {
-        const payload = event.payload;
-        console.log("[CLIPBOARD] frontend received change:", payload);
-        if (!payload.hasChange) return;
-        const request = searchRequestRef.current;
-        // 纯列表视图：只取最新 1 条做增量合并（置顶/按 id 去重），不全量刷新 200 行。
-        // 解决「每次复制一次 70ms+2MB IPC 的卡顿尖峰」和「分页后列表被截断回 200 条」。
-        if (isPlainListRequest(request)) {
-          await mergeTopClip();
-          if (payload.preview) {
-            lastSeenClipboard.current = payload.preview.trim();
-          }
-          setNativeStatus(tr("main.status.clipboardCapturedNew"));
-          return;
-        }
-        // 搜索/过滤/回收站视图：后端已入库，按当前请求全量刷新（保留已加载条数，不截断）。
-        try {
-          const result = await invoke<QueryClipPayload>("search_clip_records", {
-            input: { ...request, limit: Math.max(200, clipsRef.current.length), cursor: null },
-          });
-          if (!isQueryClipPayload(result)) throw new Error("Invalid search_clip_records payload");
-          const items = result.items
-            .map((item) => normalizeClip(item, settingsRef.current))
-            .filter((item): item is ClipItem => Boolean(item));
-          clipsRef.current = items;
-          setClips(items);
-          setNextCursor(result.nextCursor ?? null);
-          updateViewClipEntryData(viewCacheKey(request), items, result.nextCursor ?? null);
-          if (items.length > 0) {
-            setSelectedId(items[0].id);
-          }
-          if (payload.preview) {
-            lastSeenClipboard.current = payload.preview.trim();
-          }
-          setNativeStatus(tr("main.status.clipboardCapturedNew"));
-        } catch (error) {
-          console.error("[CLIPBOARD] refresh failed:", error);
-        }
+      unlisten = await listen<ClipboardChangedEvent>("clipboard-changed", (event) => {
+        if (!event.payload.hasChange) return;
+        dispatchChangedEvent(event.payload);
       });
-      console.log("[CLIPBOARD] frontend listener registered");
       setNativeStatus(tr("main.status.clipboardWatcherStarted"));
     };
     void setup();
