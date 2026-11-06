@@ -1,4 +1,4 @@
-import { Clipboard, ExternalLink, Image, MoreHorizontal } from "lucide-react";
+import { Clipboard, ExternalLink, Image, MoreHorizontal, ScanText } from "lucide-react";
 import type { ClipItem } from "../../App";
 import {
   DropdownMenu,
@@ -19,6 +19,7 @@ export type DetailOverflowMenuProps = {
   menuActions: DetailQuickAction[];
   tr: WorkspaceTr;
   onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
+  onOcrExtract: (clip: Parameters<typeof clipImageSrc>[0]) => void;
   onOpen: (clip: ClipItem) => void;
   onOpenPath?: (path: string) => void;
   onToggleImageActualSize: () => void;
@@ -38,6 +39,7 @@ export function DetailOverflowMenu({
   menuActions,
   tr,
   onCopyText,
+  onOcrExtract,
   onOpen,
   onOpenPath,
   onToggleImageActualSize,
@@ -100,6 +102,14 @@ export function DetailOverflowMenu({
                 <span>{tr("main.detail.openSystem")}</span>
               </DropdownMenuItem>
             ) : null}
+            <DropdownMenuItem
+              className={menuItem}
+              disabled={!clipImageSrc(clip)}
+              onSelect={() => onOcrExtract(clip)}
+            >
+              <ScanText size={13} />
+              <span>{tr("main.context.ocrExtract")}</span>
+            </DropdownMenuItem>
           </DropdownMenuGroup>
         ) : null}
         {hasImageActions && menuActions.length ? <DropdownMenuSeparator /> : null}

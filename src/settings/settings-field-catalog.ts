@@ -126,6 +126,7 @@ export const SETTINGS_FIELD_CATALOG = [
   { id: "captureHtmlEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.html", order: 20 },
   { id: "captureRtfEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.rtf", order: 30 },
   { id: "captureImageEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.image", order: 40 },
+  { id: "ocrEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.content.ocr.enable", order: 45 },
   { id: "captureFileEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.file", order: 50 },
   { id: "captureSensitiveEnabled", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.onboarding.capture.sensitive", order: 60 },
   { id: "captureApplicationContext", section: "capture-content", tab: "capture-types", type: "switch", labelKey: "settings.capture.applicationContext", order: 70 },
@@ -151,5 +152,5 @@ export const SETTINGS_FIELD_CATALOG = [
   { id: "updateActions", section: "update-distribution", tab: "update-flow", type: "action", labelKey: "settings.update.actions", order: 10 },
   { id: "buildInfo", section: "update-distribution", tab: "build", type: "readonly", labelKey: "settings.update.buildInfo", order: 10 },
   { id: "tagMode", section: "tag-rules", tab: "tag-mode", type: "segment", labelKey: "settings.tags.mode", order: 10 },
-  { id: "tagRules", section: "tag-rules", tab: "rules", type: "action", labelKey: "settings.tags.rules", order: 10 },
+  { id: "builtinTagRules", section: "tag-rules", tab: "tag-mode", type: "toggle", labelKey: "settings.tags.builtinHint", order: 20 },
 ] as const satisfies readonly SettingFieldConfig[];

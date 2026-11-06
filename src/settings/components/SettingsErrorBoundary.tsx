@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { logSettingsEvent } from "../settings-log";
 
 /** 设置页错误兜底文案：区分根页面与单个页签的恢复提示。 */
 export interface SettingsErrorBoundaryCopy {
@@ -63,6 +64,8 @@ export class SettingsErrorBoundary extends Component<
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     appendSettingsErrorLog(this.props.scope, error, info);
+    // fallback.shown：兜底 UI 即将渲染的事件流水（与上方 error 级日志分轨，便于日志侧统计兜底率）。
+    logSettingsEvent("settings.fallback.shown", { scope: this.props.scope });
   }
 
   render() {

@@ -1,10 +1,12 @@
 /** 设置窗口「采集与内容」「存储与日志」两个 section（从 settings.tsx 切出的展示组件）。
  *  边界：状态与动作经 props 注入；diagnostics 的 tooltip/两步确认探针受 verify 断言锁定。 */
 import { Eye, ExternalLink, FileCode, FileDown, FolderOpen, RefreshCw, Terminal, Trash2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { TranslationKey } from "../../i18n";
 import { CheckItem, NumberSetting, ReadonlyField, SettingGroup, ToggleSetting } from "../controls";
 import { LogsDataTables } from "../components/LogsDataTables";
+import { OcrEndpointCard } from "../components/OcrEndpointCard";
 import { SettingsFieldRow } from "../components/SettingsFieldRow";
 import { SettingsStatusPanel } from "../components/SettingsStatusPanel";
 import type { SettingsStatusPanelState } from "../components/SettingsStatusPanel";
@@ -77,6 +79,12 @@ export function CaptureContentSection({ settings, tr, updateSettings, renderTabs
           onChange={(key, value) => updateSettings({ [key]: value } as Partial<AppSettings>)}
           tr={tr}
           extraNodes={[
+            <OcrEndpointCard
+              endpointUrl={settings.ocrEndpointUrl}
+              key="ocr-endpoint-card"
+              onEndpointChange={(ocrEndpointUrl) => updateSettings({ ocrEndpointUrl })}
+              tr={tr}
+            />,
             <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]" key="capture-multi-type">
               <span>{tr("settings.capture.multiType.title")}</span>
               <strong>{tr("settings.capture.multiType.summary")}</strong>
@@ -131,6 +139,68 @@ export type StorageLogsSectionProps = {
   cleanupDataNow: () => Promise<void> | void;
   revealDataFolder: () => Promise<void> | void;
 };
+
+/** 调试模式实时指标面板：仅当 diagnostics tab 挂载时存在（TabsContent 懒渲染），
+ *  轮询随挂载/卸载自动起停——没人看时零开销（对应提案「采样默认关闭」的 UI 侧落点）。
+ *  数据源：diagnostics_get_metrics 命令（Rust 按需采集，无后台线程）。 */
+function DiagnosticsMetricsPanel({ tr, formatBytes }: { tr: (key: TranslationKey) => string; formatBytes: (bytes: number) => string }) {
+  const [metrics, setMetrics] = useState<Record<string, never> | null>(null);
+  // 上一次快照:用于「内存持续增长」告警(连续 3 次单调增长才高亮,避免单次波动误报)。
+  const growthRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    let disposed = false;
+    const poll = async () => {
+      try {
+        const next = await invoke<Record<string, never>>("diagnostics_get_metrics");
+        if (!disposed) setMetrics(next);
+      } catch {
+        /* 单次采集失败不打断面板,下个周期重试 */
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const memory = (metrics as unknown as { memory?: { physFootprintBytes?: number } } | null)?.memory;
+  const physFootprint = memory?.physFootprintBytes ?? 0;
+  useEffect(() => {
+    if (!physFootprint) return;
+    const history = [...growthRef.current, physFootprint].slice(-3);
+    growthRef.current = history;
+  }, [physFootprint]);
+  const growing =
+    growthRef.current.length === 3 && growthRef.current[0] < growthRef.current[1] && growthRef.current[1] < growthRef.current[2];
+
+  const data = (metrics as unknown as { data?: { dbBytes?: number; imagesBytes?: number; clipCount?: number } } | null)?.data;
+  const log = (metrics as unknown as { log?: { lastEntryAgeMs?: number; bytes?: number } } | null)?.log;
+  const logStalled = (log?.lastEntryAgeMs ?? 0) > 5000;
+  const uptimeMs = (metrics as unknown as { uptimeMs?: number } | null)?.uptimeMs ?? 0;
+
+  const rows: Array<{ label: string; value: string; warn?: boolean }> = [
+    { label: tr("settings.diagnostics.metric.memory"), value: physFootprint ? formatBytes(physFootprint) : "—", warn: growing },
+    { label: tr("settings.diagnostics.metric.database"), value: data?.dbBytes ? formatBytes(data.dbBytes) : "—" },
+    { label: tr("settings.diagnostics.metric.images"), value: data?.imagesBytes ? formatBytes(data.imagesBytes) : "—" },
+    { label: tr("settings.diagnostics.metric.clipCount"), value: String(data?.clipCount ?? 0) },
+    { label: tr("settings.diagnostics.metric.logAge"), value: log?.lastEntryAgeMs != null && log.lastEntryAgeMs >= 0 ? `${log.lastEntryAgeMs} ms` : "—", warn: logStalled },
+    { label: tr("settings.diagnostics.metric.uptime"), value: uptimeMs ? `${Math.round(uptimeMs / 1000)} s` : "—" },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 py-1 sm:grid-cols-3" data-dev-probe="settings-diagnostics-metrics">
+      {rows.map((row) => (
+        <div className="flex items-baseline justify-between gap-2 text-[12px]" key={row.label}>
+          <span className="text-muted-foreground">{row.label}</span>
+          <span className={row.warn ? "mono text-destructive" : "mono text-foreground/90"}>{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** 存储与日志 section（data/cleanup/logs/diagnostics 四个 tab）；清理确认保持两步式。 */
 export function StorageLogsSection({
@@ -336,6 +406,7 @@ export function StorageLogsSection({
     ),
     diagnostics: (
       <SettingGroup title={tr("settings.diagnostics.title")}>
+        <DiagnosticsMetricsPanel formatBytes={formatBytes} tr={tr} />
         <SettingsStatusPanel
           actions={[
             {

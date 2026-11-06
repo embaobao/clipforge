@@ -1,6 +1,7 @@
 /** pi agent 的剪贴板工具集：把本地剪贴板历史暴露给 Agent 的工具调用框架。
- *  边界：只读工具（搜索/读取）；写回类操作不作为 Agent 工具暴露（避免模型驱动写剪贴板）。 */
-import { Type } from "@mariozechner/pi-ai";
+ *  边界：只读工具（搜索/读取）；写回类操作不作为 Agent 工具暴露（避免模型驱动写剪贴板）。
+ *  1.1.0 适配：`Type` 仍从主入口导出（pi-ai 主入口 re-export typebox 的 Type）。 */
+import { Type } from "@earendil-works/pi-ai";
 import { invoke } from "@tauri-apps/api/core";
 
 type SearchClipsResult = {

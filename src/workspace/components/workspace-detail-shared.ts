@@ -25,6 +25,19 @@ export type DetailQuickAction = {
   disabled?: boolean;
 };
 
+/** 详情页 agent provider 列表（脱敏）：apiKey 一律剥离换 hasApiKey 布尔，
+ *  防止设置态（legacy 读路径可能带明文）把 key 传进详情组件树；
+ *  AI 调用的真实 key 走 agent_resolve_pi_provider 运行时解析，与此展示态无关。 */
+export function toDetailAgentProviders(
+  providers: Array<Record<string, unknown>> | undefined,
+): Array<Record<string, unknown>> {
+  return (providers ?? []).map((entry) => {
+    const apiKey = typeof entry.apiKey === "string" ? entry.apiKey : "";
+    const { apiKey: _stripped, ...rest } = entry;
+    return { ...rest, hasApiKey: apiKey.trim() !== "" };
+  });
+}
+
 /** 编辑器变量抽屉的单行变量描述（key/类型/示例值）。 */
 export type EditorVariableRow = {
   key: string;

@@ -1,9 +1,10 @@
 /** 设置窗口「MCP/Agent」「更新与分发」「标签规则」三个 section（从 settings.tsx 切出的展示组件）。
  *  边界：状态与动作经 props 注入；MCP code tabs 的三条过滤断言锚定本文件。 */
 import { FileDown, Plus, RefreshCw, Tags, Trash2, UploadCloud } from "lucide-react";
+import { SegmentSetting, SettingGroup, ToggleSetting } from "../controls";
+import { AgentProviderManager } from "./AgentProviderManager";
 import type { ReactNode } from "react";
 import type { TranslationKey } from "../../i18n";
-import { SegmentSetting, SettingGroup } from "../controls";
 import type { ChangeEvent } from "react";
 import { Input } from "@/components/ui/input";
 import { SettingsCodeTabs } from "../components/SettingsCodeTabs";
@@ -29,6 +30,10 @@ export type McpAgentSectionProps = {
   mcpAgentCodeTabs: SettingsCodeTab[];
   copyMcpAgentCodeTab: (tab: SettingsCodeTab) => void;
   getConfiguredAgentProviderCount: () => number;
+  /** 脱敏后的 provider 列表（settings.agent.providers ?? settings.agentProviders）。 */
+  agentProviders: Array<Record<string, unknown>>;
+  /** 整表写回通道（setState → settings_service_patch），与设置页其余分组共用。 */
+  updateSettings: (next: Partial<AppSettings>) => void;
   renderTabs: (panels: Partial<Record<SettingsTabId, ReactNode>>) => ReactNode;
 };
 
@@ -39,6 +44,8 @@ export function McpAgentSection({
   mcpAgentCodeTabs,
   copyMcpAgentCodeTab,
   getConfiguredAgentProviderCount,
+  agentProviders,
+  updateSettings,
   renderTabs,
 }: McpAgentSectionProps) {
   return renderTabs({
@@ -114,18 +121,25 @@ export function McpAgentSection({
       </SettingGroup>
     ),
     provider: (
-      <SettingGroup>
-        <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
-          <span>{tr("settings.integration.provider.title")}</span>
-          <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
-          <p>{tr("settings.integration.provider.description")}</p>
-          <SettingsCodeTabs
-            copyLabel={tr("settings.action.copy")}
-            tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "provider")}
-            onCopy={copyMcpAgentCodeTab}
-          />
-        </div>
-      </SettingGroup>
+      <>
+        <AgentProviderManager
+          providers={agentProviders}
+          tr={tr}
+          updateSettings={updateSettings}
+        />
+        <SettingGroup>
+          <div className="rounded-lg bg-black/[0.03] p-4 dark:bg-white/[0.05]">
+            <span>{tr("settings.integration.provider.title")}</span>
+            <strong>{tr("settings.integration.provider.summary", { count: getConfiguredAgentProviderCount() })}</strong>
+            <p>{tr("settings.integration.provider.description")}</p>
+            <SettingsCodeTabs
+              copyLabel={tr("settings.action.copy")}
+              tabs={mcpAgentCodeTabs.filter((tab) => tab.value === "provider")}
+              onCopy={copyMcpAgentCodeTab}
+            />
+          </div>
+        </SettingGroup>
+      </>
     ),
   });
 }
@@ -297,8 +311,7 @@ export function UpdateDistributionSection({
 }
 
 export type TagRulesSectionProps = {
-  settings: Pick<AppSettings, "tagMode" | "tagRules">;
-  tagModeLabels: Record<AppSettings["tagMode"], string>;
+  settings: Pick<AppSettings, "tagMode" | "tagRules" | "builtinTagRules">;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
   updateSettings: (next: Partial<AppSettings>) => void;
   addTagRule: () => void;
@@ -310,7 +323,6 @@ export type TagRulesSectionProps = {
 /** 标签规则 section（tag-mode/rules 两个 tab）：自动打标模式与关键词规则编辑。 */
 export function TagRulesSection({
   settings,
-  tagModeLabels,
   tr,
   updateSettings,
   addTagRule,
@@ -318,6 +330,11 @@ export function TagRulesSection({
   deleteTagRule,
   renderTabs,
 }: TagRulesSectionProps) {
+  const tagModeLabels: Record<AppSettings["tagMode"], string> = {
+    similar: tr("settings.tags.mode.similar"),
+    rules: tr("settings.tags.mode.rules"),
+    off: tr("settings.tags.mode.off"),
+  };
   return renderTabs({
     "tag-mode": (
       <SettingGroup>
@@ -331,6 +348,27 @@ export function TagRulesSection({
           selected={settings.tagMode}
           onChange={(tagMode) => updateSettings({ tagMode })}
         />
+        <div className="mt-3 space-y-0.5 border-t border-black/[0.06] pt-3 dark:border-white/[0.08]">
+          <p className="pb-1 text-[12.5px] text-muted-foreground">{tr("settings.tags.builtinHint")}</p>
+          <ToggleSetting
+            checked={settings.builtinTagRules?.link ?? true}
+            label={tr("settings.tags.builtinLink")}
+            probeId="settings-control:builtinTagRules.link"
+            onChange={(link) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, link } })}
+          />
+          <ToggleSetting
+            checked={settings.builtinTagRules?.markdown ?? true}
+            label={tr("settings.tags.builtinMarkdown")}
+            probeId="settings-control:builtinTagRules.markdown"
+            onChange={(markdown) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, markdown } })}
+          />
+          <ToggleSetting
+            checked={settings.builtinTagRules?.hashtag ?? true}
+            label={tr("settings.tags.builtinHashtag")}
+            probeId="settings-control:builtinTagRules.hashtag"
+            onChange={(hashtag) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, hashtag } })}
+          />
+        </div>
       </SettingGroup>
     ),
     rules: (

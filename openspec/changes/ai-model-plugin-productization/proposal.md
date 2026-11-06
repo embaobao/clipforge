@@ -22,15 +22,15 @@ ClipForge 当前已经有三条相关规划：
 
 ## 调研依据
 
-### Context7 状态
+### 当前文档拉取（2026-10-27 完成，替代 Context7）
 
-按项目规则已先调用 `npx ctx7@latest library Tiptap "<用户完整问题>"`，但当前 Context7 返回：
+Context7 配额仍超限；已改经官方文档/npm registry 直接拉取五组文档（Tiptap AI、AI SDK、Tauri 安全存储/updater、MCP schema/authorization、Tiptap 降级路径），纪要见 [doc-pull-2026-10-27.md](doc-pull-2026-10-27.md)。关键结论（实现前以此为准，未确认假设已删除）：
 
-```text
-Monthly quota exceeded. Create a free API key at https://context7.com/dashboard for more requests.
-```
-
-因此本轮方案不能声称已通过 Context7 拉取完整当前文档。后续进入实现前必须用 Context7 重新拉取 Tiptap、AI SDK、Tauri、MCP 等库文档。
+- **Tiptap**：文档已重组——旧 Content AI 现名 Basic AI Generation（`@tiptap-pro/extension-ai`），新主推 AI Toolkit（client/server 两版）；`@tiptap-pro/*` 为付费私有 registry，公共 npm 不可查，版本假设只能写到「`@tiptap/*` ≥ 3.12.0（公开包 3.32.0）」粒度；旧 AI Agent/AI Changes/AI Suggestion 已进 deprecated。
+- **AI SDK**：ai@7.0.154；provider registry = `createProviderRegistry`；tool calling = `tool({ inputSchema, execute? })` + `stopWhen`（`needsApproval` 已 deprecated → `toolApproval`）；UIMessage 为 `parts` 数组（tool part 六态状态机）。
+- **Tauri v2**：**无官方 secure-storage/keyring 插件**（官方列表实查）；官方密钥方案 = Stronghold 插件 2.4.0；updater 2.14.0 签名强制；社区方案仅 `keyring` crate 4.2.0 / `tauri-plugin-keyring` 0.1.0（未背书）。
+- **MCP**：官方 current spec = 2025-11-25；tools `inputSchema`/`outputSchema` + `isError:true` 双轨错误；authorization 基于 OAuth 2.1 + RFC 9728/8707 + PKCE S256，stdio 传输不适用。
+- **Tiptap 降级**：官方无自动降级/超时配置文档——「Tiptap AI 失败降级到紧凑编辑」需宿主自行实现（可用 Basic AI `storage.ai` 状态机 + `aiReject(reset)`，AI Toolkit `onError` + `reviewOptions` 预览确认）。
 
 ### Tiptap 官方文档方向
 

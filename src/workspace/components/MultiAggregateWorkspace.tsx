@@ -1,19 +1,23 @@
-import { Copy, FileDown, FileJson, FileText, Table2 } from "lucide-react";
+import { Copy, FileDown, FileJson, Table2 } from "lucide-react";
 import { useState } from "react";
 import type { ClipItem } from "../../App";
 import { WorkspaceCrumb } from "./WorkspaceCrumb";
 import { AggregateItem } from "./AggregateItem";
+import { AggregateFormatMenu } from "./AggregateFormatMenu";
+import type { AggregateFormatOptions } from "../../clipboard/clipboard-domain";
 import type { WorkspaceTr } from "./workspace-detail-shared";
 
 export type MultiAggregateWorkspaceProps = {
   items: ClipItem[];
   aggregatePreview: string;
+  format: AggregateFormatOptions;
   tr: WorkspaceTr;
   onBack: () => void;
   onCopy: () => void;
   onCopyItem: (clip: ClipItem) => void;
   onExportTextFiles: () => Promise<void> | void;
   onExportTable: () => void;
+  onFormatChange: (next: AggregateFormatOptions) => void;
   onOpenItem: (clip: ClipItem) => void;
 };
 
@@ -24,12 +28,14 @@ const crumbIconButtonClass = "relative inline-flex h-7 w-7 items-center justify-
 export function MultiAggregateWorkspace({
   aggregatePreview,
   items,
+  format,
   tr,
   onBack,
   onCopy,
   onCopyItem,
   onExportTextFiles,
   onExportTable,
+  onFormatChange,
   onOpenItem,
 }: MultiAggregateWorkspaceProps) {
   const [isExporting, setIsExporting] = useState(false);
@@ -72,10 +78,7 @@ export function MultiAggregateWorkspace({
           <FileDown size={13} />
           {tr("main.aggregate.exportTexts")}
         </button>
-        <button className={actionStripButtonClass} disabled type="button">
-          <FileText size={13} />
-          {tr("main.aggregate.template")}
-        </button>
+        <AggregateFormatMenu format={format} onChange={onFormatChange} tr={tr} />
         <button className={actionStripButtonClass} disabled type="button">
           <FileJson size={13} />
           {tr("main.aggregate.structure")}

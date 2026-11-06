@@ -63,6 +63,8 @@ export interface AppSettings {
   pinyinSearchEnabled: boolean;
   tagMode: "similar" | "rules" | "off";
   tagRules: Array<{ id: string; label: string; query: string }>;
+  /** 内置标签规则开关（详情页提案 §5.4）：链接/Markdown/#话题 三条采集端内置规则；#多行 已删除。 */
+  builtinTagRules: { link: boolean; markdown: boolean; hashtag: boolean };
   positionStrategy: "trayCenter" | "followCursor" | "center" | "windowCenter" | "lastPosition" | "focusInput";
   panelBackgroundOpacity: number;
   enableScrollCollapse: boolean;
@@ -78,6 +80,10 @@ export interface AppSettings {
   logAutoCleanup: boolean;
   logCleanupIntervalMin: number;
   debugLogsEnabled: boolean;
+  /** 图片文字识别(OCR)开关:仅本地视觉端点,默认开。 */
+  ocrEnabled: boolean;
+  /** OCR 端点 URL(OpenAI-compatible),默认 llama-server 惯例端口。 */
+  ocrEndpointUrl: string;
   captureTextEnabled: boolean;
   captureHtmlEnabled: boolean;
   captureRtfEnabled: boolean;
@@ -254,6 +260,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fuzzySearchEnabled: true,
   pinyinSearchEnabled: true,
   tagMode: "rules",
+  builtinTagRules: { link: true, markdown: true, hashtag: true },
   tagRules: [
     { id: "r1", label: "GitHub", query: "github.com gh repo pull request" },
     { id: "r2", label: "GitLab", query: "gitlab.com merge request" },
@@ -275,6 +282,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   logAutoCleanup: true,
   logCleanupIntervalMin: 1440,
   debugLogsEnabled: false,
+  ocrEnabled: true,
+  ocrEndpointUrl: "http://127.0.0.1:8491",
   captureTextEnabled: true,
   captureHtmlEnabled: true,
   captureRtfEnabled: true,
@@ -293,6 +302,8 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | Record<str
     ...DEFAULT_SETTINGS,
     ...partial,
     language: normalizeLanguagePreference(partial.language),
+    // 内置规则开关嵌套合并：旧配置缺键时逐项回落默认（全开）。
+    builtinTagRules: { ...DEFAULT_SETTINGS.builtinTagRules, ...(partial.builtinTagRules ?? {}) },
   };
 }
 

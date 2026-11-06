@@ -57,7 +57,16 @@ assert(fs.existsSync(settingsWindowPath), `${settingsWindowPath} not found`);
 assert(fs.existsSync(perfCollectorPath), `${perfCollectorPath} not found`);
 
 // ---- 静态断言 1：后端 settings_service_* 埋点 ------------------------------
-const rust = read(rustPath);
+// Phase 3 起 settings_service_* 实现迁入 settings_service/ 子模块，
+// Rust 断言源 = lib.rs + settings_service/*.rs 拼接。
+const settingsServiceDir = path.join(root, "src-tauri/src/settings_service");
+const rustSources = [rustPath].concat(
+  ["mod.rs", "write.rs", "commands.rs", "mcp.rs"].map((name) => path.join(settingsServiceDir, name)),
+);
+for (const file of rustSources) {
+  assert(fs.existsSync(file), `${file} not found`);
+}
+const rust = rustSources.map(read).join("\n");
 const settingsFns = ["settings_service_get", "settings_service_patch", "settings_service_replace", "settings_service_reset"];
 
 assert(

@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClipForge 插件运行时 · 整体架构与功能预演</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #2d3142;
+      --color-muted:   #4f5d75;
+      --color-accent:  #bf4520;
+      --color-rule:    rgba(45,49,66,0.12);
+      --font-sans:     'Geist', 'Noto Sans SC', 'PingFang SC', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', 'Noto Serif SC', 'Songti SC', serif;
+      --font-mono:     'Geist Mono', 'PingFang SC', ui-monospace, monospace;
+      --motion-fast: 160ms;
+      --motion-step: 480ms;
+      --motion-hold: 720ms;
+      --motion-total: 5040ms;
+      --motion-ease: cubic-bezier(.2,.8,.2,1);
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      padding: 3rem 2rem 4rem;
+    }
+    .frame { max-width: 1100px; margin: 0 auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    section { margin-top: 3rem; }
+    h2 {
+      font-family: var(--font-serif);
+      font-size: 1.25rem;
+      font-weight: 400;
+      line-height: 1.2;
+      color: var(--color-ink);
+      margin-bottom: 0.75rem;
+    }
+    .lead {
+      font-size: 0.9rem;
+      line-height: 1.8;
+      color: var(--color-muted);
+      margin-bottom: 1.25rem;
+    }
+    .diagram-scroll { overflow-x: auto; }
+    .diagram-scroll svg { width: 100%; min-width: 1000px; display: block; }
+
+    /* 白话拆解表 */
+    .plain-rows { border-top: 1px solid var(--color-rule); }
+    .plain-row {
+      display: grid;
+      grid-template-columns: 190px 1fr;
+      gap: 1rem;
+      padding: 0.7rem 0.25rem;
+      border-bottom: 1px solid var(--color-rule);
+    }
+    .plain-row dt {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--color-ink);
+    }
+    .plain-row dd {
+      font-size: 0.86rem;
+      line-height: 1.75;
+      color: var(--color-muted);
+    }
+
+    /* Motion: item visibility owned by CSS, static source stays complete */
+    [data-motion-root] .diagram-scroll svg { min-width: 960px; }
+    .motion-ready [data-motion-item] {
+      opacity: .12;
+      transform: translateY(8px);
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: opacity var(--motion-step) var(--motion-ease),
+                  transform var(--motion-step) var(--motion-ease);
+    }
+    .motion-ready [data-motion-item].is-visible,
+    .motion-ready[data-frame="end"] [data-motion-item],
+    .motion-ready[data-frame="static"] [data-motion-item] {
+      opacity: 1;
+      transform: none;
+    }
+    [data-motion-controls] {
+      display: none;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--color-rule);
+    }
+    .motion-ready [data-motion-controls] { display: flex; }
+    [data-motion-controls][hidden] { display: none !important; }
+    [data-motion-controls] button {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 8px 12px;
+      border: 1px solid var(--color-muted);
+      border-radius: 4px;
+      color: var(--color-ink);
+      background: var(--color-paper);
+      font: 600 12px/1 var(--font-sans);
+      cursor: pointer;
+    }
+    [data-motion-controls] button:hover { border-color: var(--color-accent); }
+    [data-motion-controls] button:focus-visible {
+      outline: 3px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+    [data-motion-controls] button:disabled { cursor: not-allowed; opacity: .45; }
+    .keyboard-help {
+      color: var(--color-muted);
+      font: 500 12px/1.4 var(--font-mono);
+    }
+    [data-motion-status-visible] {
+      margin-left: auto;
+      color: var(--color-muted);
+      font: 500 12px/1.4 var(--font-mono);
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      white-space: nowrap;
+      border: 0;
+    }
+    noscript p {
+      margin: 12px 0 0;
+      color: var(--color-muted);
+      font: 500 12px/1.4 var(--font-mono);
+    }
+
+    html[data-motion="static"] [data-motion-controls],
+    html[data-motion="static"] [data-motion-decorative] { display: none !important; }
+    html[data-motion="static"] [data-motion-item] {
+      opacity: 1 !important;
+      transform: none !important;
+      animation: none !important;
+      transition: none !important;
+    }
+    html[data-motion="step"] [data-motion-controls],
+    html[data-motion="step"] [data-motion-decorative] { display: none !important; }
+    html[data-motion="step"] [data-motion-item] {
+      animation: none !important;
+      transition: none !important;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .001ms !important;
+      }
+      [data-motion-item] { opacity: 1 !important; transform: none !important; }
+      [data-motion-decorative] { display: none !important; }
+      [data-motion-controls] { display: none !important; }
+    }
+    @media print {
+      .diagram-scroll { overflow-x: visible; }
+      svg { min-width: 0; }
+      [data-motion-controls], [data-motion-decorative] { display: none !important; }
+      [data-motion-item] {
+        opacity: 1 !important;
+        transform: none !important;
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">架构图 · agent-plugin-runtime</p>
+    <h1>ClipForge 插件运行时 · 整体架构</h1>
+
+    <div class="diagram-scroll">
+    <svg viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="clipforge-plugin-runtime-title clipforge-plugin-runtime-desc">
+      <title id="clipforge-plugin-runtime-title">ClipForge 插件运行时整体架构</title>
+      <desc id="clipforge-plugin-runtime-desc">三区:调用方、宿主进程、插件沙箱。插件经唯一 ctx 桥以 JSON 值边界对接宿主域层:cordis Fiber 管生命周期,Service 注入能力,Event 分发域事件,rquickjs 每插件独立运行时隔离。</desc>
+        <defs>
+          <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="0.9" fill="rgba(45,49,66,0.10)"/>
+          </pattern>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+        <rect width="100%" height="100%" fill="url(#dots)" opacity="0.55"/>
+
+        <!-- Zones (before arrows and nodes) -->
+        <rect x="36" y="12" width="188" height="412" rx="8"
+              fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="106" y="16" width="48" height="14" rx="2" fill="#f5f5f5"/>
+        <text x="130" y="26" fill="#5a6580" font-size="8" font-family="'Geist Mono','PingFang SC',monospace"
+              text-anchor="middle" letter-spacing="0.10em">调用方</text>
+
+        <rect x="300" y="12" width="340" height="412" rx="8"
+              fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <rect x="440" y="16" width="60" height="14" rx="2" fill="#f5f5f5"/>
+        <text x="470" y="26" fill="#5a6580" font-size="8" font-family="'Geist Mono','PingFang SC',monospace"
+              text-anchor="middle" letter-spacing="0.10em">宿主进程</text>
+
+        <rect x="660" y="192" width="300" height="232" rx="8"
+              fill="rgba(45,49,66,0.02)" stroke="rgba(45,49,66,0.10)" stroke-width="0.8" stroke-dasharray="5,4"/>
+        <rect x="770" y="196" width="80" height="14" rx="2" fill="#f5f5f5"/>
+        <text x="810" y="206" fill="#5a6580" font-size="8" font-family="'Geist Mono','PingFang SC',monospace"
+              text-anchor="middle" letter-spacing="0.10em">插件沙箱 ×N</text>
+
+        <!-- Arrows first (behind boxes) -->
+        <!-- 1 外部 Agent -> 网关 -->
+        <line x1="208" y1="76" x2="316" y2="76" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- 2 网关 -> 门面 -->
+        <line x1="456" y1="108" x2="456" y2="140" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 3 门面 -> ctx 桥 -->
+        <line x1="456" y1="204" x2="456" y2="236" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 4 设置页 -> 门面 -->
+        <path d="M 208,348 H 228 Q 236,348 236,340 V 212 a 8,8 0 0 0 0,-16 V 180 Q 236,172 244,172 H 316"
+              fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 5 pi Agent -> 域层(现有热路径,直调) -->
+        <path d="M 208,204 H 240 Q 248,204 248,212 V 356 Q 248,364 256,364 H 316"
+              fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- 6 域层 -> ctx 桥(域事件,异步,焦点) -->
+        <line x1="520" y1="332" x2="520" y2="300" stroke="#bf4520" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#arrow-accent)"/>
+        <!-- 7 ctx 桥 <-> 插件 A -->
+        <line x1="700" y1="252" x2="596" y2="252" stroke="#4f5d75" stroke-width="1.2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+        <!-- 8 ctx 桥 <-> 插件 B -->
+        <path d="M 700,372 H 672 Q 664,372 664,364 V 292 Q 664,284 672,284 H 596"
+              fill="none" stroke="#4f5d75" stroke-width="1.2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+
+        <!-- Arrow labels -->
+        <rect x="234" y="62" width="48" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="258" y="71" fill="#2e5aa8" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">工具调用</text>
+
+        <rect x="476" y="112" width="48" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="500" y="121" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">插件管理</text>
+
+        <rect x="462" y="208" width="48" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="486" y="217" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">生命周期</text>
+
+        <rect x="178" y="250" width="52" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="204" y="259" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">启用/配置</text>
+
+        <rect x="250" y="272" width="64" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="282" y="281" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">invoke 直调</text>
+
+        <rect x="528" y="306" width="44" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="550" y="315" fill="#bf4520" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">域事件</text>
+
+        <rect x="600" y="262" width="60" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="630" y="271" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">JSON 值边界</text>
+
+        <!-- Nodes: 调用方 -->
+        <rect x="48" y="44" width="160" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="48" y="44" width="160" height="64" rx="6" fill="rgba(79,93,117,0.10)" stroke="#5a6580" stroke-width="1"/>
+        <rect x="56" y="52" width="24" height="12" rx="2" fill="transparent" stroke="rgba(90,101,128,0.40)" stroke-width="0.8"/>
+        <text x="68" y="61" fill="#5a6580" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">外部</text>
+        <text x="128" y="80" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">外部 Agent</text>
+        <text x="128" y="96" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">MCP stdio</text>
+
+        <rect x="48" y="172" width="160" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="48" y="172" width="160" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="56" y="180" width="24" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="68" y="189" fill="#2d3142" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">前端</text>
+        <text x="128" y="208" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">pi Agent</text>
+        <text x="128" y="224" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">WebView · invoke()</text>
+
+        <rect x="48" y="316" width="160" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="48" y="316" width="160" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="56" y="324" width="24" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="68" y="333" fill="#2d3142" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">前端</text>
+        <text x="128" y="352" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">设置页</text>
+        <text x="128" y="368" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">插件/模板分区</text>
+
+        <!-- Nodes: 宿主进程 -->
+        <rect x="316" y="44" width="280" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="316" y="44" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="324" y="52" width="24" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="336" y="61" fill="#2d3142" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">网关</text>
+        <text x="456" y="80" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">MCP 网关</text>
+        <text x="456" y="96" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">specs.rs 40 条 · tools/list 聚合</text>
+
+        <rect x="316" y="140" width="280" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="316" y="140" width="280" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <rect x="324" y="148" width="24" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="336" y="157" fill="#2d3142" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">宿主</text>
+        <text x="456" y="176" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">plugin_runtime 门面</text>
+        <text x="456" y="192" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">cordis Fiber·Service·Event</text>
+
+        <rect x="316" y="236" width="280" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="316" y="236" width="280" height="64" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+        <rect x="324" y="244" width="24" height="12" rx="2" fill="transparent" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+        <text x="336" y="253" fill="#bf4520" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">桥接</text>
+        <text x="456" y="272" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">ctx 桥</text>
+        <text x="456" y="288" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">JSON 值边界 · 预算/双层看门狗</text>
+
+        <rect x="316" y="332" width="280" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="316" y="332" width="280" height="64" rx="6" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+        <rect x="324" y="340" width="24" height="12" rx="2" fill="transparent" stroke="rgba(79,93,117,0.50)" stroke-width="0.8"/>
+        <text x="336" y="349" fill="#4f5d75" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">域层</text>
+        <text x="456" y="368" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">域层</text>
+        <text x="456" y="384" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">剪贴板·搜索·标签 · SQLite</text>
+
+        <!-- Nodes: 插件沙箱 -->
+        <rect x="700" y="224" width="224" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="700" y="224" width="224" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="5,4"/>
+        <rect x="708" y="232" width="24" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="720" y="241" fill="#2d3142" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">沙箱</text>
+        <text x="812" y="260" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">插件 A · auto-tag-rules</text>
+        <text x="812" y="276" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">rquickjs Runtime · ctx</text>
+
+        <rect x="700" y="340" width="224" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="700" y="340" width="224" height="64" rx="6" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="5,4"/>
+        <rect x="708" y="348" width="24" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+        <text x="720" y="357" fill="#2d3142" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.05em">沙箱</text>
+        <text x="812" y="376" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">插件 B · quick-tag</text>
+        <text x="812" y="392" fill="#4f5d75" font-size="9" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">rquickjs Runtime · ctx</text>
+
+        <!-- Legend strip -->
+        <line x1="40" y1="448" x2="960" y2="448" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+        <text x="40" y="464" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" letter-spacing="0.18em">图例</text>
+
+        <rect x="40" y="480" width="14" height="10" rx="2" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+        <text x="60" y="488" fill="#4f5d75" font-size="8.5" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif">唯一通道 · ctx 桥</text>
+
+        <rect x="200" y="480" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+        <text x="220" y="488" fill="#4f5d75" font-size="8.5" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif">宿主进程</text>
+
+        <rect x="310" y="480" width="14" height="10" rx="2" fill="rgba(45,49,66,0.05)" stroke="#4f5d75" stroke-width="1"/>
+        <text x="330" y="488" fill="#4f5d75" font-size="8.5" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif">域层/数据</text>
+
+        <rect x="420" y="480" width="14" height="10" rx="2" fill="rgba(45,49,66,0.03)" stroke="rgba(45,49,66,0.30)" stroke-width="1" stroke-dasharray="5,4"/>
+        <text x="440" y="488" fill="#4f5d75" font-size="8.5" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif">插件沙箱(隔离)</text>
+
+        <rect x="580" y="480" width="14" height="10" rx="2" fill="rgba(79,93,117,0.10)" stroke="#5a6580" stroke-width="1"/>
+        <text x="600" y="488" fill="#4f5d75" font-size="8.5" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif">外部</text>
+
+        <line x1="660" y1="485" x2="688" y2="485" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <text x="696" y="488" fill="#4f5d75" font-size="8.5" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif">外部工具调用</text>
+
+        <line x1="790" y1="485" x2="818" y2="485" stroke="#bf4520" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#arrow-accent)"/>
+        <text x="826" y="488" fill="#4f5d75" font-size="8.5" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif">域事件(异步)</text>
+      </svg>
+    </div>
+
+    <section>
+      <h2>白话拆解:每一层是干什么的</h2>
+      <p class="lead">整张图就一句话:<strong>外面的 AI 隔着传达室下单,里面的数据只从一个传菜窗口进出,插件各住各的包间,谁也搞不垮宿主。</strong>控制流从左往右,数据经 ctx 桥时只传副本。</p>
+      <dl class="plain-rows">
+        <div class="plain-row">
+          <dt>外部 Agent</dt>
+          <dd>住在别的 App 里的 AI 助手(比如 Claude Code)。它只能隔着传达室(MCP 网关)下单:搜历史、复制条目、装插件。进不了后厨。</dd>
+        </div>
+        <div class="plain-row">
+          <dt>pi Agent</dt>
+          <dd>住在 App 自己窗口里的 AI 面板。它不走传达室,直接喊后厨(invoke 直调),所以快——这是现有热路径,插件机制一行不改。</dd>
+        </div>
+        <div class="plain-row">
+          <dt>设置页</dt>
+          <dd>你操作的地方:装/卸插件、改配置、管提示词模板。装插件和改配置都要你点确认,Agent 不能替你拍板。</dd>
+        </div>
+        <div class="plain-row">
+          <dt>MCP 网关</dt>
+          <dd>传达室。墙上挂着两块菜单:固定菜单(40 条 clipf.* 工具)和插件自报的菜(plugin.*.*)。外部 Agent 只能照菜单点。</dd>
+        </div>
+        <div class="plain-row">
+          <dt>plugin_runtime 门面</dt>
+          <dd>插件管理处。每个插件一份档案加一条生命周期(cordis Fiber):装 → 跑 → 停 → 回收,全自动;插件挂了标记 Failed,不连累别人。</dd>
+        </div>
+        <div class="plain-row">
+          <dt>ctx 桥(图上红框)</dt>
+          <dd>唯一的传菜窗口。插件在 manifest 里声明过要什么,窗口里才有什么;没声明的菜,窗口里压根不存在。数据只传副本,超时、限量、双层看门狗都在这层把守。</dd>
+        </div>
+        <div class="plain-row">
+          <dt>域层</dt>
+          <dd>后厨。剪贴板采集、搜索、打标签、SQLite 存取全在这。插件要数据只能经窗口点菜,不能翻墙进后厨。</dd>
+        </div>
+        <div class="plain-row">
+          <dt>插件沙箱</dt>
+          <dd>独立包间。一个插件一个线程一个 QuickJS,内存封顶(默认 8MB)。包间里跑死循环、爆内存,只死自己;宿主把它强制回收、停成 failed,重新启用才复活。</dd>
+        </div>
+      </dl>
+    </section>
+
+    <main data-motion-root data-motion-mode="step" data-step-count="7" data-step-current="7" data-frame="static" data-static-frame="complete">
+      <section>
+        <p class="eyebrow">功能预演 · auto-tag-rules</p>
+        <h2>预演:复制一段会议纪要,会发生什么</h2>
+        <p class="lead">以首个示例插件「规则自动打标」走一遍真实数据流。点「播放」逐步看:用户复制 → 域层采集入库 → 发事件 → 桥投递 → 插件跑规则 → 写回标签 → 面板可见。</p>
+
+        <div class="diagram-scroll">
+        <svg viewBox="0 0 960 215" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="clipforge-tag-scenario-title clipforge-tag-scenario-desc">
+          <title id="clipforge-tag-scenario-title">规则自动打标插件·功能预演</title>
+          <desc id="clipforge-tag-scenario-desc">七步数据流:用户复制会议纪要,域层一百毫秒轮询采集入库并异步发布事件,ctx 桥经有界队列投递,插件读取正文、跑配置里的规则、写回标签,快速面板条目带标签可见;全程宿主源码零改动。</desc>
+          <defs>
+            <marker id="s-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          </defs>
+
+          <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+          <!-- 沙箱边界(静态,持久含义) -->
+          <line x1="545" y1="38" x2="545" y2="152" stroke="rgba(79,93,117,0.45)" stroke-width="1" stroke-dasharray="5,4"/>
+          <text x="545" y="30" fill="#5a6580" font-size="7.5" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle" letter-spacing="0.06em">JSON 值边界 · 只传副本</text>
+
+          <!-- 持久连接线:站点先后顺序(静态含义) -->
+          <line x1="142" y1="96" x2="164" y2="96" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s-arrow)"/>
+          <line x1="272" y1="96" x2="294" y2="96" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s-arrow)"/>
+          <line x1="402" y1="96" x2="424" y2="96" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s-arrow)"/>
+          <line x1="532" y1="96" x2="554" y2="96" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s-arrow)"/>
+          <line x1="662" y1="96" x2="684" y2="96" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s-arrow)"/>
+          <line x1="792" y1="96" x2="814" y2="96" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#s-arrow)"/>
+
+          <g data-motion-item data-step="1" aria-label="第 1 步 · 复制文本:你复制一段会议纪要进系统剪贴板">
+            <rect x="38" y="48" width="104" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+            <rect x="46" y="56" width="14" height="14" rx="2" fill="rgba(45,49,66,0.08)"/>
+            <text x="53" y="66" fill="#2d3142" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">1</text>
+            <text x="134" y="66" fill="#5a6580" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="end">用户</text>
+            <text x="90" y="94" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">复制文本</text>
+            <text x="90" y="114" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">一段会议纪要</text>
+            <text x="90" y="128" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">进系统剪贴板</text>
+          </g>
+
+          <g data-motion-item data-step="2" aria-label="第 2 步 · 采集入库:后台线程 100ms 轮询发现新内容,写入 SQLite">
+            <rect x="168" y="48" width="104" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+            <rect x="176" y="56" width="14" height="14" rx="2" fill="rgba(45,49,66,0.08)"/>
+            <text x="183" y="66" fill="#2d3142" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">2</text>
+            <text x="264" y="66" fill="#5a6580" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="end">域层</text>
+            <text x="220" y="94" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">采集入库</text>
+            <text x="220" y="114" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">100ms 轮询</text>
+            <text x="220" y="128" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">写入 SQLite</text>
+          </g>
+
+          <g data-motion-item data-step="3" aria-label="第 3 步 · 发布事件:域层提交成功后异步广播 capture.finished">
+            <rect x="298" y="48" width="104" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+            <rect x="306" y="56" width="14" height="14" rx="2" fill="rgba(45,49,66,0.08)"/>
+            <text x="313" y="66" fill="#2d3142" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">3</text>
+            <text x="394" y="66" fill="#5a6580" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="end">域层</text>
+            <text x="350" y="94" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">发布事件</text>
+            <text x="350" y="114" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">capture.finished</text>
+            <text x="350" y="128" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">提交后异步广播</text>
+          </g>
+
+          <g data-motion-item data-step="4" aria-label="第 4 步 · 投递事件:ctx 桥经有界队列(深 64)投给插件,超预算即丢弃不反压">
+            <rect x="428" y="48" width="104" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+            <rect x="436" y="56" width="14" height="14" rx="2" fill="rgba(45,49,66,0.08)"/>
+            <text x="443" y="66" fill="#2d3142" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">4</text>
+            <text x="524" y="66" fill="#5a6580" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="end">ctx 桥</text>
+            <text x="480" y="94" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">投递事件</text>
+            <text x="480" y="114" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">有界队列 64 深</text>
+            <text x="480" y="128" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">超预算即丢弃</text>
+          </g>
+
+          <g data-motion-item data-step="5" aria-label="第 5 步 · 读取匹配:插件 ctx.clipf.read 读正文,跑 config 里配置的正则规则">
+            <rect x="558" y="48" width="104" height="96" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+            <rect x="566" y="56" width="14" height="14" rx="2" fill="rgba(191,69,32,0.12)"/>
+            <text x="573" y="66" fill="#bf4520" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">5</text>
+            <text x="654" y="66" fill="#bf4520" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="end">插件</text>
+            <text x="610" y="94" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">读取匹配</text>
+            <text x="610" y="114" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">clipf.read 正文</text>
+            <text x="610" y="128" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">跑 config 规则</text>
+          </g>
+
+          <g data-motion-item data-step="6" aria-label="第 6 步 · 写回标签:插件 ctx.clipf.tag.write 打上「会议」标签(安装时已一次性授权)">
+            <rect x="688" y="48" width="104" height="96" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+            <rect x="696" y="56" width="14" height="14" rx="2" fill="rgba(191,69,32,0.12)"/>
+            <text x="703" y="66" fill="#bf4520" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">6</text>
+            <text x="784" y="66" fill="#bf4520" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="end">插件</text>
+            <text x="740" y="94" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">写回标签</text>
+            <text x="740" y="114" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">clipf.tag.write</text>
+            <text x="740" y="128" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">打上「会议」</text>
+          </g>
+
+          <g data-motion-item data-step="7" aria-label="第 7 步 · 效果可见:快速面板条目带标签,按标签搜索直达">
+            <rect x="818" y="48" width="104" height="96" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+            <rect x="826" y="56" width="14" height="14" rx="2" fill="rgba(45,49,66,0.08)"/>
+            <text x="833" y="66" fill="#2d3142" font-size="8" font-family="'Geist Mono',monospace" text-anchor="middle">7</text>
+            <text x="914" y="66" fill="#5a6580" font-size="7" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="end">前端</text>
+            <text x="870" y="94" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist','Noto Sans SC','PingFang SC',sans-serif" text-anchor="middle">效果可见</text>
+            <text x="870" y="114" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">面板条目带标签</text>
+            <text x="870" y="128" fill="#4f5d75" font-size="8" font-family="'Geist Mono','PingFang SC',monospace" text-anchor="middle">按标签搜索直达</text>
+          </g>
+
+          <g data-motion-item data-step="7" aria-label="效果总结:宿主源码零改动,打标规则住在插件里,改规则等于改配置,装卸即生效">
+            <text x="480" y="192" fill="#2d3142" font-size="14" font-style="italic" font-family="'Instrument Serif','Noto Serif SC','Songti SC',serif" text-anchor="middle">「宿主源码零改动——打标规则住在插件里:改规则 = 改配置,装/卸即生效。」</text>
+          </g>
+        </svg>
+        </div>
+
+        <div data-motion-controls role="group" aria-label="流程预演播放控制">
+          <button type="button" data-motion-action="prev">上一步</button>
+          <button type="button" data-motion-action="play" aria-pressed="false">播放</button>
+          <button type="button" data-motion-action="pause" aria-pressed="true">暂停</button>
+          <button type="button" data-motion-action="next">下一步</button>
+          <button type="button" data-motion-action="replay">重播</button>
+          <span class="keyboard-help">←/→ 单步 · 空格 播放/暂停 · R 重播 · Home/End 跳转</span>
+          <span data-motion-status-visible aria-hidden="true">第 <span data-motion-step-label>7</span> / 7 步</span>
+        </div>
+        <p class="sr-only" data-motion-status role="status" aria-live="polite" aria-atomic="true"></p>
+        <noscript><p>播放控件需要 JavaScript。上方已展示完整的静态流程图。</p></noscript>
+      </section>
+    </main>
+  </div>
+
+  <script data-diagram-controls>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const staticOverride = params.get('motion') === 'static' || document.documentElement.dataset.motion === 'static';
+      const requestedStep = params.get('step');
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+      document.fonts.ready.then(() => { document.documentElement.dataset.fontsReady = 'true'; });
+
+      document.querySelectorAll('[data-motion-root]').forEach((root) => {
+        const count = Number(root.dataset.stepCount);
+        const hold = parseFloat(getComputedStyle(root).getPropertyValue('--motion-hold')) || 720;
+        const parsedStep = requestedStep !== null && /^\d+$/.test(requestedStep) ? Number(requestedStep) : null;
+        const exactStep = params.get('motion') === 'step' && Number.isSafeInteger(parsedStep) && parsedStep >= 0 && parsedStep <= count ? parsedStep : null;
+        const items = [...root.querySelectorAll('[data-motion-item]')];
+        const labels = Array.from({ length: count + 1 }, (_, index) => index === 0
+          ? 'Ready'
+          : items.filter((item) => !item.hasAttribute('data-motion-decorative') && Number(item.dataset.step) === index)
+              .map((item) => item.getAttribute('aria-label')).join('; '));
+        const controls = root.querySelector('[data-motion-controls]');
+        const status = root.querySelector('[data-motion-status]');
+        const visibleStep = root.querySelector('[data-motion-step-label]');
+        let step = count;
+        let timer = 0;
+        let playing = false;
+        let stepBeforeReduce = 0;
+        let resumeAfterReduce = root.dataset.motionMode === 'reveal';
+
+        const buttons = (action) => controls.querySelector(`[data-motion-action="${action}"]`);
+        const clearClock = () => { window.clearTimeout(timer); timer = 0; };
+        const announce = () => { status.textContent = `Step ${step} of ${count}: ${labels[step] || 'Complete'}`; };
+        const setControlsAvailable = (available) => {
+          controls.hidden = !available;
+          controls.setAttribute('aria-hidden', String(!available));
+          controls.dataset.playbackDisabled = String(!available);
+          controls.querySelectorAll('button').forEach((control) => { control.disabled = !available; });
+        };
+
+        function render(next, userInitiated = false) {
+          step = Math.max(0, Math.min(count, next));
+          root.dataset.stepCurrent = String(step);
+          root.dataset.frame = step === count ? 'end' : step === 0 ? 'start' : 'step';
+          items.forEach((item) => {
+            const itemStep = Number(item.dataset.step);
+            item.classList.toggle('is-visible', itemStep <= step);
+            item.classList.toggle('is-current', itemStep === step);
+          });
+          if (visibleStep) visibleStep.textContent = String(step);
+          const unavailable = controls.dataset.playbackDisabled === 'true';
+          buttons('prev').disabled = unavailable || step === 0;
+          buttons('next').disabled = unavailable || step === count;
+          if (userInitiated) announce();
+        }
+
+        function pause(userInitiated = false) {
+          clearClock();
+          playing = false;
+          root.classList.remove('is-playing');
+          buttons('play').setAttribute('aria-pressed', 'false');
+          buttons('pause').setAttribute('aria-pressed', 'true');
+          if (userInitiated) status.textContent = `Paused at step ${step} of ${count}`;
+        }
+
+        function finish() {
+          pause(false);
+          root.dataset.frame = 'end';
+          status.textContent = `Complete · step ${count} of ${count}`;
+        }
+
+        function tick() {
+          if (!playing) return;
+          if (step >= count) { finish(); return; }
+          render(step + 1, false);
+          if (step >= count) { finish(); return; }
+          timer = window.setTimeout(tick, hold);
+        }
+
+        function play(fromStart = false, userInitiated = false) {
+          clearClock();
+          if (fromStart || step >= count) render(0, userInitiated);
+          playing = true;
+          root.classList.add('is-playing');
+          buttons('play').setAttribute('aria-pressed', 'true');
+          buttons('pause').setAttribute('aria-pressed', 'false');
+          timer = window.setTimeout(tick, hold);
+        }
+
+        controls.addEventListener('click', (event) => {
+          const button = event.target.closest('[data-motion-action]');
+          if (!button) return;
+          const action = button.dataset.motionAction;
+          if (action === 'play') play(false, true);
+          if (action === 'pause') pause(true);
+          if (action === 'replay') play(true, true);
+          if (action === 'prev') { pause(false); render(step - 1, true); }
+          if (action === 'next') { pause(false); render(step + 1, true); }
+        });
+
+        root.addEventListener('keydown', (event) => {
+          if (event.target.matches('input, textarea, select, a[href]')) return;
+          const keys = { ArrowLeft: step - 1, ArrowRight: step + 1, Home: 0, End: count };
+          if (event.code === 'Space' && !event.target.closest('button')) {
+            event.preventDefault();
+            playing ? pause(true) : play(false, true);
+            return;
+          }
+          if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'r') {
+            event.preventDefault();
+            play(true, true);
+            return;
+          }
+          if (!(event.key in keys)) return;
+          event.preventDefault();
+          pause(false);
+          render(keys[event.key], true);
+        });
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden' && playing) pause(false);
+        });
+        reduce.addEventListener('change', (event) => {
+          if (event.matches && root.dataset.motionState !== 'reduced') {
+            stepBeforeReduce = step;
+            resumeAfterReduce = playing;
+          }
+          pause(false);
+          if (event.matches) {
+            setControlsAvailable(false);
+            render(count, false);
+            root.dataset.frame = 'static';
+            root.dataset.motionState = 'reduced';
+            status.textContent = 'Reduced motion · complete static frame · playback controls unavailable';
+          } else if (staticOverride || root.dataset.motionMode === 'none') {
+            setControlsAvailable(false);
+            render(count, false);
+            root.dataset.frame = 'static';
+            root.dataset.motionState = 'static';
+            status.textContent = 'Static frame · complete diagram · playback controls unavailable';
+          } else {
+            delete root.dataset.motionState;
+            if (exactStep !== null) {
+              setControlsAvailable(false);
+              render(exactStep, false);
+              root.dataset.frame = 'step';
+              root.dataset.motionState = 'test';
+              status.textContent = `Test frame · step ${step} of ${count} · playback controls unavailable`;
+            } else {
+              setControlsAvailable(true);
+              render(stepBeforeReduce, false);
+              status.textContent = `Ready · step ${step} of ${count}`;
+              if (resumeAfterReduce && root.dataset.motionMode === 'reveal') {
+                play(false, false);
+              }
+            }
+            resumeAfterReduce = false;
+          }
+        });
+
+        if (staticOverride) {
+          document.documentElement.dataset.motion = 'static';
+          pause(false);
+          setControlsAvailable(false);
+          render(count, false);
+          root.dataset.frame = 'static';
+          root.dataset.motionState = 'static';
+          status.textContent = 'Static frame · complete diagram · playback controls unavailable';
+        } else if (reduce.matches || root.dataset.motionMode === 'none') {
+          pause(false);
+          setControlsAvailable(false);
+          render(count, false);
+          root.dataset.frame = 'static';
+          root.dataset.motionState = reduce.matches ? 'reduced' : 'static';
+          status.textContent = reduce.matches
+            ? 'Reduced motion · complete static frame · playback controls unavailable'
+            : 'Static frame · complete diagram · playback controls unavailable';
+        } else if (exactStep !== null) {
+          document.documentElement.dataset.motion = 'step';
+          pause(false);
+          setControlsAvailable(false);
+          render(exactStep, false);
+          root.dataset.frame = 'step';
+          root.dataset.motionState = 'test';
+          status.textContent = `Test frame · step ${step} of ${count} · playback controls unavailable`;
+        } else if (root.dataset.motionMode === 'reveal') {
+          setControlsAvailable(true);
+          render(0, false);
+          play(false, false);
+        } else {
+          pause(false);
+          setControlsAvailable(true);
+          render(0, false);
+          status.textContent = `Ready · step 0 of ${count}`;
+        }
+        root.classList.add('motion-ready');
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -5,14 +5,12 @@ import { checkAnimFreeze } from "./clipboard/anim-freeze-guard";
 import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
 import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
 import { SurfaceFade } from "./components/surface-fade";
-import {
-  getShortcutModLabel,
-} from "./clipboard/clipboard-domain";
+import { getShortcutModLabel, formatAggregate } from "./clipboard/clipboard-domain";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { ErrorInfo, ReactNode, UIEvent } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import {
   formatCommandError,
   resolveAppLocale,
@@ -20,7 +18,7 @@ import {
   type AppLanguagePreference,
   type TranslationKey,
 } from "./i18n";
-import { pasteClipboard, writeClipboard, type FilePathStatus } from "./services/clipboard";
+import { pasteClipboard, type FilePathStatus } from "./services/clipboard";
 import { resolvePrimaryPluginAction } from "./plugin-actions";
 import {
   getSearchSuggestionToken,
@@ -36,6 +34,8 @@ import {
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
 import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
+import { toDetailAgentProviders } from "./workspace/components/workspace-detail-shared";
+import { mergeAiProvenance, parseTagProvenance } from "./workspace/components/detail/tag-provenance";
 import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
 import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
 import { TrashPanel } from "./clipboard/components/TrashPanel";
@@ -49,6 +49,8 @@ import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
 import { isQueryClipPayload, useClipboardList, type QueryClipPayload } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { useClipWriteback } from "./clipboard/use-clip-writeback";
+import { invalidateViewClipCache } from "./clipboard/use-clip-cache-invalidation";
+import { peekViewClipEntry, saveViewScrollTop, setViewClipEntry } from "./clipboard/view-clip-cache";
 import { usePanelKeyboard } from "./clipboard/use-panel-keyboard";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
 import { usePanelUiStore } from "./clipboard/panel-shared";
@@ -56,7 +58,6 @@ import { buildBaseSearchSuggestions, buildSearchClipsRequest, buildSearchSuggest
 import {
   createClip,
   normalizeClip,
-  truncateText,
   type ContentDisplayMode,
   type PanelArrowKey,
   type PanelDensity,
@@ -70,7 +71,6 @@ import {
   type ClipItem,
   type ClipTypeFilter,
   canOpenClipTarget,
-  type PasteMode,
 } from "./clipboard/clip-model";
 
 export { extractHashTags, normalizeTagList } from "./clipboard/clip-model";
@@ -133,6 +133,9 @@ export type AppSettings = {
   captureApplicationContext: boolean;
   imageMaxSizeMb: number;
   textMaxSizeMb: number;
+  /** Agent provider 配置（legacy 顶层 agentProviders[] 与新结构 agent.providers[]；主窗只读展示用）。 */
+  agentProviders?: Array<Record<string, unknown>>;
+  agent?: { providers?: Array<Record<string, unknown>> };
 };
 
 type ErrorBoundaryCopy = {
@@ -271,9 +274,10 @@ function ClipForgeApp() {
   // 否则动画在 webview 隐藏的首启阶段就开始并被冻结在 from{opacity:0}，面板永久不可见。
   // 浏览器预览没有唤起事件，初始 true 保持加载即播放入场。
   const [isPanelEntering, setIsPanelEntering] = useState(() => !isTauriRuntime());
-  const [, setScrollOffset] = useState(0);
-  const [, setSearchCompact] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // 视图切换滚动恢复(panel-list-perf):token 单调递增驱动 VirtualList 恢复,同 key 再进也生效。
+  const [restoreScroll, setRestoreScroll] = useState<{ top: number; token: string } | null>(null);
+  const restoreScrollTokenRef = useRef(0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 120);
   usePanelEnvironmentEffects({ activeView, setNativeStatus, tr });
@@ -300,7 +304,8 @@ function ClipForgeApp() {
   const blurHideInFlightRef = useRef(false);
   const focusRetryTimersRef = useRef<number[]>([]);
   const panelShowStartedAtRef = useRef(0);
-  const isPanelClosing = usePanelUiStore((state) => state.isClosing);
+  // setPanelClosing 仍被 blur-hide/show 流程调用,但收起动画已迁到 Rust 原生 alpha 淡出,
+  // isClosing 状态不再驱动任何 UI(CSS panel-out 已移除),故不订阅 isClosing。
   const setPanelClosing = usePanelUiStore((state) => state.setClosing);
   const workspaceRoute = useWorkspaceStore((state) => state.route);
   const errorBoundaryCopy = useMemo<ErrorBoundaryCopy>(
@@ -328,7 +333,7 @@ function ClipForgeApp() {
     normalizeClip,
   });
 
-  const { loadMoreClips, captureClipboard } = useClipboardList({
+  const { loadMoreClips, captureClipboard, mergeTopClip } = useClipboardList({
     isSettingsWindow,
     setClips,
     clipsRef,
@@ -337,7 +342,7 @@ function ClipForgeApp() {
     setIsLoadingMore,
     isLoadingMore,
     setSelectedId,
-    setActiveView,
+    selectedIdRef,
     setNativeStatus,
     setIsReadingClipboard,
     searchRequestRef,
@@ -349,12 +354,6 @@ function ClipForgeApp() {
     normalizeClip,
     createClip,
   });
-
-  const handleScroll = useCallback((event: UIEvent<HTMLElement>) => {
-    const top = event.currentTarget.scrollTop;
-    setScrollOffset(top);
-    setSearchCompact(top > 18);
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -420,6 +419,10 @@ function ClipForgeApp() {
         focusRetryTimersRef.current.push(timer);
       });
       setNativeStatus(reason === "tray" ? tr("main.status.panelFocusedTray") : tr("main.status.panelFocusedShortcut"));
+      // 唤起即合并最新 1 条：快速复制后立刻唤起时，Rust 侧已在显示前同步入库（open_panel
+      // 预采集），这里立刻把它并进列表，首帧即最终态。不能等 +300ms 的 manual 采集——
+      // 那会让首行在用户手指落下后才突然变化（用户反馈「每次唤起后第一条改变」）。
+      void mergeTopClip();
       // 后台监听线程每 100ms 已在采集，这里只是兜底；延后到 300ms，避免与「唤起后立即输入」
       // 抢主线程——setClips 触发的重渲染会吞掉最初几个按键，造成「面板出来后要等一下才能打字」。
       window.setTimeout(() => {
@@ -455,9 +458,8 @@ function ClipForgeApp() {
   );
 
   const effectiveQuery = parsedSearchCommand.handled ? parsedSearchCommand.queryText : debouncedQuery;
-  // 必须稳定引用：filteredClips 的 memo 依赖它们，而 row-animation epoch 按 items 引用
-  // 判定「数据变化帧」。裸新建数组会让每次 App 重渲都换 items 引用，虚拟窗口回填行
-  // 被误判为数据帧而重放 row-in（T22 暴露的闪烁回归）。
+  // 必须稳定引用：filteredClips 的 memo 依赖它们,裸新建数组会让每次 App 重渲都重算过滤。
+  // row-in epoch 已改为按 id 序列摘要判定「数据变化帧」(见 row-animation.ts),引用抖动不再重放动画。
   const effectiveTypeFilters = useMemo(
     () => (activeTypeFilter !== "all" ? [activeTypeFilter] : parsedSearchCommand.ast.types),
     [activeTypeFilter, parsedSearchCommand.ast],
@@ -480,6 +482,11 @@ function ClipForgeApp() {
     [activeTag, activeTypeFilter, activeView, filterFavorite, parsedSearchCommand.ast],
   );
   const searchRequestKey = useMemo(() => JSON.stringify(searchRequest), [searchRequest]);
+  // 列表滚动位置连续回写快照:切走再切回即恢复,不依赖快照重建。
+  const handleListScrollTop = useCallback(
+    (top: number) => saveViewScrollTop(searchRequestKey, top),
+    [searchRequestKey],
+  );
 
   useEffect(() => {
     searchRequestRef.current = searchRequest;
@@ -490,6 +497,25 @@ function ClipForgeApp() {
     let cancelled = false;
     const request = JSON.parse(searchRequestKey) as SearchClipsRequest;
     searchRequestRef.current = request;
+    // SWR(panel-list-perf):先回放缓存快照——命中即零 IPC,列表/游标/选中/滚动一次到位,
+    // 消除切视图时「在途期间旧数据被新视图过滤成空态」的闪烁;随后后台拉新校验。
+    const cached = peekViewClipEntry(searchRequestKey);
+    if (cached) {
+      clipsRef.current = cached.items;
+      setClips(cached.items);
+      setNextCursor(cached.nextCursor);
+      setSelectedId(
+        cached.selectedId && cached.items.some((item) => item.id === cached.selectedId)
+          ? cached.selectedId
+          : (cached.items[0]?.id ?? null),
+      );
+    } else {
+      // 未命中(首次进视图/写操作已失效):游标先清零,防止旧视图游标冒充新视图的 hasMore。
+      setNextCursor(null);
+    }
+    // 每次视图切换都驱动一次滚动恢复:命中用快照 scrollTop,未命中回顶。
+    restoreScrollTokenRef.current += 1;
+    setRestoreScroll({ top: cached?.scrollTop ?? 0, token: String(restoreScrollTokenRef.current) });
     invoke<QueryClipPayload>("search_clip_records", { input: request })
       .then((payload) => {
         if (cancelled) return;
@@ -497,10 +523,24 @@ function ClipForgeApp() {
         const items = payload.items
           .map((item) => normalizeClip(item, settingsRef.current))
           .filter((item): item is ClipItem => Boolean(item));
-        clipsRef.current = items;
-        setClips(items);
+        // 快照守卫:服务端首条与当前列表首条一致(id+hash)时跳过 setClips——
+        // 同时保住快照里已分页加载的条数(整表替换会被 limit 截断回 200)。
+        const head = clipsRef.current[0];
+        if (!head || head.id !== items[0]?.id || head.contentHash !== items[0]?.contentHash) {
+          clipsRef.current = items;
+          setClips(items);
+        }
         setNextCursor(payload.nextCursor ?? null);
-        setSelectedId((current) => (current && items.some((item) => item.id === current) ? current : (items[0]?.id ?? null)));
+        setSelectedId((current) =>
+          current && items.some((item) => item.id === current) ? current : (items[0]?.id ?? null),
+        );
+        // 回写快照:items 取 clipsRef(守卫跳过时保留分页态);scrollTop 沿用快照对象的最新值。
+        setViewClipEntry(searchRequestKey, {
+          items: clipsRef.current,
+          nextCursor: payload.nextCursor ?? null,
+          scrollTop: cached?.scrollTop ?? 0,
+          selectedId: selectedIdRef.current,
+        });
       })
       .catch((error) => {
         if (!cancelled) {
@@ -588,10 +628,6 @@ function ClipForgeApp() {
   useEffect(() => {
     setActiveSuggestionIndex(0);
   }, [searchSuggestions]);
-
-  const aggregatePreview = useMemo(() => {
-    return selectedInList.map((item) => item.content.trim()).filter(Boolean).join("\n\n");
-  }, [selectedInList]);
 
   const focusSearch = useCallback(() => {
     setSearchActive(true);
@@ -746,7 +782,7 @@ function ClipForgeApp() {
     window.setTimeout(() => searchRef.current?.focus(), 0);
   };
 
-  const { markClipCopied, captureStandardTextClip, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent } = useClipWriteback({
+  const { captureStandardTextClip, copyClip, ocrExtractAndCopy, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent, aggregateFormat, setAggregateFormat } = useClipWriteback({
     setClips,
     clipsRef,
     settingsRef,
@@ -765,6 +801,9 @@ function ClipForgeApp() {
     openPath,
     openUrl,
   });
+
+  // 聚合预览与 copySelectedClips 共用 formatAggregate + 同一份格式配置：预览即复制结果。
+  const aggregatePreview = useMemo(() => formatAggregate(selectedInList, aggregateFormat), [selectedInList, aggregateFormat]);
 
   const togglePanelPinned = useCallback(() => {
     const nextPinned = !settingsRef.current.panelPinned;
@@ -846,37 +885,6 @@ function ClipForgeApp() {
     setGroupScrollTarget,
     setActiveSuggestionIndex,
   });
-
-  async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
-    const finishCopyPerf = startPerfSpan("quick.copy", { source: "ui", pasteMode });
-    let perfStatus = "ok";
-    const optimisticStatus =
-      pasteMode === "plain"
-        ? tr("main.status.copiedPlain")
-        : pasteMode === "filesAsPaths"
-          ? tr("main.status.copiedFilePaths")
-          : tr("main.status.copiedRich");
-    lastSeenClipboard.current = item.content.trim();
-    markClipCopied(item, optimisticStatus);
-    try {
-      const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode, source: "ui" });
-      const normalized = normalizeClip(payload, settingsRef.current);
-      if (normalized) {
-        setClips((current) => {
-          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-          clipsRef.current = next;
-          return next;
-        });
-      }
-    } catch {
-      perfStatus = "fallback";
-      await navigator.clipboard.writeText(item.content);
-      setNativeStatus(tr("main.status.copiedBrowser"));
-    } finally {
-      toast.success("已复制到剪贴板", { description: truncateText(item.plainText || item.content, 42) });
-      finishCopyPerf({ status: perfStatus });
-    }
-  }
 
   async function pasteText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
     const finishPastePerf = startPerfSpan("quick.paste", { source });
@@ -982,10 +990,14 @@ function ClipForgeApp() {
       setNativeStatus(formatNativeError(error));
       return;
     }
-    // 软删除后保留在 clips 中以支持垃圾箱视图，仅设置 deletedAt 标记
-    setClips((current) =>
-      current.map((item) => (ids.includes(item.id) ? { ...item, deletedAt: now } : item)),
-    );
+    // 软删除后保留在 clips 中以支持垃圾箱视图，仅设置 deletedAt 标记；
+    // 快照里没有这层标记(拍摄于删除前),不清缓存会在切回时复活已删条目。
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.map((item) => (ids.includes(item.id) ? { ...item, deletedAt: now } : item));
+      clipsRef.current = next;
+      return next;
+    });
     setSelectedIds(new Set());
     setMultiSelectMode(false);
     if (shouldReselect) setSelectedId(nextSelectedId);
@@ -1000,11 +1012,14 @@ function ClipForgeApp() {
       setNativeStatus(formatNativeError(error));
       return;
     }
-    setClips((current) =>
-      current.map((item) =>
-        ids.includes(item.id) ? { ...item, deletedAt: null, bucket: "history" } : item,
-      ),
-    );
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.map((item) =>
+        ids.includes(item.id) ? { ...item, deletedAt: null, bucket: "history" as const } : item,
+      );
+      clipsRef.current = next;
+      return next;
+    });
     setSelectedIds(new Set());
     setMultiSelectMode(false);
   }
@@ -1025,7 +1040,12 @@ function ClipForgeApp() {
       setNativeStatus(formatNativeError(error));
       return;
     }
-    setClips((current) => current.filter((item) => !ids.includes(item.id)));
+    invalidateViewClipCache();
+    setClips((current) => {
+      const next = current.filter((item) => !ids.includes(item.id));
+      clipsRef.current = next;
+      return next;
+    });
     setSelectedIds(new Set());
     setMultiSelectMode(false);
     if (shouldReselect) setSelectedId(nextSelectedId);
@@ -1056,7 +1076,7 @@ function ClipForgeApp() {
       // 高度撑满窗口（h-screen）：悬浮窗是 transparent 窗口，面板 h-fit 时内容低于窗高
       // 会在底部留一条透明带，macOS 合成器在该区域画出残留波浪状伪影（「背景透明/波浪线」）。
       // 窗高由 Rust 按设置设定（300-1000），面板必须等于窗高，不再用 h-fit/max-h 截断。
-      className={`relative mx-auto grid h-screen w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow${isPanelEntering ? " panel-in" : ""}${isPanelClosing ? " panel-out pointer-events-none" : ""}`}
+      className={`relative mx-auto grid h-screen w-[min(480px,100%)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-[14px] material panel-shadow${isPanelEntering ? " panel-in" : ""}`}
       ref={shellRef}
     >
       {workspaceRoute.name !== "detail" && (
@@ -1098,7 +1118,7 @@ function ClipForgeApp() {
         />
       )}
 
-      <section className="min-w-0 overflow-hidden" onScroll={handleScroll}>
+      <section className="min-w-0 overflow-hidden">
         <PanelContentBoundary
           copy={errorBoundaryCopy}
           resetKey={`workspace:${activeView}:${selectedId ?? "none"}:${filteredClips.length}:${selectedInList.length}`}
@@ -1128,9 +1148,11 @@ function ClipForgeApp() {
                   onDeleteSelected={() => hardDeleteClips(selectedInList.map((item) => item.id))}
                   onHardDelete={(item) => hardDeleteClips([item.id])}
                   onLoadMore={loadMoreClips}
+                  onScrollTopChange={handleListScrollTop}
                   onPointerActive={() => setKeyboardNavigating(false)}
                   onRestore={(item) => restoreClips([item.id])}
                   onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
+                  restoreScroll={restoreScroll}
                   onSelect={(item) => {
                     setSelectedId(item.id);
                   }}
@@ -1153,7 +1175,6 @@ function ClipForgeApp() {
                 />
               ) : (
                 <QuickPastePanel
-                  key={`quick:${activeView}`}
                   activeId={selectedClip?.id ?? null}
                   autoScroll={keyboardNavigating}
                   clips={filteredClips}
@@ -1173,6 +1194,8 @@ function ClipForgeApp() {
                     void favoriteSelectedClips(selectedInList);
                   }}
                   onLoadMore={loadMoreClips}
+                  onScrollTopChange={handleListScrollTop}
+                  restoreScroll={restoreScroll}
                   onOpen={(item) => {
                     void runPrimaryOpenAction(item, "click");
                   }}
@@ -1187,6 +1210,9 @@ function ClipForgeApp() {
                   }}
                   onCopyMode={(item, mode) => {
                     void copyClip(item, mode);
+                  }}
+                  onOcrExtract={(item) => {
+                    void ocrExtractAndCopy(item);
                   }}
                   onDelete={(item) => {
                     void deleteClips([item.id]);
@@ -1235,6 +1261,9 @@ function ClipForgeApp() {
                   onCopy={copyClip}
                   onCopyPlain={(item) => copyClip(item, "plain")}
                   onCopyText={copyText}
+                  onOcrExtract={(clip) => {
+                    void ocrExtractAndCopy(clip);
+                  }}
                   onOpen={openClipTarget}
                   onOpenPath={openSystemPath}
                   onPasteText={pasteText}
@@ -1242,6 +1271,22 @@ function ClipForgeApp() {
                   onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
                   onSearchTag={searchByTag}
                   onUpdateContent={updateClipContent}
+                  onApplyTags={(clipId, tags) => {
+                    // AI 建议标签应用：merge 语义写入，新增 tag 在 provenance 标 ai（详情页提案 §5.3）。
+                    const source = clipsRef.current.find((item) => item.id === clipId);
+                    const previous = source ? parseTagProvenance(source) : {};
+                    const added = tags.filter((tag) => !(source?.tags ?? []).includes(tag));
+                    updateClip(clipId, {
+                      tags,
+                      metadata: {
+                        ...(source?.metadata ?? {}),
+                        tags_provenance: mergeAiProvenance(previous, added, "pi"),
+                      },
+                    });
+                  }}
+                  agentProviders={toDetailAgentProviders(
+                    settings.agent?.providers ?? settings.agentProviders,
+                  )}
                   quickActions={[
                     ...(clip && canOpenClipTarget(clip)
                       ? [
@@ -1283,7 +1328,9 @@ function ClipForgeApp() {
               <MultiAggregateWorkspace
                 aggregatePreview={aggregatePreview}
                 items={selectedInList}
+                format={aggregateFormat}
                 tr={tr}
+                onFormatChange={setAggregateFormat}
                 onBack={() => {
                   setMultiPreviewOpen(false);
                   setMultiSelectMode(selectedInList.length > 0);

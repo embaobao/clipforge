@@ -1,5 +1,70 @@
 # ClipForge 视觉重构 · 交接摘要
 
+## 2026-10-22 增量（omp 夜间 step-5 监工派开发：TASK-4/5/6 收官，TASK-3 中途停机）
+
+### ① 开发模式
+盟哥指示：omp 直接开发（newapi/step-5-preview 夜间免费通道），监工 cron `cd600f4e1566` 每 40 分钟巡验收。10-22 盟哥令停止跟进，cron 已 paused，omp 会话已终止。任务书/报告/事故记录全在 `.work/supervisor/`（git 跟踪）。
+
+### ② 已完成并验收 ✅（门禁真跑，监工复核后勾 Done）
+- **TASK-4 pi sdk 迁移**（commit `d6f5e42` 验收）：`src/agent/pi/` 全切 `@earendil-works/pi-agent-core|pi-ai@1.1.0`，旧 `@mariozechner/*` 清零；build:web + test:unit 绿。
+- **TASK-5 提示词快速优化器**（`4a313a3`）：`prompt-optimizer.ts` 5-slot 元提示 + piComplete 单次重写 + diff 确认写回链路走通。
+- **TASK-6A 拼接格式可定制**（`b44771b`）：`formatAggregate` helper 消两处硬编码 join，多选底栏/聚合工作区加分隔符/编号/顺序格式菜单，i18n 对齐。
+- **TASK-6B clipboard.merge MCP**（`5f0bc02`）：41 条工具面 + specs.rs/mod.rs golden/verify 三处同步；cargo check + test:unit 绿。**注意：TASK-3 任务书写的 40 条计数已过期，续作按 41。**
+
+### ③ TASK-3 插件运行时 spike：中断在飞 ⚠️（status In Progress）
+- 工作区未提交：`src-tauri/src/plugin_runtime/{mod,budget,spike}.rs`（~600 行：cordis+rquickjs 依赖、四组 ctx 桥、64KB 超限中断、回收探针、bridge_spike_gate 测试）。
+- 已知卡点：`spike.rs` 用未声明的 tokio（E0433×6 处，集中在 81/85/187/188/335/397 行）；修复授权见 `.work/supervisor/task3-resume.md`（dev-dependencies 加 tokio 或自建 block_on 二选一）。主构建链其余部分干净。
+- 事故记录：run1 死于 tee 管道 EPIPE（非限流），见 `task3-incident.md`；对策=日志改进程直写文件。run2（pid 51578）续作中被本次停机令终止。
+- **续作入口**：任务书 `.work/supervisor/task3-spike.md` + `task3-resume.md`，先修 tokio 卡点 → cargo check 绿 → 跑 spike 测试 → report → 验收。
+
+### ④ 遗留脏文件说明
+`src-tauri/Cargo.{toml,lock}`、`lib.rs`（+`mod plugin_runtime;`）改动均属 TASK-3 在飞产物，勿单独 revert；基线 checkpoint 在 `2258b51`。
+
+## 2026-10-10 会话增量（panel-list-perf 全量落地 + 沙箱自动验收）
+
+### ① panel-list-perf 编码完成 ✅（未提交，22/25）
+- **Rust**（lib.rs）：`search_clip_records` N+1→单次 38 列 JOIN 直出（FTS/非 FTS 两分支，行映射抽 `clip_item_from_row` 与 `load_clip` 共用）；探针基建修复（`dev_quick_probe_script` 选择器 `.quick-menu/.quick-row`→`.thin-scroll/article`，tailwind 重构后已烂尾；新增 `CLIPFORGE_DEV_QUICK_PROBE=scroll` 纯滚动模式）。
+- **前端**：`view-clip-cache.ts`（按 searchRequestKey SWR 快照：items/游标/选中/滚动，512 LRU）+ App 搜索 effect 改「回放缓照→后台拉新+头部守卫（id+contentHash，保住分页）」；`VirtualList` 增 `onScrollTopChange`/`restoreScroll(token)`；移除 `quick:${activeView}` remount key 与 4 处 `setActiveView` yank；`row-animation.ts` epoch 改 id 摘要；`normalizeClip` 按 contentHash memo；写操作全路径失效+clipsRef 同步；死代码清理。
+- **门禁**：build:web / cargo check+fmt / test:unit / test:boundaries / openspec validate 33/33 全绿。
+- **实现与设计偏差**（已写进 design.md 修订说明）：SWR per-key（非 bucket:"all" 合并——收藏是服务端 favorite:true 过滤）；contentHash memo（非 trustAnalysis——Rust 无 attachment 列）；restoreScroll token（非受控 scrollTop prop）。
+- **缓议 3 项**（tasks.md `[~]`）：payload 瘦身/Rust analysis 落库/类型适配——根因「列表态即详情态」（复制/详情都读列表 state），需先解耦详情读取路径，降级为后续提案。
+
+### ② 沙箱自动验收 ✅（692 条生产数据拷入沙箱实测）
+- `quick.scroll` P95=**1ms**（200 行挂载，预算 300ms）；`panel.open` P95=182ms 且 16 条/692 条库完全一致→固定开销非数据路径；`clipboard-promote: local merge` 守卫实机命中。
+- 窗口级 `perf-panel-probe`：hide 5ms ✓；show 超时/幻影 blur FAIL 是**环境问题**——改 lib.rs→重编译→新 adhoc 签名 cdHash→TCC Accessibility 信任丢失→`universalAccessAuthWarn` 抢焦点。需用户重新授权后复测。
+- blur-keep/pin 逻辑实机正确（pinned 后多次 `blur hide cancelled`）。
+
+### ③ 视觉走查半自动化 ⏳（.work/panel_visual_probe.py）
+- 截图驱动：合成滚轮滚动+区域截图已跑通；NSPanel 是 nonactivating panel（show 不改 frontmost，判定「面板在屏」要用 CGWindowList layer 25 而非 frontmost）。
+- Tab 切视图验证被 keyWindow 抢占阻断（Ghostty/通知中心抢 key，合成键打进前台终端）；脚本已加 rekey（点搜索框重新置 key），待 dev 实例重启复跑。判定标准：`04-history-back.png` 滚动位置 == `02-history-scrolled.png`。
+
+### ④ 待办（可交付前）
+1. 视觉走查复跑（重启 `pnpm dev:sandbox` + 跑 .work/panel_visual_probe.py，或肉眼走查）。
+2. TCC 重新授权后复跑 `python3 scripts/perf-panel-probe.py --sandbox`（窗口级 show/幻影 blur）。
+3. 对抗 review workflow 补跑（5 维 find→3 refute 投票，脚本已存 session workflows 目录；上轮因 5h 配额 403 全灭，lead 已逐点自审兜底）。
+4. 提交本批改动。
+
+## 2026-10-09 会话增量（收起丝滑化 + 面板"点不开"诊断）
+
+### ① 面板收起丝滑化 ✅（未提交）
+- **Rust** `src-tauri/src/lib.rs`：新增 `hide_panel_with_native_fade`——NSWindow animator 原生 alpha 淡出（160ms，对齐原 CSS `--motion-panel-out`），动画完成后主线程 `resign_key + hide + set_alpha(1.0)`；轮询 1ms 粒度、400ms 兜底瞬切。**动机**：CSS opacity 动画下 backdrop-filter material 层每帧强制重新栅格化，是失焦自动收起卡顿的根源；原生淡出走 WindowServer 合成路径，WKWebView 零重绘。
+- **前端** `src/clipboard/use-panel-blur-hide.ts`：失焦收起改调原生淡出命令，不再走 CSS `panel-out`。
+- **验证**：cargo check ✓ / pnpm build:web ✓ / tauri dev 实机 show→blur→淡出收起无感 ✓；连按两轮开收进程稳定无崩溃（此前的 `NSWMWindowCoordinator` EXC_BREAKPOINT 崩溃已消除——orderOut/hide 全部经 `run_on_main_thread` 回主线程）。
+
+### ② 淡出竞态修复 ✅（未提交，lib.rs ~8320-8470）
+- **问题**：160ms 淡出窗口期内 `is_visible()` 仍为 true,连按 Ctrl+V 被 toggle 误判成第二次 hide → 面板被彻底藏没（is_visible=true 但 alpha=0 的"隐形窗口"），再按也"出不来"。
+- **修复**：`PANEL_FADE_ACTIVE: AtomicBool`（hide 发起时置位、show 抢占/收尾完成复位）+ `PANEL_FADE_GENERATION: AtomicI64` 代际号（hide 抢占递增、show 复位，迟到的轮询/收尾闭包校验代际号不匹配即弃权）。`toggle_quick_panel` 判定改为 `visible && !is_panel_fading()`——淡出中再按=唤起。
+- **验证**：cargo check ✓；实机 show→hide→160ms 内再按→正确走 show（决策日志 `show/hide/show`）。
+
+### ③ 面板"点不开"诊断结论（2026-10-09 晚）：系统会话故障，非 app bug ⚠️ 需用户重启/注销
+- **现象**：Ctrl+V 全局快捷键完全失效（托盘菜单「打开快捷面板」仍可用）。
+- **排查**：日志 `registered shortcuts` 成功但无 `pressed`；进程/主线程/托盘/面板链路全部健康（AX+sample 抓栈证实）；**决定性实验：独立 Swift Carbon 探针注册同组合键，RegisterEventHotKey 返回 0 但回调 0 次（HID 级 CGEvent 注入 + 用户物理按键均无反应）** → macOS 登录会话的全局热键派发故障，与 ClipForge 无关。时间点约 20:59（同时段 Dock 重启、出现 `IMKCFRunLoopWakeUpReliable` 报错）。
+- **恢复手段**：注销重登或重启系统。重登后 ClipForge autostart 自启，Ctrl+V 即恢复。应急入口：菜单栏 ClipForge 图标 → 「打开快捷面板」。
+- 诊断工具与套路已入长期记忆（Carbon 探针 + CGEvent HID 注入 + AX 托盘定位，注意 clipforge 是 background only 进程）。
+
+### ④ pi-sdk-agent-foundation 收官（2026-10-08 已记录，24/26）
+L2 key redaction + provider UI + L3 智能标签已完成并勾选（见 4c+ 条）；剩 Phase 4 全量回归与归档两项。
+
 ## 会话背景
 
 用户要求按 `docs/Kimi_Agent_设计系统草图.zip` 中的设计稿，将 ClipForge 从旧 CSS 架构全面迁移到 Tailwind CSS v3 + shadcn/ui 新视觉体系。设计稿对应文档为 `docs/DESIGN_SYSTEM.md`（本次会话新建）。
@@ -99,6 +164,7 @@
    另剩零散：markClipCopied/updateClip/updateClipContent/exportSelectedTextFiles/copyStandardTextClip 等写回域函数（依赖 state 较多，建议随 B 一起走）。每切一个跑全套；切走前先 grep verify 脚本断言。
 4b. **旧 AI 侧车全链删除（批次 36-38）✅**：前端 -528 行（`6275653`，删除旧 AI 面板前端入口、分析服务层、详情页面板组件及全部引用链，AI 分析入口暂缺位待 pi 恢复）+ Rust -553 行（`d7c7bd2`/`8fc1dcb`，删守护进程模块 484 行、lib.rs 命令注册/守护进程/退出清理、tauri 旧 AI 窗口 4→3）；旧 AI 侧车三提案归档至 archive/2026-09-11-*（`0c694e7`）。前端零残留（grep 复查）。**pi-sdk-agent-foundation 提案接管 Agent 能力**（Phase 1 删除 ✅ / Phase 2 集成 ✅，见 4c 条）。
 4c. **pi sdk Phase 2 完成 ✅ + Phase 3 首项 ✅（批次 39-40 + 44-50）**：依赖引入、适配层（provider-config/analysis/stream/history）、AI 分析入口恢复（PiAnalysisBar）、工具（clipboard_search/read_latest）、provider 配置 UI 确认已存在（catalog 驱动）；分析历史持久化 ✅（`32c1e9e`，localStorage）。Phase 3 待办：stream 流式接入 UI、provider 结构化表单（可选）。
+4c+. **pi sdk L2/L3 收官（2026-10-08，24/26）**：L2 Key redaction/keyRef ✅（settings 读路径恒 "[redacted]" 占位、写路径 apiKeyEnv 环境变量引用 + write.rs preserve 回填；真机走查 settings.json5 仅落 apiKeyEnv，`clipf.agent.providers` 返回 `apiKey:"not-sent-to-react"`）+ provider 表单 ✅（AgentProviderManager.tsx，增删改 + 双 kind + enabled 开关，真机新建 → `clipf.agent.check` status=ready）+ L3 智能标签 ✅（PiAnalysisBar 建议 chip 点击检索 + 「应用标签」合并去重走 onApplyTags 通道）。端到端链路验证：本地 new-api 网关（127.0.0.1:20140，glm-5.3-flash）chat/completions 200 且正常返回；`clipf.agent.check` ready。剩 Phase 4 两项：全量回归（test:unit/tsc/vite/cargo check 本轮已过，待盟哥真机视觉/功能验收）+ 本条文档收官。
 4d2. **lib.rs 拆分序②（SETTINGS_WRITE_LOCK 接管）侦察（批次 48）**：settings 写盘链分布——
    - **紧凑组**（命令层相邻，纯平移候选）：log_slow_settings_operation(2374)/sync_launch_at_login_from_settings(2511)/emit_settings_changed(2633)/settings_write_response(2655)/refresh_tray_menu_after_settings_write(2672)；SETTINGS_WRITE_LOCK(2362, 已 pub(crate))。
    - **分散组**：read_user_settings(5327, **主体 27 处引用**)/write_user_settings(5418, 7 处)/sync_global_shortcut_registration(8146, 快捷键域深处)。
@@ -128,7 +194,7 @@
 
 1. **真机走查**（仍缺人眼，W1）：浏览器自动化基线（批次 51-55）已覆盖 14 交互 + 13 视觉断言，但 `pnpm tauri dev` 实机过一遍详情页/聚合页/onboarding 三个 surface 仍待盟哥执行；可用 `CLIPFORGE_DATA_DIR=$(mktemp -d) pnpm tauri dev` 隔离数据并行验证。走查后随 `tailwind-v3-style-refactor` Phase 5/6 收口（旧 AI 面板 iframe 细节项已作废——旧 AI 侧车全链删除，AI 面由 PiAnalysisBar 承接）
 2. **7 场景实机验收矩阵**（W1）：`file-image-clipboard-support` + `clipboard-multi-format-fidelity` 剩余项（复制/粘贴/显示/清理证据），完成后两提案可归档
-3. ~~旧 AI 侧车基座取舍决策~~ **已裁决**（2026-09-11 `a020068`）：pi sdk 确立为 Agent 基座，旧 AI 侧车全链删除完成；pi-sdk 剩余项见其 tasks.md（21/26）
+3. ~~旧 AI 侧车基座取舍决策~~ **已裁决**（2026-09-11 `a020068`）：pi sdk 确立为 Agent 基座，旧 AI 侧车全链删除完成；pi-sdk 剩余项见其 tasks.md（24/26，仅剩 Phase 4 真机验收 + 收官归档）
 4. **grilling 会话 Q1–Q4**：产品方向问题待回答
 
 夜间任务至此进入「无事可做秒退」状态：工作区干净、可自动化验证全绿、可推进提案项清零。后续夜晚的触发若仍无新待办（盟哥白天未新增），会话将直接退出。若确认不再需要，可删除定时任务 automation-7b5269b1。

@@ -1,5 +1,5 @@
 // 剪贴板领域纯函数与类型（frontend-surface-architecture-refactor Phase B）
-// 从 src/App.tsx 迁出的「剪贴板内容展示」相关纯逻辑：行文案截断、显示文本、文件路径、tooltip 内容、AI 摘要状态文案。
+// 从 src/App.tsx 迁出的「剪贴板内容展示」相关纯逻辑：行文案截断、显示文本、文件路径、tooltip 内容。
 // 纯函数无副作用、不依赖 React/DOM，供主面板行组件（ClipboardContentPreview / ClipboardRowActions / ClipboardRow）和 App.tsx 共用。
 // TODO: ClipItem 当前 type-only 从 ../App 引入；后续 App.tsx 拆分时迁到共享 types 模块。
 import type { TranslationKey } from "../i18n";
@@ -137,4 +137,76 @@ export function getItemTooltip(item: ClipItem, tr: TrFunction): AppTooltipConten
 /** 返回当前平台的修饰键标签：macOS 为 Cmd，其它为 Ctrl。 */
 export function getShortcutModLabel() {
   return typeof navigator !== "undefined" && /Mac/i.test(navigator.platform) ? "Cmd" : "Ctrl";
+}
+
+/** 聚合拼接的分隔符档位：blank=一个空行，newline=单个换行，space=单空格，custom=用户自定义串。 */
+export type AggregateSeparator = "blank" | "newline" | "space" | "custom";
+/** 聚合条目顺序：selected=选中（点击）顺序，time=按创建时间从新到旧（与面板列表一致）。 */
+export type AggregateOrder = "selected" | "time";
+
+/** 聚合拼接格式：分隔符 + 编号开关 + 顺序。持久化到 localStorage，复制与预览共用同一份配置。 */
+export type AggregateFormatOptions = {
+  separator: AggregateSeparator;
+  /** separator=custom 时使用的分隔串，支持 `\n` `\t` 转义。 */
+  customSeparator: string;
+  /** 是否给每条加 `1. ` 序号。 */
+  numbered: boolean;
+  order: AggregateOrder;
+};
+
+/** 默认拼接格式：空行分隔、无编号、保持点击顺序（与旧硬编码 join("\n\n") 行为一致）。 */
+export const DEFAULT_AGGREGATE_FORMAT: AggregateFormatOptions = {
+  separator: "blank",
+  customSeparator: "",
+  numbered: false,
+  order: "selected",
+};
+
+/** 分隔符档位 → 实际拼接串；custom 档把字面量 `\n`/`\t`/`\r` 转义成真实控制字符。 */
+function resolveSeparator(options: AggregateFormatOptions) {
+  switch (options.separator) {
+    case "newline":
+      return "\n";
+    case "space":
+      return " ";
+    case "custom":
+      return options.customSeparator.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r");
+    default:
+      return "\n\n";
+  }
+}
+
+/** 非文本条目降级为可拼接字符串：file 取全部路径（每条一行），image 取文件名/标题。
+ *  富格式（RTF/HTML）合并不在本版本范围，附件类统一走此降级路径。 */
+function aggregateItemText(item: ClipItem) {
+  if (item.payloadKind === "file") {
+    const paths = getFilePathsFromClip(item);
+    return paths.length ? paths.join("\n") : item.content;
+  }
+  if (item.payloadKind === "image") {
+    return (
+      getFileNameFromPath(item.imageFile) ||
+      item.analysis.attachment?.name ||
+      getFileNameFromPath(item.thumbnailPath) ||
+      item.analysis.title ||
+      item.content
+    );
+  }
+  return item.content;
+}
+
+/** 按格式选项拼接多条剪贴板内容：聚合复制（copySelectedClips）与聚合工作区预览共用本函数，
+ *  保证「复制结果与预览一致」。空内容条目直接跳过，避免旧实现在空条目处留下多余分隔符。
+ *  顺序：selected 保持调用方传入序（App.tsx 的 selectedIds Set 插入序 = 点击序）；
+ *  time 按 createdAt 从新到旧排序，同秒时保持原相对顺序（稳定排序）。 */
+export function formatAggregate(items: ClipItem[], options: AggregateFormatOptions = DEFAULT_AGGREGATE_FORMAT) {
+  const ordered = options.order === "time" ? [...items].sort((a, b) => b.createdAt - a.createdAt) : items;
+  const separator = resolveSeparator(options);
+  const parts: string[] = [];
+  ordered.forEach((item, index) => {
+    const text = aggregateItemText(item).replace(/\s+$/, "");
+    if (!text) return;
+    parts.push(options.numbered ? `${index + 1}. ${text}` : text);
+  });
+  return parts.join(separator);
 }

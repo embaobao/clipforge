@@ -21,6 +21,8 @@ export type TrashPanelProps = {
   onDeleteSelected: () => void;
   onHardDelete: (item: ClipItem) => void;
   onLoadMore: () => void;
+  onScrollTopChange?: (scrollTop: number) => void;
+  restoreScroll?: { top: number; token: string } | null;
   onPointerActive: () => void;
   onRestore: (item: ClipItem) => void;
   onRestoreSelected: () => void;
@@ -44,6 +46,8 @@ export function TrashPanel({
   onDeleteSelected,
   onHardDelete,
   onLoadMore,
+  onScrollTopChange,
+  restoreScroll,
   onPointerActive,
   onRestore,
   onRestoreSelected,
@@ -88,6 +92,8 @@ export function TrashPanel({
           items={clips}
           onEndReached={onLoadMore}
           onUserScroll={onPointerActive}
+          onScrollTopChange={onScrollTopChange}
+          restoreScroll={restoreScroll}
           groupSize={10}
           renderItem={(item, index) => (
             <TrashRow

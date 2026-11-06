@@ -35,6 +35,7 @@ ClipForge 是一个跨平台剪贴板工具，第一目标是完整替代 Clipy 
 - 搜索、输入、复制、删除等基础操作要优先保证焦点稳定、按钮可点击、列表不跳动。
 - 样式优化应优先保持现有信息结构和控件尺寸稳定；除非需求明确，不要借视觉优化重排核心工作流。
 - 不引入重型运行时，除非有明确性能和维护收益。
+- 新增 MCP/L3 工具与 pi 侧 L2 工具属同源重复实现：每新增一处必须在 [agent-extension-seams 提案 tasks](openspec/changes/agent-extension-seams/tasks.md) 登记计数；累计达第 3 处即触发该 dormant 提案实施（工具同源注册表），不得继续手写两份。
 
 ## 验证要求
 
@@ -50,6 +51,17 @@ cd src-tauri && cargo check
 ```bash
 pnpm tauri dev
 ```
+
+日常调试一律使用 `pnpm dev:sandbox`（CLIPFORGE_DATA_DIR 数据目录隔离 + CLIPFORGE_DEV_OPEN=panel 自动开面板）：沙箱实例的设置/数据库/日志/图片缓存全部写到独立目录，不与 `/Applications/ClipForge.app` 稳定版共享数据；稳定版常驻并持有全局快捷键，沙箱的快捷键注册失败只记 warning 不崩溃，面板经 dev-open 入口打开。稳定版只由 `pnpm tauri build` 后显式部署更新，开发构建不触碰它。
+
+面板性能回归用固化的自动探针（不用手工 CGEvent 注入+截图比对）：
+
+```bash
+pnpm test:perf-panel              # 测稳定版：show/hide 延迟、幻影 blur 自愈、动画可打断、透明鬼影
+pnpm test:perf-panel -- --sandbox # 测沙箱实例（快捷键自动读该实例 settings.json5）
+```
+
+阈值：show/hide 端到端 ≤180ms；任一不达标退出码 1，可挂 CI。注意：探针依赖 CGEvent 注入全局热键，**锁屏/息屏状态下必然全部超时**，跑之前确认机器处于解锁状态。
 
 如果因为本机依赖、权限或系统安全策略无法完成，必须在交付说明中明确写出未验证项。
 
@@ -89,3 +101,27 @@ pnpm tauri dev
 - 索引维护义务：新增/移动/重命名模块、Surface、Tauri command、校验脚本时，必须同步更新 `docs/BUSINESS_INDEX.md` 对应行；索引以「域」为行，不逐文件罗列，一个域多文件时入口写最常改的文件、其余写目录。
 - 索引防腐：`pnpm locate --check-index` 校验索引反引号内引用的路径真实存在，已挂入 `pnpm test:unit` 末尾，索引引用失效会导致门禁失败。
 - 上文「必须有中文注释」规范是 locate 的数据源：新公共能力文件头缺一句中文文档注释，定位能力即对该文件失效。
+
+<!-- BACKLOG.MD GUIDELINES START -->
+<!-- backlog.md-instructions-version: 1.52.0 -->
+<CRITICAL_INSTRUCTION>
+
+## Backlog.md Workflow
+
+This project uses Backlog.md for task and project management.
+
+**At the beginning of each conversation in this project, run `backlog instructions overview` before answering or taking action. Re-read it only if you have not read it yet in the current conversation.**
+
+Use the overview to decide whether to search, read, create, or update Backlog tasks.
+
+Before task lifecycle actions, read the matching detailed guide:
+- `backlog instructions task-creation` before creating or splitting tasks
+- `backlog instructions task-execution` before planning, changing status or assignee, adding a plan or implementation notes, or implementing task work
+- `backlog instructions task-finalization` before checking acceptance criteria, writing final summaries, or moving tasks to terminal statuses
+
+Use `backlog <command> --help` before running unfamiliar commands. Help shows options, fields, and examples.
+
+Do not edit Backlog task, draft, document, decision, or milestone markdown files directly. Use the `backlog` CLI so metadata, relationships, and history stay consistent.
+
+</CRITICAL_INSTRUCTION>
+<!-- BACKLOG.MD GUIDELINES END -->

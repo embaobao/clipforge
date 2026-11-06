@@ -6,8 +6,7 @@ use std::time::Duration;
 use crate::context_collector_runtime::{redact_sensitive, run_json_command};
 
 use super::{
-    ExternalCollectorManifest, LoadedCollector, DEFAULT_TIMEOUT_MS, MAX_MANIFESTS,
-    MAX_OUTPUT_BYTES,
+    ExternalCollectorManifest, LoadedCollector, DEFAULT_TIMEOUT_MS, MAX_MANIFESTS, MAX_OUTPUT_BYTES,
 };
 
 pub(super) fn run_external_collector(collector: &LoadedCollector, input: &Value) -> Value {
@@ -27,7 +26,9 @@ pub(super) fn run_external_collector(collector: &LoadedCollector, input: &Value)
     };
     let input_json = match serde_json::to_vec(input) {
         Ok(value) => value,
-        Err(error) => return json!({ "ok": false, "status": "invalid-input", "error": error.to_string() }),
+        Err(error) => {
+            return json!({ "ok": false, "status": "invalid-input", "error": error.to_string() })
+        }
     };
     let started = std::time::Instant::now();
     let output = match run_json_command(
@@ -38,12 +39,18 @@ pub(super) fn run_external_collector(collector: &LoadedCollector, input: &Value)
         max_output_bytes,
     ) {
         Ok(output) => output,
-        Err(error) => return json!({ "ok": false, "status": "failed", "durationMs": started.elapsed().as_millis(), "error": error }),
+        Err(error) => {
+            return json!({ "ok": false, "status": "failed", "durationMs": started.elapsed().as_millis(), "error": error })
+        }
     };
     let parsed = match serde_json::from_slice::<Value>(&output) {
         Ok(value) if value.is_object() => value,
-        Ok(_) => return json!({ "ok": false, "status": "invalid-output", "error": "collector output must be a JSON object" }),
-        Err(error) => return json!({ "ok": false, "status": "invalid-output", "error": format!("collector output is not JSON: {error}") }),
+        Ok(_) => {
+            return json!({ "ok": false, "status": "invalid-output", "error": "collector output must be a JSON object" })
+        }
+        Err(error) => {
+            return json!({ "ok": false, "status": "invalid-output", "error": format!("collector output is not JSON: {error}") })
+        }
     };
     let mut redacted = Vec::new();
     let sanitized = redact_sensitive(parsed, "$".to_string(), &mut redacted);
@@ -61,7 +68,9 @@ pub(super) fn run_external_collector(collector: &LoadedCollector, input: &Value)
 
 pub(super) fn load_external_collectors() -> Vec<Result<LoadedCollector, String>> {
     let Some(root) = collectors_directory() else {
-        return vec![Err("collector directory unavailable: HOME is not set".to_string())];
+        return vec![Err(
+            "collector directory unavailable: HOME is not set".to_string()
+        )];
     };
     let entries = match fs::read_dir(&root) {
         Ok(entries) => entries,
@@ -93,13 +102,21 @@ fn load_manifest(root: &Path, path: PathBuf) -> Result<LoadedCollector, String> 
         .canonicalize()
         .map_err(|error| format!("collector manifest unavailable: {error}"))?;
     if !manifest_path.starts_with(&root) {
-        return Err(format!("collector manifest outside approved directory: {}", path.display()));
+        return Err(format!(
+            "collector manifest outside approved directory: {}",
+            path.display()
+        ));
     }
-    let raw = fs::read_to_string(&manifest_path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let raw = fs::read_to_string(&manifest_path)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
     let manifest = serde_json::from_str::<ExternalCollectorManifest>(&raw)
         .map_err(|error| format!("{} invalid: {error}", path.display()))?;
     validate_manifest(&manifest)?;
-    Ok(LoadedCollector { manifest, root, manifest_path })
+    Ok(LoadedCollector {
+        manifest,
+        root,
+        manifest_path,
+    })
 }
 
 fn validate_manifest(manifest: &ExternalCollectorManifest) -> Result<(), String> {
@@ -108,16 +125,25 @@ fn validate_manifest(manifest: &ExternalCollectorManifest) -> Result<(), String>
         || manifest.name.trim().is_empty()
         || manifest.version.trim().is_empty()
     {
-        return Err(format!("collector {} has an invalid schemaVersion/id/name/version", manifest.id));
+        return Err(format!(
+            "collector {} has an invalid schemaVersion/id/name/version",
+            manifest.id
+        ));
     }
     if manifest.command.trim().is_empty()
         || manifest.args.len() > 16
         || manifest.args.iter().any(|arg| arg.len() > 256)
     {
-        return Err(format!("collector {} has an invalid command or args", manifest.id));
+        return Err(format!(
+            "collector {} has an invalid command or args",
+            manifest.id
+        ));
     }
     if manifest.matcher.bundle_ids.is_empty() && manifest.matcher.app_names.is_empty() {
-        return Err(format!("collector {} must declare match.bundleIds or match.appNames", manifest.id));
+        return Err(format!(
+            "collector {} must declare match.bundleIds or match.appNames",
+            manifest.id
+        ));
     }
     Ok(())
 }
@@ -127,13 +153,19 @@ fn resolve_executable(collector: &LoadedCollector) -> Result<PathBuf, String> {
     let path = if candidate.is_absolute() {
         candidate
     } else {
-        collector.manifest_path.parent().unwrap_or(&collector.root).join(candidate)
+        collector
+            .manifest_path
+            .parent()
+            .unwrap_or(&collector.root)
+            .join(candidate)
     };
     let canonical = path
         .canonicalize()
         .map_err(|error| format!("collector executable unavailable: {error}"))?;
     if !canonical.starts_with(&collector.root) {
-        return Err("collector executable must stay inside the approved collector directory".to_string());
+        return Err(
+            "collector executable must stay inside the approved collector directory".to_string(),
+        );
     }
     if !canonical.is_file() {
         return Err("collector executable is not a file".to_string());
@@ -145,22 +177,41 @@ pub(super) fn collectors_directory() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     #[cfg(target_os = "macos")]
     {
-        return Some(home.join("Library").join("Application Support").join("ClipForge").join("context-collectors"));
+        return Some(
+            home.join("Library")
+                .join("Application Support")
+                .join("ClipForge")
+                .join("context-collectors"),
+        );
     }
     #[cfg(target_os = "windows")]
     {
-        return Some(home.join("AppData").join("Roaming").join("ClipForge").join("context-collectors"));
+        return Some(
+            home.join("AppData")
+                .join("Roaming")
+                .join("ClipForge")
+                .join("context-collectors"),
+        );
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        Some(home.join(".config").join("clipforge").join("context-collectors"))
+        Some(
+            home.join(".config")
+                .join("clipforge")
+                .join("context-collectors"),
+        )
     }
 }
 
 pub(super) fn external_collectors_enabled() -> bool {
     crate::read_user_settings()
         .ok()
-        .and_then(|payload| payload.settings.get("enableExternalContextCollectors").and_then(Value::as_bool))
+        .and_then(|payload| {
+            payload
+                .settings
+                .get("enableExternalContextCollectors")
+                .and_then(Value::as_bool)
+        })
         .unwrap_or(false)
 }
 

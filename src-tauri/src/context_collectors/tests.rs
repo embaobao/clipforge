@@ -4,9 +4,15 @@ use serde_json::json;
 #[test]
 fn contract_describes_external_execution_boundary() {
     let catalog = collector_catalog();
-    assert_eq!(catalog["protocol"], "clipforge.application-context.collector.v1");
+    assert_eq!(
+        catalog["protocol"],
+        "clipforge.application-context.collector.v1"
+    );
     assert_eq!(catalog["safety"]["shell"], false);
-    assert_eq!(catalog["externalAdapter"]["example"]["id"], "browser.chrome.example");
+    assert_eq!(
+        catalog["externalAdapter"]["example"]["id"],
+        "browser.chrome.example"
+    );
 }
 
 #[test]
@@ -31,4 +37,3 @@ fn output_validation_reports_missing_contract_fields() {
     assert_eq!(validation["valid"], false);
     assert!(validation["errors"].as_array().unwrap().len() >= 3);
 }
-

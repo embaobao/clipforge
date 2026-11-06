@@ -1,9 +1,10 @@
 /** pi sdk 流式补全封装：与 piComplete 同输入形状，text_delta 事件逐段回调增量文本。
- *  边界：业务代码不直接 import pi-ai 的 stream；onDelta 收到纯文本增量；写完即用，中止后置。 */
+ *  边界：业务代码不直接 import pi-ai 的 stream；onDelta 收到纯文本增量；写完即用，中止后置。
+ *  1.1.0 适配：streamSimple 迁到 `@earendil-works/pi-ai/compat` 兼容入口（主入口不再导出）。 */
 import {
   streamSimple,
   type AssistantMessage,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import type { AgentProviderConfig } from "./provider-config";
 import { resolvePiModel } from "./provider-config";
 

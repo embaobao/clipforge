@@ -39,6 +39,7 @@
 | [clipboard-multi-format-fidelity](./changes/clipboard-multi-format-fidelity/proposal.md) | W1 | P3 收尾，22/26 | 格式保真层：多 representation、纯文本降级和回写验证矩阵；剩余系统剪贴板写回与监听去重实机验证 |
 | [onboarding-standalone-page](./changes/onboarding-standalone-page/proposal.md) | W1 | P1.x 收尾，25/52 | 独立引导窗口、权限检查、开机启动已落地;仍需真实 Tauri 验证托盘/快捷键不阻塞、完成/跳过链路、P95 与日志边界 |
 | [tailwind-v3-style-refactor](./changes/tailwind-v3-style-refactor/proposal.md) | W1 | 收尾，21/25 | v3 视觉重构;剩盟哥三 surface 人工走查 + 走查修复(旧 AI 面板 iframe 细节项已作废) |
+| [panel-list-perf](./changes/panel-list-perf/proposal.md) | W1 | 实施中，22/25 | 主面板列表性能修复：SWR 视图快照、列表 key 稳定、批量 JOIN、写回刷新收敛；编码+自动验收完成（scroll P95=1ms），剩视觉走查与 copy/paste span |
 | (W2 未开工,见总纲) | W2 | — | 基于 `clip_semantic_index`(SQLite local-keyword 已建)的语义检索,本地索引优先,先服务 pi/MCP 工具面 |
 | [pi-sdk-agent-foundation](./changes/pi-sdk-agent-foundation/proposal.md) | W3 | P1 主体，21/26 | pi sdk Agent 基座:旧 AI 侧车删除完成、L1 分析/历史/工具面落地;剩 API Key redaction/keyRef、provider 极简 UI、智能标签建议、Phase 4 验收 |
 | [ai-model-plugin-productization](./changes/ai-model-plugin-productization/proposal.md) | W3 | P4 复审中，65/76 | scope 复审后按 L1/L2 归位并入 pi 线;Context7 恢复前不进 SDK/Tiptap 实现 |

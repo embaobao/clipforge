@@ -5,9 +5,9 @@ import {
   Clipboard,
   Copy,
   ExternalLink,
+  ScanText,
   FileJson,
   Heart,
-  ScanSearch,
   Square,
   Trash2,
   X,
@@ -40,7 +40,7 @@ export interface ClipContextMenuProps {
   onOpenAggregate: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
   onCopyMode: (mode: PasteMode) => void;
-  onAnalyzeClipboard?: (item: ClipItem) => void;
+  onOcrExtract: (item: ClipItem) => void;
   onCopySelected: () => void;
   onStartMultiSelect: (id: string) => void;
   onClearSelection: () => void;
@@ -67,7 +67,7 @@ export function ClipContextMenu({
   onOpenAggregate,
   onPaste,
   onCopyMode,
-  onAnalyzeClipboard,
+  onOcrExtract,
   onCopySelected,
   onStartMultiSelect,
   onClearSelection,
@@ -169,11 +169,12 @@ export function ClipContextMenu({
             </DropdownMenuItem>
             <DropdownMenuItem
               className={menuItem}
-              disabled={!onAnalyzeClipboard}
-              onSelect={() => run(() => onAnalyzeClipboard?.(item))}
+              disabled={item.payloadKind !== "image"}
+              onSelect={() => run(() => onOcrExtract(item))}
+              title={item.payloadKind !== "image" ? tr("main.context.ocrImageOnly") : tr("main.context.ocrTitle")}
             >
-              <ScanSearch size={14} />
-              <span>AI 分析</span>
+              <ScanText size={14} />
+              <span>{tr("main.context.ocrExtract")}</span>
             </DropdownMenuItem>
             <DropdownMenuItem className={menuItem} onSelect={() => run(onOpenDetail)}>
               <FileJson size={14} />

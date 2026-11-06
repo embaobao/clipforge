@@ -1,8 +1,11 @@
+//! 剪贴板域：读取、监听、写回、入库草稿与共享去重/抑制状态。
+pub mod dedup;
 pub mod detect;
 pub mod ingest;
 pub mod payload;
 pub mod read;
 pub mod storage;
+pub mod suppress;
 pub mod watcher;
 pub mod write;
 

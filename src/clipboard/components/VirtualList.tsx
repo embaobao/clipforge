@@ -30,6 +30,10 @@ export type VirtualListProps<T extends { id: string }> = {
   itemHeight?: number;
   onEndReached?: () => void;
   onUserScroll?: () => void;
+  /** 滚动位置连续回写(raf 节流后),供视图快照缓存记录 scrollTop。 */
+  onScrollTopChange?: (scrollTop: number) => void;
+  /** 外部命令式恢复滚动位置:token 变化时 scrollTo 到 top(视图切换回放快照用)。 */
+  restoreScroll?: { top: number; token: string } | null;
   renderItem: (item: T, index: number) => ReactNode;
   autoScroll?: boolean;
   groupSize?: number;
@@ -46,6 +50,8 @@ export function VirtualList<T extends { id: string }>({
   itemHeight = ROW_HEIGHT,
   onEndReached,
   onUserScroll,
+  onScrollTopChange,
+  restoreScroll,
   renderItem,
   autoScroll = true,
   groupSize,
@@ -62,6 +68,11 @@ export function VirtualList<T extends { id: string }>({
   const lastScrollPerfAtRef = useRef(0);
   const lastAutoScrollActiveIdRef = useRef<string | null>(null);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  // 滚动期毛玻璃降级(见 index.css .material[data-scrolling]):28px backdrop blur
+  // 在透明窗口上每帧滚动都触发整屏重采样(唤起后首秒滚动顿挫的主因),
+  // 滚动中把祖先 .material 的 blur 降到 6px,停滚 160ms 后恢复。
+  const scrollBlurNodeRef = useRef<HTMLElement | null>(null);
+  const scrollBlurTimerRef = useRef<number | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
 
   // WKWebView 的怪癖：列表滚动、指针原地不动时，滚动停下后不会对新位置的行重新发
@@ -104,6 +115,22 @@ export function VirtualList<T extends { id: string }>({
     [reemitHoverAtLastPointer],
   );
 
+  // 毛玻璃降级:首次滚动时定位祖先 .material 节点并打 data-scrolling,停滚 160ms 摘除。
+  const setScrollBlurActive = useCallback((active: boolean) => {
+    if (active) {
+      if (!scrollBlurNodeRef.current) {
+        scrollBlurNodeRef.current = ref.current?.closest<HTMLElement>(".material") ?? null;
+      }
+      if (scrollBlurNodeRef.current && scrollBlurNodeRef.current.dataset.scrolling !== "true") {
+        scrollBlurNodeRef.current.dataset.scrolling = "true";
+      }
+    }
+    if (scrollBlurTimerRef.current) window.clearTimeout(scrollBlurTimerRef.current);
+    scrollBlurTimerRef.current = window.setTimeout(() => {
+      delete scrollBlurNodeRef.current?.dataset.scrolling;
+    }, 160);
+  }, []);
+
   useEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -124,6 +151,8 @@ export function VirtualList<T extends { id: string }>({
     return () => {
       if (scrollFeedbackTimerRef.current) window.clearTimeout(scrollFeedbackTimerRef.current);
       if (scrollRafRef.current) window.cancelAnimationFrame(scrollRafRef.current);
+      if (scrollBlurTimerRef.current) window.clearTimeout(scrollBlurTimerRef.current);
+      delete scrollBlurNodeRef.current?.dataset.scrolling;
     };
   }, []);
 
@@ -155,7 +184,7 @@ export function VirtualList<T extends { id: string }>({
     onActiveGroupChange(groupStart);
   }, [scrollTop, height, itemHeight, groupSize, onActiveGroupChange]);
 
-  // 父级命令：滚动到某个分组起始（Cmd+↑/↓ 切组用）。
+  // 父级命令:滚动到某个分组起始（Cmd+↑/↓ 切组用）。
   useEffect(() => {
     if (scrollToGroupStart == null) return;
     const node = ref.current;
@@ -166,6 +195,17 @@ export function VirtualList<T extends { id: string }>({
     setFeedback(true);
     node.scrollTo({ top, behavior: "smooth" });
   }, [scrollToGroupStart, itemHeight, setFeedback]);
+
+  // 父级命令:视图切换回放快照时恢复滚动位置(token 变化才执行,避免重复 setState)。
+  // behavior:"auto" 即时定位;恢复触发的 onScroll 会回写同一 scrollTop,无抖动。
+  useEffect(() => {
+    if (!restoreScroll) return;
+    const node = ref.current;
+    if (!node) return;
+    setScrollTop(restoreScroll.top);
+    node.scrollTo({ top: restoreScroll.top, behavior: "auto" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreScroll?.token]);
 
   const start = Math.max(0, Math.floor(scrollTop / itemHeight) - OVERSCAN);
   const visibleCount = Math.ceil(height / itemHeight) + OVERSCAN * 2;
@@ -221,9 +261,11 @@ export function VirtualList<T extends { id: string }>({
           scrollRafRef.current = window.requestAnimationFrame(() => {
             scrollRafRef.current = null;
             setScrollTop(pendingScrollTopRef.current);
+            onScrollTopChange?.(pendingScrollTopRef.current);
           });
         }
         setFeedback(true);
+        setScrollBlurActive(true);
         if (hasMore && !isLoadingMore && node.scrollHeight - node.scrollTop - node.clientHeight < itemHeight * 6) {
           onEndReached?.();
         }

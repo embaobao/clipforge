@@ -33,6 +33,14 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
 blake3 = "1"
 clipboard-rs = "0.3.5"
+cordis-rs = "=0.11.1"
+rquickjs = { version = "=0.14.0", features = ["loader", "futures", "classes", "properties"] }
+# plugin_runtime spike：cordis 内部 tokio::spawn 要求 Send future，QuickJS episode
+# 用 futures::executor::block_on 在 apply 单次 poll 内同步收敛（两库均已在依赖树中）。
+tokio = { version = "1", default-features = false, features = ["rt"] }
+# ocr 域：本地视觉端点 HTTP 调用（reqwest 已由 tauri-plugin-updater 引入依赖树，零新增编译面）
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+futures = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

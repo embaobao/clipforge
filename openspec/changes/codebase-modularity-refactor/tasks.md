@@ -18,19 +18,27 @@
 
 ## Phase 3：lib.rs settings 模块拆分（服务 settings-service B3）
 
-- [ ] 抽 `src-tauri/src/settings/mod.rs`：SettingsService get/patch/replace/reset + revision + emit
+- [x] 抽 `src-tauri/src/settings/mod.rs`：SettingsService get/patch/replace/reset + revision + emit（2026-10-08 实际落位 settings_service/mod.rs 门面 485 行）
 - [x] 抽 settings 校验域：settings_json_schema/resolve_schema_ref/validate_settings_value/settings_validation_error/validate_settings_patch 五函数（~225 行）迁入 settings_service.rs 并 pub 导出（2026-09-11，lib.rs 14284→14058；实际落位 settings_service.rs 而非新目录，避免多一层模块）
-- [ ] 抽 `settings/write.rs`：原子写 + Mutex（依赖 B2 先落地）
-- [ ] 抽 `settings/commands.rs`：settings_service_* Tauri command 适配层
-- [ ] 抽 `settings/mcp.rs`：clipf.settings.*/clipf.agent.* dispatch（复用 service，满足 B3）
-- [ ] lib.rs 只保留模块声明 + 命令注册，移除 settings 相关内联实现——进行中：schema 校验域已迁（上）；settings_service_* 七命令（~240 行）+ 辅助函数链（sync_launch_at_login/sync_global_shortcut/refresh_tray_menu/emit_settings_changed/settings_write_response/log_slow_settings_operation）与 SETTINGS_WRITE_LOCK 待迁，建议新会话满上下文执行
-- [ ] `cargo check` + `cargo fmt` + verify 脚本通过
+- [x] 抽 `settings/write.rs`：原子写 + Mutex（2026-10-08，319 行，SETTINGS_WRITE_LOCK 私有化 + degraded 语义）
+- [x] 抽 `settings/commands.rs`：settings_service_* Tauri command 适配层（2026-10-08，471 行，签名零变化）
+- [x] 抽 `settings/mcp.rs`：clipf.settings.*/clipf.agent.* dispatch（2026-10-08，201 行，call_settings_agent_tool 七臂）
+- [x] lib.rs 只保留模块声明 + 命令注册，移除 settings 相关内联实现——完成：13410→12850（净减 560≥550），lib.rs 无 SETTINGS_WRITE_LOCK 残余（2026-10-08）
+- [x] `cargo check` + `cargo fmt` + verify 脚本通过（test:unit 10 项全绿，2026-10-08）
+
+### Phase 3 评审修订项(2026-10-08 多模型论证,见 [agent-extension-seams/evaluation.md](../agent-extension-seams/evaluation.md) §4)
+
+- [x] 门面单入口:写路径唯一入口 = mod.rs 门面,commands.rs/mcp.rs 禁止自行取 SETTINGS_WRITE_LOCK（acquire 为 pub(super),仅门面调用）
+- [x] 锁内规则:持锁期间不 emit、不跨 await、无网络/子进程 I/O;emit 一律在锁释放后
+- [x] poisoned 语义:SETTINGS_LOCK_POISONED + 进程级 degraded(写禁用读可用,需重启),不自动重建
+- [x] 锁层级表:持锁期间仅允许再取 DB 写连接,禁嵌套其他锁
+- [x] MCP dispatch 与错误路径 golden 用例先行(错误码映射/修订冲突文案/patch 合并与 changed_paths 三测冻结,src-tauri settings_service#[cfg(test)] golden_tests)
 
 ## Phase 4：lib.rs agent / mcp 模块拆分
 
-- [ ] 抽 `agent/`：provider 解析 + run 状态机 + agent_* command
-- [ ] 抽 `mcp/`：run_mcp_stdio + call_mcp_tool + mcp_tool_specs
-- [ ] lib.rs 继续收敛
+- [x] 抽 `agent/`：provider 解析 + run 状态机 + agent_* command（2026-10-08，8 文件 362/465/242/223/376/456/57+context，run 存储锁私有化+poisoned→AGENT_RUNS_LOCK_POISONED+degraded）
+- [x] 抽 `mcp/`：run_mcp_stdio + call_mcp_tool + mcp_tool_specs（2026-10-08，8 文件，specs 40 条 golden 冻结；settings_service 依赖解耦走 crate::agent::）
+- [x] lib.rs 继续收敛——13004→9079（净减 3925）；cargo test --lib 30/30，test:unit 10 项全绿，pnpm build 通过（2026-10-08）
 
 ## Phase 5：前端组件拆分
 
@@ -39,10 +47,20 @@
 - [ ] App.tsx 按 surface 拆——2026-09-10 完成 4051 → 1334 行（-67%）：10 hooks + 8 子组件 + 3 域模块 + UI store；剩余 1334 行为状态粘合层，进一步压缩需状态 store 化（架构改动，待盟哥拍板）
 - [x] 每个抽出的文件 ≤500 行（全部新文件 ≤498 行，file-size 门禁全程通过）
 - [ ] App.tsx 剩余切片（2026-09-10 盟哥授权全量推进，当前 1692 行）：
-  - [ ] 写回域接线：useClipWriteback（已建文件未接线）——注意 verify-runtime-boundaries 的 updateClip 终点锚同步改 updateClipContent
+  - [ ] 写回域接线：useClipWriteback（已建文件未接线）——注：verify-runtime-boundaries 当前并无 updateClip 终点锚，若接线时需要静态断言应新增（而非“同步改”）
   - [ ] 写回域深链：copyClip/copyText/pasteClip/captureStandardTextClip/updateClipContent/openClipTarget → use-clip-writeback.ts 二批
   - [ ] search 域：handleSearchChange/applySearchSuggestion/closeSearchIfEmpty/removeSearchFilter 等
   - [ ] UI JSX：TopCommandBar/ModeBar/列表参数组装/Overlay 区块切展示组件
+
+### Phase 5.x：panel-list-perf 接缝注记（2026-10-10）
+
+W1 性能修复 `panel-list-perf` 与本阶段重构存在文件重叠，需按以下顺序执行：
+
+1. **search 域提取必须等 panel-list-perf Phase 2 落地后再做**。原因：perf 会改 `searchRequest` 构建（history/favorites 共用 `bucket:"all"`）并在 `use-clipboard-list.ts` 引入 `clipsByView` 缓存；先提取 search hook 会导致 perf 需要二次 rebase。
+2. **UI JSX 列表参数组装必须等 panel-list-perf Phase 3 落地后再做**。原因：`VirtualList` key/scrollTop/row-in epoch 都会变更；列表组件 props 签名稳定后再切展示层。
+3. **写回域深链迁移时把 SWR 缓存失效逻辑一起下沉**。原因：panel-list-perf Phase 5 会把缓存失效集中在 `use-clip-writeback.ts`；深链函数迁出时必须复用同一失效入口，避免散落。
+4. **verify-runtime-boundaries 当前没有 updateClip/updateClipContent 终点锚**(核对过脚本实况)。panel-list-perf 只加缓存失效、不改调用命令名;若要静态保障,应新增断言验证失效逻辑不绕过 `use-clip-writeback.ts`。
+5. **状态 store 化（待盟哥拍板）与 clipsByView 缓存解耦**：perf 用 `useRef`/轻量 hook 实现缓存，不为 store 化阻塞；后续 store 化只需替换缓存实现，保持 `getCachedClips(view, requestKey)` / `setCachedClips(...)` 接口。
 
 ## Phase 6：收尾
 
@@ -50,6 +68,10 @@
 - [ ] 豁免清单逐步清空（每拆完一个文件就从清单移除）——已 7 → 3（workspace-panels/contracts/agent-panel×2 已清，剩 App.tsx/settings.tsx/lib.rs）
 - [ ] 文件大小门禁对全部源文件 fail-mode 生效
 - [ ] `pnpm build` + `cargo check` + `cargo fmt --check` + 全部 verify 脚本通过
+
+### Phase 6.x：panel-list-perf 接缝注记（2026-10-10）
+
+panel-list-perf 只改动 `src-tauri/src/lib.rs` 的 `search_clip_records`/`load_clip` 数据查询层（N+1 → JOIN、payload 瘦身），不碰 window/log/tray 模块拆分。两者顺序无关；但 lib.rs 数据层变更应先于或并行于 window/log/tray 拆分，避免后续重构时同时改动查询与模块边界。 
 
 ### 状态记录（2026-09-10，Tailwind 重构期间的还债对账）
 

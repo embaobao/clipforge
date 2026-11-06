@@ -1,5 +1,5 @@
 import type { KeyboardEvent } from "react";
-import { Bot, ClipboardList, Heart, Search, Trash2 } from "lucide-react";
+import { ClipboardList, Heart, Search, Trash2 } from "lucide-react";
 import type { TranslationKey } from "../../i18n";
 
 export type OnboardingStepKey = "welcome" | "accessibility" | "capture" | "shortcut" | "tour";
@@ -28,6 +28,8 @@ export interface OnboardingWizardProps {
   accessibility: OnboardingAccessibility | null;
   openAccessibilitySettings: () => void | Promise<void>;
   refreshAccessibilityStatus: () => void | Promise<void>;
+  /** 步骤切换回调（点击/键盘/跳过统一触发），供调用方记 onboarding.step 日志。 */
+  onStepChange?: (stepKey: OnboardingStepKey) => void;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -95,11 +97,6 @@ export const FEATURE_CARDS: Array<{ icon: typeof ClipboardList; titleKey: Transl
     icon: Trash2,
     titleKey: "settings.onboarding.feature.trash.title",
     bodyKey: "settings.onboarding.feature.trash.body",
-  },
-  {
-    icon: Bot,
-    titleKey: "settings.onboarding.feature.agent.title",
-    bodyKey: "settings.onboarding.feature.agent.body",
   },
 ];
 

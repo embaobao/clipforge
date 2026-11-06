@@ -1,12 +1,29 @@
-use super::{classify_application, parse_browser_payload, parse_editor_context, parse_selection_paths};
+use super::{
+    classify_application, parse_browser_payload, parse_editor_context, parse_selection_paths,
+};
 
 #[test]
 fn classifies_common_application_families() {
-    assert_eq!(classify_application("com.google.Chrome", "Google Chrome"), "browser");
-    assert_eq!(classify_application("com.microsoft.VSCode", "Code"), "editor");
-    assert_eq!(classify_application("com.apple.Terminal", "Terminal"), "terminal");
-    assert_eq!(classify_application("com.example.App", "Example"), "generic");
-    assert_eq!(classify_application("com.openai.codex", "Codex"), "assistant");
+    assert_eq!(
+        classify_application("com.google.Chrome", "Google Chrome"),
+        "browser"
+    );
+    assert_eq!(
+        classify_application("com.microsoft.VSCode", "Code"),
+        "editor"
+    );
+    assert_eq!(
+        classify_application("com.apple.Terminal", "Terminal"),
+        "terminal"
+    );
+    assert_eq!(
+        classify_application("com.example.App", "Example"),
+        "generic"
+    );
+    assert_eq!(
+        classify_application("com.openai.codex", "Codex"),
+        "assistant"
+    );
 }
 
 #[test]
@@ -29,4 +46,3 @@ fn malformed_optional_context_is_ignored() {
         vec!["/tmp/a", "/tmp/b"]
     );
 }
-

@@ -1,3 +1,6 @@
+mod classify;
+
+pub(crate) use classify::classify_application;
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -27,46 +30,6 @@ pub(crate) fn capture(include_application_context: bool) -> Option<CapturedAppli
     {
         let _ = include_application_context;
         None
-    }
-}
-
-/// 按 Bundle ID 和应用名归类，供 Agent 选择更准确的上下文解释器。
-pub(crate) fn classify_application(bundle_id: &str, name: &str) -> &'static str {
-    let bundle = bundle_id.to_lowercase();
-    let app_name = name.to_lowercase();
-    if is_browser_bundle(&bundle) {
-        "browser"
-    } else if bundle.contains("codex")
-        || bundle.contains("openai")
-        || app_name == "codex"
-        || app_name.contains("chatgpt")
-    {
-        // 只标识当前助手应用，不读取 prompt、transcript、token 或内部 session 内容。
-        "assistant"
-    } else if bundle.contains("vscode")
-        || bundle.contains("codium")
-        || bundle.contains("cursor")
-        || bundle.contains("todesktop")
-        || bundle.contains("code.oss")
-        || bundle.contains("jetbrains")
-        || bundle.contains("xcode")
-        || app_name.contains("visual studio code")
-        || app_name.contains("vscodium")
-        || app_name.contains("cursor")
-        || app_name == "code"
-    {
-        "editor"
-    } else if bundle.contains("terminal")
-        || bundle.contains("iterm")
-        || bundle.contains("warp")
-        || bundle.contains("wezterm")
-        || app_name.contains("terminal")
-    {
-        "terminal"
-    } else if bundle == "com.apple.finder" || app_name == "finder" {
-        "file-manager"
-    } else {
-        "generic"
     }
 }
 
@@ -132,25 +95,6 @@ fn non_empty(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
-fn is_browser_bundle(bundle_id: &str) -> bool {
-    [
-        "com.google.chrome",
-        "com.google.chrome.canary",
-        "com.google.chrome.beta",
-        "com.google.chrome.dev",
-        "com.microsoft.edgemac",
-        "com.brave.browser",
-        "com.vivaldi.vivaldi",
-        "com.operasoftware.opera",
-        "company.thebrowser.browser",
-        "com.apple.safari",
-        "org.mozilla.firefox",
-        "com.kagi.kagimacOS",
-    ]
-    .iter()
-    .any(|candidate| candidate.eq_ignore_ascii_case(bundle_id))
-}
-
 fn extract_uri_or_path(command_line: &str, flags: &[&str]) -> Option<String> {
     let tokens = command_line.split_whitespace().collect::<Vec<_>>();
     for flag in flags {
@@ -167,6 +111,38 @@ fn extract_uri_or_path(command_line: &str, flags: &[&str]) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn capture_macos(include_application_context: bool) -> Option<CapturedApplicationContext> {
+    // 快速路径（热路径）：只要前台应用身份。原生 NSWorkspace 无授权依赖、亚毫秒返回；
+    // 旧实现无条件跑 osascript（500ms 预算）本机常态 300-500ms。扩展上下文仅显式要求时走 osascript。
+    if !include_application_context {
+        if let Some((name, bundle_id)) = crate::frontmost_app_identity_including_self() {
+            // icon/executablePath 快速路径不取（入库 badge 非必需，省文件 IO）。
+            let source_app = SourceAppInfo {
+                icon_base64: None,
+                executable_path: String::new(),
+                name: name.clone(),
+                bundle_id,
+            };
+            let kind = classify_application(&source_app.bundle_id, &name);
+            // 字段与下方 osascript 完整路径同构；AX 项置空（来源 macos.workspace）。
+            let context = json!({
+                "schemaVersion": 1, "kind": kind, "confidence": "best-effort",
+                "application": {
+                    "name": source_app.name, "bundleId": source_app.bundle_id,
+                    "executablePath": null, "processId": null,
+                },
+                "window": { "title": null, "source": "macos.workspace" },
+                "document": null, "workspace": null, "browser": null,
+                "terminal": null, "selection": null,
+                "signals": ["frontmost-application"],
+                "permissions": { "accessibility": "not-used", "automation": "not-requested" },
+            });
+            return Some(CapturedApplicationContext {
+                source_app,
+                application_context: context,
+            });
+        }
+        // 原生快照失败时退回 osascript 完整路径，不静默降级为 None。
+    }
     let raw = match run_osascript(
         r#"
 tell application "System Events"

@@ -1,13 +1,51 @@
-pub mod commands;
-pub use commands::{emit_settings_changed, log_slow_settings_operation, settings_write_response, settings_service_agent_check, settings_service_agent_models, settings_service_agent_providers, settings_service_agent_providers_payload, settings_service_get, settings_service_patch, settings_service_replace, settings_service_reset, sync_launch_at_login_from_settings};
+//! settings 域门面（modularity Phase 3）：get/patch/replace/reset 公共流程、redact 与
+//! payload 组装、写事务唯一入口（run_settings_write / commit_settings_*），以及设置 JSON
+//! Schema 校验。铁律（2026-10-08 评审）：SETTINGS_WRITE_LOCK 私有于 write.rs，锁内不
+//! emit、不跨 await、无网络/子进程 I/O；emit/托盘/快捷键等副作用一律在锁释放后执行。
 
+pub mod commands;
+pub(crate) mod mcp;
+mod write;
+
+use crate::{now_millis, parse_json5_like, settings_path, system_native_locale};
+pub use commands::{
+    current_global_shortcut_value, settings_service_agent_check, settings_service_agent_models,
+    settings_service_agent_providers, settings_service_get, settings_service_patch,
+    settings_service_replace, settings_service_reset, sync_global_shortcut_registration,
+    sync_launch_at_login_from_settings, update_clipforge_settings,
+};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::hash::{Hash, Hasher};
+pub use write::{merge_settings_patch, settings_changed_paths, write_user_settings};
 
-pub struct SettingsWriteDraft {
-    pub next: Value,
-    pub previous_revision: String,
-    pub changed_paths: Vec<String>,
+#[derive(Serialize)]
+pub struct UserSettingsPayload {
+    pub path: String,
+    pub settings: Value,
+}
+
+#[tauri::command]
+pub fn read_user_settings() -> Result<UserSettingsPayload, String> {
+    let path = settings_path()?;
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&path, "{}\n").map_err(|error| error.to_string())?;
+    }
+
+    let raw = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let settings = parse_json5_like(&raw).unwrap_or(Value::Object(Default::default()));
+    Ok(UserSettingsPayload {
+        path: path.to_string_lossy().to_string(),
+        settings,
+    })
+}
+
+#[tauri::command]
+pub fn get_clipforge_settings() -> Result<Value, String> {
+    read_user_settings().map(|payload| payload.settings)
 }
 
 pub fn settings_revision(settings: &Value) -> String {
@@ -17,240 +55,204 @@ pub fn settings_revision(settings: &Value) -> String {
     format!("rev_{:016x}", hasher.finish())
 }
 
-pub fn ensure_expected_settings_revision(
-    settings: &Value,
-    expected_revision: Option<&str>,
-) -> Result<String, String> {
-    let revision = settings_revision(settings);
-    if let Some(expected_revision) = expected_revision {
-        if !expected_revision.trim().is_empty() && expected_revision != revision {
-            return Err(format!(
-                "SETTINGS_REVISION_CONFLICT: expected {expected_revision}, current {revision}; get latest settings before retrying"
-            ));
+pub(crate) fn redact_settings_value(value: &Value) -> Value {
+    let mut redacted = value.clone();
+    // 抹掉明文 apiKey（B7）：schema 同时接受新结构 agent.providers[] 和 legacy 顶层 agentProviders[]，
+    // 两条路径都要 redact，否则 settings_service_get 会泄漏 legacy provider 的 key。
+    if let Some(providers) = redacted
+        .get_mut("agentProviders")
+        .and_then(Value::as_array_mut)
+    {
+        for provider in providers {
+            redact_provider_api_key(provider);
         }
     }
-    Ok(revision)
-}
-
-fn collect_changed_paths(previous: &Value, next: &Value, path: &str, out: &mut Vec<String>) {
-    if previous == next {
-        return;
-    }
-    match (previous.as_object(), next.as_object()) {
-        (Some(previous_object), Some(next_object)) => {
-            let mut keys = previous_object.keys().collect::<Vec<_>>();
-            for key in next_object.keys() {
-                if !previous_object.contains_key(key) {
-                    keys.push(key);
-                }
-            }
-            keys.sort();
-            keys.dedup();
-            for key in keys {
-                let next_path = if path == "$" {
-                    format!("$.{key}")
-                } else {
-                    format!("{path}.{key}")
-                };
-                collect_changed_paths(
-                    previous_object.get(key).unwrap_or(&Value::Null),
-                    next_object.get(key).unwrap_or(&Value::Null),
-                    &next_path,
-                    out,
-                );
+    if let Some(agent) = redacted.get_mut("agent") {
+        if let Some(providers) = agent.get_mut("providers").and_then(Value::as_array_mut) {
+            for provider in providers {
+                redact_provider_api_key(provider);
             }
         }
-        _ => out.push(path.to_string()),
     }
+    redacted
 }
 
-pub fn settings_changed_paths(previous: &Value, next: &Value) -> Vec<String> {
-    let mut out = Vec::new();
-    collect_changed_paths(previous, next, "$", &mut out);
-    if out.is_empty() {
-        vec![]
-    } else {
-        out
-    }
-}
-
-pub fn merge_settings_patch(base: &mut Value, patch: &Value) {
-    if !base.is_object() || !patch.is_object() {
-        *base = patch.clone();
-        return;
-    }
-    let Some(base_object) = base.as_object_mut() else {
-        return;
-    };
-    let Some(patch_object) = patch.as_object() else {
-        return;
-    };
-    for (key, value) in patch_object {
-        if value.is_null() {
-            base_object.remove(key);
-        } else if value.is_object() {
-            let entry = base_object
-                .entry(key.clone())
-                .or_insert_with(|| Value::Object(Default::default()));
-            merge_settings_patch(entry, value);
-        } else {
-            base_object.insert(key.clone(), value.clone());
+/// 抹掉单个 provider 配置里的明文 apiKey，统一返回 redacted 占位符。
+fn redact_provider_api_key(provider: &mut Value) {
+    if let Some(object) = provider.as_object_mut() {
+        if object.contains_key("apiKey") {
+            object.insert(
+                "apiKey".to_string(),
+                Value::String("[redacted]".to_string()),
+            );
         }
     }
 }
 
-/// 兼容读取 legacy `agentProviders`，但 Settings Service 新写入统一落到 `agent.providers`。
-fn normalize_agent_provider_write(settings: &mut Value) {
-    let Some(object) = settings.as_object_mut() else {
-        return;
-    };
-    let Some(legacy_providers) = object.remove("agentProviders") else {
-        return;
-    };
-    let agent_entry = object
-        .entry("agent".to_string())
-        .or_insert_with(|| json!({}));
-    if !agent_entry.is_object() {
-        *agent_entry = json!({});
-    }
-    if let Some(agent_object) = agent_entry.as_object_mut() {
-        agent_object
-            .entry("providers".to_string())
-            .or_insert(legacy_providers);
+pub(crate) fn public_settings_payload(include_schema: bool) -> Result<Value, String> {
+    let payload = read_user_settings()?;
+    let settings = payload.settings;
+    let revision = settings_revision(&settings);
+    let updated_at = now_millis()?;
+    Ok(json!({
+        "settings": redact_settings_value(&settings),
+        "schema": if include_schema { settings_json_schema() } else { Value::Null },
+        "revision": revision,
+        "updatedAt": updated_at,
+        "source": "tauri",
+        "writePolicy": {
+            "recommendedMode": "patch",
+            "replaceRequiresConfirmation": true,
+            "resetRequiresConfirmation": true,
+            "arrayMerge": "replace"
+        },
+        "warnings": [
+            "Prefer settings patch updates. Full replacement is available only with confirmed=true.",
+            "Arrays are replaced as complete values, including agent.providers and tagRules.",
+            "Prefer agent.providers[].apiKeyEnv over persistent inline apiKey."
+        ],
+        "redaction": {
+            "agent.providers[].apiKey": "write-only in UI and MCP responses should not depend on reading it back from provider list",
+            "agent.providers[].apiKeyEnv": "preferred for persistent config"
+        }
+    }))
+}
+
+pub(crate) fn desired_launch_at_login(settings: &Value) -> bool {
+    settings
+        .get("launchAtLogin")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
+#[tauri::command]
+pub fn get_clipforge_config_path() -> Result<String, String> {
+    Ok(settings_path()?.to_string_lossy().to_string())
+}
+
+pub(crate) fn current_native_locale() -> &'static str {
+    let preference = read_user_settings()
+        .ok()
+        .and_then(|settings| {
+            settings
+                .settings
+                .get("language")
+                .and_then(Value::as_str)
+                .map(|value| value.to_string())
+        })
+        .unwrap_or_else(|| "system".to_string());
+    match preference.as_str() {
+        "zh-CN" => "zh-CN",
+        "en-US" => "en-US",
+        _ => system_native_locale(),
     }
 }
 
-pub fn prepare_patch(
-    previous: &Value,
+/// 设置写事务唯一入口（铁律 1）：锁内读取当前设置交给 body 产出 next，Some(next) 才原子落盘，
+/// 附带任意输出 T 返回给调用方。锁内规则（铁律 2）：只做读-改-写与本地原子写，禁止 emit、
+/// 网络或子进程 I/O；emit/托盘/快捷键等副作用必须在本函数返回后执行。
+/// 锁层级（铁律 4）：持锁期间仅允许再获取 DB 连接，禁嵌套其他锁。
+pub fn run_settings_write<T>(
+    body: impl FnOnce(&Value) -> Result<(Option<Value>, T), String>,
+) -> Result<T, String> {
+    let _guard = write::acquire_settings_write_lock()?;
+    let previous = read_user_settings()?.settings;
+    let (next, output) = body(&previous)?;
+    if let Some(next) = next {
+        write::write_settings_atomic(&next)?;
+    }
+    Ok(output)
+}
+
+/// patch/replace/reset 公共写流程：锁内 读 → prepare_* → 原子写，锁外返回 draft。
+/// 调用方须先用 validate_settings_patch 校验输入（纯计算，无需持锁）。
+pub fn commit_settings_patch(
     patch: &Value,
     expected_revision: Option<&str>,
-) -> Result<SettingsWriteDraft, String> {
-    let previous_revision = ensure_expected_settings_revision(previous, expected_revision)?;
-    let mut next = previous.clone();
-    merge_settings_patch(&mut next, patch);
-    normalize_agent_provider_write(&mut next);
-    let changed_paths = settings_changed_paths(previous, &next);
-    Ok(SettingsWriteDraft {
-        next,
-        previous_revision,
-        changed_paths,
-    })
+) -> Result<write::SettingsWriteDraft, String> {
+    commit_settings_write(|previous| write::prepare_patch(previous, patch, expected_revision))
 }
 
-pub fn prepare_replace(
-    previous: &Value,
+pub fn commit_settings_replace(
     settings: Value,
     expected_revision: Option<&str>,
-) -> Result<SettingsWriteDraft, String> {
-    let previous_revision = ensure_expected_settings_revision(previous, expected_revision)?;
-    let mut next = settings;
-    normalize_agent_provider_write(&mut next);
-    let changed_paths = settings_changed_paths(previous, &next);
-    Ok(SettingsWriteDraft {
-        next,
-        previous_revision,
-        changed_paths,
+) -> Result<write::SettingsWriteDraft, String> {
+    commit_settings_write(|previous| write::prepare_replace(previous, settings, expected_revision))
+}
+
+pub fn commit_settings_reset(
+    scope: &str,
+    expected_revision: Option<&str>,
+) -> Result<write::SettingsWriteDraft, String> {
+    commit_settings_write(|previous| write::prepare_reset(previous, scope, expected_revision))
+}
+
+fn commit_settings_write<F>(prepare: F) -> Result<write::SettingsWriteDraft, String>
+where
+    F: FnOnce(&Value) -> Result<write::SettingsWriteDraft, String>,
+{
+    run_settings_write(|previous| {
+        let draft = prepare(previous)?;
+        Ok((Some(draft.next.clone()), draft))
     })
 }
 
-pub fn prepare_reset(
-    previous: &Value,
-    scope: &str,
-    expected_revision: Option<&str>,
-) -> Result<SettingsWriteDraft, String> {
-    let previous_revision = ensure_expected_settings_revision(previous, expected_revision)?;
-    let mut next = previous.clone();
-    match scope {
-        "all" => next = json!({}),
-        "agent" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("agent");
-                object.remove("agentProviders");
-            }
-        }
-        "shortcuts" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("globalShortcut");
-            }
-        }
-        "display" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "panelDensity",
-                    "contentDisplayMode",
-                    "positionStrategy",
-                    "panelBackgroundOpacity",
-                    "enableScrollCollapse",
-                    "panelWidth",
-                    "panelHeight",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "capture" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "captureTextEnabled",
-                    "captureHtmlEnabled",
-                    "captureRtfEnabled",
-                    "captureImageEnabled",
-                    "captureFileEnabled",
-                    "captureSensitiveEnabled",
-                    "captureExternalContextOnClipboard",
-                    "enableExternalContextCollectors",
-                    "imageMaxSizeMb",
-                    "textMaxSizeMb",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "storage" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "quickItemLimit",
-                    "maxStoredItems",
-                    "clipboardPollMs",
-                    "cleanupEnabled",
-                    "cleanupIntervalHours",
-                    "softDeletedRetentionDays",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "logs" => {
-            if let Some(object) = next.as_object_mut() {
-                for key in [
-                    "logMaxSizeMb",
-                    "logKeepRatio",
-                    "logMaxLines",
-                    "logRetentionDays",
-                    "logAutoCleanup",
-                    "logCleanupIntervalMin",
-                    "debugLogsEnabled",
-                ] {
-                    object.remove(key);
-                }
-            }
-        }
-        "tags" => {
-            if let Some(object) = next.as_object_mut() {
-                object.remove("tagMode");
-                object.remove("tagRules");
-            }
-        }
-        _ => {
-            return Err("SETTINGS_RESET_INVALID_SCOPE: use one of all, agent, shortcuts, display, capture, storage, logs, tags".to_string());
-        }
+#[tauri::command]
+pub fn settings_get_public() -> Result<Value, String> {
+    public_settings_payload(true)
+}
+
+#[tauri::command]
+pub fn settings_patch_public(input: Value) -> Result<Value, String> {
+    validate_settings_patch(&input)?;
+    run_settings_write(|previous| {
+        let mut current = previous.clone();
+        merge_settings_patch(&mut current, &input);
+        Ok((Some(current), ()))
+    })?;
+    public_settings_payload(true)
+}
+
+#[tauri::command]
+pub fn settings_replace_public(input: Value, confirmed: Option<bool>) -> Result<Value, String> {
+    if confirmed != Some(true) {
+        return Err("SETTINGS_REPLACE_REQUIRES_CONFIRMATION: use partial patch unless you intend to replace the full settings object".to_string());
     }
-    let changed_paths = settings_changed_paths(previous, &next);
-    Ok(SettingsWriteDraft {
-        next,
-        previous_revision,
-        changed_paths,
-    })
+    validate_settings_patch(&input)?;
+    run_settings_write(|_| Ok((Some(input), ())))?;
+    public_settings_payload(true)
+}
+
+#[tauri::command]
+pub fn settings_reset_public(
+    scope: Option<String>,
+    confirmed: Option<bool>,
+) -> Result<Value, String> {
+    if confirmed != Some(true) {
+        return Err("SETTINGS_RESET_REQUIRES_CONFIRMATION".to_string());
+    }
+    let scope = scope.unwrap_or_else(|| "all".to_string());
+    run_settings_write(|previous| {
+        let mut current = previous.clone();
+        match scope.as_str() {
+            "all" => current = json!({}),
+            "agent" => {
+                if let Some(object) = current.as_object_mut() {
+                    object.remove("agent");
+                    object.remove("agentProviders");
+                }
+            }
+            key => {
+                if let Some(object) = current.as_object_mut() {
+                    object.remove(key);
+                } else {
+                    current = json!({});
+                }
+            }
+        }
+        Ok((Some(current), ()))
+    })?;
+    public_settings_payload(true)
 }
 
 // ===== 设置 schema 与校验（从 lib.rs 迁入，2026-09-11 modularity Phase 3 第一小步）=====
@@ -481,4 +483,3 @@ pub fn validate_settings_patch(input: &Value) -> Result<(), String> {
         Err(settings_validation_error(errors))
     }
 }
-

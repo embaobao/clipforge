@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>详情页 v3 vs v4 · 操作规范化 + AI 侧拉插件化</title>
+<style>
+  :root {
+    --bg: #fafafa; --surface: #ffffff; --fg: #0a0a0a; --muted: #737373;
+    --border: #e5e5e5; --accent: #0a0a0a; --accent-fg: #ffffff;
+    --success: #16a34a; --warning: #d97706; --error: #dc2626; --info: #2563eb;
+    --chip: #f4f4f5; --chip-hover: #ebebeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0a0a0a; --surface:#141414; --fg:#fafafa; --muted:#a3a3a3; --border:#262626; --accent:#fafafa; --accent-fg:#0a0a0a; --chip:#1e1e1e; --chip-hover:#262626; }
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:28px; font-size:14px; }
+  .page-head { max-width:1560px; margin:0 auto 20px; }
+  .page-head h1 { font-size:18px; font-weight:600; }
+  .page-head p { font-size:12px; color:var(--muted); margin-top:6px; }
+  .tabs { display:flex; gap:8px; margin-top:12px; }
+  .tab { font-size:12px; padding:5px 12px; border-radius:7px; border:1px solid var(--border); background:var(--surface); cursor:pointer; color:var(--muted); }
+  .tab:hover { background:var(--chip); }
+  .tab.active { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  .tabs .hint { font-size:11px; color:var(--muted); align-self:center; margin-left:6px; }
+
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:22px; max-width:1560px; margin:0 auto; }
+  @media (max-width:1100px){ .cols { grid-template-columns:1fr; } }
+  .col-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; }
+  .col-head h2 { font-size:14px; font-weight:600; }
+  .col-head .stat { font-size:11px; color:var(--muted); }
+
+  .window { width:100%; max-width:760px; aspect-ratio:760/680; background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.04); }
+  .crumb { display:flex; align-items:center; gap:6px; padding:8px 14px; border-bottom:1px solid var(--border); font-size:12.5px; color:var(--muted); flex-shrink:0; }
+  .icon-btn { width:26px; height:26px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; border:none; background:transparent; color:var(--muted); cursor:pointer; font-size:12px; transition:background .1s,transform .1s; flex-shrink:0; }
+  .icon-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .icon-btn:active { transform:scale(.94); }
+  .icon-btn.on { color:var(--warning); }
+  /* chips 即采集信息入口：可点下钻 */
+  .meta-chip { display:inline-flex; align-items:center; gap:5px; height:24px; padding:0 9px; border-radius:999px; background:var(--chip); border:none; font-size:11px; color:var(--fg); cursor:pointer; font-family:inherit; transition:background .1s; }
+  .meta-chip:hover { background:var(--chip-hover); }
+  .meta-chip .app-ico { width:14px; height:14px; border-radius:4px; background:linear-gradient(135deg,#4da3ff,#1a6ed8); display:inline-flex; align-items:center; justify-content:center; color:#fff; font-size:8px; font-weight:700; }
+  .meta-chip .chev { color:var(--muted); font-size:9px; margin-left:1px; }
+  .tag-btn { display:inline-flex; align-items:center; gap:3px; height:20px; padding:0 7px; border-radius:5px; border:none; background:transparent; color:var(--muted); font-size:11px; cursor:pointer; white-space:nowrap; }
+  .tag-btn:hover { background:var(--chip-hover); color:var(--fg); }
+  .tag-btn .src { width:5px; height:5px; border-radius:50%; display:inline-block; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:5px; height:28px; padding:0 11px; border-radius:7px; font-size:12px; cursor:pointer; border:1px solid var(--border); background:transparent; color:var(--fg); white-space:nowrap; transition:background .1s,transform .1s; flex-shrink:0; }
+  .btn:hover { background:var(--chip); }
+  .btn:active { transform:scale(.97); }
+  .btn.primary { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+  .btn.small { height:24px; font-size:11px; padding:0 9px; }
+
+  .tags-line { display:flex; align-items:center; gap:6px; padding:6px 14px; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .tags-scroll { display:flex; gap:2px; overflow-x:auto; scrollbar-width:none; flex:1; min-width:0; }
+  .tags-scroll::-webkit-scrollbar { display:none; }
+  .scroll-hint { color:var(--muted); font-size:10px; flex-shrink:0; }
+  .plus-tag { color:var(--muted); font-size:12px; width:20px; height:20px; border-radius:5px; border:none; background:transparent; cursor:pointer; flex-shrink:0; }
+  .plus-tag:hover { background:var(--chip); color:var(--fg); }
+
+  .content { flex:1; min-height:0; overflow:auto; padding:12px 16px; display:flex; flex-direction:column; gap:8px; position:relative; }
+  .content .title { font-size:12.5px; font-weight:600; }
+  .content p { font-size:12.5px; line-height:1.65; }
+  .content .muted { color:var(--muted); font-size:11.5px; }
+  /* 编辑器边界工具条（类型操作 + 插件注入位） */
+  .edge-bar { position:sticky; top:0; z-index:5; display:flex; gap:2px; align-items:center; padding:3px; border-radius:9px; background:color-mix(in srgb, var(--surface) 85%, transparent); backdrop-filter:blur(6px); border:1px solid var(--border); align-self:flex-end; float:right; margin:-2px -2px 0 10px; }
+  .edge-bar .icon-btn { width:24px; height:24px; font-size:11px; }
+  .edge-bar .count { font-size:10px; color:var(--muted); padding:0 6px; }
+  .edge-bar .sep { width:1px; height:14px; background:var(--border); margin:0 2px; }
+  .edge-bar .plug { border:1px dashed var(--warning); border-radius:7px; color:var(--warning); }
+  .links-tail { margin-top:auto; padding-top:10px; display:flex; gap:6px; flex-wrap:wrap; }
+  .link-chip { display:inline-flex; align-items:center; gap:5px; height:26px; padding:0 10px; border-radius:7px; border:1px solid var(--border); background:var(--surface); font-size:11.5px; cursor:pointer; }
+  .link-chip:hover { background:var(--chip); }
+
+  /* 下钻层（原数据 / 编辑共用） */
+  .drill-layer { position:absolute; inset:0; background:var(--surface); z-index:10; display:none; flex-direction:column; animation:drill .24s cubic-bezier(.32,.72,0,1); }
+  .drill-layer.open { display:flex; }
+  @keyframes drill { from { opacity:0; transform:translateY(14px);} to { opacity:1; transform:none;} }
+  .drill-head { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--border); font-size:12.5px; color:var(--muted); }
+  .drill-body { flex:1; overflow:auto; padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+  .raw-json { font-family:ui-monospace,Menlo,monospace; font-size:11px; line-height:1.7; background:var(--chip); border-radius:8px; padding:10px 12px; white-space:pre-wrap; }
+  .raw-json .k { color:var(--accent); font-weight:600; }
+  .raw-json .dim { color:var(--muted); }
+  .drill-body textarea { flex:1; min-height:110px; border:1px solid var(--border); border-radius:8px; padding:10px; font:inherit; font-size:12.5px; resize:none; background:var(--bg); color:var(--fg); }
+  .drill-foot { border-top:1px solid var(--border); padding:8px 12px; display:flex; gap:7px; }
+  /* 编辑器边界操作（内嵌） */
+  .editor-edge { display:flex; gap:4px; align-items:center; font-size:10.5px; color:var(--muted); }
+  .editor-edge button { font-size:10.5px; color:var(--muted); background:none; border:1px solid var(--border); border-radius:6px; padding:2px 8px; cursor:pointer; }
+  .editor-edge button:hover { background:var(--chip); color:var(--fg); }
+
+  /* AI 侧拉面板（插件侧车） */
+  .ai-sidecar { position:absolute; top:8px; bottom:8px; right:8px; width:64%; max-width:340px; border:1px solid var(--accent); border-radius:12px; background:var(--surface); box-shadow:-8px 8px 32px rgba(0,0,0,.14); z-index:20; display:flex; flex-direction:column; transform:translateX(16px); opacity:0; pointer-events:none; transition:transform .24s cubic-bezier(.32,.72,0,1), opacity .24s; }
+  .ai-sidecar.open { transform:none; opacity:1; pointer-events:auto; }
+  @media (prefers-reduced-motion:reduce){ .ai-sidecar { transition:opacity .12s ease; transform:none; } }
+  .ai-sidecar .sc-head { display:flex; align-items:center; gap:6px; padding:9px 12px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); }
+  .ai-sidecar .sc-head .plug-badge { font-size:9px; color:var(--warning); border:1px dashed var(--warning); border-radius:5px; padding:1px 5px; }
+  .ai-sidecar .sc-head .cfg { margin-left:auto; font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; }
+  .ai-sidecar .sc-body { flex:1; overflow:auto; padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
+  .sc-sec .lab { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:4px; }
+  .sc-sec .txt { font-size:11.5px; line-height:1.6; }
+  .sc-sec .row { display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
+  .sc-sug { background:var(--chip); border-radius:5px; padding:2px 7px; font-size:10.5px; color:var(--muted); }
+  .sc-actions { display:flex; gap:5px; flex-wrap:wrap; }
+  .sc-preview { border:1px dashed var(--border); border-radius:8px; padding:8px 10px; font-size:11px; line-height:1.6; color:var(--muted); display:none; }
+  .sc-preview.show { display:block; animation:fadein .2s ease; }
+  @keyframes fadein { from{opacity:0;} to{opacity:1;} }
+  .sc-caps { display:flex; gap:4px; flex-wrap:wrap; }
+  .cap { font-size:9.5px; border:1px solid var(--border); border-radius:999px; padding:2px 7px; color:var(--muted); display:inline-flex; gap:3px; align-items:center; }
+  .cap.on { border-color:var(--success); color:var(--success); }
+  /* 提示词配置 mock */
+  .sc-config { display:none; border-top:1px dashed var(--border); padding:10px 12px; }
+  .sc-config.show { display:block; }
+  .sc-config textarea { width:100%; height:54px; border:1px solid var(--border); border-radius:8px; padding:8px; font:11px ui-monospace,Menlo,monospace; resize:none; background:var(--bg); color:var(--fg); }
+
+  .action-bar { border-top:1px solid var(--border); padding:8px 12px; display:flex; align-items:center; gap:7px; flex-shrink:0; }
+  .action-bar .spacer { flex:1; }
+  .plugin-zone { border-top:1px dashed var(--warning); color:var(--warning); font-size:10.5px; padding:5px 14px; display:none; }
+  .plugin-zone.visible { display:block; }
+
+  .json-view { font-family:ui-monospace,Menlo,monospace; font-size:11.5px; line-height:1.7; background:var(--chip); border-radius:8px; padding:10px 12px; }
+  .img-ph { width:70%; aspect-ratio:16/9; border-radius:8px; background:linear-gradient(135deg,var(--chip) 25%,var(--chip-hover) 50%,var(--chip) 75%); display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:11px; }
+
+  .scenarios { max-width:1560px; margin:24px auto 0; }
+  .scenarios h3 { font-size:13px; font-weight:600; margin-bottom:10px; }
+  .scenarios table { width:100%; border-collapse:collapse; font-size:11.5px; }
+  .scenarios th, .scenarios td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border); vertical-align:top; line-height:1.55; }
+  .scenarios th { color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; }
+  .scenarios td:first-child { white-space:nowrap; font-weight:600; }
+  .spec-table td:first-child { white-space:normal; width:16%; }
+  .footnote { max-width:1560px; margin:16px auto 0; font-size:11px; color:var(--muted); line-height:1.7; }
+</style>
+</head>
+<body>
+<div class="page-head">
+  <h1>详情页 v3 vs v4 · 操作规范化 + AI 侧拉插件化</h1>
+  <p>v4 吸收：①类型/来源 chips 上移 crumb、点击即看采集原数据 ②AI=侧拉插件（设置可配能力/提示词，不占主内容）③JSON/文本操作内嵌编辑器边界，底部动作区只留全局动作</p>
+  <div class="tabs">
+    <button class="tab active" data-type="text">文本条目</button>
+    <button class="tab" data-type="json">JSON 条目</button>
+    <button class="tab" data-type="image">图片条目</button>
+    <span class="hint">右栏 v4 可点：chips 下钻原数据 · 边界工具 · AI 侧拉（⚙ 展开）</span>
+  </div>
+</div>
+
+<div class="cols">
+
+  <!-- ============ 左：v3 ============ -->
+  <div class="col">
+    <div class="col-head"><h2>v3 · 上一版</h2><div class="stat">批注问题：⌨入口是文字钮 · AI 挤底部 · 类型操作无规范</div></div>
+    <div class="window">
+      <div class="crumb"><span>←</span> <button class="meta-chip" style="cursor:default">ⓘ 采集原数据</button> <span style="flex:1"></span>
+        <button class="icon-btn">☆</button><button class="icon-btn">↑</button><button class="icon-btn" style="color:var(--error)">↓</button><button class="icon-btn">⋯</button></div>
+      <div class="tags-line" style="padding:7px 14px">
+        <span class="meta-chip" style="cursor:default">文本</span><span class="meta-chip" style="cursor:default">Safari</span>
+        <div class="tags-scroll"><span class="tag-btn">#链接</span><span class="tag-btn">#工作</span><span class="tag-btn">#Markdown</span></div>
+      </div>
+      <div class="content">
+        <span class="title">ClipForge 开发纪要</span>
+        <p>主分支近期合并了面板性能修复与设置页改版。</p>
+        <p class="muted">（v3 痛点：类型/Safari chips 是死标签不是入口；「ⓘ 采集原数据」文字钮多余；AI 钮挤在底部动作区；JSON 折叠/格式化这类类型操作没有规范落位）</p>
+        <div class="links-tail"><span class="link-chip">github.com</span></div>
+      </div>
+      <div class="action-bar">
+        <button class="btn primary">⧉ 复制</button><button class="btn">↵ 粘贴</button><button class="btn">✎ 编辑</button><button class="btn">⌕ AI 分析</button>
+        <span style="width:1px;height:18px;background:var(--border)"></span>
+        <span style="display:flex;gap:7px"><button class="btn">◧ 智能格式</button></span>
+        <span class="spacer"></span><button class="btn" style="border-style:dashed;color:var(--muted)">＋</button><button class="icon-btn">⋯</button></div>
+    </div>
+  </div>
+
+  <!-- ============ 右：v4 ============ -->
+  <div class="col">
+    <div class="col-head"><h2>v4 · 本版</h2><div class="stat">chips=采集入口 · AI 侧拉插件 · 操作规范三层</div></div>
+    <div class="window">
+      <!-- crumb：chips 上移 + 可点下钻 -->
+      <div class="crumb"><span class="back" style="cursor:pointer">←</span>
+        <button class="meta-chip" id="v4KindChip" title="点击查看采集原数据">📄 <span id="v4Kind">文本</span><span class="chev">▾</span></button>
+        <button class="meta-chip" id="v4AppChip" title="点击查看采集原数据"><span class="app-ico">S</span> <span id="v4App">Safari</span><span class="chev">▾</span></button>
+        <span style="flex:1"></span>
+        <button class="icon-btn" id="v4Star" title="收藏 (F)">☆</button>
+        <button class="icon-btn" title="上一条 (↑)">↑</button><button class="icon-btn" id="v4Next" title="下一条 (↓)">↓</button><button class="icon-btn" title="溢出：删除等">⋯</button></div>
+      <!-- tags 行（独立薄行） -->
+      <div class="tags-line">
+        <div class="tags-scroll" id="v4Tags">
+          <span class="tag-btn"><i class="src" style="background:var(--accent)"></i>#链接</span>
+          <span class="tag-btn"><i class="src" style="background:var(--accent)"></i>#工作</span>
+          <span class="tag-btn"><i class="src" style="background:var(--success)"></i>#Markdown</span>
+          <span class="tag-btn"><i class="src" style="background:var(--warning)"></i>#多行</span>
+        </div>
+        <button class="plus-tag" title="快速加标签">＋</button><span class="scroll-hint">›</span>
+      </div>
+      <div class="content" id="v4Content">
+        <!-- 编辑器边界工具：字数 | 全局 | 类型操作 | 插件注入位（AI icon 在此） -->
+        <div class="edge-bar">
+          <span class="count" id="v4Count">412 字</span>
+          <button class="icon-btn" id="v4CopyMini" title="复制 (⌘C)">⧉</button>
+          <button class="icon-btn" title="全选">≡</button>
+          <span class="sep"></span>
+          <span id="v4TypeOps" style="display:flex;gap:2px"></span>
+          <span class="sep"></span>
+          <button class="icon-btn plug" id="v4AiOpen" title="AI 分析插件（侧拉）· 可在设置配置注入类型">⌕</button>
+        </div>
+        <div id="v4Body"></div>
+        <div class="links-tail"><span class="link-chip">github.com</span><span class="link-chip">pi.dev</span></div>
+
+        <!-- 采集原数据下钻层 -->
+        <div class="drill-layer" id="v4RawLayer">
+          <div class="drill-head"><span class="back" id="v4RawClose" style="cursor:pointer">←</span> 采集原数据 · <span id="v4RawTitle">Safari</span></div>
+          <div class="drill-body"><div class="raw-json" id="v4RawJson"></div></div>
+        </div>
+
+        <!-- 下钻编辑层：操作内嵌编辑器边界 -->
+        <div class="drill-layer" id="v4EditLayer">
+          <div class="drill-head"><span class="back" id="v4EditClose" style="cursor:pointer">←</span> 编辑
+            <span style="margin-left:auto" class="editor-edge">
+              <button>◧ 自动换行</button><button># 行号</button><button>⌕ 查找</button>
+              <span style="width:1px;height:12px;background:var(--border);margin:0 3px"></span>
+              <button style="border-style:dashed;color:var(--warning)">⌕ AI 润色（插件注入）</button>
+            </span></div>
+          <div class="drill-body"><textarea id="v4EditArea" spellcheck="false"></textarea></div>
+          <div class="drill-foot">
+            <button class="btn primary" id="v4Save">保存 (⌘S)</button>
+            <button class="btn" id="v4Cancel">取消 (Esc)</button>
+            <span style="flex:1"></span><button class="btn" id="v4SavePaste">保存并粘贴</button></div>
+        </div>
+
+        <!-- AI 侧拉面板（插件侧车，不占主内容） -->
+        <div class="ai-sidecar" id="v4Ai">
+          <div class="sc-head"><b style="color:var(--fg);font-size:12px">⌕ AI 分析</b> <span class="plug-badge">插件 · 可配置</span>
+            <button class="cfg" id="v4Cfg">⚙ 设置</button><button class="cfg" id="v4AiClose">✕</button></div>
+          <div class="sc-body">
+            <div class="sc-sec"><div class="lab">概述</div><div class="txt" id="scSum">一条关于 ClipForge 开发计划的剪贴板纪要：性能修复、详情页重构、插件运行时。</div></div>
+            <div class="sc-sec"><div class="lab">推荐标签</div><div class="row"><span class="sc-sug">#开发</span><span class="sc-sug">#纪要</span><span class="sc-sug">#P1</span><button class="btn small" id="scApply">应用标签</button></div></div>
+            <div class="sc-sec"><div class="lab">快速回写</div>
+              <div class="sc-actions"><button class="btn small" id="scGen">生成预览</button><button class="btn small" id="scRewrite" style="display:none">回写内容</button><span class="sc-sug" style="display:none" id="scDone">✓ 已回写</span></div>
+              <div class="sc-preview" id="scPrev">ClipForge 近期完成面板性能修复与设置页改版；下一步聚焦详情页信息架构重构，目标是打开即见内容。（生成结果可编辑后回写）</div>
+            </div>
+            <div class="sc-sec"><div class="lab">能力开关（设置页同源）</div><div class="sc-caps">
+              <span class="cap on">✓ 识别图片</span><span class="cap on">✓ 概览文字</span><span class="cap on">✓ 推荐标签</span><span class="cap on">✓ 快速回写</span><span class="cap">✕ 生成预览</span>
+            </div></div>
+          </div>
+          <div class="sc-config" id="v4CfgPanel">
+            <div class="lab" style="font-size:9.5px;color:var(--muted);margin-bottom:5px">提示词模板（变量：{{content}} {{kind}} {{tags}}）· 设置页可完整编辑</div>
+            <textarea>你是剪贴板分析助手。对 {{kind}} 类型内容输出：1) 30 字内概述 2) 3 个标签 3) 若为文本给出润色建议。</textarea>
+          </div>
+        </div>
+      </div>
+      <div class="plugin-zone" id="v4Plugin">◈ detail-section 插件位（空注册零高度）</div>
+      <!-- 底部动作区：只留全局恒定动作 -->
+      <div class="action-bar">
+        <button class="btn primary" id="v4Copy">⧉ 复制</button>
+        <button class="btn">↵ 粘贴</button>
+        <span class="spacer"></span>
+        <button class="btn" style="border-style:dashed;color:var(--muted)" title="detail-action 插件位">＋</button>
+        <button class="icon-btn">⋯</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="scenarios">
+  <h3>批注 → v4 吸收</h3>
+  <table>
+    <tr><th>批注</th><th>v4 落法</th></tr>
+    <tr><td>类型/Safari 两个 chip 上移，本身就是采集信息，点击直接看原始信息；不要「采集原数据」文字钮</td><td>类型 + 来源 app chips 上移进 crumb 顶行，chip 即入口（▾ 提示可点）；点击原地展开采集原数据下钻层（source_app/bundle_id/process/时间/事件上下文/hash 全量）；独立 meta 行取消，只剩 tags 薄行</td></tr>
+    <tr><td>AI 不放底部，类似详情页插件，唤起侧拉；不占主内容区</td><td>AI 定位为第一个内置插件：侧拉面板（右侧 64% 宽浮层，可打断滑入，主内容不被挤压）；入口 = 编辑器边界工具条的插件注入位 ⌕（manifest 声明注入类型，设置可关）；底部动作区不再有 AI</td></tr>
+    <tr><td>AI 插件支持配置：识别图片/概览文字/优化提示词/推荐标签/快速回写/生成预览</td><td>侧拉面板内直接见能力开关 + ⚙ 展开提示词模板编辑（{{content}}/{{kind}}/{{tags}} 变量）；完整配置落设置页「AI 分析插件」分区（同一 schema，mock 即真实结构）；快速回写演示：生成预览 → 回写内容</td></tr>
+    <tr><td>JSON/文本类操作不放底部，内嵌编辑器边界</td><td>操作规范三层：全局动作（复制/粘贴/收藏/返回）→ 顶/底固定区；类型动作（折叠全部/复制格式化/另存为）→ 内嵌内容区边界工具条（sticky 跟随滚动）；插件动作 → 边界工具条注入位 + 下钻编辑器边界注入位。底部动作区恒定只剩全局动作</td></tr>
+    <tr><td>AI 整体功能就是一个插件，支持配置在不同类型注入 icon 操作按钮，默认可触发</td><td>AI 以 detail-edge-action 注入位示范：文本/JSON 条目边界条出 ⌕，图片条目可配成「识别图片摘要」（本 mock 三态均注入）；插件注入按钮与类型按钮同 24px 语言，dashed 边框区分来源</td></tr>
+  </table>
+</div>
+
+<div class="footnote">
+  操作规范（v4 定稿核心）：<br>
+  ① 全局动作（复制/粘贴/收藏/删除/返回/翻条目）→ crumb + 底部动作区，恒定不变；② 类型动作 → 内容区边界工具条 sticky 内嵌，随 renderer 走；③ 插件动作 → 边界条/编辑器注入位（manifest match 声明），AI 是第一个示范插件；④ 编辑 = 下钻层（E/双击），保存/取消/保存并粘贴在层内；⑤ 深层信息（采集原数据/AI）= 下钻层或侧拉，不占主内容。
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const bodies = {
+    text: { kind:'文本', app:'Safari', count:'412 字',
+      body:'<span class="title">ClipForge 开发纪要</span><p>主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。</p><p class="muted">类型操作在右上边界工具条；点 chips 看采集原数据；⌕ 唤起 AI 侧拉。</p>',
+      ops:'<button class="icon-btn" title="智能格式">◧</button>',
+      raw:'{\n  <span class="k">"payload_kind"</span>: "text",\n  <span class="k">"source_app"</span>: "Safari",\n  <span class="k">"bundle_id"</span>: "com.apple.Safari",\n  <span class="k">"process"</span>: { "pid": 4821, "name": "Safari" },\n  <span class="k">"captured_at"</span>: "2026-10-12T19:42:07+08:00",\n  <span class="k">"trigger"</span>: "clipboard-change",\n  <span class="k">"event_context"</span>: { "frontmost": true, "selection_copy": true },\n  <span class="k">"content_hash"</span>: "sha256:9f2c…",\n  <span class="dim">… 其余字段</span>\n}',
+      edit:'主分支近期合并了面板性能修复与设置页改版。下一步是详情页信息架构重构，目标是打开即见内容。' },
+    json: { kind:'JSON', app:'Raycast', count:'28 键',
+      body:'<span class="title">config.json</span><div class="json-view"><span style="color:var(--accent);font-weight:600">"build"</span>: { "command": "pnpm build" },<br><span class="dim" style="color:var(--muted)">… 24 键已折叠</span></div>',
+      ops:'<button class="icon-btn" title="折叠全部">⊟</button><button class="icon-btn" title="复制格式化">⧉</button>',
+      raw:'{\n  <span class="k">"payload_kind"</span>: "json",\n  <span class="k">"source_app"</span>: "Raycast",\n  <span class="dim">…</span>\n}',
+      edit:'{ "build": { "command": "pnpm build" } }' },
+    image: { kind:'图片', app:'PixelSnap', count:'1920×1080',
+      body:'<span class="title">screenshot-panel.png</span><div class="img-ph">图片预览</div>',
+      ops:'<button class="icon-btn" title="适缩/原尺寸">⤢</button><button class="icon-btn" title="另存为">⤓</button>',
+      raw:'{\n  <span class="k">"payload_kind"</span>: "image",\n  <span class="k">"dimensions"</span>: "1920x1080",\n  <span class="k">"source_app"</span>: "PixelSnap",\n  <span class="dim">…</span>\n}',
+      edit:'' },
+  };
+  let t='text', rawOpen=false, editOpen=false, aiOpen=false, cfgOpen=false;
+  function apply(type){ t=type; const d=bodies[type];
+    $('v4Kind').textContent=d.kind; $('v4App').textContent=d.app; $('v4Count').textContent=d.count;
+    $('v4Body').innerHTML=d.body; $('v4TypeOps').innerHTML=d.ops;
+    $('v4RawJson').innerHTML=d.raw; $('v4RawTitle').textContent=d.app;
+    $('v4EditArea').value=d.edit;
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.type===type));
+  }
+  document.querySelectorAll('.tab').forEach(x=>x.addEventListener('click',()=>apply(x.dataset.type)));
+  // chips 下钻原数据
+  const openRaw=()=>{ rawOpen=true; $('v4RawLayer').classList.add('open'); };
+  $('v4KindChip').onclick=openRaw; $('v4AppChip').onclick=openRaw;
+  $('v4RawClose').onclick=()=>{ rawOpen=false; $('v4RawLayer').classList.remove('open'); };
+  // 编辑下钻
+  $('v4EditClose').onclick=$('v4Cancel').onclick=()=>{ editOpen=false; $('v4EditLayer').classList.remove('open'); };
+  $('v4Save').onclick=()=>{ const b=$('v4Save'); b.textContent='✓ 已保存'; setTimeout(()=>{ b.textContent='保存 (⌘S)'; editOpen=false; $('v4EditLayer').classList.remove('open'); },500); };
+  // 内容双击 = 进入编辑
+  $('v4Body').ondblclick=()=>{ editOpen=true; $('v4EditLayer').classList.add('open'); $('v4EditArea').focus(); };
+  // AI 侧拉
+  $('v4AiOpen').onclick=()=>{ aiOpen=!aiOpen; $('v4Ai').classList.toggle('open',aiOpen); };
+  $('v4AiClose').onclick=()=>{ aiOpen=false; $('v4Ai').classList.remove('open'); };
+  $('v4Cfg').onclick=()=>{ cfgOpen=!cfgOpen; $('v4CfgPanel').classList.toggle('show',cfgOpen); $('v4Cfg').style.color=cfgOpen?'var(--accent)':''; };
+  $('scApply').onclick=()=>{ const b=$('scApply'); b.textContent='✓ 已应用'; b.style.color='var(--success)'; b.style.borderColor='var(--success)';
+    const tags=$('v4Tags'); if(!tags.dataset.applied){ tags.dataset.applied='1'; tags.insertAdjacentHTML('beforeend','<span class="tag-btn"><i class="src" style="background:var(--success)"></i>#开发</span><span class="tag-btn"><i class="src" style="background:var(--success)"></i>#纪要</span>'); } };
+  $('scGen').onclick=()=>{ $('scPrev').classList.add('show'); $('scRewrite').style.display=''; $('scGen').textContent='重新生成'; };
+  $('scRewrite').onclick=()=>{ $('scRewrite').style.display='none'; $('scDone').style.display=''; };
+  // 复制反馈 / 收藏 / 翻条目
+  const flash=(b,txt)=>{ const o=b.innerHTML; b.innerHTML=txt; b.style.color='var(--success)'; setTimeout(()=>{b.innerHTML=o;b.style.color='';},600); };
+  $('v4CopyMini').onclick=e=>flash(e.currentTarget,'✓'); $('v4Copy').onclick=e=>flash(e.currentTarget,'✓');
+  $('v4Star').onclick=()=>{ const s=$('v4Star'); const on=s.textContent==='★'; s.textContent=on?'☆':'★'; s.classList.toggle('on',!on); };
+  $('v4Next').onclick=()=>apply(t==='text'?'json':'text');
+  apply('text');
+</script>
+</body>
+</html>
