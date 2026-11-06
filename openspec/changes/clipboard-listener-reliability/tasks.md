@@ -1,6 +1,6 @@
 # Tasks: clipboard-listener-reliability
 
-> 状态：**已实施（RS-51，2026-11-06）**，分支 `rs-51-clipboard-listener-reliability`，PR 链接见 Multica RS-51 issue 评论。
+> 状态：**已实施（RS-51，2026-11-06）**，分支 `rs-51-clipboard-listener-reliability`，PR：https://github.com/embaobao/clipforge/pull/1（含基线说明：本地 main 领先 origin/main 57 提交）。
 > 证据栏填日志时间戳 / 计数 / 命令输出；未跑项保持 `[ ]` 并写明原因，禁止写「应该没问题」。
 
 ## 1. 取证与复核（已完成，只读）
