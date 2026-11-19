@@ -127,6 +127,7 @@
 | W3 后置 | `automated-tagging-eval` | dormant | 自动打标调研:规则/MCP/LLM 三层边界已裁决,pi-sdk L3 smart-tag 已完成,待真实批量回填诉求 + MCP 集成方三判据齐后转实施 |
 | W5 | `project-demo-gif-pipeline` | 0/30 | W1 稳定后录制 |
 | 插队 | `snipaste-parity` | 0/27 | 方案已评审**待用户放行**;前置=剪贴板主链路收口(W1 关波);四阶段逐段放行,不碰热路径 |
+| S4 | 性能治理横切 | `rust-anything-adoption-eval` | No tasks | **11-19 补登记**：前端热路径移植工具链评估；按信号表触发（搜索过滤 profile 证据）；CLI 已装未接 agent 配置 |
 
 已归档:旧 AI 侧车三提案(2026-09-11,`a020068` 拍板废弃,pi 接管)、`settings-service-unified-protocol` 等见上表「已归档」节。
 
