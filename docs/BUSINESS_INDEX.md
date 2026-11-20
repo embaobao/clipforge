@@ -22,14 +22,16 @@
 
 | 业务域 | 入口 / 核心文件 | 说明 |
 | --- | --- | --- |
-| 图片文字识别（OCR） | `src-tauri/src/ocr.rs`（`ocr_extract` command）、`openspec/changes/ocr-image-text-extraction/` | 本地视觉端点（llama-server/Ollama）调用；`OCR_*` 错误码；端点设置键 `ocrEnabled`/`ocrEndpointUrl` |
+| 图片文字识别（OCR） | `src-tauri/src/ocr/`（`mod.rs` 门面、`endpoint.rs`/`extract.rs`/`cache.rs`/`tests.rs`）、`openspec/changes/ocr-image-text-extraction/` | 本地视觉端点（llama-server/Ollama）调用；`ocr::ocr_extract`/`ocr_detect_endpoints` 为 command 入口；`OCR_*` 错误码；端点设置键 `ocrEnabled`/`ocrEndpointUrl`；结果按 content_hash+端点在进程内缓存（上限 64 条、重启失效） |
+| OCR 错误提示脱敏 | `src/clipboard/ocr-error-guidance.ts`、`src/clipboard/use-ocr-extract.ts`、`src/i18n/locales/zh-CN.json`、`scripts/verify-ocr-error-guidance.mjs` | `clipboard-interaction-repair` 第 3 项纯本地部分：失败时按白名单 `OCR_*` 码映射为静态 i18n 原因 + 可复制修复方案（toast 可关闭、可复制），原始异常里的端点 URL / 图片路径 / 端口 / 凭据绝不进入展示或复制文本；展示前 `findOcrGuidanceLeaks` 二次兜底；静态门禁校验 11 个 Rust 错误码与前端白名单一致、中英文案 key 对齐、零敏感片段。Agent 诊断修复（涉外部模型）未做，待人工确认 |
 | 面板生命周期 | `src/clipboard/use-panel-bootstrap.ts`、`src/clipboard/use-panel-environment.ts` | 启动引导、环境副作用 |
-| 面板显隐 / 失焦 | `src/clipboard/use-panel-blur-hide.ts` | 失焦隐藏 180ms 窗口约束 |
+| 面板显隐 / 失焦 | `src/clipboard/use-panel-blur-hide.ts`、`src/clipboard/use-panel-keyboard.ts` | 失焦 60ms 延迟 → 查 Rust `PANEL_PINNED` → 原生 alpha 淡出（FADE_MS=110）；180ms 是 `pnpm test:perf-panel` 的 show/hide 端到端阈值，不是淡出时长。固定悬浮面板语义与状态收敛见 `openspec/changes/pinned-floating-panel/` |
 | 键盘交互 | `src/clipboard/use-panel-keyboard.ts` | 全局键位、快捷键分发；effect deps 是历史 bug 高发区 |
 | 列表 / 虚拟滚动 | `src/clipboard/use-clipboard-list.ts`、`src/clipboard/components/VirtualList.tsx` | 主列表数据与渲染 |
 | 搜索 | `src/clipboard/clip-search.ts`、`src/search-query.ts`、`src/clipboard/components/GlassSearchBar.tsx` | 搜索请求构建与查询语法 |
 | 复制回写 | `src/clipboard/use-clip-writeback.ts`、`src/services/clipboard.ts` | 粘贴写回抑制，避免回环采集 |
 | 聚合拼接格式 | `src/clipboard/clipboard-domain.ts`、`src/clipboard/use-aggregate-format.ts`、`src/clipboard/aggregate-format-storage.ts`、`src/workspace/components/AggregateFormatMenu.tsx` | 多选聚合的分隔符/编号/顺序，复制与预览共用 formatAggregate |
+| 多选表格 / CSV 导出 | `src/clipboard/csv-export.ts`、`src/clipboard/csv-file-export.ts`、`src/workspace/components/MultiAggregateWorkspace.tsx`、`src-tauri/src/lib.rs`（`export_clip_csv_file`、`export_clip_split_files`） | 纯函数：RFC 4180 单元格转义（逗号/引号/换行）、表格公式注入防护（`= + - @` 前缀）、TSV 复制表格（空白折叠，保留粘贴兼容）与 CSV 文件内容（BOM+CRLF）构建；`csv-file-export.ts` 负责条目投影、按类型分割（文本进 CSV / 图片文件按原始路径复制 / 缺失项单列）、写盘前路径复核与部分失败结构化报告；`src/App.tsx` 的 `onExportTable` 走 TSV 复制路径、`onExportCsvFile` 写 CSV 清单、`onExportSplitFiles` 先 `check_file_paths` 复核再调 Rust 写盘（CSV 清单 + 原始文件复制落在同一时间戳独立目录，`create_new` 不覆盖、文件名过滤防路径穿越、逐项 success/missing/failed outcome）；错误码与失败原因脱敏。实机落盘与部分失败触发路径待沙箱走查 |
 | 行视觉 / 动画 | `src/clipboard/row-animation.ts`、`src/clipboard/anim-freeze-guard.ts` | 行入场动画、WKWebView 动画冻结守卫 |
 | 快速预览 | `src/clipboard/components/QuickPreviewCard.tsx`、`src/clipboard/components/ClipboardContentPreview.tsx` | hover 预览卡（规格见 DESIGN_SYSTEM 7.3） |
 | 多选 / 回收站 | `src/clipboard/components/MultiSelectBottomBar.tsx`、`src/clipboard/components/TrashPanel.tsx` | 批量删除、回收站视图 |
@@ -38,7 +40,9 @@
 | 设置控件 | `src/settings/controls.tsx` | Switch / Slider / ToggleGroup / Input 语义控件 |
 | 设置 sections | `src/settings/sections/` | 各分类内容（ShortcutLanguage、DisplayPanel、CaptureStorage、AgentUpdateTag、AgentProviderManager：provider 增删改表单，key 只写不回显） |
 | 设置状态条 | `src/settings/components/SettingsStickyStatusBar.tsx` | 底部保存状态 |
-| 详情 / 聚合工作区 | `src/workspace/components/ClipDetailWorkspace.tsx`、`src/workspace/components/detail/` | 详情页三态（浏览/编辑/diff）编排壳 + 子组件：`detail-state.ts` 状态机纯函数、`md-editor.tsx` MD 编辑器、`renderer-registry.ts` 类型渲染注册表（含 golden 测试）、`detail-meta-row.tsx` tags 四源 provenance、`detail-plugin-zone.tsx` 插件区装配（AI 分析 + 提示词优化共用插件队列）、`draft-diff.tsx` 草稿对比；聚合视图/PiAnalysisBar/PromptOptimizerBar 在 `src/workspace/components/` |
+| 详情 / 聚合工作区 | `src/workspace/components/ClipDetailWorkspace.tsx`、`src/workspace/components/detail/` | 详情页三态（浏览/编辑/diff）编排壳 + 子组件：`detail-state.ts` 状态机纯函数、`md-editor.tsx` MD 编辑器、`renderer-registry.ts` 类型渲染注册表（含 golden 测试）、`detail-meta-row.tsx` tags 四源 provenance（浏览态可直接增删）、`detail-plugin-zone.tsx` 插件区装配（AI 分析 + 提示词优化共用插件队列）、`draft-diff.tsx` 草稿对比；`clip-detail-workspace-props.ts` 收敛外壳 props 契约；聚合视图/PiAnalysisBar/PromptOptimizerBar 在 `src/workspace/components/` |
+| 标签独立写回（不重建正文/表示） | `src/workspace/components/detail/tag-only-save.ts`、`src/workspace/components/detail/use-browse-tag-edit.ts`、`src/workspace/components/detail/browse-tag-input.ts`、`src/clipboard/tag-only-writeback.ts`、`scripts/verify-tag-only-save.mjs`、`scripts/verify-browse-tag-input.mjs` | `clipboard-interaction-repair` 第 8 项 / 提案 §24：浏览态增删标签与编辑态仅改标签共用一条写回通道，入参只含 `id/tags/metadata`、显式不带 `content`，Rust `update_clip_record` 在 `content=None` 时跳过 `representations_json`/`plain_text`/`content_hash` 重建；`tag-only-save.ts` 纯函数负责标签规整、变更判定、provenance 增量合并（保留 heuristic/ai/plugin 来源，新增标 manual）与 forbidden 字段静态防护；`use-browse-tag-edit.ts` 管防重入、可关闭脱敏错误与添加输入框状态；`browse-tag-input.ts` 是零依赖输入状态机（失焦保留未提交文本、Escape 显式取消、切条目 reset），文本送入 `detail-leave-guard` 触发离开确认，见「详情离开保护」域；单测挂入 `pnpm test:unit`。实机写回与输入焦点行为未走查 |
+| 详情离开保护（统一草稿判定） | `src/workspace/components/detail/detail-leave-guard.ts`、`src/workspace/components/detail/use-detail-keyboard.ts`、`src/workspace/components/ClipDetailWorkspace.tsx`、`scripts/verify-detail-leave-guard.mjs` | `clipboard-interaction-repair` 第 1 项 / 提案 §13：`decideLeaveGuard` 把正文保存中、浏览标签写回中、编辑/diff 草稿、Agent 草稿、未提交标签输入收敛为 `allow/confirm/block`；保存或写回中硬拒绝（不弹窗、不导航）防并发写库，view 态忽略编辑态草稿比较避免误弹确认。返回按钮、上下条、view 态 Escape 共用 `resolveLeaveGuard`；详情键盘层 capture 阶段接管 view 态 Escape，堵住 `use-panel-keyboard` 详情路由下无条件 `navigateWorkspaceList()` 的绕过，输入与 Radix 菜单保留原生 Escape。单测挂入 `pnpm test:unit`。实机 Escape 时序与焦点行为未走查 |
 | 内置标签规则 / tag provenance | `src-tauri/src/lib.rs`（`builtin_tag_rules_enabled`、`default_tags`）、`src/workspace/components/detail/tag-provenance.ts`、设置页 tag-rules 分区 | 链接/Markdown/#话题 三开关（settings.builtinTagRules）；tags 四源色点存 `clips.metadata.tags_provenance` |
 | Agent / pi-sdk | `src/agent/pi/` | agent、analysis、tools、provider-config、stream、prompt-optimizer（提示词单次 AI 重写，产出草稿进 diff 态写回）；默认 provider 经 `agent_resolve_pi_provider` 运行时解析（设置态无明文 key） |
 | 编辑器域 | `src/editor/` | 敏感信息、建议、动作 |
@@ -71,6 +75,8 @@
 | Rust 任意 | `cd src-tauri && cargo check` |
 | 设置页 | `node scripts/verify-settings-surface.mjs`（已含在 `pnpm test:unit`） |
 | 主面板交互 | `pnpm test:interaction` |
+| 面板固定 / 显隐语义 | `pnpm test:unit`（pin 静态断言）+ `pnpm test:perf-panel`（show/hide ≤180ms，需机器解锁；锁屏必然超时） |
+| 焦点框预取 / 面板定位 | `node scripts/verify-focus-prefetch.mjs`（已含在 `pnpm test:unit`）：扫描全部 Rust 源码，断言预取线程已移除、主链路与兼容面符号完整 |
 | i18n 文案 | `pnpm check:i18n` |
 | 动效 token | `pnpm verify:motion` |
 | 全量门禁 | `pnpm test:unit`（含文件行数、边界、索引防腐校验） |

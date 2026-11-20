@@ -177,7 +177,7 @@ enum PositionStrategy {
     Center,           // 居中当前显示器
     WindowCenter,     // 居中当前窗口（Maccy 方案）
     LastPosition,     // 恢复上次位置（归一化坐标，Maccy 方案）
-    FocusInput,       // 跟随焦点输入框（macOS Accessibility）
+    FocusInput,       // 跟随焦点输入框（macOS Accessibility）；后端策略当前不可达，见下方说明
 }
 ```
 
@@ -192,7 +192,9 @@ enum PositionStrategy {
 | Center | Center → FollowCursor → TrayCenter | 屏幕居中失败时回退到光标，再回退到托盘 |
 | WindowCenter | WindowCenter → Center → FollowCursor | 窗口居中失败时回退到屏幕居中，再回退到光标 |
 | LastPosition | LastPosition → Center → FollowCursor | 上次位置失效时回退到屏幕居中，再回退到光标 |
-| FocusInput | FocusInput → Center → TrayCenter | 焦点定位失败时回退到屏幕居中，再回退到托盘 |
+| FocusInput | FocusInput → Center → TrayCenter | **当前不可达**：`get_strategy_for_source` 只返回 TrayCenter / FollowCursor / Center，设置项 `positionStrategy` 不参与后端策略选择；分支保留仅为枚举兼容 |
+
+> 现状说明（`focus-prefetch-idle-removal` 提案）：面板定位由 `open_panel` 走几何策略，显示后不再用焦点框位置异步覆盖；焦点框位置只在粘贴目标快照（`snapshot_paste_target_bounds`）中按需直调原生 AX 读取，写入独立的 `PASTE_TARGET_BOUNDS_CACHE`。已不存在后台焦点预取线程，`focused_input_bounds` 命令仅为兼容面保留、仓库内无调用方。
 
 ### 策略优先级
 

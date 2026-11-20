@@ -4,6 +4,8 @@
 
 P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后续功能持续迭代)。本提案不实现新功能,只确立:Agent 范式基座与三层形态、功能规划波次、功能点交互区域矩阵、推进门禁。所有活跃 change 的推进顺序以本提案波次表为单一事实源;`docs/PROPOSAL_ROADMAP.md` 与本提案保持同步。
 
+> **状态（2026-11-05 归档整理）：常驻治理文档，豁免归档。** 7/7 tasks 已完成、`openspec list` 显示 ✓ Complete，但本提案是活的单一事实源，被 24 条相对链接引用；归档会静默断链、脱离 `openspec list` 对账口径，且 `--skip-specs` 会让治理 spec 失根。**禁止对本提案执行 `openspec archive`**；后续 W1 关波批量归档时跳过本目录。分类判据见 [openspec/project.md](../../project.md)「常驻治理文档」节。
+
 ## 背景
 
 现状:15 个活跃 change 各自携带 tasks 推进,缺乏统一叙事——「下一批做什么」散落在 ROADMAP 的迭代 A-E(2026-09-07 写就,部分前提已过时)与各提案的依赖声明里。三条新事实要求重排:
@@ -31,9 +33,9 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 波次只约定**推进顺序与依赖**,不改变各 change 自身验收标准:
 
 ### W1 剪贴板核心闭环收口(P0,当前主战场)
-- `file-image-clipboard-support`(75/83):文本/HTML/图片/文件 复制-展示-粘贴-磁盘清理实机矩阵。
+- `file-image-clipboard-support`(82/83):文本/HTML/图片/文件 复制-展示-粘贴-磁盘清理实机矩阵;仅剩真人目检「图片 hover 预览不遮挡列表」。
 - `clipboard-multi-format-fidelity`(22/26):多 representation 写回 + 监听去重实机矩阵。
-- `onboarding-standalone-page`(35/52):Phase 5-6 编码已落地(四态兜底/日志+perf);Phase 4 侧栏常驻作废(2026-10-14 用户裁决,收起/展开为成品保留);剩实机验证项。
+- `onboarding-standalone-page`(43/48):Phase 5-6 编码已落地(四态兜底/日志+perf);Phase 4 侧栏常驻作废(2026-10-14 用户裁决,收起/展开为成品保留);剩 5 项实机验证。
 - `interaction-animation-polish`(25/25):已归档(2026-10-08)。
 - `tailwind-v3-style-refactor`(21/25):盟哥三 surface 人工走查 + 走查修复。
 - `panel-list-perf`:主面板列表性能修复——已 22/22 完成并归档(2026-10-13,新建 capability `panel-list-performance`;692 条实机 quick.scroll P95=1ms、panel.open P95=182ms;payload 瘦身 3 项缓议降级为后续提案)。
@@ -41,6 +43,7 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 - `detail-page-information-architecture`(24/31):v8 三态状态机+MD 编辑器+类型渲染注册表主体已落地;剩验证+终验。
 - `settings-status-bar-and-dead-ai-cleanup`(9/15,W1/W5 横切):死键/过期注释已清;剩 multiSelect 待定决策+验收。
 - **2026-10-13 收口备注**:W1 编码侧全部完成,剩余项为实机验收/走查(四批推进计划见 PROPOSAL_ROADMAP「后续开发计划」);全绿后批量归档并关波。
+- **2026-11-09 实数与依赖校准**:上表实数按 `openspec list` 刷新。11-05/11-09 三次对账后新建的 5 个提案按如下归位,不改写既有波次:① `clipboard-interaction-repair`(0/10) 与 `pinned-floating-panel`(0/13) 属 W1 补位/插队,**其实现代码已在工作区但未提交未勾选**,且改到 `App.tsx`/`use-panel-keyboard.ts`/`lib.rs`,实机矩阵必须在它们形成可回滚基线之后才有效;② `clipboard-listener-reliability`(9/39) 只放行 P0 可观测性日志,P1 缺陷修复会改写 `clipboard-data-integrity` 缺口 2 的评估前提,须排在关波后;③ `focus-prefetch-idle-removal`(39/46) 属性能治理横切,不占 W1 走查窗口;④ `remove-dead-snippet-tab`(0/24) 待放行且需产品方向裁决。`pinned-floating-panel` 自陈会污染 W1 显隐验收、且是 snipaste 前置链,实际排期在关波后。
 - 退出条件:实机矩阵全绿 + 两个格式提案归档;性能基线 `quick.scroll/select/copy/paste` P95 ≤ 300ms(`window.__clipforgePerf.summary()`)。
 
 ### W2 搜索与语义检索(P1,W1 收口后启动)
@@ -50,13 +53,13 @@ P0 治理类(2026-09-30 盟哥指示:建立整体开发方案的目标,支撑后
 
 ### W3 Agent 能力补全(P1,依赖 W1 的稳定性基线)
 - `pi-sdk-agent-foundation`(25/30)收尾:自动门禁+沙箱功能验证+盟哥验收后归档;L2 助手承载面形态评估(候选 A 详情侧栏/B 独立面板窗口/C 仅 MCP,不嵌 pi-web)结论写入其 tasks。
-- `ai-model-plugin-productization`(65/76):scope 复审后按 L1/L2 归位,重叠能力并入 pi 线,不并行开工。
-- `agent-plugin-runtime`(0/23):dormant,插件化 Agent 能力运行时(cordis 生命周期+rquickjs);入口任务 Phase 1 桥接 spike 待排期。
-- `agent-extension-seams`(1/11):dormant,同源工具第 3 处重复实现即触发实施(计数规则见 AGENTS.md)。
+- `ai-model-plugin-productization`(73/76):scope 复审后按 L1/L2 归位,重叠能力并入 pi 线,不并行开工。**scope 复审以 W4 四案取舍结论为输入**(见 W4 校准),不得先于结论独立拍板。
+- `agent-plugin-runtime`(4/23):dormant,插件化 Agent 能力运行时(cordis 生命周期+rquickjs);入口任务 Phase 1 桥接 spike 待排期(闸门四断言 2026-10-27 已过闸)。
+- `agent-extension-seams`(1/12):dormant,同源工具第 3 处重复实现即触发实施(计数规则见 AGENTS.md)。实数按 `openspec list` 顶层 checkbox 口径;含缩进登记项时为 2/13,三处口径差异已在 ROADMAP 标注。
 - 助手面板形态评估结论(做/不做/以何形态)写入 pi-sdk tasks。
 
 ### W4 运行时与外部接口决策(P2)
-- `vercel-ai-sdk-integration`(30/38)/`mastra-agent-runtime-evaluation`(11/25)/`local-model-quick-integration`(4/16)三案统一取舍:产出一份「引入/裁剪/归档」结论文档,结论前不新增重型依赖(承 AGENTS.md)。
+- `vercel-ai-sdk-integration`(30/38)/`mastra-agent-runtime-evaluation`(11/25)/`local-model-quick-integration`(4/16)/`ai-model-plugin-productization`(73/76)**四案统一取舍**:产出一份「引入/裁剪/归档」结论文档,结论前不新增重型依赖(承 AGENTS.md、project.md AI 四案口径)。**2026-11-09 依赖校准**:ROADMAP「M1 关波后放行点」原把 ai-model scope 复审(第 3 项)排在取舍文档(第 4 项)之前,属依赖倒置——scope 复审需要取舍结论作输入;正确顺序是「四案结论 → ai-model scope 复审 → W2/W3 落地」,且结论文档只做书面取舍、不装 SDK、不归档实施。W2 语义检索至今未立项(仓库无对应 change),是波次表里的空洞,应在关波后优先补立项。
 - `external-hook-plugin-runtime`(0/67):只推进 Block A 读取侧,Block B 写入侧维持冻结。
 - L3 MCP 工具面按 W2/W3 产物扩展(语义检索工具、标签写回工具走 preview/confirm)。
 

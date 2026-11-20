@@ -46,7 +46,7 @@ pnpm tauri build      # 生产构建（会先跑 `pnpm build`）
 
 - **后台剪贴板监听线程**：`setup_app()` 里 spawn 的独立线程每 100ms 轮询系统剪贴板，变更即入库（`capture_clip_record_internal`），并通过 `app_handle.emit("clipboard-changed", ...)` 通知前端。**采集不依赖 WebView 是否可见**——这是与早期「前端监听」方案的关键差异，重构时不要退回到「只在面板可见时采集」。
 - **写回抑制**：`write_clipboard_text` / `paste_clipboard_text` 会 `suppress_writeback_for()` 设一个短窗口（~450–700ms），让监听线程跳过这次「我们自己写进去」的内容，避免回环。任何新写剪贴板的代码都要考虑这一点。
-- **面板定位策略**：`PanelPositionStrategy` 枚举（trayCenter / followCursor / center / windowCenter / lastPosition / focusInput），默认 `FollowCursor`。每种策略有回退链；macOS 用 `tauri-nspanel` 的浮动 panel + 辅助功能读焦点输入框位置，读不到就退回屏幕右侧。焦点位置有后台预热线程（`start_focus_prefetch_thread`）缓存。
+- **面板定位策略**：`PanelPositionStrategy` 枚举与回退链见 `docs/ARCHITECTURE.md`（唯一权威）；默认值与前端选项以代码为准。本文件不维护第二套架构事实。
 - **MCP 是子进程而非线程内**：`start_mcp_server` 用 `current_exe() + --mcp` spawn 自己，`src-tauri/src/main.rs` 检测到 `--mcp` 就走 `run_mcp_stdio()`（在 `lib.rs` 后半段）。架构文档写的「进程内常驻」与现状略有出入，以 `main.rs` 为准。
 - **两个窗口**：`main`（快速面板，无边框透明、置顶、所有工作区可见）和 `settings`（普通带边框窗口，按需创建，见 `open_settings_window`）。窗口配置在 `tauri.conf.json`。
 
