@@ -111,9 +111,22 @@ export function findSensitiveFragments(text: string): string[] {
  * 未知 `OCR_*` 码、非 OCR 码（如 CLIP_NOT_FOUND）、无前缀字符串、null 全部收敛为 UNKNOWN。
  */
 export function parseOcrErrorCode(error: unknown): ResolvedOcrCode {
-  const raw = error instanceof Error ? error.message : String(error ?? "");
-  const match = raw.match(/^([A-Z][A-Z0-9_]*):/);
-  const code = match?.[1];
+  // Tauri command 的 Err(String) 原样到达前端，但上层包装可能把它塞进 message/error 字段。
+  // 只提取白名单码，detail 永不进入返回值。
+  let raw = error instanceof Error ? error.message : "";
+  if (!raw && error && typeof error === "object") {
+    const fields = error as Record<string, unknown>;
+    for (const key of ["message", "error", "detail"]) {
+      if (typeof fields[key] === "string") {
+        raw = fields[key] as string;
+        break;
+      }
+    }
+  }
+  if (!raw) raw = String(error ?? "");
+  // 不锚定行首：兼容 `Error: OCR_BUILTIN_FAILED: ...` 与 JSON 包装。
+  const match = raw.match(/OCR_[A-Z0-9_]+(?=:)/);
+  const code = match?.[0];
   if (code && (OCR_ERROR_CODES as readonly string[]).includes(code)) return code as OcrErrorCode;
   return "UNKNOWN";
 }

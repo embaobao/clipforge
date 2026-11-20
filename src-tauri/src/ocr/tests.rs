@@ -311,3 +311,19 @@ fn builtin_vision_recognizes_sample_text() {
     assert!(text.contains("ClipForge"), "识别结果应含 ClipForge：{text}");
     assert!(text.contains("2026"), "识别结果应含 2026：{text}");
 }
+
+/// 回归：command 内层完整路径（读库 → 读图 → 内置引擎 → 缓存 → payload）。
+#[cfg(target_os = "macos")]
+#[test]
+fn ocr_extract_inner_prefers_builtin_engine() {
+    let _guard = data_dir_lock();
+    let root = std::env::temp_dir().join(format!("clipforge-ocr-e2e-{}", std::process::id()));
+    let fixture = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/ocr/fixtures/ocr-sample.png"));
+    image_row(&root, "probe_builtin", "probe-builtin-hash", fixture);
+    let payload = runtime()
+        .block_on(extract::ocr_extract_inner("probe_builtin"))
+        .expect("内置 OCR 完整路径应成功");
+    assert!(payload.text.contains("ClipForge"), "{payload:?}");
+    assert_eq!(payload.endpoint, "builtin://apple-vision");
+    let _ = std::fs::remove_dir_all(&root);
+}

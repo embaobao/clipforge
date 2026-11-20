@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { ClipItem } from "../App";
 import type { TranslationKey } from "../i18n";
+import { writeClipboard } from "../services/clipboard";
 import { truncateText } from "./clip-model";
 import { buildOcrErrorGuidance, findOcrGuidanceLeaks } from "./ocr-error-guidance";
 
@@ -15,9 +16,11 @@ type OcrExtractPayload = {
   endpoint: string;
 };
 
+type CapturedClip = { id: string };
+
 export type OcrExtractDeps = {
   /** 写回 hook 的显式入库动作（写回抑制会拦住复制回采，落条目必须显式 capture）。 */
-  captureStandardTextClip: (text: string, source: string, context?: Record<string, unknown>) => Promise<unknown>;
+  captureStandardTextClip: (text: string, source: string, context?: Record<string, unknown>) => Promise<CapturedClip>;
   setNativeStatus: (status: string) => void;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 };
@@ -27,20 +30,13 @@ export type OcrExtractDeps = {
  *  原始异常（含本地端点 URL / 图片路径 / 端口）绝不进入展示或复制文本（提案 §27）。 */
 export async function ocrExtractAndCopy(item: ClipItem, deps: OcrExtractDeps) {
   const { captureStandardTextClip, setNativeStatus, tr } = deps;
+  const translate = tr as (key: string) => string;
+
+  // OCR 调用单独捕获：只有它属于「图片文字识别失败」，错误码才能正确映射到脱敏诊断。
+  let result: OcrExtractPayload;
   try {
-    const result = await invoke<OcrExtractPayload>("ocr_extract", { id: item.id });
-    await navigator.clipboard.writeText(result.text);
-    await captureStandardTextClip(result.text, "ocr", {
-      // spec 要求 metadata 顶层 sourceImageId；其余诊断字段仍进 clipforgeContext。
-      sourceImageId: item.id,
-      ocrModel: result.model,
-      ocrElapsedMs: result.elapsedMs,
-    });
-    toast.success(tr("main.toast.ocrCopied"), { description: truncateText(result.text, 42) });
-    setNativeStatus(tr("main.status.ocrCopied"));
+    result = await invoke<OcrExtractPayload>("ocr_extract", { id: item.id });
   } catch (error) {
-    // 文案由纯函数编排，展示前再做一次脱敏兜底：一旦文案被改坏带出敏感片段，退化为纯静态兜底句。
-    const translate = (key: string) => tr(key as TranslationKey);
     const guidance = buildOcrErrorGuidance(error, translate);
     const leaks = findOcrGuidanceLeaks(guidance);
     const safe = leaks.length === 0;
@@ -60,5 +56,53 @@ export async function ocrExtractAndCopy(item: ClipItem, deps: OcrExtractDeps) {
         },
       },
     });
+    return;
   }
+
+  // 识别成功后，复制失败与入库失败不能误报为 OCR 失败（旧链路会把非 OCR 异常收敛成 UNKNOWN）。
+  let captured: CapturedClip;
+  try {
+    captured = await captureStandardTextClip(result.text, "ocr", {
+      // spec 要求 metadata 顶层 sourceImageId；其余诊断字段仍进 clipforgeContext。
+      sourceImageId: item.id,
+      ocrModel: result.model,
+      ocrElapsedMs: result.elapsedMs,
+    });
+  } catch {
+    showCopyFailure(tr);
+    return;
+  }
+
+  try {
+    // 原生写剪贴板：绕开 WKWebView 对 navigator.clipboard 的权限/用户手势限制。
+    await writeClipboard({ id: captured.id, pasteMode: "plain" });
+  } catch {
+    try {
+      await navigator.clipboard.writeText(result.text);
+    } catch {
+      showCopyFailure(tr);
+      return;
+    }
+  }
+
+  toast.success(tr("main.toast.ocrCopied"), { description: truncateText(result.text, 42) });
+  setNativeStatus(tr("main.status.ocrCopied"));
+}
+
+/** 复制/入库阶段失败：只展示静态脱敏文案，不把原始异常带入 UI。 */
+function showCopyFailure(tr: OcrExtractDeps["tr"]) {
+  toast.error(tr("main.toast.ocrCopyFailed"), {
+    description: tr("main.error.ocr.reason.COPY_FAILED"),
+    closeButton: true,
+    duration: 15000,
+    action: {
+      label: tr("main.error.ocr.copyFix"),
+      onClick: () => {
+        void navigator.clipboard.writeText(tr("main.error.ocr.fix.copy")).then(
+          () => toast.success(tr("main.error.ocr.fixCopied")),
+          () => toast.error(tr("main.error.ocr.copyFailed")),
+        );
+      },
+    },
+  });
 }

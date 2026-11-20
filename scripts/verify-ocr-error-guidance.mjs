@@ -66,6 +66,9 @@ try {
   assert.equal(mod.parseOcrErrorCode("connection refused"), "UNKNOWN");
   assert.equal(mod.parseOcrErrorCode(null), "UNKNOWN");
   assert.equal(mod.parseOcrErrorCode(undefined), "UNKNOWN");
+  assert.equal(mod.parseOcrErrorCode("Error: OCR_BUILTIN_FAILED: Vision returned error"), "OCR_BUILTIN_FAILED", "包装后的白名单码仍需识别");
+  assert.equal(mod.parseOcrErrorCode({ message: "wrapped: OCR_TIMEOUT: exceeded 60s" }), "OCR_TIMEOUT", "对象 message 中的白名单码仍需识别");
+  assert.equal(mod.parseOcrErrorCode({ error: "OCR_FUTURE_CODE: secret" }), "UNKNOWN", "未登记码即使被包装也要收敛");
 
   // ---------- 3. 敏感片段检出本身要可靠 ----------
   const leakProbe = "http://10.1.7.28:8491/v1/chat 127.0.0.1:8491 /Users/meng/Library/secret.png sk-abcdefgh1234 apiKey=xyz a@b.com";
@@ -129,6 +132,7 @@ try {
   assert.ok(caller.includes("closeButton: true"), "错误提示需可关闭");
   assert.ok(caller.includes("action:"), "错误提示需提供可复制修复方案的入口");
   assert.ok(caller.includes("findOcrGuidanceLeaks"), "调用点需做展示前脱敏兜底");
+  assert.ok(caller.includes('writeClipboard({ id: captured.id, pasteMode: "plain" })'), "OCR 复制应优先走原生剪贴板命令");
 
   console.log("[unit] ocr-error-guidance checks passed (code parity, redaction, i18n parity, caller wiring)");
 } finally {
