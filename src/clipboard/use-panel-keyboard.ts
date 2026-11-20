@@ -30,7 +30,6 @@ export type PanelKeyboardOptions = {
   workspaceRoute: WorkspaceRouteSnapshot;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
   searchRef: { current: HTMLInputElement | null };
-  settingsRef: { current: { panelPinned: boolean } };
   activeGroupStartRef: { current: number };
   programmaticGroupUntilRef: { current: number };
   switchClipboardView: (view: ViewKey) => void;
@@ -82,7 +81,6 @@ export function usePanelKeyboard({
   workspaceRoute,
   tr,
   searchRef,
-  settingsRef,
   activeGroupStartRef,
   programmaticGroupUntilRef,
   switchClipboardView,
@@ -279,10 +277,11 @@ export function usePanelKeyboard({
           searchRef.current?.blur();
           return;
         }
-        if (!settingsRef.current.panelPinned) {
-          setIsPanelEntering(false);
-          invoke("hide_quick_panel_command").catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
-        }
+        // Esc 属于「显式收起」：固定(pin)只抑制失焦自动隐藏，不得拦显式收起。
+        // 隐藏判定以 Rust hide_panel 为唯一权威源，前端不再用 settingsRef 二次门控
+        // （settingsRef 与 Rust PANEL_PINNED 可能漂移，旧门控导致固定态下 Esc 收不起面板）。
+        setIsPanelEntering(false);
+        invoke("hide_quick_panel_command").catch((error) => logAppError("warn", "Hide quick panel failed", String(error)));
         return;
       }
 

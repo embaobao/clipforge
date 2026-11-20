@@ -113,13 +113,11 @@ export function usePanelWindowListeners({
   enabled,
   setPanelClosing,
   setIsPanelEntering,
-  settingsRef,
   showQuickPanel,
 }: {
   enabled: boolean;
   setPanelClosing: (closing: boolean) => void;
   setIsPanelEntering: (entering: boolean) => void;
-  settingsRef: { current: { panelPinned: boolean } };
   showQuickPanel: (reason: "shortcut" | "tray") => void;
 }) {
   const showQuickPanelRef = useRef(showQuickPanel);
@@ -144,11 +142,9 @@ export function usePanelWindowListeners({
       .catch((error) => logAppError("warn", "Register tray listener failed", String(error)));
     appWindow
       .listen<string>("clipforge://hide-quick-panel", () => {
-        if (settingsRef.current.panelPinned) {
-          logAppError("info", "panel-pin: hide-quick-panel event ignored, panel pinned");
-          return;
-        }
-        // Rust 侧隐藏（粘贴 / 托盘切换走 hide_panel）后复位 is-entering，下次唤起才能淡入。
+        // 事件在 Rust hide_panel 完成窗口隐藏之后才发出，这里只复位前端动画状态。
+        // 不得按本地 panelPinned 拦截——那是「谁拦 hide」的第二个权威源（漂移时把
+        // 已隐藏窗口的状态卡在 entering，且 pin 本不该拦显式收起）。
         setIsPanelEntering(false);
         setPanelClosing(false);
       })
@@ -164,5 +160,5 @@ export function usePanelWindowListeners({
     };
     // 回调走 ref，effect 只注册一次；额外 deps 均为 setState/store 稳定引用。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, setPanelClosing, setIsPanelEntering, settingsRef]);
+  }, [enabled, setPanelClosing, setIsPanelEntering]);
 }

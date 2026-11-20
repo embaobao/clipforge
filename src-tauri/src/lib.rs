@@ -3441,7 +3441,9 @@ fn toggle_quick_panel_command<R: tauri::Runtime>(
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window is not available".to_string())?;
-    if window.is_visible().unwrap_or(false) {
+    // 可见性口径与全局快捷键 toggle_quick_panel 一致（panel_visible_to_user）：
+    // 淡出在途按「已隐藏」处理走 show，取消淡出而非二次 hide。
+    if panel_visible_to_user(&window) {
         hide_panel(&app, source.as_deref().unwrap_or("toggle"))
     } else {
         open_panel(&app, source.as_deref().unwrap_or("toggle"))
@@ -8159,7 +8161,8 @@ fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str
     // 「可见」必须是用户感知可见:原生淡出在途(160ms 窗口期)的窗口 is_visible 仍为 true,
     // 但对用户已等同隐藏;此时按快捷键意图是「唤起」,必须走 show 分支取消淡出,
     // 否则误判成第二次 hide,面板被彻底藏没(隐形面板 bug 根因)。
-    let visible = window.is_visible().unwrap_or(false) && !is_panel_fading();
+    // 口径与 toggle_quick_panel_command 共用 panel_visible_to_user，不再各写各的。
+    let visible = panel_visible_to_user(&window);
     let focused = window.is_focused().unwrap_or(false);
     let panel_visible = app
         .get_webview_panel("main")
@@ -8561,6 +8564,15 @@ fn next_fade_generation() -> i64 {
 
 fn is_panel_fading() -> bool {
     PANEL_FADE_ACTIVE.load(Ordering::SeqCst)
+}
+
+/// 面板「用户感知可见」的唯一口径：窗口可见，且没有原生淡出在途。
+/// 淡出（约 160ms）在途的窗口 is_visible 仍为 true，但对用户已等同隐藏，
+/// 此时 toggle 意图是「唤起」（show 分支会取消淡出）；若误判成 hide，
+/// 面板会被彻底藏没（隐形面板 bug）。全局快捷键 toggle_quick_panel 与
+/// 前端/托盘显式 toggle（toggle_quick_panel_command）必须共用本判定，避免两套口径。
+fn panel_visible_to_user<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> bool {
+    window.is_visible().unwrap_or(false) && !is_panel_fading()
 }
 
 #[cfg(target_os = "macos")]

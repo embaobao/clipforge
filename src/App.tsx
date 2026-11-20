@@ -435,7 +435,6 @@ function ClipForgeApp() {
     enabled: !isSettingsWindow,
     setPanelClosing,
     setIsPanelEntering,
-    settingsRef,
     showQuickPanel,
   });
 
@@ -805,11 +804,13 @@ function ClipForgeApp() {
   const aggregatePreview = useMemo(() => formatAggregate(selectedInList, aggregateFormat), [selectedInList, aggregateFormat]);
 
   const togglePanelPinned = useCallback(() => {
+    // 事务链：先改 Rust 权威源 PANEL_PINNED，确认成功才落前端 state（随后经设置同步写盘）。
+    // 失败不改任何状态——避免「前端显示已固定但 Rust 未固定」或反向漂移，
+    // 也堵住旧链路 fire-and-forget 失败仍写盘、重启把脏值灌回 Rust 的复发路径。
     const nextPinned = !settingsRef.current.panelPinned;
-    setSettings((prev) => ({ ...prev, panelPinned: nextPinned }));
-    invoke("set_panel_pinned_command", { pinned: nextPinned }).catch((error) =>
-      logAppError("warn", "Toggle panel pin failed", String(error)),
-    );
+    invoke("set_panel_pinned_command", { pinned: nextPinned })
+      .then(() => setSettings((prev) => ({ ...prev, panelPinned: nextPinned })))
+      .catch((error) => logAppError("warn", "Toggle panel pin failed", String(error)));
   }, []);
 
   // 快速面板行级回调：引用稳定是 ClipboardRow memo（行重渲染跳过）的前提，
@@ -850,7 +851,6 @@ function ClipForgeApp() {
     workspaceRoute: { name: workspaceRoute.name, clipId: workspaceRoute.clipId },
     tr,
     searchRef,
-    settingsRef,
     activeGroupStartRef,
     programmaticGroupUntilRef,
     switchClipboardView,
