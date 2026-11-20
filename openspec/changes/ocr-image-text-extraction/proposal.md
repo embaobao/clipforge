@@ -4,7 +4,9 @@
 
 ## 状态
 
-评估已完成并实测通过（2026-10-27），方案定型：**复用现有 OpenAI-compatible provider 体系接入本地视觉模型 OvisOCR3**，不做内置推理运行时。优先级 P3，不阻塞剪贴板主线。
+2026-11-20 用户决策更新：macOS 平台直接内置系统 Vision OCR，提取时默认走内置引擎，不再要求用户启动本地视觉端点；本地 OpenAI-compatible 端点仅作为内置失败时的兜底。实施切片已完成，见 [tasks.md](./tasks.md) Phase 6。
+
+2026-10-27 原始评估结论：复用现有 OpenAI-compatible provider 体系接入本地视觉模型 OvisOCR3，不做内置推理运行时。该结论保留作跨平台/高准确度兜底；内置 Vision 不打包模型、不下载权重，只调用系统框架。优先级 P3，不阻塞剪贴板主线。
 
 ## 背景
 
@@ -37,9 +39,9 @@
 
 ## 边界（明确不做）
 
-- 不内置模型下载管理/sidecar 进程管理（llama.cpp 二进制分发 + 1GB 模型托管是独立重量级决策，后续按需另立提案）。
+- 不内置模型下载管理/sidecar 进程管理（llama.cpp 二进制分发 + 1GB 模型托管是独立重量级决策，后续按需另立提案）。内置 macOS Vision 不打包模型，只调用系统框架。
 - 不做批量 OCR、不做表格/公式结构化输出（plain OCR 单一契约；document_markdown 等 prompt 能力留作后续 additive）。
-- macOS Vision 快速路径（零依赖、<1s）列为 Phase 2 可选优化：平台分支隔离在 Rust 原生层，与跨平台 OCR 端点并存。
+- macOS Vision 内置路径已按 2026-11-20 用户决策提前实施：平台分支隔离在 `src-tauri/src/ocr/builtin/`，与跨平台 OCR 端点并存；不再是 Phase 2 可选项。
 
 ## 风险与护栏
 

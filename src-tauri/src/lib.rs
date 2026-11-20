@@ -8138,6 +8138,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ocr::ocr_detect_endpoints,
             ocr::ocr_extract,
+            ocr::ocr_builtin_available,
             write_clipboard_item,
             paste_clipboard_item,
             init_clip_database,

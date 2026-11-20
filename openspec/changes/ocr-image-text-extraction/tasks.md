@@ -54,3 +54,11 @@
 - [ ] 5.8 完整迁移后验证：按 design 7.8 逐条跑（`cargo check` 0 warning、`cargo test --lib` 连跑 2 次、`pnpm test:unit`、`pnpm check:i18n`、`pnpm test:interaction` T1–T23、`pnpm build:web`、`openspec validate --strict`、`wc -l` ≤800）；未验项显式列出，不代勾 3.2 实机
 
 > 本批边界：不动剪贴板采集 hash 口径、不动 `lib.rs` 除注册行、不新增内存探针/Cargo 依赖、不做 `lib.rs` 模块化、不复活 1.1 provider 扩展、不跑 `pnpm build`（重签发布产物，需单独点头）。
+
+## Phase 6：macOS 内置 Vision OCR（2026-11-20，用户决策更新）
+
+- [x] 6.1 `src-tauri/src/ocr/builtin.rs` + `builtin/macos.rs`：系统 Vision 动态 FFI（`VNRecognizeTextRequest` / `VNImageRequestHandler`），关闭语言纠正，单图 8MB 上限沿用；同步调用放 `spawn_blocking`，错误码 `OCR_BUILTIN_UNAVAILABLE` / `OCR_BUILTIN_FAILED` / `OCR_BUILTIN_NO_TEXT` 全部入白名单
+- [x] 6.2 `extract::ocr_extract_inner` 优先内置引擎，失败回落本地端点；缓存键按引擎隔离（`apple-vision-v1`），前端契约 `invoke("ocr_extract")` 不变；新增 `ocr_builtin_available` command 并在 `lib.rs` 注册
+- [x] 6.3 设置页 `OcrEndpointCard` 在 macOS 只显示「系统内置 OCR 已启用」，不再要求用户配置端点；其他平台保留端点发现/手填；中英文案与错误修复指引同步
+- [x] 6.4 回归：`cargo test --lib ocr` 20 passed（新增固定样张 Vision 识别断言），`pnpm test:unit` 14 码一致性 + 脱敏 + i18n 全绿，`pnpm build:web` / `cargo check --lib` 全绿
+- [x] 6.5 实机验证：重建并用 `ClipForge Dev` 自签部署 `/Applications/ClipForge.app`（pid 79427）；`cargo test --lib ocr` 中 `builtin_vision_recognizes_sample_text` 对 `src-tauri/src/ocr/fixtures/ocr-sample.png` 调真实 Apple Vision 返回 `ClipForge`/`2026`；浏览器面板 harness 实测 Tab 在历史 9↔收藏 2 间切换、Shift+Tab 反向，且顶栏选中态随之变化。完整 `pnpm build` 与 `pnpm tauri build --bundles app` 通过；GUI 右键 OCR 因 WKWebView 无 accessible row 未做自动点击，留人工验收。

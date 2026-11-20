@@ -43,11 +43,13 @@ try {
   const rustDir = join(root, "src-tauri/src/ocr");
   const rustSources = readFileSync(join(rustDir, "extract.rs"), "utf8")
     + readFileSync(join(rustDir, "cache.rs"), "utf8")
-    + readFileSync(join(rustDir, "endpoint.rs"), "utf8");
+    + readFileSync(join(rustDir, "endpoint.rs"), "utf8")
+    + readFileSync(join(rustDir, "builtin.rs"), "utf8")
+    + readFileSync(join(rustDir, "builtin/macos.rs"), "utf8");
   const rustCodes = new Set(
     [...rustSources.matchAll(/["'](OCR_[A-Z0-9_]+):/g)].map((m) => m[1]),
   );
-  assert.equal(rustCodes.size, 11, "Rust 侧引号内 OCR_* 错误码应为 11 个，新增码需同步前端");
+  assert.equal(rustCodes.size, 14, "Rust 侧引号内 OCR_* 错误码应为 14 个，新增码需同步前端");
   for (const code of rustCodes) {
     assert.ok(mod.OCR_ERROR_CODES.includes(code), `前端白名单缺少 Rust 错误码 ${code}`);
   }

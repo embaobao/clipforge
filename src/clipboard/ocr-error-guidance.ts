@@ -11,10 +11,13 @@
  * 边界：只做展示与复制的文本编排，不做端点探测、配置修改或任何外部调用。
  */
 
-/** Rust 侧 `src-tauri/src/ocr/*.rs` 冻结的 11 个 `OCR_*` 错误码。
+/** Rust 侧 `src-tauri/src/ocr/*.rs` 冻结的 14 个 `OCR_*` 错误码（含 macOS Vision 内置路径）。
  *  与 `scripts/verify-ocr-error-guidance.mjs` 的源码一致性断言互相校验，新增错误码必须两处同步。 */
 export const OCR_ERROR_CODES = [
   "OCR_BAD_RESPONSE",
+  "OCR_BUILTIN_FAILED",
+  "OCR_BUILTIN_NO_TEXT",
+  "OCR_BUILTIN_UNAVAILABLE",
   "OCR_CLIENT_BUILD_FAILED",
   "OCR_DB_ERROR",
   "OCR_DISABLED",
@@ -35,11 +38,14 @@ export type ResolvedOcrCode = OcrErrorCode | "UNKNOWN";
 
 /**
  * 每个错误码对应的静态文案 key。
- * reasonKey 逐码精确描述原因；fixKey 按修复策略分组复用，避免 11 份重复步骤。
+ * reasonKey 逐码精确描述原因；fixKey 按修复策略分组复用，避免 14 份重复步骤。
  * key 值均为 `main.error.ocr.*` 下的字面量，由 verify-ocr-error-guidance.mjs 断言两个语言字典都存在。
  */
 export const OCR_GUIDANCE_KEYS: Record<OcrErrorCode, { reasonKey: string; fixKey: string }> = {
   OCR_BAD_RESPONSE: { reasonKey: "main.error.ocr.reason.BAD_RESPONSE", fixKey: "main.error.ocr.fix.response" },
+  OCR_BUILTIN_FAILED: { reasonKey: "main.error.ocr.reason.BUILTIN_FAILED", fixKey: "main.error.ocr.fix.builtin" },
+  OCR_BUILTIN_NO_TEXT: { reasonKey: "main.error.ocr.reason.BUILTIN_NO_TEXT", fixKey: "main.error.ocr.fix.builtin" },
+  OCR_BUILTIN_UNAVAILABLE: { reasonKey: "main.error.ocr.reason.BUILTIN_UNAVAILABLE", fixKey: "main.error.ocr.fix.builtin" },
   OCR_CLIENT_BUILD_FAILED: { reasonKey: "main.error.ocr.reason.CLIENT_BUILD_FAILED", fixKey: "main.error.ocr.fix.response" },
   OCR_DB_ERROR: { reasonKey: "main.error.ocr.reason.DB_ERROR", fixKey: "main.error.ocr.fix.internal" },
   OCR_DISABLED: { reasonKey: "main.error.ocr.reason.DISABLED", fixKey: "main.error.ocr.fix.config" },

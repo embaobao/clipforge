@@ -1,5 +1,5 @@
 /** 快速面板全局键盘导航 hook（从 App.tsx 切出）：所有 window keydown 分支的原样平移。
- *  分支清单：Cmd+, 设置 / t 回收站 / Cmd+P 固定 / Cmd+F 收藏 / Cmd+J 打开 / Cmd+A 全选 /
+ *  分支清单：Cmd+, 设置 / t·Tab 视图 / Cmd+P 固定 / Cmd+F 收藏 / Cmd+J 打开 / Cmd+A 全选 /
  *  Cmd+C 复制 / Cmd+X·Delete 删除 / Cmd+0-9 分组条目 / Escape 逐级退出 / Cmd+↑↓ 切组 /
  *  ↑↓·←→ 导航与建议高亮 / Enter 粘贴或应用建议 / 空格 多选 / 普通字符唤醒搜索。
  *  边界：所有 state/handler 经 options 注入（主体保持单一事实源）；热路径无新增抽象开销。 */
@@ -145,6 +145,19 @@ export function usePanelKeyboard({
       if (!editable && !event.ctrlKey && !event.metaKey && !event.altKey && key === "t") {
         event.preventDefault();
         switchClipboardView("trash");
+        return;
+      }
+
+      // Tab 在「历史/收藏」间切换；Shift+Tab 反向。空搜索框默认聚焦，也应能切视图；
+      // 有查询词时保留原生 Tab 焦点行为，避免打断建议列表。
+      if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey && (!editable || allowListShortcutFromSearch)) {
+        event.preventDefault();
+        const views: ViewKey[] = ["history", "favorites"];
+        const currentIndex = Math.max(0, views.indexOf(activeView));
+        const nextIndex = event.shiftKey
+          ? (currentIndex - 1 + views.length) % views.length
+          : (currentIndex + 1) % views.length;
+        switchClipboardView(views[nextIndex]);
         return;
       }
 

@@ -1,12 +1,12 @@
-//! 提取域：请求体构造、HTTP 响应解析与「准入 → 缓存 → 读图 → POST → 写缓存」控制流。
-//! 边界：网络段是唯一 async 部分；端点显式传入的 `extract_with_endpoint` 供 stub 测试注入，
-//!   避免测试依赖全局设置文件（最小依赖注入，不引入 trait/框架）。
+//! 提取域：请求体构造、HTTP 响应解析与「准入 → 缓存 → 读图 → 提取 → 写缓存」控制流。
+//! 边界：macOS 优先同步调用系统 Vision（在阻塞线程池执行），否则走本地端点；
+//!   端点显式传入的 `extract_with_endpoint` 供 stub 测试注入，不依赖全局设置文件。
 
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{OCR_PLAIN_PROMPT, OCR_TIMEOUT_SECS, OcrExtractPayload, cache, endpoint};
+use super::{OCR_PLAIN_PROMPT, OCR_TIMEOUT_SECS, OcrExtractPayload, builtin, cache, endpoint};
 
 /// OpenAI-compatible chat 响应中本域关心的最小字段集合。
 #[derive(Debug, Deserialize)]
@@ -40,15 +40,51 @@ pub(super) fn build_ocr_request_body(image_base64: &str) -> serde_json::Value {
     })
 }
 
-/// 命令主体：读设置 → 启用检查 → 委托给带显式端点的实现。
-/// 错误码：OCR_DISABLED / OCR_ENDPOINT_NOT_LOCAL / OCR_ENDPOINT_UNAVAILABLE / OCR_TIMEOUT /
+/// 命令主体：启用检查 → macOS 内置 Vision → 兜底本地端点。
+/// 错误码：OCR_DISABLED / OCR_BUILTIN_* / OCR_ENDPOINT_* / OCR_TIMEOUT /
 ///   OCR_ENDPOINT_ERROR / OCR_BAD_RESPONSE / OCR_IMAGE_* / OCR_NOT_AN_IMAGE。
 pub(super) async fn ocr_extract_inner(id: &str) -> Result<OcrExtractPayload, String> {
     let (enabled, endpoint) = endpoint::ocr_settings();
     if !enabled {
         return Err("OCR_DISABLED: image text recognition is disabled in settings".to_string());
     }
+
+    // 内置引擎只有 macOS 可用。失败保留具体错误码给脱敏提示，同时回落到用户
+    // 已配置的本地视觉服务，避免系统 OCR 偶发失败时功能完全不可用。
+    #[cfg(target_os = "macos")]
+    if let Ok(payload) = extract_with_builtin(id).await {
+        return Ok(payload);
+    }
     extract_with_endpoint(id, &endpoint).await
+}
+
+/// 内置引擎提取：缓存键按引擎隔离；读图大小校验后把同步 Vision 调用移到阻塞线程池。
+/// 只在 macOS 编译，其他平台由 `ocr_extract_inner` 直接走端点。
+#[cfg(target_os = "macos")]
+async fn extract_with_builtin(id: &str) -> Result<OcrExtractPayload, String> {
+    let (content_hash, image_file) = cache::load_image_identity(id)?;
+    let key = cache::cache_key(builtin::BUILTIN_ENGINE, &content_hash);
+    if let Some(hit) = cache::get_cached(&key) {
+        return Ok(hit);
+    }
+    // 内置 OCR 直接读文件路径，不构造 base64；仍需 8MB / 文件存在校验。
+    let _ = cache::read_image_bytes(&image_file)?;
+    let started = std::time::Instant::now();
+    let text = tokio::task::spawn_blocking(move || builtin::recognize_image(&image_file))
+        .await
+        .map_err(|_| "OCR_BUILTIN_FAILED: Vision worker crashed".to_string())??;
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("OCR_BUILTIN_NO_TEXT: no text observed in image".to_string());
+    }
+    let payload = OcrExtractPayload {
+        text,
+        model: "Apple Vision".to_string(),
+        elapsed_ms: started.elapsed().as_millis() as u64,
+        endpoint: "builtin://apple-vision".to_string(),
+    };
+    cache::store_cached(key, &payload);
+    Ok(payload)
 }
 
 /// 带显式端点的提取实现：供 command 与本地 stub 测试共用。

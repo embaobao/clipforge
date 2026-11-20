@@ -7,6 +7,7 @@
 //! 对外契约：`ocr::ocr_extract` / `ocr::ocr_detect_endpoints` 两个 command 路径与前端
 //!   `invoke("ocr_extract")`、错误码字符串保持不变；内部 helper 一律 `pub(super)` 最小可见。
 
+mod builtin;
 mod cache;
 mod endpoint;
 mod extract;
@@ -47,8 +48,15 @@ pub struct OcrExtractPayload {
     pub endpoint: String,
 }
 
+/// 查询当前平台是否提供内置 OCR（设置页据此隐藏本地端点配置）。
+#[tauri::command]
+pub fn ocr_builtin_available() -> bool {
+    cfg!(target_os = "macos")
+}
+
 /// 提取图片条目中的文字（Tauri command，前端详情页/右键菜单「提取文字」入口）。
-/// 只打本地视觉端点；失败返回 `OCR_*` 前缀错误码（前端按码映射提示文案）。
+/// macOS 优先用系统 Vision 内置识别；失败时保留端点路径作兜底，返回 `OCR_*` 稳定错误码。
+
 #[tauri::command]
 pub async fn ocr_extract(id: String) -> Result<OcrExtractPayload, String> {
     extract::ocr_extract_inner(&id).await

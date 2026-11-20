@@ -22,8 +22,8 @@
 
 | 业务域 | 入口 / 核心文件 | 说明 |
 | --- | --- | --- |
-| 图片文字识别（OCR） | `src-tauri/src/ocr/`（`mod.rs` 门面、`endpoint.rs`/`extract.rs`/`cache.rs`/`tests.rs`）、`openspec/changes/ocr-image-text-extraction/` | 本地视觉端点（llama-server/Ollama）调用；`ocr::ocr_extract`/`ocr_detect_endpoints` 为 command 入口；`OCR_*` 错误码；端点设置键 `ocrEnabled`/`ocrEndpointUrl`；结果按 content_hash+端点在进程内缓存（上限 64 条、重启失效） |
-| OCR 错误提示脱敏 | `src/clipboard/ocr-error-guidance.ts`、`src/clipboard/use-ocr-extract.ts`、`src/i18n/locales/zh-CN.json`、`scripts/verify-ocr-error-guidance.mjs` | `clipboard-interaction-repair` 第 3 项纯本地部分：失败时按白名单 `OCR_*` 码映射为静态 i18n 原因 + 可复制修复方案（toast 可关闭、可复制），原始异常里的端点 URL / 图片路径 / 端口 / 凭据绝不进入展示或复制文本；展示前 `findOcrGuidanceLeaks` 二次兜底；静态门禁校验 11 个 Rust 错误码与前端白名单一致、中英文案 key 对齐、零敏感片段。Agent 诊断修复（涉外部模型）未做，待人工确认 |
+| 图片文字识别（OCR） | `src-tauri/src/ocr/`（`mod.rs` 门面、`builtin/` 系统 Vision、`endpoint.rs`/`extract.rs`/`cache.rs`/`tests.rs`）、`openspec/changes/ocr-image-text-extraction/` | macOS 默认走系统 Vision 内置引擎（无端点/无模型下载），失败回落本地端点；`ocr::ocr_extract`/`ocr_detect_endpoints`/`ocr_builtin_available` 为 command 入口；`OCR_*` 错误码；端点设置键 `ocrEnabled`/`ocrEndpointUrl`；结果按 content_hash+引擎在进程内缓存（上限 64 条、重启失效） |
+| OCR 错误提示脱敏 | `src/clipboard/ocr-error-guidance.ts`、`src/clipboard/use-ocr-extract.ts`、`src/i18n/locales/zh-CN.json`、`scripts/verify-ocr-error-guidance.mjs` | `clipboard-interaction-repair` 第 3 项纯本地部分：失败时按白名单 `OCR_*` 码映射为静态 i18n 原因 + 可复制修复方案（toast 可关闭、可复制），原始异常里的端点 URL / 图片路径 / 端口 / 凭据绝不进入展示或复制文本；展示前 `findOcrGuidanceLeaks` 二次兜底；静态门禁校验 14 个 Rust 错误码与前端白名单一致、中英文案 key 对齐、零敏感片段（含内置 OCR 3 个码）。Agent 诊断修复（涉外部模型）未做，待人工确认 |
 | 面板生命周期 | `src/clipboard/use-panel-bootstrap.ts`、`src/clipboard/use-panel-environment.ts` | 启动引导、环境副作用 |
 | 面板显隐 / 失焦 | `src/clipboard/use-panel-blur-hide.ts`、`src/clipboard/use-panel-keyboard.ts` | 失焦 60ms 延迟 → 查 Rust `PANEL_PINNED` → 原生 alpha 淡出（FADE_MS=110）；180ms 是 `pnpm test:perf-panel` 的 show/hide 端到端阈值，不是淡出时长。固定悬浮面板语义与状态收敛见 `openspec/changes/pinned-floating-panel/` |
 | 键盘交互 | `src/clipboard/use-panel-keyboard.ts` | 全局键位、快捷键分发；effect deps 是历史 bug 高发区 |

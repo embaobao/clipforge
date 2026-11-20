@@ -4,7 +4,7 @@
 //! 全局状态约定：改 `CLIPFORGE_DATA_DIR` 的用例持 `TEST_DATA_DIR_LOCK`；
 //! 写进程内缓存的淘汰/并发/毒化用例持本文件 `OCR_CACHE_TEST_LOCK`，避免并行互相清空。
 
-use super::{OCR_IMAGE_MAX_BYTES, OcrExtractPayload, cache, endpoint, extract};
+use super::{OCR_IMAGE_MAX_BYTES, OcrExtractPayload, builtin, cache, endpoint, extract};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
@@ -300,4 +300,14 @@ fn cache_hit_skips_image_read() {
     assert_eq!(result.text, "缓存命中");
     assert_eq!(result.elapsed_ms, 0);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// macOS 内置 OCR 最小回归：对固定文字图片识别，防止 FFI 类/选择器漂移后静默失效。
+#[cfg(target_os = "macos")]
+#[test]
+fn builtin_vision_recognizes_sample_text() {
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/src/ocr/fixtures/ocr-sample.png");
+    let text = builtin::recognize_image(fixture).expect("Vision 识别固定样本应成功");
+    assert!(text.contains("ClipForge"), "识别结果应含 ClipForge：{text}");
+    assert!(text.contains("2026"), "识别结果应含 2026：{text}");
 }
