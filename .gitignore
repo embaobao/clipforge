@@ -58,3 +58,4 @@ artifacts/
 _tmp_*
 .work/
 .work/
+.aiflow/
