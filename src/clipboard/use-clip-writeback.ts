@@ -434,6 +434,10 @@ export function useClipWriteback({
     ]);
     const metadata = {
       ...normalized.metadata,
+      // OCR 等来源要求顶层 sourceImageId 可检索；其余上下文仍保留在 clipforgeContext。
+      ...(typeof context.sourceImageId === "string"
+        ? { sourceImageId: context.sourceImageId }
+        : {}),
       clipforgeContext: {
         source,
         ...context,

@@ -185,7 +185,6 @@ fn resolve_panel_dims() -> (f64, f64) {
     }
     (width, height)
 }
-const FOCUS_PREFETCH_INTERVAL_MS: u64 = 250;
 const FOCUS_CACHE_MAX_AGE_MS: i64 = 600;
 const PASTE_TARGET_CACHE_MAX_AGE_MS: i64 = 12_000;
 static LAST_NATIVE_POSITION_FAILURE_MS: AtomicI64 = AtomicI64::new(0);
@@ -620,6 +619,74 @@ struct ExportTextFilesPayload {
     directory: String,
     count: i64,
     files: Vec<String>,
+}
+
+/// 多选详情「导出 CSV 文件」输入：CSV 正文由前端安全构建（RFC 4180 转义 +
+/// 表格公式注入防护 + BOM），原生层只负责写盘，不再解析条目内容。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportCsvFileInput {
+    content: String,
+    row_count: i64,
+}
+
+/// 多选详情「导出 CSV 文件」结果：导出目录、文件路径与条目数，供状态栏展示。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportCsvFilePayload {
+    directory: String,
+    path: String,
+    count: i64,
+}
+
+/// 多选「按类型分割导出」输入：CSV 清单正文（含全部条目）+ 待复制的原始文件清单。
+/// 路径由前端经 `check_file_paths` 复核后传入，原生层再做一次存在性与类型校验。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportSplitFilesInput {
+    csv_content: String,
+    csv_row_count: i64,
+    files: Vec<SplitFileInputItem>,
+}
+
+/// 待复制的原始文件：只带稳定 id 与路径，不携带正文，避免原生层解析不可信内容。
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SplitFileInputItem {
+    id: String,
+    path: String,
+}
+
+/// 单项写盘状态：success / missing / failed，序列化为小写字符串供前端汇总。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum SplitFileStatus {
+    Success,
+    Missing,
+    Failed,
+}
+
+/// 单项写盘结果：reasonCode 为稳定类别码，detail 为脱敏原因（不含路径与正文）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SplitFileOutcome {
+    id: String,
+    status: SplitFileStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+/// 按类型分割导出结果：导出目录、CSV 清单路径与逐项写盘结果（支持部分失败）。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportSplitFilesPayload {
+    directory: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    csv_path: Option<String>,
+    csv_row_count: i64,
+    outcomes: Vec<SplitFileOutcome>,
 }
 
 #[derive(Deserialize)]
@@ -2630,6 +2697,206 @@ fn export_clip_text_files<R: tauri::Runtime>(
     })
 }
 
+/** 把 IO 错误映射为不含路径的类别描述，避免系统错误文本把用户目录结构回显到 UI（错误脱敏）。 */
+fn csv_export_io_reason(error: &std::io::Error) -> String {
+    match error.kind() {
+        std::io::ErrorKind::PermissionDenied => "permission denied".to_string(),
+        std::io::ErrorKind::AlreadyExists => "target already exists".to_string(),
+        std::io::ErrorKind::NotFound => "download directory not found".to_string(),
+        std::io::ErrorKind::StorageFull => "disk full".to_string(),
+        _ => "filesystem error".to_string(),
+    }
+}
+
+/// 把多选详情的 CSV 正文写入 Downloads 下新建的独立目录，返回目录、路径与条目数。
+///
+/// 为什么：提案要求「表格可复制或导出 CSV」，CSV 正文由前端 `csv-export.ts` 完成
+/// RFC 4180 转义与表格公式注入防护，原生层只做写盘，不重复解析不可信内容。
+///
+/// 边界：不覆盖已有文件——目录名含毫秒时间戳并避让同名目录，文件用 `create_new`
+/// 独占创建；失败返回稳定错误码且原因脱敏（不含路径）；不读取剪贴板数据库。
+#[tauri::command]
+fn export_clip_csv_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    input: ExportCsvFileInput,
+) -> Result<ExportCsvFilePayload, String> {
+    if input.content.is_empty() {
+        return Err(command_error(
+            "CLIP_CSV_EXPORT_EMPTY",
+            "CSV content is empty",
+        ));
+    }
+    // 下载目录解析失败不回显系统路径，只给稳定类别，避免把用户目录结构带到 UI。
+    let download_dir = app.path().download_dir().map_err(|_| {
+        command_error("CLIP_CSV_EXPORT_PATH_FAILED", "download directory unavailable")
+    })?;
+    let timestamp =
+        now_millis().map_err(|error| preserve_command_error("CLIP_CSV_EXPORT_FAILED", error))?;
+
+    // 同名目录已存在时改用带序号的新目录，绝不复用旧目录，避免覆盖上次导出。
+    let mut export_dir = download_dir.join(format!("ClipForge-CSV-Export-{}", timestamp));
+    let mut suffix = 0i32;
+    while export_dir.exists() {
+        suffix += 1;
+        if suffix > 99 {
+            return Err(command_error(
+                "CLIP_CSV_EXPORT_DIRECTORY_FAILED",
+                "no free export directory",
+            ));
+        }
+        export_dir = download_dir.join(format!("ClipForge-CSV-Export-{}-{}", timestamp, suffix));
+    }
+    fs::create_dir_all(&export_dir).map_err(|error| {
+        command_error("CLIP_CSV_EXPORT_DIRECTORY_FAILED", csv_export_io_reason(&error))
+    })?;
+
+    let path = export_dir.join("clips.csv");
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            command_error("CLIP_CSV_EXPORT_FILE_FAILED", csv_export_io_reason(&error))
+        })?;
+    file.write_all(input.content.as_bytes()).map_err(|error| {
+        command_error("CLIP_CSV_EXPORT_FILE_FAILED", csv_export_io_reason(&error))
+    })?;
+
+    Ok(ExportCsvFilePayload {
+        directory: export_dir.to_string_lossy().to_string(),
+        path: path.to_string_lossy().to_string(),
+        count: input.row_count,
+    })
+}
+
+/// 把原始文件名收敛为安全 basename：只保留字母数字与 -_.，长度受限。
+/// 目标文件名绝不拼接前端传入的目录片段，避免路径穿越与超长名。
+fn split_export_file_name(source: &PathBuf, index: usize) -> String {
+    let original = source
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let safe: String = original
+        .chars()
+        .filter(|character| character.is_alphanumeric() || matches!(character, '-' | '_' | '.'))
+        .take(100)
+        .collect();
+    let stem = safe.trim_matches('.');
+    if stem.is_empty() {
+        format!("item-{}", index + 1)
+    } else {
+        stem.to_string()
+    }
+}
+
+/// 按类型分割导出（openspec `clipboard-interaction-repair` 第 5 项）：
+/// 在同一独立目录里写 CSV 清单并逐项复制图片 / 文件类原始文件，返回逐项结果。
+///
+/// 为什么：提案要求「文本、图片和文件分别导出，缺失项明确报告；分割导出不覆盖
+/// 已有文件」。单项失败不中断整批，改为结构化 outcome，供 UI 明确报告部分失败。
+///
+/// 边界：目标目录固定为 Downloads 下带毫秒时间戳的新目录（避让同名目录）；目标
+/// 文件名由 `file_name()` 提取并过滤；所有文件 `create_new` 独占创建；失败原因
+/// 经 `csv_export_io_reason` 脱敏，不回显系统路径与正文；不读取剪贴板数据库。
+#[tauri::command]
+fn export_clip_split_files<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    input: ExportSplitFilesInput,
+) -> Result<ExportSplitFilesPayload, String> {
+    if input.csv_content.is_empty() && input.files.is_empty() {
+        return Err(command_error("CLIP_SPLIT_EXPORT_EMPTY", "Nothing to export"));
+    }
+    let download_dir = app.path().download_dir().map_err(|_| {
+        command_error("CLIP_SPLIT_EXPORT_PATH_FAILED", "download directory unavailable")
+    })?;
+    let timestamp =
+        now_millis().map_err(|error| preserve_command_error("CLIP_SPLIT_EXPORT_FAILED", error))?;
+
+    let mut export_dir = download_dir.join(format!("ClipForge-Split-Export-{}", timestamp));
+    let mut suffix = 0i32;
+    while export_dir.exists() {
+        suffix += 1;
+        if suffix > 99 {
+            return Err(command_error(
+                "CLIP_SPLIT_EXPORT_DIRECTORY_FAILED",
+                "no free export directory",
+            ));
+        }
+        export_dir = download_dir.join(format!("ClipForge-Split-Export-{}-{}", timestamp, suffix));
+    }
+    fs::create_dir_all(&export_dir).map_err(|error| {
+        command_error("CLIP_SPLIT_EXPORT_DIRECTORY_FAILED", csv_export_io_reason(&error))
+    })?;
+
+    // CSV 清单含全部条目（含文件类的路径信息），保证导出目录里有一份完整索引。
+    let mut csv_path = None;
+    if !input.csv_content.is_empty() {
+        let path = export_dir.join("clips.csv");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| {
+                command_error("CLIP_SPLIT_EXPORT_FILE_FAILED", csv_export_io_reason(&error))
+            })?;
+        file.write_all(input.csv_content.as_bytes()).map_err(|error| {
+            command_error("CLIP_SPLIT_EXPORT_FILE_FAILED", csv_export_io_reason(&error))
+        })?;
+        csv_path = Some(path.to_string_lossy().to_string());
+    }
+
+    let mut outcomes = Vec::with_capacity(input.files.len());
+    for (index, item) in input.files.into_iter().enumerate() {
+        let source = normalize_file_path_for_check(&item.path);
+        let metadata = fs::metadata(&source);
+        // 防御性复核：前端已用 check_file_paths 过滤，原生层仍要求目标确为普通文件。
+        if !matches!(metadata.as_ref(), Ok(meta) if meta.is_file()) {
+            outcomes.push(SplitFileOutcome {
+                id: item.id,
+                status: SplitFileStatus::Missing,
+                reason_code: Some("CLIP_SPLIT_SOURCE_MISSING".to_string()),
+                detail: Some("source file missing".to_string()),
+            });
+            continue;
+        }
+        let destination = export_dir.join(format!(
+            "{:02}-{}",
+            index + 1,
+            split_export_file_name(&source, index)
+        ));
+        let copy_result = (|| -> std::io::Result<()> {
+            let mut reader = fs::File::open(&source)?;
+            let mut writer = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)?;
+            std::io::copy(&mut reader, &mut writer)?;
+            Ok(())
+        })();
+        match copy_result {
+            Ok(()) => outcomes.push(SplitFileOutcome {
+                id: item.id,
+                status: SplitFileStatus::Success,
+                reason_code: None,
+                detail: None,
+            }),
+            Err(error) => outcomes.push(SplitFileOutcome {
+                id: item.id,
+                status: SplitFileStatus::Failed,
+                reason_code: Some("CLIP_SPLIT_COPY_FAILED".to_string()),
+                detail: Some(csv_export_io_reason(&error)),
+            }),
+        }
+    }
+
+    Ok(ExportSplitFilesPayload {
+        directory: export_dir.to_string_lossy().to_string(),
+        csv_path,
+        csv_row_count: input.csv_row_count,
+        outcomes,
+    })
+}
+
 #[tauri::command]
 fn import_clip_records(items: Vec<ImportClipInput>) -> Result<ImportClipPayload, String> {
     let conn =
@@ -2656,6 +2923,9 @@ fn settings_window_path(section: Option<&str>) -> Result<&'static str, String> {
     match section {
         None => Ok("settings.html"),
         Some("onboarding") => Ok("settings.html?section=onboarding"),
+        // dev 沙箱一键诊断：直接落到「存储与日志 → 诊断」tab，省掉 DOM 探针点击。
+        // 仅供 CLIPFORGE_DEV_OPEN=settings:diagnostics 使用，不改变正式产品入口。
+        Some("diagnostics") => Ok("settings.html?section=storage-logs&tab=diagnostics"),
         Some(value) => Err(format!("Unsupported settings section: {}", value)),
     }
 }
@@ -3405,6 +3675,11 @@ fn export_diagnostics_bundle<R: tauri::Runtime>(
     })
 }
 
+/// 焦点输入框位置命令（兼容面，仓库内无调用方）。
+/// 做什么：按需返回当前系统焦点输入框坐标，读不到时退化为全 0 的 fallback。
+/// 边界：后台周期性预热已移除（见 focus-prefetch-idle-removal 提案）；本命令自身
+/// 仍保留 600ms 短缓存，未命中时现场调原生 AX 查询。保留注册仅为仓库外调用方与回滚契约，
+/// 面板定位与粘贴目标快照均不依赖本命令。
 #[tauri::command]
 fn focused_input_bounds() -> Result<FocusedInputBoundsPayload, String> {
     focused_input_bounds_platform().or_else(|_| {
@@ -3512,6 +3787,8 @@ fn reset_accessibility_permission() -> Result<AccessibilityPermissionPayload, St
     reset_accessibility_permission_platform()
 }
 
+/// macOS 焦点框位置查询：先读 600ms 短缓存，未命中才走原生 AX 查询。
+/// 边界：不再有后台预热线程周期性刷新缓存；缓存只由本命令的调用写入。
 #[cfg(target_os = "macos")]
 fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> {
     if let Ok(cache) = focus_bounds_cache().lock() {
@@ -3782,17 +4059,9 @@ fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> 
     Err("focused input bounds unavailable on this platform".to_string())
 }
 
-/// 启动后台预热线程：定期查询焦点输入框位置并写入全局缓存。
-/// 这样面板触发时可以立即读取最新焦点位置，避免 AppleScript 同步阻塞。
-fn start_focus_prefetch_thread() {
-    #[cfg(target_os = "macos")]
-    {
-        thread::spawn(|| loop {
-            thread::sleep(Duration::from_millis(FOCUS_PREFETCH_INTERVAL_MS));
-            let _ = focused_input_bounds_platform();
-        });
-    }
-}
+// 后台焦点框预取线程已移除：原 FOCUS_BOUNDS_CACHE 的写入结果没有消费者，每 250ms
+// 的原生 AX 查询属于纯空转。面板定位走几何策略；粘贴目标快照按需直调下面的原生 AX
+// 并写独立的 PASTE_TARGET_BOUNDS_CACHE。详见 openspec/changes/focus-prefetch-idle-removal/。
 
 #[cfg(target_os = "macos")]
 fn native_focused_input_bounds() -> Result<NativeBounds, String> {
@@ -5956,9 +6225,12 @@ fn schedule_dev_window_trigger<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 | "settings:forms"
                 | "settings:code-tabs"
                 | "settings:tooltip"
-                | "settings:diagnostics"
                 | "settings:interactions" => {
                     open_settings_window(app_for_main.clone())
+                }
+                // dev 沙箱内存检查入口：直达诊断 tab（settings_window_path 已支持该 section）。
+                "settings:diagnostics" => {
+                    open_settings_window_internal(app_for_main.clone(), Some("diagnostics"))
                 }
                 "settings:onboarding" | "onboarding" => {
                     open_settings_window_internal(app_for_main.clone(), Some("onboarding"))
@@ -7808,7 +8080,6 @@ fn schedule_dev_perf_probe<R: tauri::Runtime>(app: tauri::AppHandle<R>, target: 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    start_focus_prefetch_thread();
     let mut builder = tauri::Builder::default();
     #[cfg(target_os = "macos")]
     {
@@ -7900,6 +8171,8 @@ pub fn run() {
             save_editor_draft,
             export_clip_records,
             export_clip_text_files,
+            export_clip_csv_file,
+            export_clip_split_files,
             import_clip_records,
             check_file_paths,
             cleanup_clip_records,
@@ -8042,9 +8315,9 @@ fn open_panel<R: tauri::Runtime>(
                 reason, strategy, cx, cy, cursor_monitor, acc
             ),
         );
-        // 粘贴目标快照只用于「粘贴时 activate 目标 App」所需的 bundle id，且其内部会
-        // fork osascript（frontmost_app_identity + native_focused_input_bounds）。放到后台
-        // 线程执行，避免在唤起热路径上阻塞——用户从面板出现到选中条目通常 >100ms，足够缓存就绪。
+        // 粘贴目标快照只用于「粘贴时 activate 目标 App」所需的 bundle id 与焦点框位置，
+        // 实现走 NSWorkspace.frontmostApplication + 原生 AX 直查（不 fork osascript）。放到
+        // 后台线程执行，避免在唤起热路径上阻塞——用户从面板出现到选中条目通常 >100ms，足够缓存就绪。
         {
             let reason_owned = reason.to_string();
             let fallback = if cx >= 0.0 && cy >= 0.0 {
@@ -9447,9 +9720,10 @@ fn apply_position_strategy<R: tauri::Runtime>(
         PanelPositionStrategy::LastPosition => {
             ladder(position_last_position(window, panel_width, panel_height))
         }
-        // 真正的「跟随输入框」需要辅助功能(AX)，是异步的（见 open_panel 的异步覆盖）。
-        // 同步阶段先用「激活窗体中心」兜底，再退光标/屏幕中心——避免名义跟随输入框却退化成
-        // FollowCursor 的旧实现(Gap#2)。AX 命中且与光标同屏时，异步覆盖会精修到光标位置。
+        // FocusInput 变体当前不可达：get_strategy_for_source 只返回 TrayCenter /
+        // FollowCursor / Center，设置里的 positionStrategy 也不参与后端策略选择。
+        // 保留分支仅为枚举兼容；同步阶段用「激活窗体中心」兜底，再退光标/屏幕中心。
+        // 面板显示后不再用焦点框位置异步覆盖定位（open_panel 已明确移除该路径）。
         PanelPositionStrategy::FocusInput => ladder(position_active_window_center(
             window,
             panel_width,

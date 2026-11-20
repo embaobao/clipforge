@@ -7,11 +7,16 @@
 //! - **不碰热路径**：只读已有 DB/文件/日志，不向剪贴板采集/写回链路加任何埋点。
 //! - **沙箱隔离**：所有路径经 `settings_path()` 派生，`CLIPFORGE_DATA_DIR` 对沙箱 dev
 //!   自动生效，调试不污染稳定版数据。
-//! - 内存取 macOS `task_info(TASK_VM_INFO)` 的 phys_footprint（Tauri v2 的 WKWebView
-//!   与主进程同进程，无需跨 pid 归集）；结构布局经 C 探针在本机 macOS 26 验证。
+//! - 内存取 macOS `task_info(TASK_VM_INFO)` 的 phys_footprint；结构布局经 C 探针在本机 macOS 26 验证。
+//! - **口径边界**：`process_memory()` 只量 Rust 主进程（`mach_task_self()`）。WKWebView 的
+//!   WebContent / GPU / Networking 由 launchd 托管、ppid=1，不在本进程内，也不在进程树里；
+//!   实测稳定版主进程 48 MB 而 coalition 全量 256 MB，差约 5 倍。全量口径由
+//!   `pnpm mem:report`（scripts/memory-baseline.mjs 按 lsappinfo coalition 归集）提供，
+//!   本模块的数值只用于观察主进程趋势，禁止当作「应用总内存」。
 
 use std::path::Path;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
@@ -67,6 +72,8 @@ extern "C" {
 }
 
 /// 采集进程内存指标（字节）。非 macOS 或调用失败时返回 None，调用方降级为 null。
+/// phys_footprint 与活动监视器同口径；virtual_size 是地址空间保留量（含 Guard 区），
+/// 可达数百 GB，不是内存占用，前端必须分栏展示、禁止计入总量。
 #[cfg(target_os = "macos")]
 fn process_memory() -> Option<Value> {
     let mut info: TaskVmInfo = unsafe { std::mem::zeroed() };
@@ -88,6 +95,13 @@ fn process_memory() -> Option<Value> {
         "residentBytes": info.resident_size,
         "residentPeakBytes": info.resident_size_peak,
         "virtualBytes": info.virtual_size,
+        // TASK_VM_INFO 已解析但此前未输出的细分：用于区分「真增长」与可回收缓存膨胀。
+        // reusable / purgeable 同步上升时不应判为泄漏。
+        "internalBytes": info.internal,
+        "externalBytes": info.external,
+        "compressedBytes": info.compressed,
+        "reusableBytes": info.reusable,
+        "purgeableVolatileResidentBytes": info.purgeable_volatile_resident,
     }))
 }
 
@@ -122,7 +136,7 @@ mod tests {
         assert!(footprint > 0, "phys_footprint 应为正值,实际 {footprint}");
     }
 
-    /// collect_metrics 在隔离数据目录下应返回完整字段(数据/日志/uptime 三类不依赖内存 FFI)。
+    /// collect_metrics 在隔离数据目录下应返回完整字段(数据/日志/uptime/口径三类不依赖内存 FFI)。
     #[test]
     fn collect_metrics_shape_is_stable() {
         // CLIPFORGE_DATA_DIR 是进程级全局：与 lib.rs hard_delete / ocr 域测试同锁串行。
@@ -133,23 +147,79 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("CLIPFORGE_DATA_DIR", &dir);
         let metrics = super::collect_metrics();
-        for key in ["uptimeMs", "memory", "data", "log", "debugLogsEnabled"] {
+        for key in ["uptimeMs", "memory", "data", "log", "debugLogsEnabled", "memoryScope"] {
             assert!(metrics.get(key).is_some(), "指标缺少字段 {key}");
         }
+        assert_eq!(metrics["memoryScope"], "main-process-only");
         assert!(metrics["data"]["clipCount"].is_i64());
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// 重 IO 指标缓存：图片目录递归、clips 计数、日志扫描在 1s 轮询下会反复 stat 上万文件、
+/// 反复开关 SQLite 连接，既拖慢面板又把被测进程的内存抬高。按数据目录缓存 30s，
+/// 按需刷新；无后台线程、无定时器，关闭诊断 tab 后零开销。
+struct SlowMetrics {
+    key: std::path::PathBuf,
+    at: Instant,
+    value: Value,
+}
+
+static SLOW_METRICS: Mutex<Option<SlowMetrics>> = Mutex::new(None);
+
+fn slow_metrics(db_path: Option<&Path>, images_dir: Option<&Path>, log_file: Option<&Path>) -> Value {
+    // key 用数据库路径：测试与 dev 沙箱切换 CLIPFORGE_DATA_DIR 时互不串扰。
+    let key = db_path.map(|path| path.to_path_buf()).unwrap_or_default();
+    if let Ok(guard) = SLOW_METRICS.lock() {
+        if let Some(ref cached) = *guard {
+            if cached.key == key && cached.at.elapsed() < Duration::from_secs(30) {
+                return cached.value.clone();
+            }
+        }
+    }
+
+    let value = json!({
+        "imagesBytes": images_dir.map(dir_size_bytes).unwrap_or(0),
+        "clipCount": db_path
+            .and_then(|_| crate::open_clip_db().ok())
+            .map(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM clips WHERE deleted_at IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0)
+            })
+            .unwrap_or(0),
+        "log": log_file.map(log_health).unwrap_or(json!({
+            "lastEntryAgeMs": -1,
+            "bytes": 0,
+        })),
+    });
+
+    if let Ok(mut guard) = SLOW_METRICS.lock() {
+        *guard = Some(SlowMetrics {
+            key,
+            at: Instant::now(),
+            value: value.clone(),
+        });
+    }
+    value
 }
 
 fn dir_size_bytes(path: &Path) -> i64 {
     let mut total = 0;
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                total += dir_size_bytes(&path);
+            // entry.metadata() 一次 stat 同时给类型和大小，避免 path.is_dir() 的二次 stat。
+            let meta = match entry.metadata() {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            };
+            if meta.is_dir() {
+                total += dir_size_bytes(&entry.path());
             } else {
-                total += file_size(&path);
+                total += meta.len() as i64;
             }
         }
     }
@@ -157,22 +227,35 @@ fn dir_size_bytes(path: &Path) -> i64 {
 }
 
 /// 日志健康度：最后一行 jsonl 的 tsMs 距今年的毫秒数。
-/// 同时反映监听线程活性——轮询线程每轮有日志时该值应 ≤ 采集间隔 + 余量。
+/// 只读尾部 4KB（而非全文件逐行），避免 1s 轮询把 20k 行日志全量扫一遍；
+/// 尾部起点可能截断首行，超过 4KB 时跳过第一行。
 fn log_health(path: &Path) -> Value {
-    use std::io::{BufRead, BufReader};
+    use std::io::{Read, Seek, SeekFrom};
     let mut last_ts = 0i64;
-    if let Ok(file) = std::fs::File::open(path) {
-        let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
-            if let Some(start) = line.find("\"tsMs\":") {
-                let rest = &line[start + 7..];
-                let digits: String = rest
-                    .trim_start()
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
-                if let Ok(value) = digits.parse::<i64>() {
-                    last_ts = value;
+    if let Ok(mut file) = std::fs::File::open(path) {
+        let size = file.metadata().map(|meta| meta.len() as i64).unwrap_or(0);
+        let tail_len = size.min(4096);
+        let skip_first = size > 4096;
+        let mut tail = Vec::new();
+        if tail_len > 0
+            && file.seek(SeekFrom::End(-tail_len)).is_ok()
+            && file.take(tail_len as u64).read_to_end(&mut tail).is_ok()
+        {
+            let text = String::from_utf8_lossy(&tail);
+            for (index, line) in text.lines().enumerate() {
+                if skip_first && index == 0 {
+                    continue;
+                }
+                if let Some(start) = line.find("\"tsMs\":") {
+                    let rest = &line[start + 7..];
+                    let digits: String = rest
+                        .trim_start()
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    if let Ok(value) = digits.parse::<i64>() {
+                        last_ts = value;
+                    }
                 }
             }
         }
@@ -189,35 +272,26 @@ fn log_health(path: &Path) -> Value {
 }
 
 /// 采集一帧诊断指标（按需，无后台线程）。
+/// memoryScope 固定为 main-process-only：调用方必须把该数值当作「主进程趋势」，
+/// 应用全量内存请走 scripts/memory-baseline.mjs 的 coalition 归集。
 pub fn collect_metrics() -> Value {
     let db_path = crate::database_path().ok();
     let images_dir = crate::image_storage_path().ok();
     let log_file = crate::log_path().ok();
     let settings_file = crate::settings_path().ok();
-
-    let clip_count = db_path
-        .as_deref()
-        .and_then(|_| crate::open_clip_db().ok())
-        .map(|conn| {
-            conn.query_row(
-                "SELECT COUNT(*) FROM clips WHERE deleted_at IS NULL",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap_or(0)
-        })
-        .unwrap_or(0);
+    let slow = slow_metrics(db_path.as_deref(), images_dir.as_deref(), log_file.as_deref());
 
     json!({
         "uptimeMs": uptime_ms(),
+        "memoryScope": "main-process-only",
         "memory": process_memory(),
         "data": {
             "dbBytes": db_path.as_deref().map(file_size).unwrap_or(0),
-            "imagesBytes": images_dir.as_deref().map(dir_size_bytes).unwrap_or(0),
+            "imagesBytes": slow["imagesBytes"].clone(),
             "settingsBytes": settings_file.as_deref().map(file_size).unwrap_or(0),
-            "clipCount": clip_count,
+            "clipCount": slow["clipCount"].clone(),
         },
-        "log": log_file.as_deref().map(log_health),
+        "log": slow["log"].clone(),
         "debugLogsEnabled": crate::debug_logs_enabled_cached(),
     })
 }

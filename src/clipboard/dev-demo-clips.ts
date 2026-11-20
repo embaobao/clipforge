@@ -67,7 +67,7 @@ export const DEMO_CLIP_SOURCES: DemoClipSource[] = [
     minutesAgo: 150,
   },
   {
-    content: "记住：Cmd+Shift+V 唤起面板，⌘K 打开全部操作，空格快速预览选中条目。",
+    content: "记住：Cmd+Shift+V 唤起面板，⌘K 打开全部操作，空格选中条目。",
     favorite: true,
     sourceLabel: "备忘录",
     minutesAgo: 190,

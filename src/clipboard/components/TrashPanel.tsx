@@ -65,15 +65,14 @@ export function TrashPanel({
     event.preventDefault();
     event.stopPropagation();
     onSelect(item);
-    if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
     const menuWidth = 204;
-    const menuHeight = multiSelectMode ? 188 : 142;
+    const menuHeight = multiSelectMode && selectedIds.has(item.id) ? 188 : 142;
     setContextMenu({
       item,
       x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
       y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
     });
-  }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
+  }, [multiSelectMode, onSelect, selectedIds]);
 
   if (!clips.length) {
     return <ClipboardEmptyState variant="trash" emptySummary={emptySummary} tr={tr} />;
@@ -119,14 +118,14 @@ export function TrashPanel({
         {contextMenu ? (
           <TrashContextMenu
             item={contextMenu.item}
-            multiSelectMode={multiSelectMode}
+            multiSelectMode={multiSelectMode && selectedIds.has(contextMenu.item.id)}
             onClose={closeContextMenu}
             onDeleteSelected={onDeleteSelected}
             onEmptyTrash={onEmptyTrash}
             onHardDelete={onHardDelete}
             onRestore={onRestore}
             onRestoreSelected={onRestoreSelected}
-            onStartMultiSelect={onStartMultiSelect}
+            onStartMultiSelect={multiSelectMode ? onToggleSelected : onStartMultiSelect}
             selectedCount={selectedCount}
             tr={tr}
             x={contextMenu.x}

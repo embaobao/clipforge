@@ -34,6 +34,8 @@ try {
       "src/editor/actions.ts",
       "src/editor/sensitive.ts",
       "src/clipboard/row-animation.ts",
+      "src/clipboard/csv-export.ts",
+      "src/clipboard/csv-file-export.ts",
     ],
     { cwd: root, stdio: "inherit" },
   );
@@ -270,7 +272,223 @@ try {
     );
     assert.equal(hit(mk({ payloadKind: "file" }), merged), "file-list");
   }
-  console.log("[unit] search-query, smart-format, plugin-action, editor-suggestion, editor-action, sensitive, row-animation, renderer-registry checks passed");
+  // ---------- 多选表格 / CSV 导出安全构建（clipboard-interaction-repair 第 5 项） ----------
+  {
+    const csv = await import(pathToFileURL(join(outDir, "clipboard/csv-export.js")).href);
+
+    // RFC 4180：逗号、双引号、CR/LF 触发包裹；内部引号翻倍；null/undefined 归一为空串。
+    assert.equal(csv.escapeDelimitedCell("a,b", ",", true), '"a,b"');
+    assert.equal(csv.escapeDelimitedCell('say "hi"', ",", true), '"say ""hi"""');
+    assert.equal(csv.escapeDelimitedCell("line1\nline2", ",", true), '"line1\nline2"');
+    assert.equal(csv.escapeDelimitedCell("line1\r\nline2", ",", true), '"line1\r\nline2"');
+    assert.equal(csv.escapeDelimitedCell("plain", ",", true), "plain");
+    assert.equal(csv.escapeDelimitedCell(null, ",", true), "");
+    assert.equal(csv.escapeDelimitedCell(undefined, ",", true), "");
+    // TSV 用制表符分隔：含 tab 的单元格必须被包裹，否则串列。
+    assert.equal(csv.escapeDelimitedCell("a\tb", "\t", true), '"a\tb"');
+    assert.equal(csv.escapeDelimitedCell("a,b", "\t", true), "a,b");
+
+    // 表格公式注入防护：= + @ 与非法 - 开头前置单引号，前导空白不能绕过。
+    assert.equal(csv.guardCsvFormula("=SUM(A1:A2)"), "'=SUM(A1:A2)");
+    assert.equal(csv.guardCsvFormula("+1+1"), "'+1+1");
+    assert.equal(csv.guardCsvFormula("@SUM(A1)"), "'@SUM(A1)");
+    assert.equal(csv.guardCsvFormula("-cmd|' /C calc'!A0"), "'-cmd|' /C calc'!A0");
+    assert.equal(csv.guardCsvFormula("  =2+2"), "'  =2+2");
+    assert.equal(csv.guardCsvFormula("\t=2+2"), "'\t=2+2");
+    // 合法负数与普通文本不改写，避免破坏数值语义。
+    assert.equal(csv.guardCsvFormula("-12.5"), "-12.5");
+    assert.equal(csv.guardCsvFormula("-1e3"), "-1e3");
+    assert.equal(csv.guardCsvFormula("hello"), "hello");
+    assert.equal(csv.guardCsvFormula(""), "");
+    // guardFormula=false 时保留原文。
+    assert.equal(csv.escapeDelimitedCell("=1+1", ",", false), "=1+1");
+
+    // 表格组装：表头、BOM、行结束符、公式防护组合生效。
+    assert.equal(
+      csv.buildDelimitedTable([["a", "b"], ["c,d", "e"]], { delimiter: ",", lineEnding: "\r\n", withBom: false, guardFormula: true }),
+      'a,b\r\n"c,d",e',
+    );
+    assert.ok(
+      csv.buildDelimitedTable([["x"]], { delimiter: ",", headers: ["H"], lineEnding: "\r\n", withBom: true, guardFormula: true }).startsWith("\uFEFFH\r\nx"),
+    );
+
+    // 条目投影：两列（复制表格）与三列（CSV 文件）两种形态。
+    const items = [
+      { title: "First", kind: "text", content: "line1\nline2" },
+      { title: "=2+2", kind: "image", content: "a,b" },
+    ];
+    assert.deepEqual(csv.clipRowsToDelimitedRows(items, false), [
+      ["First", "line1\nline2"],
+      ["=2+2", "a,b"],
+    ]);
+    assert.deepEqual(csv.clipRowsToDelimitedRows(items, true)[0], ["First", "text", "line1\nline2"]);
+
+    // 复制到剪贴板的表格：TSV、两列、LF、无 BOM，空白折叠防串列，公式前缀防护。
+    // 与 CSV 文件不同：TSV 走粘贴路径，折叠空白而不套引号，保持既有粘贴兼容性。
+    const clipboardTable = csv.buildClipboardTable(items);
+    assert.equal(
+      clipboardTable,
+      "First\tline1 line2\n'=2+2\ta,b",
+      "两列 TSV：换行折叠为空格、标题公式前缀防护、逗号保留为字面量",
+    );
+
+    // CSV 文件：逗号分隔、CRLF、BOM、三列、表头注入、组合转义。
+    const csvFile = csv.buildCsvFileContent(items, ["标题", "类型", "内容"]);
+    assert.ok(csvFile.startsWith("\uFEFF标题,类型,内容\r\n"));
+    assert.ok(csvFile.includes('"a,b"'), "逗号单元格应被包裹");
+    assert.ok(csvFile.includes("'=2+2"), "CSV 文件同样防公式注入");
+  }
+  // ---------- 多选 CSV 文件导出编排 / 按类型分割 / 部分失败报告（clipboard-interaction-repair 第 5 项） ----------
+  {
+    const csvFileExport = await import(pathToFileURL(join(outDir, "clipboard/csv-file-export.js")).href);
+
+    // 标题兜底：空串与纯空白都回退到 i18n 注入的「未命名」，正文与类型不改。
+    const rows = csvFileExport.toCsvExportRows(
+      [
+        { id: "1", title: "  ", kind: "text", content: "a,b" },
+        { id: "2", title: "Named", kind: "image", content: "=1+1" },
+      ],
+      "未命名",
+    );
+    assert.deepEqual(rows, [
+      { title: "未命名", kind: "text", content: "a,b" },
+      { title: "Named", kind: "image", content: "=1+1" },
+    ]);
+
+    // 空选区不产出内容，也不抛错，由调用方提示。
+    assert.deepEqual(csvFileExport.buildCsvFileExportPlan([], ["标题", "类型", "内容"], "未命名"), {
+      content: "",
+      rowCount: 0,
+    });
+    const plan = csvFileExport.buildCsvFileExportPlan(
+      [
+        { id: "1", title: "", kind: "text", content: "line1\nline2" },
+        { id: "2", title: "=2+2", kind: "image", content: "a,b" },
+      ],
+      ["标题", "类型", "内容"],
+      "未命名",
+    );
+    assert.equal(plan.rowCount, 2);
+    assert.ok(plan.content.startsWith("\uFEFF标题,类型,内容\r\n"), "CSV 文件应带 BOM 与 i18n 表头");
+    assert.ok(plan.content.includes('"a,b"'), "逗号单元格应按 RFC 4180 包裹");
+    assert.ok(plan.content.includes("'=2+2"), "CSV 文件应防表格公式注入");
+    assert.ok(plan.content.includes('"line1\nline2"'), "正文换行应保留并转义，不被折叠");
+
+    // 按类型分割：文本进 CSV、图片/文件按原始路径复制、缺失项单列、未检查不误报缺失。
+    const split = csvFileExport.planSplitExport([
+      { id: "t", title: "T", kind: "text", content: "text" },
+      { id: "h", title: "H", kind: "html", content: "<b>x</b>" },
+      { id: "i", title: "I", kind: "image", content: "/img/a.png", filePath: "/img/a.png", pathAvailable: true },
+      { id: "f", title: "F", kind: "file", content: "/f/b.txt", filePath: "/f/b.txt", pathAvailable: false },
+      { id: "m", title: "M", kind: "file", content: "", filePath: null },
+      { id: "u", title: "U", kind: "image", content: "/img/u.png", filePath: "/img/u.png" },
+      { id: "o", title: "O", kind: "rtf", content: "{\\rtf}" },
+      { id: "x", title: "X", kind: "unknown", content: "?" },
+    ]);
+    assert.deepEqual(split.textItems.map((item) => item.id), ["t", "h", "o"]);
+    assert.deepEqual(split.fileItems.map((item) => item.id), ["i", "u"]);
+    assert.deepEqual(split.missingItems.map((item) => item.id), ["f", "m"], "显式不可用与无路径都算缺失");
+    assert.deepEqual(split.otherItems.map((item) => item.id), ["x"]);
+    assert.deepEqual(split.groups, [
+      { group: "text", count: 3 },
+      { group: "image", count: 2 },
+      { group: "file", count: 0 },
+      { group: "other", count: 1 },
+    ]);
+
+    // 部分失败汇总：任一失败/缺失即 partial，原因码去重且不回显正文或路径。
+    const summary = csvFileExport.summarizeExportOutcome([
+      { id: "1", outcome: "success" },
+      { id: "2", outcome: "failed", reasonCode: "CLIP_CSV_EXPORT_FILE_FAILED" },
+      { id: "3", outcome: "failed", reasonCode: "CLIP_CSV_EXPORT_FILE_FAILED" },
+      { id: "4", outcome: "missing", reasonCode: "CLIP_CSV_SOURCE_MISSING" },
+    ]);
+    assert.deepEqual(summary, {
+      total: 4,
+      succeeded: 1,
+      failed: 2,
+      missing: 1,
+      partial: true,
+      reasonCodes: ["CLIP_CSV_EXPORT_FILE_FAILED", "CLIP_CSV_SOURCE_MISSING"],
+    });
+    const allOk = csvFileExport.summarizeExportOutcome([
+      { id: "1", outcome: "success" },
+      { id: "2", outcome: "success" },
+    ]);
+    assert.deepEqual(allOk, {
+      total: 2, succeeded: 2, failed: 0, missing: 0, partial: false, reasonCodes: [],
+    });
+    assert.equal(csvFileExport.summarizeExportOutcome([]).partial, false, "空结果不应误报部分失败");
+
+    // 按类型分割导出请求：路径状态注入 + 写盘前复核（clipboard-interaction-repair 第 5 项）。
+    const statuses = {
+      "/tmp/ok.png": { exists: true, isFile: true },
+      "/tmp/gone.pdf": { exists: false, isFile: false },
+      "/tmp/dir.png": { exists: true, isFile: false },
+    };
+    const projected = csvFileExport.projectExportSources(
+      [
+        { id: "t", title: "T", kind: "text", content: "a" },
+        { id: "i", title: "I", kind: "image", content: "img", filePath: "/tmp/ok.png" },
+        { id: "f", title: "F", kind: "file", content: "doc", filePath: "/tmp/gone.pdf" },
+        { id: "d", title: "D", kind: "image", content: "dir", filePath: "/tmp/dir.png" },
+        { id: "u", title: "U", kind: "file", content: "unknown", filePath: "/tmp/unchecked.zip" },
+      ],
+      statuses,
+    );
+    assert.equal(projected[0].pathAvailable, undefined, "文本条目无需路径状态");
+    assert.equal(projected[1].pathAvailable, true, "命中状态表且为普通文件 → 可用");
+    assert.equal(projected[2].pathAvailable, false, "命中状态表但不存在 → 缺失");
+    assert.equal(projected[3].pathAvailable, false, "目录不应被判定为可复制文件");
+    assert.equal(projected[4].pathAvailable, undefined, "未命中状态表保持「尚未检查」，不误报缺失");
+
+    // 复核结果覆盖 stale 快照：原本可用的 ok.png 复核为不可用后移出 files 并计入缺失。
+    const request = csvFileExport.buildSplitExportRequest(
+      projected,
+      ["标题", "类型", "内容"],
+      "未命名",
+      { "/tmp/ok.png": false, "/tmp/gone.pdf": false, "/tmp/dir.png": false, "/tmp/unchecked.zip": true },
+    );
+    assert.equal(request.csvRowCount, 5, "CSV 清单必须包含全部条目（含文件类）");
+    assert.ok(request.csvContent.startsWith("\uFEFF标题,类型,内容\r\n"), "CSV 清单仍带 BOM 与表头");
+    assert.ok(request.csvContent.includes("unknown"), "未复核的文件类条目仍保留在 CSV 清单中");
+    assert.deepEqual(request.files, [{ id: "u", path: "/tmp/unchecked.zip" }], "仅路径复核可用的文件类进入原始文件复制");
+    assert.equal(request.split.missingItems.length, 3, "复核后不可用的文件类全部单列为缺失");
+    assert.deepEqual(request.split.textItems.map((item) => item.id), ["t"], "文本类不进入原始文件复制");
+
+    // 表格公式注入防护在分割导出清单里同样生效。
+    const guarded = csvFileExport.buildSplitExportRequest(
+      [{ id: "x", title: "=2+2", kind: "text", content: "=1+1" }],
+      ["标题", "类型", "内容"],
+      "未命名",
+      {},
+    );
+    assert.ok(guarded.csvContent.includes("'=2+2"), "标题公式前缀防护");
+    assert.ok(guarded.csvContent.includes("'=1+1"), "正文公式前缀防护");
+    assert.deepEqual(guarded.files, []);
+
+    // 空选区不产出内容，也不抛错，由调用方提示。
+    const empty = csvFileExport.buildSplitExportRequest([], ["标题", "类型", "内容"], "未命名", {});
+    assert.deepEqual(empty, {
+      csvContent: "",
+      csvRowCount: 0,
+      files: [],
+      split: {
+        textItems: [],
+        fileItems: [],
+        missingItems: [],
+        otherItems: [],
+        groups: [
+          { group: "text", count: 0 },
+          { group: "image", count: 0 },
+          { group: "file", count: 0 },
+          { group: "other", count: 0 },
+        ],
+      },
+    });
+  }
+
+  console.log("[unit] search-query, smart-format, plugin-action, editor-suggestion, editor-action, sensitive, row-animation, renderer-registry, csv-export, csv-file-export, split-export checks passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

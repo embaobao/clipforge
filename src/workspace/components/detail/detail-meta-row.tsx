@@ -1,11 +1,16 @@
 /** meta 单行（设计 §1 层③）：静态类型 chip + 来源 app chip（点击=采集原数据弹窗）
- *  + tags 横滚（四源色点 provenance）+ 右端插件区。编辑态 tags 行内编辑挂插件区左侧，路径行编辑态隐藏。 */
-import { AppWindow, Tag, X } from "lucide-react";
-import type { ReactNode } from "react";
+ *  + tags 横滚（四源色点 provenance）+ 右端插件区。编辑态 tags 行内编辑挂插件区左侧，路径行编辑态隐藏。
+ *  浏览态（clipboard-interaction-repair 第 8 项）：注入 browseTagEdit 后可直接增删标签并即时写回，
+ *  chip 主体仍点击搜索、四源色点不变；错误为可关闭的脱敏原因，写回中禁用控件防重入。
+ *  第 1 项补充：添加标签输入框改为受控，未提交文本由 browseTagEdit 上报外壳离开保护，
+ *  blur 只关闭不丢文本，Escape 显式取消才清空；切条目由 hook reset，避免跨条目残留。 */
+import { AppWindow, Plus, Tag, X } from "lucide-react";
+import { type ReactNode } from "react";
 import type { ClipItem } from "../../../App";
 import type { TranslationKey } from "../../../i18n";
 import { getPayloadKindIcon, getPayloadKindLabel, normalizeDetailTag, normalizeDetailTags } from "../workspace-detail-shared";
 import { tagSourceDotClass, tagSourceLabelKey, type TagProvenanceMap } from "./tag-provenance";
+import type { BrowseTagEditState } from "./use-browse-tag-edit";
 export type DetailMetaRowProps = {
   clip: ClipItem;
   editing: boolean;
@@ -16,6 +21,8 @@ export type DetailMetaRowProps = {
   onSearchTag: (tag: string) => void;
   onTagsChange: (tags: string[]) => void;
   onOpenCaptureDialog: () => void;
+  /** 浏览态标签编辑状态；缺省时浏览态只读（向后兼容其他调用点）。 */
+  browseTagEdit?: BrowseTagEditState;
   /** 插件区（⌕ AI 下拉 + 队列角标）由外壳注入。 */
   pluginZone?: ReactNode;
 };
@@ -30,6 +37,7 @@ export function DetailMetaRow({
   onSearchTag,
   onTagsChange,
   onOpenCaptureDialog,
+  browseTagEdit,
   pluginZone,
 }: DetailMetaRowProps) {
   const KindIcon = getPayloadKindIcon(clip.payloadKind);
@@ -117,23 +125,97 @@ export function DetailMetaRow({
             ))}
           </>
         ) : (
-          clip.tags.map((tag) => {
-            const source = provenance[tag]?.source ?? "heuristic";
-            return (
-              <button
-                className="inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[11px] text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
-                data-tag-chip={tag}
-                data-tag-source={source}
-                key={tag}
-                onClick={() => onSearchTag(tag)}
-                title={`${tag} · ${tr(tagSourceLabelKey[source])}`}
-                type="button"
+          <>
+            {/* 浏览态：chip 主体始终点击搜索（保留既有 data-tag-chip 契约与四源色点），
+                注入 browseTagEdit 后每个 chip 追加独立删除按钮，不进正文编辑态。 */}
+            {clip.tags.map((tag) => {
+              const source = provenance[tag]?.source ?? "heuristic";
+              return (
+                <span className="inline-flex shrink-0 items-center" key={tag}>
+                  <button
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded-l px-1 py-0.5 text-[11px] text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 dark:hover:bg-white/[0.08]"
+                    data-tag-chip={tag}
+                    data-tag-source={source}
+                    onClick={() => onSearchTag(tag)}
+                    title={`${tag} · ${tr(tagSourceLabelKey[source])}`}
+                    type="button"
+                  >
+                    <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${tagSourceDotClass[source]}`} data-tag-source-dot />
+                    #{tag}
+                  </button>
+                  {browseTagEdit ? (
+                    <button
+                      aria-label={tr("main.detail.removeTag", { tag })}
+                      className="inline-flex h-[18px] w-[15px] shrink-0 items-center justify-center rounded-r text-muted-foreground/60 transition-[color,background-color,border-color,transform] hover:bg-black/[0.06] hover:text-destructive active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.1]"
+                      data-tag-remove={tag}
+                      disabled={browseTagEdit.saving}
+                      onClick={() => void browseTagEdit.edit(clip, { type: "remove", tag })}
+                      title={tr("main.detail.removeTag", { tag })}
+                      type="button"
+                    >
+                      <X size={9} />
+                    </button>
+                  ) : null}
+                </span>
+              );
+            })}
+            {browseTagEdit ? (
+              browseTagEdit.input.open ? (
+                <input
+                  aria-label={tr("main.detail.addTag")}
+                  autoFocus
+                  className="h-[18px] w-20 shrink-0 rounded border border-border/60 bg-transparent px-1 text-[11px] outline-none placeholder:text-muted-foreground/60 disabled:opacity-40"
+                  data-browse-tag-input
+                  disabled={browseTagEdit.saving}
+                  onBlur={browseTagEdit.blurInput}
+                  onChange={(event) => browseTagEdit.changeInput(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      browseTagEdit.submitInput(clip);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      browseTagEdit.cancelInput();
+                    }
+                  }}
+                  placeholder="#tag"
+                  type="text"
+                  value={browseTagEdit.input.text}
+                />
+              ) : (
+                <button
+                  aria-label={tr("main.detail.addTag")}
+                  className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border border-dashed border-border text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.04] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.07]"
+                  data-browse-tag-add
+                  disabled={browseTagEdit.saving}
+                  onClick={browseTagEdit.openInput}
+                  title={tr("main.detail.addTag")}
+                  type="button"
+                >
+                  <Plus size={10} />
+                </button>
+              )
+            ) : null}
+            {browseTagEdit?.error ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive"
+                data-browse-tag-error
+                role="status"
               >
-                <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${tagSourceDotClass[source]}`} data-tag-source-dot />
-                #{tag}
-              </button>
-            );
-          })
+                <span className="max-w-48 truncate">{browseTagEdit.error}</span>
+                <button
+                  aria-label={tr("main.detail.closeTagError")}
+                  className="inline-flex items-center transition-[color,background-color,border-color,transform] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  data-browse-tag-error-dismiss
+                  onClick={browseTagEdit.clearError}
+                  type="button"
+                >
+                  <X size={9} />
+                </button>
+              </span>
+            ) : null}
+          </>
         )}
       </div>
       {/* 插件区：⌕ AI 下拉 + 队列角标（tags 行右侧，v7 定稿落位） */}

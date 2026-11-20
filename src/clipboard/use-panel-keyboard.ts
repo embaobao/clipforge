@@ -1,7 +1,7 @@
 /** 快速面板全局键盘导航 hook（从 App.tsx 切出）：所有 window keydown 分支的原样平移。
- *  分支清单：Cmd+, 设置 / t·Tab 视图 / Cmd+P 固定 / Cmd+F 收藏 / Cmd+J 打开 / Cmd+A 全选 /
+ *  分支清单：Cmd+, 设置 / t 回收站 / Cmd+P 固定 / Cmd+F 收藏 / Cmd+J 打开 / Cmd+A 全选 /
  *  Cmd+C 复制 / Cmd+X·Delete 删除 / Cmd+0-9 分组条目 / Escape 逐级退出 / Cmd+↑↓ 切组 /
- *  ↑↓·←→ 导航与建议高亮 / Enter 粘贴或应用建议 / 空格 预览与多选 / 普通字符唤醒搜索。
+ *  ↑↓·←→ 导航与建议高亮 / Enter 粘贴或应用建议 / 空格 多选 / 普通字符唤醒搜索。
  *  边界：所有 state/handler 经 options 注入（主体保持单一事实源）；热路径无新增抽象开销。 */
 import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -125,6 +125,7 @@ export function usePanelKeyboard({
           ? target.closest("input, textarea, select, [contenteditable='true']")
           : null;
       const allowListShortcutFromSearch = editable === searchRef.current && !query.trim();
+      const interactive = target instanceof Element && target.closest("button, a, [role='menu'], [role='menuitem'], [role='button'], [role='checkbox'], [role='switch'], [role='slider']");
       const quickItems = filteredClips;
       const key = event.key.toLowerCase();
       const currentItem = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
@@ -137,20 +138,13 @@ export function usePanelKeyboard({
         return;
       }
 
+      // 详情键盘由详情页处理，避免列表快捷键绕过未保存草稿保护。
+      if (workspaceRoute.name !== "list" && event.key !== "Escape") return;
+      if (interactive && event.key !== "Escape") return;
+
       if (!editable && !event.ctrlKey && !event.metaKey && !event.altKey && key === "t") {
         event.preventDefault();
         switchClipboardView("trash");
-        return;
-      }
-
-      if (event.key === "Tab" && !event.ctrlKey && !event.metaKey && !event.altKey) {
-        event.preventDefault();
-        const views: ViewKey[] = ["history", "favorites"];
-        const currentIndex = Math.max(0, views.indexOf(activeView));
-        const nextIndex = event.shiftKey
-          ? (currentIndex - 1 + views.length) % views.length
-          : (currentIndex + 1) % views.length;
-        switchClipboardView(views[nextIndex]);
         return;
       }
 
@@ -349,21 +343,17 @@ export function usePanelKeyboard({
 
       if (event.key === " ") {
         const item = quickItems.find((clip) => clip.id === selectedId) ?? quickItems[0];
-        if (!item || editable) return;
+        if (!item || editable || interactive || workspaceRoute.name !== "list") return;
         event.preventDefault();
-        if (multiSelectMode) {
-          // 多选模式下空格继续切换当前项选中状态
-          setKeyboardNavigating(true);
-          setSelectedIds((current) => {
-            const next = new Set(current);
-            if (next.has(item.id)) next.delete(item.id);
-            else next.add(item.id);
-            return next;
-          });
-          return;
-        }
-        // 非多选模式下空格开关快速预览
-        setQuickPreviewOpen((open) => !open);
+        setKeyboardNavigating(true);
+        setQuickPreviewOpen(false);
+        setMultiSelectMode(true);
+        setSelectedIds((current) => {
+          const next = multiSelectMode ? new Set(current) : new Set<string>();
+          if (next.has(item.id)) next.delete(item.id);
+          else next.add(item.id);
+          return next;
+        });
         return;
       }
 

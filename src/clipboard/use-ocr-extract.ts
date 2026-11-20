@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { ClipItem } from "../App";
 import type { TranslationKey } from "../i18n";
 import { truncateText } from "./clip-model";
+import { buildOcrErrorGuidance, findOcrGuidanceLeaks } from "./ocr-error-guidance";
 
 /** `ocr_extract` command 返回载荷（Rust OcrExtractPayload 的 camelCase 映射）。 */
 type OcrExtractPayload = {
@@ -21,21 +22,43 @@ export type OcrExtractDeps = {
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
 };
 
-/** 图片提取文字并复制：invoke ocr_extract → 文本进剪贴板 → 显式入库 → toast 反馈；
- *  失败 toast 携带 `OCR_*` 错误码原文（前端不吞错误，提示可定位）。 */
+/** 图片提取文字并复制：invoke ocr_extract → 文本进剪贴板 → 显式入库 → toast 反馈。
+ *  失败按 `OCR_*` 错误码映射为脱敏原因 + 可复制修复方案，提示可关闭；
+ *  原始异常（含本地端点 URL / 图片路径 / 端口）绝不进入展示或复制文本（提案 §27）。 */
 export async function ocrExtractAndCopy(item: ClipItem, deps: OcrExtractDeps) {
   const { captureStandardTextClip, setNativeStatus, tr } = deps;
   try {
     const result = await invoke<OcrExtractPayload>("ocr_extract", { id: item.id });
     await navigator.clipboard.writeText(result.text);
     await captureStandardTextClip(result.text, "ocr", {
-      ocrSourceImageId: item.id,
+      // spec 要求 metadata 顶层 sourceImageId；其余诊断字段仍进 clipforgeContext。
+      sourceImageId: item.id,
       ocrModel: result.model,
       ocrElapsedMs: result.elapsedMs,
     });
     toast.success(tr("main.toast.ocrCopied"), { description: truncateText(result.text, 42) });
     setNativeStatus(tr("main.status.ocrCopied"));
   } catch (error) {
-    toast.error(tr("main.toast.ocrFailed"), { description: truncateText(String(error), 120) });
+    // 文案由纯函数编排，展示前再做一次脱敏兜底：一旦文案被改坏带出敏感片段，退化为纯静态兜底句。
+    const translate = (key: string) => tr(key as TranslationKey);
+    const guidance = buildOcrErrorGuidance(error, translate);
+    const leaks = findOcrGuidanceLeaks(guidance);
+    const safe = leaks.length === 0;
+    const description = safe ? guidance.description : translate("main.error.ocr.safeFallback");
+    const copyText = safe ? guidance.copyText : translate("main.error.ocr.safeFallback");
+    toast.error(tr("main.toast.ocrFailed"), {
+      description,
+      closeButton: true,
+      duration: 15000,
+      action: {
+        label: tr("main.error.ocr.copyFix"),
+        onClick: () => {
+          void navigator.clipboard.writeText(copyText).then(
+            () => toast.success(tr("main.error.ocr.fixCopied")),
+            () => toast.error(tr("main.error.ocr.copyFailed")),
+          );
+        },
+      },
+    });
   }
 }

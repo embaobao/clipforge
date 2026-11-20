@@ -1,8 +1,6 @@
-import { RiArrowDownWideFill, RiArrowUpWideFill } from "react-icons/ri";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ClipItem } from "../../App";
 import { formatCommandError } from "../../i18n";
-import type { FilePathStatus } from "../../services/clipboard";
 import { WorkspaceCrumb } from "./WorkspaceCrumb";
 import { DetailOverflowMenu } from "./DetailOverflowMenu";
 import { PROMPT_OPTIMIZER_DRAFT_SRC } from "./PromptOptimizerBar";
@@ -26,8 +24,6 @@ import {
   getDetailSourceAddress,
   normalizeDetailTags,
   safeHttpUrls,
-  type DetailQuickAction,
-  type WorkspaceTr,
 } from "./workspace-detail-shared";
 import { DetailActionBar } from "./detail/detail-action-bar";
 import { DetailMetaRow } from "./detail/detail-meta-row";
@@ -49,35 +45,10 @@ import { MdEditor } from "./detail/md-editor";
 import { buildManualProvenance, parseTagProvenance } from "./detail/tag-provenance";
 import { resolveDetailRenderer } from "./detail/renderer-registry";
 import { useDetailKeyboard } from "./detail/use-detail-keyboard";
-
-type ClipDetailWorkspaceProps = {
-  clip: ClipItem | null;
-  filePathStatuses?: Record<string, FilePathStatus>;
-  links: string[];
-  tr: WorkspaceTr;
-  onBack: () => void;
-  onCopy: (clip: ClipItem) => void;
-  onCopyPlain: (clip: ClipItem) => void;
-  onCopyText: (text: string, source: string, context?: Record<string, unknown>) => void;
-  onOcrExtract: (clip: ClipItem) => void;
-  onOpen: (clip: ClipItem) => void;
-  onOpenPath?: (path: string) => void;
-  onPasteText: (text: string, source: string, context?: Record<string, unknown>) => void;
-  onPrevious?: () => void;
-  onNext?: () => void;
-  onSearchTag: (tag: string) => void;
-  onUpdateContent: (
-    clip: ClipItem,
-    content: string,
-    tags?: string[],
-    context?: { sessionId: string; draftVersion: number; tagsProvenance?: Record<string, unknown> },
-  ) => Promise<ClipItem | void>;
-  quickActions?: DetailQuickAction[];
-  /** Agent provider 配置（settings.agentProviders），用于 pi 底层 AI 分析；空数组时分析按钮禁用。 */
-  agentProviders?: Array<Record<string, unknown>>;
-  /** 应用 AI 建议标签（转发 update_clip_record 写回通道）；缺省时详情页不显示应用入口。 */
-  onApplyTags?: (clipId: string, tags: string[]) => void;
-};
+import type { ClipDetailWorkspaceProps } from "./detail/clip-detail-workspace-props";
+import { sameTags } from "./detail/tag-only-save";
+import { useBrowseTagEdit } from "./detail/use-browse-tag-edit";
+import { buildLeaveGuardSnapshot, hasUnsavedDetailWork, resolveLeaveGuard } from "./detail/detail-leave-guard";
 
 /** 详情页外壳（提案 detail-page-information-architecture v8 定稿）：
  *  五区编排（crumb / 路径行 / meta 单行 / 内容三态 / 底部动作区）+ 三态状态机（浏览/编辑/diff）。
@@ -99,6 +70,7 @@ export function ClipDetailWorkspace({
   onNext,
   onSearchTag,
   onUpdateContent,
+  onUpdateTags,
   onApplyTags,
   quickActions = [],
   agentProviders = [],
@@ -117,14 +89,19 @@ export function ClipDetailWorkspace({
   const [pathCopied, setPathCopied] = useState(false);
   const [draft, setDraft] = useState<DetailDraft | null>(null);
   const [pluginQueue, setPluginQueue] = useState<PluginQueueTask[]>([]);
+  // 浏览态标签编辑（第 8 项）：翻译函数引用稳定，避免 hook 内 useCallback 每轮重建。
+  const translateTagError = useCallback((error: unknown) => formatCommandError(tr, error), [tr]);
+  const browseTagEdit = useBrowseTagEdit(onUpdateTags, translateTagError, clip?.id ?? "");
   // 动效状态（设计 §7）：切条目 140ms 方向感知 / 切态 220ms；key 变化即重播动画。
   // 用 ref 派生（render 期 setState 会连环重置，DOM 永远读不到 clip 值），200ms 后自动回落 state。
   const lastNavRef = useRef<"prev" | "next">("next");
   const goPrevious = () => {
+    if (!confirmDiscardDraft()) return;
     lastNavRef.current = "prev";
     onPrevious?.();
   };
   const goNext = () => {
+    if (!confirmDiscardDraft()) return;
     lastNavRef.current = "next";
     onNext?.();
   };
@@ -143,6 +120,7 @@ export function ClipDetailWorkspace({
     return () => window.clearTimeout(timer);
   }, [clip?.id]);
 
+  // 仅切换条目时重置，后台刷新同一条目不能丢弃编辑草稿。
   useEffect(() => {
     setDraftContent(clip?.content ?? "");
     setDraftTags(normalizeDetailTags(clip?.tags ?? []));
@@ -155,7 +133,7 @@ export function ClipDetailWorkspace({
     setImagePreviewOpen(false);
     setImageActualSize(false);
     setCaptureOpen(false);
-  }, [clip?.id, clip?.content, clip?.tags]);
+  }, [clip?.id]);
 
   // 提示词优化器产出：内存草稿 + 切 diff 态，确认后走既有 saveDraftContent 写回。
   const handlePromptOptimizerDraft = useCallback((content: string) => {
@@ -191,6 +169,13 @@ export function ClipDetailWorkspace({
   const hasDraftChanges =
     draftContent !== clip.content ||
     normalizeDetailTags(draftTags).join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
+  // 统一离开保护快照（提案 §13）：正文/标签/Agent 草稿与浏览标签写回汇总到一处决策，
+  // 返回、上下条、Escape 共用；判定细节留在 detail-leave-guard.ts 域模块内。
+  const leaveSnapshot = buildLeaveGuardSnapshot({
+    mode, isSaving, hasDraftChanges, hasAgentDraft: Boolean(draft),
+    browseTagSaving: browseTagEdit.saving,
+    pendingTagInput: browseTagEdit.input.text,
+  });
   const suggestedTags = buildSuggestedTags(clip, draftContent, draftTags);
 
   const safeLinks = safeHttpUrls(links);
@@ -213,8 +198,10 @@ export function ClipDetailWorkspace({
   const hasImageActions = clip.payloadKind === "image";
   const toolButtonClass = "relative inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,border-color,transform] hover:bg-black/[0.05] hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-white/[0.08]";
 
-  const confirmDiscardDraft = () => !hasDraftChanges || window.confirm(tr("main.detail.confirmDiscard"));
-
+  // 硬拒绝（保存/写回中）不弹窗；有草稿才弹确认，避免 view 态静默丢弃浏览标签编辑。
+  const confirmDiscardDraft = () => resolveLeaveGuard(leaveSnapshot, () => window.confirm(tr("main.detail.confirmDiscard")));
+  // view 态 Escape 的离开请求：与 crumb 返回按钮走同一套保护。
+  const requestLeave = () => { if (confirmDiscardDraft()) onBack(); };
   const enterEdit = () => {
     setDraftContent(clip.content);
     setDraftTags(normalizeDetailTags(clip.tags));
@@ -223,7 +210,9 @@ export function ClipDetailWorkspace({
   };
 
   const handleExitEdit = () => {
+    if (isSaving) return;
     if (mode === "diff") {
+      if (!confirmDiscardDraft()) return;
       setDraft(null);
       setMode("view");
       return;
@@ -238,14 +227,13 @@ export function ClipDetailWorkspace({
   const saveDraftContent = async (override?: { content: string; tags?: string[] }) => {
     const nextContent = override?.content ?? draftContent;
     const nextTags = normalizeDetailTags(override?.tags ?? draftTags);
-    const nextHasChanges =
-      nextContent !== clip.content ||
-      nextTags.join("\n").toLowerCase() !== normalizeDetailTags(clip.tags).join("\n").toLowerCase();
+    const contentChanged = nextContent !== clip.content;
+    const tagsChanged = !sameTags(nextTags, clip.tags);
     if (!nextContent.trim()) {
       setEditError(tr("main.detail.emptyContent"));
       return;
     }
-    if (!nextHasChanges) {
+    if (!contentChanged && !tagsChanged) {
       setMode("view");
       setDraft(null);
       return;
@@ -253,13 +241,19 @@ export function ClipDetailWorkspace({
     setIsSaving(true);
     setEditError("");
     try {
-      // 人工保存 = 权威整组替换：tags_provenance 对最终 tags 重组，全部标 manual（§5.3）。
-      const nextProvenance = buildManualProvenance(parseTagProvenance(clip), nextTags);
-      await onUpdateContent(clip, nextContent, nextTags, {
-        sessionId: editorSessionId || `editor_${clip.id}`,
-        draftVersion,
-        tagsProvenance: nextProvenance,
-      });
+      if (!contentChanged && tagsChanged) {
+        // 仅标签变更（提案 §24）：走标签独立写回，不带 content，Rust 侧不重建正文与 representations。
+        // provenance 增量合并由写回侧统一处理，保留 heuristic / ai / plugin 既有来源。
+        await onUpdateTags(clip, nextTags);
+      } else {
+        // 正文变更 = 权威整组替换：tags_provenance 对最终 tags 重组，全部标 manual（§5.3）。
+        const nextProvenance = buildManualProvenance(parseTagProvenance(clip), nextTags);
+        await onUpdateContent(clip, nextContent, nextTags, {
+          sessionId: editorSessionId || `editor_${clip.id}`,
+          draftVersion,
+          tagsProvenance: nextProvenance,
+        });
+      }
       setDraftContent(nextContent);
       setDraftTags(nextTags);
       setDraftVersion((current) => current + 1);
@@ -297,6 +291,8 @@ export function ClipDetailWorkspace({
     onSave: () => void (mode === "diff" && draft ? saveDraftContent({ content: draft.content }) : saveDraftContent()),
     onExit: handleExitEdit,
     onCopyPath: () => handleCopyPath(sourcePath),
+    onRequestLeave: requestLeave,
+    hasUnsavedWork: hasUnsavedDetailWork(leaveSnapshot),
     onPrevious: goPrevious,
     onNext: goNext,
   });
@@ -383,10 +379,7 @@ export function ClipDetailWorkspace({
     <section className="relative flex h-full flex-col overflow-hidden bg-transparent" data-surface="workspace">
       {/* 层① crumb：返回 + 标题 + prev/next（remixicon，v8 指定）+ 溢出菜单 */}
       <WorkspaceCrumb
-        onBack={() => {
-          if (mode === "edit" && !confirmDiscardDraft()) return;
-          onBack();
-        }}
+        onBack={() => { if (confirmDiscardDraft()) onBack(); }}
         subtitle={modeLabel}
         title={tr("main.detail.title")}
         tr={tr}
@@ -394,22 +387,22 @@ export function ClipDetailWorkspace({
         <button
           aria-label={tr("main.detail.previous")}
           className={toolButtonClass}
-          disabled={!onPrevious}
+          disabled={!onPrevious || isSaving}
           onClick={goPrevious}
           title={tr("main.detail.previousShortcut")}
           type="button"
         >
-          <RiArrowUpWideFill size={14} />
+          <ChevronUp size={15} />
         </button>
         <button
           aria-label={tr("main.detail.next")}
           className={toolButtonClass}
-          disabled={!onNext}
+          disabled={!onNext || isSaving}
           onClick={goNext}
           title={tr("main.detail.nextShortcut")}
           type="button"
         >
-          <RiArrowDownWideFill size={14} />
+          <ChevronDown size={15} />
         </button>
         <DetailOverflowMenu
           clip={clip}
@@ -430,6 +423,7 @@ export function ClipDetailWorkspace({
       {/* 层② 来源路径行：仅浏览态且条目有路径；层③ meta 单行 + 插件区 */}
       {sourcePath ? <DetailPathRow onCopyPath={handleCopyPath} path={sourcePath} tr={tr} /> : null}
       <DetailMetaRow
+        browseTagEdit={browseTagEdit}
         clip={clip}
         draftTags={draftTags}
         editing={mode === "edit"}
@@ -452,7 +446,7 @@ export function ClipDetailWorkspace({
           if (mode === "view" && canEdit) enterEdit();
         }}
       >
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {contentBody}
           {mode === "view" ? <DetailLinkList links={safeLinks} tr={tr} /> : null}
         </div>

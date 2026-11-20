@@ -101,15 +101,14 @@ export function QuickPastePanel({
     event.preventDefault();
     event.stopPropagation();
     onSelect(item);
-    if (multiSelectMode && !selectedIds.has(item.id)) onToggleSelected(item.id);
     const menuWidth = 204;
-    const menuHeight = multiSelectMode ? 190 : 332;
+    const menuHeight = multiSelectMode && selectedIds.has(item.id) ? 190 : 332;
     setContextMenu({
       item,
       x: Math.min(event.clientX, Math.max(8, window.innerWidth - menuWidth - 8)),
       y: Math.min(event.clientY, Math.max(8, window.innerHeight - menuHeight - 8)),
     });
-  }, [multiSelectMode, onSelect, onToggleSelected, selectedIds]);
+  }, [multiSelectMode, onSelect, selectedIds]);
 
   if (!clips.length) {
     return (
@@ -180,7 +179,7 @@ export function QuickPastePanel({
         {contextMenu ? (
           <ClipContextMenu
             item={contextMenu.item}
-            multiSelectMode={multiSelectMode}
+            multiSelectMode={multiSelectMode && selectedIds.has(contextMenu.item.id)}
             onClose={closeContextMenu}
             onFavorite={onFavorite}
             onFavoriteSelected={onFavoriteSelected}
@@ -191,7 +190,7 @@ export function QuickPastePanel({
             onCopyMode={(mode) => onCopyMode(contextMenu.item, mode)}
             onOcrExtract={onOcrExtract}
             onCopySelected={onCopySelected}
-            onStartMultiSelect={onStartMultiSelect}
+            onStartMultiSelect={multiSelectMode ? onToggleSelected : onStartMultiSelect}
             onClearSelection={onClearSelection}
             onOpenDetail={() => {
               logAppError("info", "context-menu-detail", {
@@ -201,7 +200,7 @@ export function QuickPastePanel({
               });
               void navigateWorkspaceDetail(contextMenu.item.id);
             }}
-            selectedCount={selectedIds.size}
+            selectedCount={clips.filter((item) => selectedIds.has(item.id)).length}
             tr={tr}
             x={contextMenu.x}
             y={contextMenu.y}

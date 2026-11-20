@@ -32,7 +32,7 @@ export function PanelStatusFeedback({ status, commandMenu, tr }: PanelStatusFeed
         )}
       </div>
       <span className="mono max-w-[58%] flex-shrink-0 truncate text-[10.5px] text-muted-foreground">
-        ↑↓ {tr("main.statusLine.navigate")} · ⏎ {tr("main.statusLine.paste")} · 空格 {tr("main.statusLine.preview")} · / {tr("main.search.aria")}
+        ↑↓ {tr("main.statusLine.navigate")} · ⏎ {tr("main.statusLine.paste")} · Space {tr("main.context.selectItem")} · / {tr("main.search.aria")}
       </span>
     </footer>
   );

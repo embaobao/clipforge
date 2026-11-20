@@ -55,50 +55,43 @@ export function DetailActionBar({
         className="flex shrink-0 items-center gap-1 border-t border-black/[0.05] px-4 py-2 dark:border-white/[0.07]"
         data-surface="detail-action-bar"
       >
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          <button className={primaryButton} data-detail-action="copy" onClick={onCopy} type="button">
+            {copyFeedback ? <Check size={13} /> : <Copy size={13} />}
+            {copyFeedback ? tr("main.detail.copied") : tr("main.detail.action.copy")}
+          </button>
+          <button
+            className={ghostButton}
+            data-detail-action="copy-rich"
+            data-tooltip={canCopyRich ? tr("main.detail.action.copyRichTitle") : tr("main.detail.action.copyRichUnavailable")}
+            disabled={!canCopyRich}
+            onClick={onCopyRich}
+            title={canCopyRich ? tr("main.detail.action.copyRichTitle") : tr("main.detail.action.copyRichUnavailable")}
+            type="button"
+          >
+            <SquareArrowOutUpRight size={13} />
+            {tr("main.detail.action.copyRich")}
+          </button>
+          <button
+            className={ghostButton}
+            data-detail-action="copy-path"
+            data-tooltip={tr("main.detail.action.copyPathTitle")}
+            disabled={!hasPath}
+            onClick={onCopyPath}
+            title={tr("main.detail.action.copyPathTitle")}
+            type="button"
+          >
+            {pathCopied ? <Check size={13} /> : <SquareArrowOutUpRight size={13} />}
+            {pathCopied ? tr("main.detail.pathCopied") : tr("main.detail.action.copyPath")}
+          </button>
+          <button className={ghostButton} data-detail-action="paste" onClick={onPaste} type="button">
+            <ClipboardPaste size={13} />
+            {tr("main.detail.action.paste")}
+          </button>
+          {pluginActions ? <div className="ml-auto flex items-center gap-1">{pluginActions}</div> : null}
+        </div>
         <button
-          className={primaryButton}
-          data-detail-action="copy"
-          onClick={onCopy}
-          type="button"
-        >
-          {copyFeedback ? <Check size={13} /> : <Copy size={13} />}
-          {copyFeedback ? tr("main.detail.copied") : tr("main.detail.action.copy")}
-        </button>
-        <button
-          className={ghostButton}
-          data-detail-action="copy-rich"
-          data-tooltip={canCopyRich ? tr("main.detail.action.copyRichTitle") : tr("main.detail.action.copyRichUnavailable")}
-          disabled={!canCopyRich}
-          onClick={onCopyRich}
-          title={canCopyRich ? tr("main.detail.action.copyRichTitle") : tr("main.detail.action.copyRichUnavailable")}
-          type="button"
-        >
-          <SquareArrowOutUpRight size={13} />
-          {tr("main.detail.action.copyRich")}
-        </button>
-        <button
-          className={ghostButton}
-          data-detail-action="copy-path"
-          data-tooltip={tr("main.detail.action.copyPathTitle")}
-          disabled={!hasPath}
-          onClick={onCopyPath}
-          title={tr("main.detail.action.copyPathTitle")}
-          type="button"
-        >
-          {pathCopied ? <Check size={13} /> : <SquareArrowOutUpRight size={13} />}
-          {pathCopied ? tr("main.detail.pathCopied") : tr("main.detail.action.copyPath")}
-        </button>
-        <button
-          className={ghostButton}
-          data-detail-action="paste"
-          onClick={onPaste}
-          type="button"
-        >
-          <ClipboardPaste size={13} />
-          {tr("main.detail.action.paste")}
-        </button>
-        <button
-          className={ghostButton}
+          className={`${ghostButton} shrink-0`}
           data-detail-action="edit"
           data-tooltip={canEdit ? tr("main.detail.quickEditTooltip") : tr("main.detail.action.editUnavailable")}
           disabled={!canEdit}
@@ -109,7 +102,6 @@ export function DetailActionBar({
           <Pencil size={13} />
           {tr("main.detail.edit")}
         </button>
-        {pluginActions ? <div className="ml-auto flex items-center gap-1">{pluginActions}</div> : null}
       </footer>
     );
   }
@@ -132,6 +124,7 @@ export function DetailActionBar({
       <button
         className={ghostButton}
         data-detail-action={mode === "edit" ? "cancel-edit" : "discard-draft"}
+        disabled={isSaving}
         onClick={onExit}
         type="button"
       >

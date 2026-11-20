@@ -307,6 +307,8 @@ pub fn settings_json_schema() -> Value {
             "logAutoCleanup": { "type": "boolean" },
             "logCleanupIntervalMin": { "type": "integer", "minimum": 60, "maximum": 1440 },
             "debugLogsEnabled": { "type": "boolean" },
+            "ocrEnabled": { "type": "boolean" },
+            "ocrEndpointUrl": { "type": "string", "minLength": 1 },
             "captureTextEnabled": { "type": "boolean" },
             "captureHtmlEnabled": { "type": "boolean" },
             "captureRtfEnabled": { "type": "boolean" },

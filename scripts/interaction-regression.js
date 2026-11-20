@@ -190,16 +190,16 @@ await page.waitForTimeout(300);
 const selAfter = await selIdx();
 report("T5 键盘 ↓ 移动选中行", selAfter === selBefore + 1, `${selBefore} -> ${selAfter}`);
 
-// ---------- T6 空格预览卡开关 ----------
-await focusPanel();
+// ---------- T6 空格切换选择 ----------
+await page.evaluate(() => document.getElementById("panel").contentDocument.querySelector("article")?.focus());
 await page.keyboard.press(" ");
 await page.waitForTimeout(400);
 state = await iframeDoc();
-const cardOpened = state.previewCard;
+const selectionStarted = /1\s*(项|items)/i.test(state.footerStatus) && !state.previewCard;
 await page.keyboard.press("Escape");
 await page.waitForTimeout(400);
 state = await iframeDoc();
-report("T6 空格打开预览卡 + Esc 关闭", cardOpened && !state.previewCard, `opened=${cardOpened} closed=${!state.previewCard}`);
+report("T6 空格选中条目 + Esc 退出", selectionStarted && !/1\s*(项|items)/i.test(state.footerStatus), `selected=${selectionStarted}`);
 
 // ---------- T7 Enter 粘贴（状态栏反馈） ----------
 await focusPanel();

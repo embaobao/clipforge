@@ -1,4 +1,4 @@
-import { Copy, FileDown, FileJson, Table2 } from "lucide-react";
+import { Copy, FileDown, FileJson, Files, FileSpreadsheet, Table2 } from "lucide-react";
 import { useState } from "react";
 import type { ClipItem } from "../../App";
 import { WorkspaceCrumb } from "./WorkspaceCrumb";
@@ -17,6 +17,10 @@ export type MultiAggregateWorkspaceProps = {
   onCopyItem: (clip: ClipItem) => void;
   onExportTextFiles: () => Promise<void> | void;
   onExportTable: () => void;
+  /** 导出 CSV 文件（Rust 侧独占写盘，不覆盖已有文件）；异步期间按钮禁用防重入。 */
+  onExportCsvFile: () => Promise<void> | void;
+  /** 按类型分割导出：CSV 清单 + 原始文件复制到同一独立目录，逐项报告部分失败。 */
+  onExportSplitFiles: () => Promise<void> | void;
   onFormatChange: (next: AggregateFormatOptions) => void;
   onOpenItem: (clip: ClipItem) => void;
 };
@@ -35,6 +39,8 @@ export function MultiAggregateWorkspace({
   onCopyItem,
   onExportTextFiles,
   onExportTable,
+  onExportCsvFile,
+  onExportSplitFiles,
   onFormatChange,
   onOpenItem,
 }: MultiAggregateWorkspaceProps) {
@@ -42,15 +48,19 @@ export function MultiAggregateWorkspace({
   const totalChars = items.reduce((sum, item) => sum + item.content.length, 0);
   const linkCount = items.reduce((sum, item) => sum + (item.analysis.url ? 1 : 0), 0);
   const kindCount = new Set(items.map((item) => item.payloadKind)).size;
-  const handleExportTextFiles = async () => {
+  /** 文本分片、CSV 文件与按类型分割导出共用同一导出锁，避免多个写盘任务同时触发。 */
+  const runExport = async (action: () => Promise<void> | void) => {
     if (isExporting || !items.length) return;
     setIsExporting(true);
     try {
-      await onExportTextFiles();
+      await action();
     } finally {
       setIsExporting(false);
     }
   };
+  const handleExportTextFiles = () => runExport(onExportTextFiles);
+  const handleExportCsvFile = () => runExport(onExportCsvFile);
+  const handleExportSplitFiles = () => runExport(onExportSplitFiles);
 
   return (
     <section className="h-full overflow-auto bg-transparent" data-surface="workspace">
@@ -60,6 +70,12 @@ export function MultiAggregateWorkspace({
         </button>
         <button aria-label={tr("main.aggregate.exportTable")} className={crumbIconButtonClass} onClick={onExportTable} title={tr("main.aggregate.exportTable")} type="button">
           <Table2 size={14} />
+        </button>
+        <button aria-busy={isExporting} aria-label={tr("main.aggregate.exportCsvFile")} className={crumbIconButtonClass} disabled={!items.length || isExporting} onClick={() => void handleExportCsvFile()} title={tr("main.aggregate.exportCsvFile")} type="button">
+          <FileSpreadsheet size={14} />
+        </button>
+        <button aria-busy={isExporting} aria-label={tr("main.aggregate.exportSplitFiles")} className={crumbIconButtonClass} disabled={!items.length || isExporting} onClick={() => void handleExportSplitFiles()} title={tr("main.aggregate.exportSplitFiles")} type="button">
+          <Files size={14} />
         </button>
         <button aria-label={tr("main.aggregate.copyContent")} className={crumbIconButtonClass} onClick={onCopy} title={tr("main.aggregate.copyContent")} type="button">
           <Copy size={14} />
@@ -77,6 +93,14 @@ export function MultiAggregateWorkspace({
         <button aria-busy={isExporting} className={actionStripButtonClass} disabled={!items.length || isExporting} onClick={() => void handleExportTextFiles()} type="button">
           <FileDown size={13} />
           {tr("main.aggregate.exportTexts")}
+        </button>
+        <button aria-busy={isExporting} className={actionStripButtonClass} disabled={!items.length || isExporting} onClick={() => void handleExportCsvFile()} type="button">
+          <FileSpreadsheet size={13} />
+          {tr("main.aggregate.exportCsvFile")}
+        </button>
+        <button aria-busy={isExporting} className={actionStripButtonClass} disabled={!items.length || isExporting} onClick={() => void handleExportSplitFiles()} type="button">
+          <Files size={13} />
+          {tr("main.aggregate.exportSplitFiles")}
         </button>
         <AggregateFormatMenu format={format} onChange={onFormatChange} tr={tr} />
         <button className={actionStripButtonClass} disabled type="button">
