@@ -1,5 +1,5 @@
 /** Clip 数据模型与内容分析域：类型定义、payload/format 映射与纯函数分析器（从 App.tsx 切出）。
- *  边界：不依赖 React 与 AppSettings；settings 相关的 generateTags/getTypeTags 留在 App.tsx。 */
+ *  边界：不依赖 React；generateTags 只收正文里的合法话题标签。 */
 import type { AppSettings } from "../App";
 import { middleEllipsis } from "./clipboard-domain";
 import { normalizeTagName } from "../search-query";
@@ -439,7 +439,13 @@ export function createTextRepresentation(content: string, payloadKind: ClipPaylo
   ];
 }
 
-export function generateTags(content: string, settings: AppSettings): string[] {  if (settings.tagMode === "off") return [];  const analysis = analyzeContent(content);  return getTypeTags(analysis);}function getTypeTags(analysis: ClipAnalysis): string[] {  if (analysis.attachment) return [analysis.attachment.isImage ? "图片" : "资源"];  if (analysis.source === "github" || analysis.source === "gitlab" || analysis.source === "link") return ["链接"];  if (analysis.source === "command") return ["命令"];  if (analysis.source === "json") return ["JSON"];  if (analysis.source === "markdown") return ["Markdown"];  if (analysis.source === "code") return ["代码"];  return ["文本"];}
+/** 自动标签只收合法话题：`#` 后面 2–32 位字母/数字/汉字/_/-，至少含一个字母或汉字，且不是色值，
+ *  规则与 Rust 侧 `tag_cleanup::is_valid_hashtag_tag` 一致。类型标签已停用（类型走 `@` 筛选）。 */
+export function generateTags(content: string, _settings: AppSettings): string[] {
+  return Array.from(content.matchAll(/#([\p{L}\p{N}_-]{2,32})(?![\p{L}\p{N}_-])/gu), (match) => match[1]).filter(
+    (tag) => /\p{L}/u.test(tag) && !/^[0-9a-f]{3,4}$|^[0-9a-f]{6}$|^[0-9a-f]{8}$/iu.test(tag),
+  );
+}
 
 export function createClip(content: string, settings: AppSettings): ClipItem {  const now = Date.now();  const analysis = analyzeContent(content);  const kind = detectKind(content);  const payloadKind = kind === "attachment" ? (analysis.attachment?.isImage ? "image" : "file") : (kind as ClipPayloadKind);  const primaryFormat = getPrimaryFormatForPayload(payloadKind);  return {    id: makeId(),    content,    createdAt: now,    updatedAt: now,    lastSeenAt: now,    source: analysis.sourceName,    kind,    bucket: "history",    favorite: false,    tags: generateTags(content, settings),    copyCount: 0,    analysis,    payloadKind,    contentHash: `${payloadKind}:${now}`,    primaryFormat,    availableFormats: [primaryFormat],    representations: createTextRepresentation(content, payloadKind),    plainText: content,    searchText: content,    subKind: payloadKind === "html" ? "html" : null,    size: new Blob([content]).size,    fileTypes: null,    thumbnailPath: null,    imageFile: null,    isSensitive: false,    captureContext: {      schemaVersion: 1,      surface: "frontend",      sourceLabel: analysis.sourceName,      sourceApp: null,      applicationContext: null,      observedAt: now,      primaryFormat,      availableFormats: [primaryFormat],      environment: {},    },    metadata: {},    agentContext: {},  };}
 

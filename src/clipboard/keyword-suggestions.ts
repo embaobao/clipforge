@@ -25,6 +25,8 @@ const STOP_WORDS: Record<string, true> = {
   your: true, will: true, not: true, but: true, all: true, use: true, using: true,
 };
 
+// 联想有意只收常用汉字（基本区 + 扩展 A）。全文索引的切分范围更宽（src-tauri/src/clipboard/search_index.rs），
+// 假名、谚文等能搜到，但不建关键词索引。
 const HAN_CHAR = /[\u3400-\u4dbf\u4e00-\u9fff]/;
 const HAN_RUNS = /[\u3400-\u4dbf\u4e00-\u9fff]+/g;
 const STOP_CHAR_IN_RUN = new RegExp(`[${STOP_CHARS}]`, "g");

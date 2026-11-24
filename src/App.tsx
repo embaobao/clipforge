@@ -762,9 +762,9 @@ function ClipForgeApp() {
   }
 
   function applySearchSuggestion(suggestion: SearchSuggestion) {
-    // 关键词联想只是把输入补全成完整的词，过滤条件不动。
+    // 关键词联想只把输入末尾那一段补成完整的词（与 @/# 候选同一口径），前面的词和过滤条件都保留。
     if (suggestion.kind === "keyword") {
-      setQuery(suggestion.label);
+      setQuery(query.replace(/\S+\s*$/, `${suggestion.label} `));
       setSearchActive(true);
       window.setTimeout(() => searchRef.current?.focus(), 0);
       return;

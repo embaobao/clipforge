@@ -39,7 +39,7 @@ fn han_substring_and_english_prefix_are_searchable() {
 fn only_valid_hashtags_become_tags() {
     let _guard = isolated_data_dir("hashtag-validation");
     // 编号、色值不是话题；正文里有链接也不再加「链接」类型标签。
-    let clip = capture("看 https://example.com #待办 #3 #1a1a2e #周报", 1000);
+    let clip = capture("看 https://example.com #待办 #3 #1a1a2e #周报。", 1000);
     assert_eq!(clip.item.tags, vec!["待办".to_string(), "周报".to_string()]);
 }
 

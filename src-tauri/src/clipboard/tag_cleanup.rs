@@ -12,6 +12,9 @@ use std::collections::HashSet;
 /// 内置类型标签（小写比较）：只应作为 kind 过滤，不应占用标签列。
 const BUILTIN_TYPE_TAGS: [&str; 2] = ["链接", "markdown"];
 
+/// `#话题` 两端要剥掉的标点：半角常用标点 + 中文全角标点（「#周报。」这种句尾写法很常见）。
+pub const HASHTAG_TRIM_CHARS: &str = "#,.;:!?)]}\"'，。：；！？）】》」』、";
+
 /// `#话题` 自动标签是否合法：2–32 个字符，只含字母、数字、汉字、下划线、连字符，
 /// 至少含一个字母或汉字，且不是 3/4/6/8 位的十六进制色值（如 `#fff`、`#1a1a2e`）。
 pub fn is_valid_hashtag_tag(tag: &str) -> bool {

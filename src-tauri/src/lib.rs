@@ -5223,10 +5223,7 @@ fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
         for token in content.split_whitespace() {
             let tag = token
                 .trim_matches(|ch: char| {
-                    matches!(
-                        ch,
-                        '#' | ',' | '.' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\''
-                    )
+                    clipboard::tag_cleanup::HASHTAG_TRIM_CHARS.contains(ch)
                 })
                 .trim_start_matches('#');
             if token.starts_with('#') && clipboard::tag_cleanup::is_valid_hashtag_tag(tag) {
