@@ -22,7 +22,7 @@ export type SettingsSyncOptions = {
   /** URL ?lang= 固定语言（悬浮窗验证器/截图脚本）：启动读取配置后仍强制覆盖，不被持久化值冲掉。 */
   urlLanguage: AppSettings["language"] | null;
   mergeSettings: (value: Partial<AppSettings> | null | undefined) => AppSettings;
-  retagClips: (clips: ClipItem[], settings: AppSettings) => ClipItem[];
+  retagClips: (clips: ClipItem[]) => ClipItem[];
 };
 
 /** 设置同步：settings 每次变化同步 settingsRef/标题并防抖写盘；挂载时 read_user_settings 一次并应用。 */
@@ -84,7 +84,7 @@ export function useSettingsSync({
         settingsRef.current = next;
         setSettings(next);
         if (!isSettingsWindow) {
-          setClips((items) => retagClips(items, next).slice(0, next.maxStoredItems));
+          setClips((items) => retagClips(items).slice(0, next.maxStoredItems));
           logAppError("info", "onboarding: startup settings loaded", {
             onboardingCompleted: merged.onboardingCompleted,
             onboardingShownAt: merged.onboardingShownAt,

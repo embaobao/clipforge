@@ -351,13 +351,13 @@ export function TagRulesSection({
         <div className="mt-3 space-y-0.5 border-t border-black/[0.06] pt-3 dark:border-white/[0.08]">
           <p className="pb-1 text-[12.5px] text-muted-foreground">{tr("settings.tags.builtinHint")}</p>
           <ToggleSetting
-            checked={settings.builtinTagRules?.link ?? true}
+            checked={settings.builtinTagRules?.link ?? false}
             label={tr("settings.tags.builtinLink")}
             probeId="settings-control:builtinTagRules.link"
             onChange={(link) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, link } })}
           />
           <ToggleSetting
-            checked={settings.builtinTagRules?.markdown ?? true}
+            checked={settings.builtinTagRules?.markdown ?? false}
             label={tr("settings.tags.builtinMarkdown")}
             probeId="settings-control:builtinTagRules.markdown"
             onChange={(markdown) => updateSettings({ builtinTagRules: { ...settings.builtinTagRules, markdown } })}

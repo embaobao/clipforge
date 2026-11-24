@@ -65,7 +65,8 @@ import { peekViewClipEntry, saveViewScrollTop, setViewClipEntry } from "./clipbo
 import { usePanelKeyboard } from "./clipboard/use-panel-keyboard";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
 import { usePanelUiStore } from "./clipboard/panel-shared";
-import { buildBaseSearchSuggestions, buildSearchClipsRequest, buildSearchSuggestions, isFavoriteView, getBucketForView, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken, type SearchClipsRequest } from "./clipboard/clip-search";
+import { buildBaseSearchSuggestions, buildSearchClipsRequest, buildSearchSuggestions, getKeywordSource, isFavoriteView, getBucketForView, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken, type SearchClipsRequest } from "./clipboard/clip-search";
+import { buildKeywordIndex, type KeywordIndex } from "./clipboard/keyword-suggestions";
 import {
   createClip,
   normalizeClip,
@@ -637,9 +638,18 @@ function ClipForgeApp() {
     });
   }, [filteredClips]);
 
+  // 关键词索引按历史惰性构建：没人输入普通文字就不建；历史列表换了，下次用到时重建。
+  const keywordIndexFor = useMemo(() => {
+    let index: KeywordIndex | null = null;
+    return () => (index ??= buildKeywordIndex(clips.filter((clip) => !clip.deletedAt).map(getKeywordSource)));
+  }, [clips]);
   const searchSuggestions = useMemo(
-    () => buildSearchSuggestions(clips, query, baseSearchSuggestions),
-    [baseSearchSuggestions, clips, query],
+    () =>
+      buildSearchSuggestions(clips, query, baseSearchSuggestions, {
+        keywordIndex: keywordIndexFor,
+        pinyinEnabled: settings.pinyinSearchEnabled,
+      }),
+    [baseSearchSuggestions, clips, keywordIndexFor, query, settings.pinyinSearchEnabled],
   );
 
   // autocomplete 下拉的高亮项索引；建议列表变化（输入/过滤）时重置到首项，使 Enter 默认应用第一项。
@@ -752,6 +762,13 @@ function ClipForgeApp() {
   }
 
   function applySearchSuggestion(suggestion: SearchSuggestion) {
+    // 关键词联想只是把输入补全成完整的词，过滤条件不动。
+    if (suggestion.kind === "keyword") {
+      setQuery(suggestion.label);
+      setSearchActive(true);
+      window.setTimeout(() => searchRef.current?.focus(), 0);
+      return;
+    }
     setActiveTag(null);
     setFilterFavorite(false);
     setActiveTypeFilter("all");

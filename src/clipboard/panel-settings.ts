@@ -1,9 +1,9 @@
-/** 面板设置域（从 App.tsx 切出）：默认设置、宽松合并归一化、本地读取与按设置重打标签。
+/** 面板设置域（从 App.tsx 切出）：默认设置、宽松合并归一化、本地读取与按内容重算分析字段。
  *  边界：AppSettings/ClipItem 类型从 App 引入（type-only）；数值钳制 clampNumber 复用 clip-model。 */
 import type { ClipItem } from "../App";
 import type { AppSettings } from "../App";
 import { normalizeLanguagePreference } from "../i18n";
-import { analyzeContent, clampNumber, detectKind, generateTags, normalizeTagList } from "./clip-model";
+import { analyzeContent, clampNumber, detectKind, normalizeTagList } from "./clip-model";
 
 export const LEGACY_DEFAULT_SHORTCUT = "CommandOrControl+Shift+V";
 export const DEFAULT_SHORTCUT = "Control+V";
@@ -143,7 +143,9 @@ export function mergeSettings(value: Partial<AppSettings> | null | undefined): A
 }
 
 
-export function retagClips(clips: ClipItem[], settings: AppSettings) {
+/** 启动读到配置后重算列表的分析字段。标签只认数据库里存的：类型标签不再由前端补，
+ *  否则每条没有标签的记录都会重新冒出「文本」「链接」这类类型标签。 */
+export function retagClips(clips: ClipItem[]) {
   return clips.map((clip) => {
     const analysis = analyzeContent(clip.content);
     return {
@@ -151,7 +153,7 @@ export function retagClips(clips: ClipItem[], settings: AppSettings) {
       analysis,
       source: analysis.sourceName,
       kind: detectKind(clip.content),
-      tags: normalizeTagList(clip.tags.length ? clip.tags : generateTags(clip.content, settings)),
+      tags: normalizeTagList(clip.tags),
     };
   });
 }

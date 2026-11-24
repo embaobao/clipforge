@@ -1,10 +1,11 @@
 /** 搜索过滤域（从 App.tsx 切出）：haystack 构建、模糊匹配、拼音匹配、保存搜索规则与过滤 token 移除。
  *  纯函数域，不依赖 React；AppSettings/TagRule 类型从 App 引入（type-only，无运行时环）。 */
-import { match as matchPinyin } from "pinyin-pro";
+import { match as matchPinyin, pinyin as toPinyin } from "pinyin-pro";
 import type { TranslationKey } from "../i18n";
 import type { AppSettings, ClipItem, ClipPayloadKind, TagRule, ViewKey } from "../App";
 import { normalizeTagList, type ClipBucket, type ClipTypeFilter } from "./clip-model";
 import { getSearchSuggestionToken, matchesSearchSuggestionToken, normalizeSearch, type SearchQueryAst, type SearchSuggestion } from "../search-query";
+import { suggestKeywords, type KeywordIndex } from "./keyword-suggestions";
 
 /** 拼接条目全部可搜索字段为小写 haystack（内容/来源/分析/标签/来源应用/采集上下文）。 */
 export function getSearchHaystack(item: ClipItem) {
@@ -125,16 +126,29 @@ export function buildBaseSearchSuggestions(
   return [...base, ...saved];
 }
 
-/** 搜索建议下拉生成：尾部 token 以 @/# 触发（reui 式 combobox 模型），
- *  已补全的过滤器不再弹下拉避免残留；# 走标签计数下拉，@ 走基础建议的拼音过滤。 */
+/** 关键词联想的取材：标题、摘要、正文与标签一起进索引。 */
+export function getKeywordSource(item: ClipItem) {
+  return [item.analysis.title, item.analysis.summary, item.searchText || item.plainText || item.content, item.tags.join(" ")].join("\n");
+}
+
+/** 搜索建议下拉生成（reui 式 combobox 模型）：尾部 token 以 @/# 触发，已补全的过滤器不再弹下拉避免残留；
+ *  # 走标签计数下拉（出现多的在前），@ 走基础建议的拼音过滤；普通文字走关键词联想，索引由调用方按需提供。 */
 export function buildSearchSuggestions(
   clips: ClipItem[],
   query: string,
   baseSearchSuggestions: SearchSuggestion[],
+  options: { keywordIndex?: () => KeywordIndex; pinyinEnabled?: boolean } = {},
 ): SearchSuggestion[] {
   const token = query.trim();
   const commandToken = token.split(/\s+/).at(-1) ?? "";
-  if (!commandToken.startsWith("@") && !commandToken.startsWith("#")) return [];
+  if (!commandToken.startsWith("@") && !commandToken.startsWith("#")) {
+    if (!options.keywordIndex) return [];
+    return suggestKeywords(options.keywordIndex(), commandToken, {
+      syllablesOf: options.pinyinEnabled
+        ? (han) => toPinyin(han, { toneType: "none", type: "array" })
+        : undefined,
+    });
+  }
   const lowerToken = commandToken.toLowerCase();
   if (baseSearchSuggestions.some((s) => getSearchSuggestionToken(s).toLowerCase() === lowerToken)) return [];
   if (commandToken.startsWith("#")) {
@@ -151,6 +165,7 @@ export function buildSearchSuggestions(
     });
     return Array.from(tagCounts.entries())
       .filter(([key]) => !tagToken || key.includes(tagToken))
+      .sort(([, a], [, b]) => b.count - a.count || (a.label < b.label ? -1 : 1))
       .slice(0, 8)
       .map(([, value]) => ({ id: `tag:${value.label}`, label: value.label, hint: `${value.count}`, kind: "saved", tag: value.label }));
   }

@@ -4,7 +4,7 @@
 use super::payload::StandardClipboardPayload;
 
 /// 进程级 `CLIPFORGE_DATA_DIR` 是全局状态：持锁串行，并把数据目录指到临时目录。
-fn isolated_data_dir(tag: &str) -> std::sync::MutexGuard<'static, ()> {
+pub(super) fn isolated_data_dir(tag: &str) -> std::sync::MutexGuard<'static, ()> {
     let guard = crate::hard_delete_image_cleanup_tests::TEST_DATA_DIR_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -19,7 +19,7 @@ fn isolated_data_dir(tag: &str) -> std::sync::MutexGuard<'static, ()> {
     guard
 }
 
-fn capture(text: &str, observed_at: i64) -> crate::CaptureClipPayload {
+pub(super) fn capture(text: &str, observed_at: i64) -> crate::CaptureClipPayload {
     let payload = StandardClipboardPayload::Text(super::TextPayload {
         text: text.to_string(),
         html: None,
@@ -30,7 +30,7 @@ fn capture(text: &str, observed_at: i64) -> crate::CaptureClipPayload {
 }
 
 /// 带关键字的搜索只走全文索引（`FROM clip_fts JOIN clips`），索引缺失时结果里不会有这一行。
-fn search_ids(text: &str) -> Vec<String> {
+pub(super) fn search_ids(text: &str) -> Vec<String> {
     crate::search_clip_records(crate::SearchClipsRequest {
         text: Some(text.to_string()),
         bucket: None,

@@ -48,6 +48,7 @@ use mcp::{
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
 use clipboard::cleanup::CleanupClipPayload;
+use clipboard::search_index::{fts_query, upsert_fts};
 use settings_service::{
     current_global_shortcut_value, current_native_locale, desired_launch_at_login,
     get_clipforge_config_path, get_clipforge_settings, read_user_settings, settings_get_public,
@@ -1475,8 +1476,7 @@ fn capture_clip_payload_with_options(
                 "clipboard-monitor",
                 &format!(
                     "revived clip is missing from search index: id={}, error={}",
-                    id,
-                    error
+                    id, error
                 ),
             );
         }
@@ -4982,12 +4982,13 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             updated_at INTEGER NOT NULL,
             FOREIGN KEY(clip_id) REFERENCES clips(id) ON DELETE CASCADE
         );
-        PRAGMA user_version = 2;
         ",
     )
     .map_err(|error| error.to_string())?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_clips_pinned_recent ON clips(pinned DESC, last_seen_at DESC)", [])
         .map_err(|error| error.to_string())?;
+    // 结构版本 2 → 3（存量标签清理 + 全文索引逐字切分）放在 DDL 之后：先保证表都在，再迁移数据。
+    clipboard::search_index::upgrade_schema(conn, version)?;
     Ok(())
 }
 
@@ -5093,19 +5094,24 @@ fn should_capture_application_context() -> bool {
         .unwrap_or(true)
 }
 
-/// 内置标签规则开关（详情页提案 §5.4）：链接/Markdown/#话题 三条内置规则可在设置页显式关闭；
-/// 读 settings.builtinTagRules，缺省全开（旧配置无此键）。#多行 规则已按定稿删除。
+/// 内置标签规则开关（详情页提案 §5.4）：链接/Markdown/#话题 三条内置规则可在设置页显式开关；
+/// 读 settings.builtinTagRules，缺省：链接、Markdown 关（类型标签只走 kind 过滤），#话题 开（只收合法话题）。
+/// 已经把 true 写进配置的安装保持原样（分不清是显式设置还是旧默认值），需要在设置页手动关。
 fn builtin_tag_rules_enabled() -> (bool, bool, bool) {
     let raw = read_user_settings()
         .ok()
         .and_then(|payload| payload.settings.get("builtinTagRules").cloned());
-    let value = |key: &str| -> bool {
+    let value = |key: &str, default: bool| -> bool {
         raw.as_ref()
             .and_then(|rules| rules.get(key))
             .and_then(Value::as_bool)
-            .unwrap_or(true)
+            .unwrap_or(default)
     };
-    (value("link"), value("markdown"), value("hashtag"))
+    (
+        value("link", false),
+        value("markdown", false),
+        value("hashtag", true),
+    )
 }
 
 fn make_capture_context(
@@ -5223,31 +5229,12 @@ fn default_tags(analysis: &ClipAnalysisPayload, content: &str) -> Vec<String> {
                     )
                 })
                 .trim_start_matches('#');
-            if token.starts_with('#') && !tag.is_empty() {
+            if token.starts_with('#') && clipboard::tag_cleanup::is_valid_hashtag_tag(tag) {
                 tags.push(tag.to_string());
             }
         }
     }
     tags
-}
-
-fn fts_query(text: &str) -> String {
-    text.split_whitespace()
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn upsert_fts(conn: &Connection, id: &str) -> Result<(), String> {
-    conn.execute("DELETE FROM clip_fts WHERE id = ?1", params![id])
-        .map_err(|error| error.to_string())?;
-    conn.execute(
-        "INSERT INTO clip_fts(id, content, plain_text, search_text, title, summary, tags)
-         SELECT id, content, plain_text, COALESCE(search_text, plain_text), title, summary, tags FROM clips WHERE id = ?1 AND deleted_at IS NULL",
-        params![id],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 /** clips 表全列 → ClipItemPayload 的统一行映射(search_clip_records 与 load_clip 共用)。

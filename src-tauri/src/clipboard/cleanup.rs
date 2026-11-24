@@ -173,7 +173,7 @@ mod tests {
             ("new-b", 6, 0, 0),
         ] {
             insert(&conn, id, last_seen_at, favorite, pinned, None);
-            crate::upsert_fts(&conn, id).expect("index clip");
+            crate::clipboard::search_index::upsert_fts(&conn, id).expect("index clip");
         }
 
         // 6 条有效、上限 2：超额 4。收藏与置顶豁免，所以裁掉的是最旧的 4 条非保护条目，

@@ -4,9 +4,16 @@ pub mod detect;
 pub mod ingest;
 pub mod payload;
 pub mod read;
+pub mod search_index;
 pub mod storage;
+pub mod tag_cleanup;
 pub mod watcher;
 pub mod write;
+
+/// 回归：汉字部分词可搜、中文标签可搜、结构升级一次性清理标签并重建索引。
+#[cfg(test)]
+#[path = "search_index_tests.rs"]
+mod search_index_tests;
 
 pub use detect::detect_text;
 pub use ingest::build_clipboard_draft;

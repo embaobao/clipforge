@@ -260,7 +260,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fuzzySearchEnabled: true,
   pinyinSearchEnabled: true,
   tagMode: "rules",
-  builtinTagRules: { link: true, markdown: true, hashtag: true },
+  builtinTagRules: { link: false, markdown: false, hashtag: true },
   tagRules: [
     { id: "r1", label: "GitHub", query: "github.com gh repo pull request" },
     { id: "r2", label: "GitLab", query: "gitlab.com merge request" },
@@ -302,7 +302,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings> | Record<str
     ...DEFAULT_SETTINGS,
     ...partial,
     language: normalizeLanguagePreference(partial.language),
-    // 内置规则开关嵌套合并：旧配置缺键时逐项回落默认（全开）。
+    // 内置规则开关嵌套合并：旧配置缺键时逐项回落默认（链接、Markdown 关，#话题 开）。
     builtinTagRules: { ...DEFAULT_SETTINGS.builtinTagRules, ...(partial.builtinTagRules ?? {}) },
   };
 }

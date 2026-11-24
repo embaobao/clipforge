@@ -18,7 +18,8 @@ export type SearchSuggestion =
   | { id: string; label: string; hint: string; kind: "all"; typeFilter: "all" }
   | { id: string; label: string; hint: string; kind: "favorite" }
   | { id: string; label: string; hint: string; kind: "type"; typeFilter: SearchClipPayloadKind }
-  | { id: string; label: string; hint: string; kind: "saved"; tag: string };
+  | { id: string; label: string; hint: string; kind: "saved"; tag: string }
+  | { id: string; label: string; hint: string; kind: "keyword" };
 
 export type SearchQueryAst = {
   text: string;
@@ -70,6 +71,7 @@ export function normalizeTagName(value: string): string | null {
 export function getSearchSuggestionToken(suggestion: SearchSuggestion) {
   if (suggestion.kind === "all") return "@全部";
   if (suggestion.kind === "favorite") return "@收藏";
+  if (suggestion.kind === "keyword") return suggestion.label;
   if (suggestion.kind === "saved") return `@${suggestion.label}`;
   const tokenMap: Record<SearchClipPayloadKind, string> = {
     text: "@text:",
@@ -92,6 +94,7 @@ export function getSearchSuggestionAliases(suggestion: SearchSuggestion) {
   const label = suggestion.label.toLowerCase();
   if (suggestion.kind === "all") return [label, "all", "全部", "全部内容"];
   if (suggestion.kind === "favorite") return [label, "fav", "favorite", "favorites", "star", "收藏"];
+  if (suggestion.kind === "keyword") return [label];
   if (suggestion.kind === "saved") return [label, suggestion.tag.toLowerCase()];
   const aliasMap: Record<SearchClipPayloadKind, string[]> = {
     text: ["text", "txt", "文本"],
