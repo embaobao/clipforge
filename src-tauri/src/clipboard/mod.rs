@@ -1,5 +1,7 @@
 pub mod detect;
+pub mod capture_worker;
 pub mod ingest;
+pub mod cleanup;
 pub mod payload;
 pub mod read;
 pub mod storage;

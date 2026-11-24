@@ -47,6 +47,7 @@ use mcp::{
 };
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
+use clipboard::cleanup::CleanupClipPayload;
 use settings_service::{
     current_global_shortcut_value, current_native_locale, desired_launch_at_login,
     get_clipforge_config_path, get_clipforge_settings, read_user_settings, settings_get_public,
@@ -501,15 +502,6 @@ struct AccessibilityDiagnosticsPayload {
 struct DeleteClipPayload {
     deleted_ids: Vec<String>,
     deleted_at: i64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CleanupClipPayload {
-    hard_deleted: i64,
-    retention_hard_deleted: i64,
-    overflow_hard_deleted: i64,
-    ran_at: i64,
 }
 
 #[derive(Serialize)]
@@ -3245,6 +3237,8 @@ fn maybe_open_onboarding_on_startup<R: tauri::Runtime>(app: tauri::AppHandle<R>)
     });
 }
 
+/// 保留策略清理：回收站过期硬删 + 超出「保留条数上限」的部分移入回收站（可恢复）。
+/// 上限钳制在 50–5000；收藏与置顶条目不参与裁剪，详见 `clipboard::cleanup`。
 #[tauri::command]
 fn cleanup_clip_records(
     retention_days: i64,
@@ -3253,56 +3247,12 @@ fn cleanup_clip_records(
     let conn = open_clip_db()?;
     init_schema(&conn)?;
     let ran_at = now_millis()?;
-    let retention_ms = retention_days.max(1) * 24 * 60 * 60 * 1000;
-    let cutoff = ran_at - retention_ms;
-    let retention_hard_deleted = conn
-        .execute(
-            "DELETE FROM clips WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
-            params![cutoff],
-        )
-        .map_err(|error| error.to_string())? as i64;
-    let max_active_items = max_active_items.unwrap_or(500).clamp(50, 5000);
-    let active_count = conn
-        .query_row(
-            "SELECT COUNT(*) FROM clips WHERE deleted_at IS NULL",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(|error| error.to_string())?;
-    let overflow = (active_count - max_active_items).max(0);
-    let mut overflow_ids = Vec::new();
-    if overflow > 0 {
-        let mut stmt = conn
-            .prepare(
-                "SELECT id FROM clips
-                 WHERE deleted_at IS NULL AND favorite = 0
-                 ORDER BY last_seen_at ASC, created_at ASC
-                 LIMIT ?1",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = stmt
-            .query_map(params![overflow], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
-        for row in rows {
-            overflow_ids.push(row.map_err(|error| error.to_string())?);
-        }
-    }
-    for id in &overflow_ids {
-        conn.execute("DELETE FROM clips WHERE id = ?1", params![id])
-            .map_err(|error| error.to_string())?;
-    }
-    let overflow_hard_deleted = overflow_ids.len() as i64;
-    conn.execute(
-        "DELETE FROM clip_fts WHERE id NOT IN (SELECT id FROM clips WHERE deleted_at IS NULL)",
-        [],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(CleanupClipPayload {
-        hard_deleted: retention_hard_deleted + overflow_hard_deleted,
-        retention_hard_deleted,
-        overflow_hard_deleted,
+    clipboard::cleanup::run_clip_cleanup(
+        &conn,
         ran_at,
-    })
+        retention_days,
+        max_active_items.unwrap_or(500).clamp(50, 5000),
+    )
 }
 
 #[tauri::command]

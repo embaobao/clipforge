@@ -1,4 +1,6 @@
+use super::capture_worker::{self, CaptureJob, CAPTURE_QUEUE_CAPACITY};
 use clipboard_rs::{ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext};
+use std::sync::mpsc::{self, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Runtime};
@@ -20,11 +22,25 @@ where
 
     start_log_maintenance_thread();
 
+    // 采集工作线程先于轮询线程启动：轮询回调只做「读板 + 指纹 + 入队」，
+    // 设置过滤、入库、应用上下文与事件推送在工作线程按复制顺序执行。
+    // 线程起不来时接收端随闭包丢弃，入队会退回任务，轮询线程退回内联采集。
+    let (capture_tx, capture_rx) = mpsc::sync_channel(CAPTURE_QUEUE_CAPACITY);
+    let worker_app_handle = app_handle.clone();
+    if let Err(error) = capture_worker::spawn(capture_rx, move |job| {
+        process_capture_job(&worker_app_handle, job)
+    }) {
+        crate::log_to_file(
+            "error",
+            "clipboard-monitor",
+            &format!("spawn capture worker failed, capturing inline: {}", error),
+        );
+    }
     let spawn_result = thread::Builder::new()
         .name("clipforge-clipboard-watcher".to_string())
         .spawn(move || {
             let started_at = Instant::now();
-            let mut monitor = ClipboardMonitor::new(app_handle);
+            let mut monitor = ClipboardMonitor::new(app_handle, capture_tx);
             // 启动阶段的首次读板：显式标记，避免把「启动即采集」误读成用户复制事件。
             crate::log_to_file(
                 "info",
@@ -51,10 +67,11 @@ where
                 "info",
                 "clipboard-monitor",
                 &format!(
-                    "watcher started, mode={}, priming_detected={}, state_changes={}",
+                    "watcher started, mode={}, priming_detected={}, state_changes={}, queue={}",
                     watcher_mode(),
                     priming_detected,
-                    priming_state_changes
+                    priming_state_changes,
+                    CAPTURE_QUEUE_CAPACITY
                 ),
             );
             watcher.add_handler(monitor);
@@ -162,23 +179,31 @@ struct ClipboardMonitor<R: Runtime> {
     last_log_time: Instant,
     observe: ObserveState,
     detected_seq: u64,
+    /// 入队通道；队列满或 worker 退出时退回内联采集。
+    capture_tx: SyncSender<CaptureJob>,
+    /// 内联回退只警告一次，避免每条变化都刷同一条日志。
+    inline_fallback_logged: bool,
 }
 
 impl<R> ClipboardMonitor<R>
 where
     R: Runtime,
 {
-    fn new(app_handle: tauri::AppHandle<R>) -> Self {
+    fn new(app_handle: tauri::AppHandle<R>, capture_tx: SyncSender<CaptureJob>) -> Self {
         Self {
             app_handle,
+            capture_tx,
             last_fingerprint: String::new(),
             consecutive_errors: 0,
             last_log_time: Instant::now(),
             observe: ObserveState::new(),
             detected_seq: 0,
+            inline_fallback_logged: false,
         }
     }
 
+    /// 轮询线程侧：读板 + raw 指纹去重 + 入队。慢步骤（设置过滤、入库、事件推送）全部在
+    /// 工作线程的 `process_capture_job`，回调因此能在读板耗时内返回，不漏掉连发复制。
     fn process_current_clipboard(&mut self) {
         // 可观测性：把暂停 / 写回抑制 / 正常三种状态做成带序号的边沿日志，
         // 这样「静默期」能直接区分是被抑制还是监听没触发，不改动原有早退逻辑。
@@ -192,6 +217,7 @@ where
         }
         self.observe.observe_state("active");
 
+        let read_started_at = Instant::now();
         match super::read_clipboard_payload() {
             Ok(Some(raw_payload)) => {
                 // read 恢复证据：consecutive_errors 只用于日志节流，清零不触碰采集行为。
@@ -217,96 +243,42 @@ where
                 }
                 self.last_fingerprint = raw_fingerprint.clone();
 
-                let payload = match crate::apply_capture_settings(raw_payload) {
-                    Ok(Some(payload)) => payload,
-                    Ok(None) => {
-                        crate::log_to_file(
-                            "info",
-                            "clipboard-monitor",
-                            &format!(
-                                "capture skipped by settings, hash={}",
-                                &raw_fingerprint[..8]
-                            ),
-                        );
-                        return;
-                    }
-                    Err(error) => {
-                        crate::log_to_file(
-                            "warn",
-                            "clipboard-monitor",
-                            &format!(
-                                "capture skipped by settings error, hash={}, reason={}",
-                                &raw_fingerprint[..8],
-                                error
-                            ),
-                        );
-                        return;
-                    }
-                };
-
-                let fingerprint = crate::clipboard_payload_fingerprint(&payload);
-                if fingerprint.is_empty() {
-                    self.observe.observe_skip(
-                        "empty-fingerprint",
-                        &format!("raw={}", short_hash(&raw_fingerprint)),
-                    );
-                    return;
-                }
-
                 let now = crate::now_millis().unwrap_or(0);
                 self.detected_seq += 1;
-                // 同时打 raw / processed 指纹，让「设置改写 payload 导致指纹漂移」可被直接证伪或证实。
+                // processed 指纹要等设置过滤之后才有，由工作线程的 `recorded` 行给出；
+                // 这里落 raw 与读板耗时，排队不排队都能从日志判定。
                 crate::log_to_file(
                     "info",
                     "clipboard-monitor",
                     &format!(
-                        "detected change, seq={}, raw={}, processed={}, identical={}, ts={}",
+                        "detected change, seq={}, raw={}, read_ms={}, ts={}",
                         self.detected_seq,
                         short_hash(&raw_fingerprint),
-                        short_hash(&fingerprint),
-                        raw_fingerprint == fingerprint,
+                        read_started_at.elapsed().as_millis(),
                         now
                     ),
                 );
 
-                match crate::capture_clip_payload(payload, Some("Clipboard".to_string()), now) {
-                    Ok(payload) => {
-                        crate::log_to_file(
-                            "debug",
-                            "clipboard-monitor",
-                            &format!(
-                                "recorded: status={}, id={}",
-                                payload.status, payload.item.id
-                            ),
-                        );
-                        let payload_json = crate::ClipboardChangePayload {
-                            change_count: now,
-                            has_change: true,
-                            preview: Some(payload.item.plain_text.chars().take(40).collect()),
-                            preview_len: Some(payload.item.plain_text.chars().count() as i64),
-                        };
-                        if let Err(error) = self.app_handle.emit("clipboard-changed", payload_json)
-                        {
+                let job = CaptureJob {
+                    payload: raw_payload,
+                    raw_fingerprint,
+                    seq: self.detected_seq,
+                    detected_at: Instant::now(),
+                    observed_at: now,
+                };
+                match capture_worker::enqueue(&self.capture_tx, job) {
+                    Ok(()) => {}
+                    Err(job) => {
+                        // 队列满或 worker 已退出：退回内联采集，宁可阻塞轮询也不丢这一条。
+                        if !self.inline_fallback_logged {
+                            self.inline_fallback_logged = true;
                             crate::log_to_file(
                                 "warn",
                                 "clipboard-monitor",
-                                &format!("emit clipboard-changed failed: {}", error),
+                                "capture queue unavailable (full or worker exited), capturing inline",
                             );
                         }
-                    }
-                    Err(error) => {
-                        // 指纹在 capture 之前已提交且失败不回滚（P1 待修缺陷）。
-                        // 这里只把「指纹被保留」写进证据，不改动任何回滚行为。
-                        crate::log_to_file(
-                            "error",
-                            "clipboard-monitor",
-                            &format!(
-                                "capture failed: seq={}, processed={}, error={}, fingerprint_kept=true",
-                                self.detected_seq,
-                                short_hash(&fingerprint),
-                                error
-                            ),
-                        );
+                        process_capture_job(&self.app_handle, job);
                     }
                 }
             }
@@ -327,6 +299,114 @@ where
                     }
                 }
             }
+        }
+    }
+}
+
+/// 工作线程侧的采集：设置过滤 → 入库（含应用上下文）→ 事件推送。
+///
+/// 为什么搬出轮询线程：这些步骤同步执行实测每次 331–807ms，留在 clipboard-rs 回调里
+/// 会让回调期间的剪贴板变化读不到。失败时指纹不回滚（P1 待修缺陷），行为与搬出前一致。
+fn process_capture_job<R: Runtime>(app_handle: &tauri::AppHandle<R>, job: CaptureJob) {
+    let CaptureJob {
+        payload,
+        raw_fingerprint,
+        seq,
+        detected_at,
+        observed_at,
+    } = job;
+    let payload = match crate::apply_capture_settings(payload) {
+        Ok(Some(payload)) => payload,
+        Ok(None) => {
+            crate::log_to_file(
+                "info",
+                "clipboard-monitor",
+                &format!(
+                    "capture skipped by settings, seq={}, hash={}",
+                    seq,
+                    short_hash(&raw_fingerprint)
+                ),
+            );
+            return;
+        }
+        Err(error) => {
+            crate::log_to_file(
+                "warn",
+                "clipboard-monitor",
+                &format!(
+                    "capture skipped by settings error, seq={}, hash={}, reason={}",
+                    seq,
+                    short_hash(&raw_fingerprint),
+                    error
+                ),
+            );
+            return;
+        }
+    };
+    let fingerprint = crate::clipboard_payload_fingerprint(&payload);
+    if fingerprint.is_empty() {
+        crate::log_to_file(
+            "info",
+            "clipboard-monitor",
+            &format!(
+                "capture skipped, seq={}, hash={}, reason=empty-fingerprint",
+                seq,
+                short_hash(&raw_fingerprint)
+            ),
+        );
+        return;
+    }
+
+    // raw / processed 双指纹在此对照，验证「设置改写 payload 导致指纹漂移」；
+    // queue_wait_ms 与 capture_ms 把端到端延迟拆成排队与处理两段。
+    let capture_started_at = Instant::now();
+    let capture_result =
+        crate::capture_clip_payload(payload, Some("Clipboard".to_string()), observed_at);
+    let capture_ms = capture_started_at.elapsed().as_millis();
+    match capture_result {
+        Ok(payload) => {
+            crate::log_to_file(
+                "debug",
+                "clipboard-monitor",
+                &format!(
+                    "recorded: status={}, id={}, seq={}, raw={}, processed={}, identical={}, queue_wait_ms={}, capture_ms={}",
+                    payload.status,
+                    payload.item.id,
+                    seq,
+                    short_hash(&raw_fingerprint),
+                    short_hash(&fingerprint),
+                    raw_fingerprint == fingerprint,
+                    capture_started_at.duration_since(detected_at).as_millis(),
+                    capture_ms
+                ),
+            );
+            let payload_json = crate::ClipboardChangePayload {
+                change_count: observed_at,
+                has_change: true,
+                preview: Some(payload.item.plain_text.chars().take(40).collect()),
+                preview_len: Some(payload.item.plain_text.chars().count() as i64),
+            };
+            if let Err(error) = app_handle.emit("clipboard-changed", payload_json) {
+                crate::log_to_file(
+                    "warn",
+                    "clipboard-monitor",
+                    &format!("emit clipboard-changed failed: {}", error),
+                );
+            }
+        }
+        Err(error) => {
+            // 指纹在 capture 之前已提交且失败不回滚（P1 待修缺陷）。
+            // 这里只把「指纹被保留」写进证据，不改动任何回滚行为。
+            crate::log_to_file(
+                "error",
+                "clipboard-monitor",
+                &format!(
+                    "capture failed: seq={}, processed={}, error={}, fingerprint_kept=true",
+                    seq,
+                    short_hash(&fingerprint),
+                    error
+                ),
+            );
         }
     }
 }

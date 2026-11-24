@@ -321,21 +321,20 @@ export function SettingsApp() {
     }
   }
 
-  /** 立即执行一次清理：清空过期回收站并按「保留条数上限」截断历史，完成后刷新统计。 */
+  /** 立即执行一次清理：硬删过期回收站，并把超出「历史数量上限」的最旧历史移入回收站，完成后刷新统计。 */
   async function cleanupDataNow() {
     setDangerConfirmation(null);
     setDataActionStatus({ message: tr("settings.data.cleaning"), state: "pending" });
     setState((prev) => ({ ...prev, status: tr("settings.data.cleaning") }));
     try {
-      const result = await invoke<{ hardDeleted: number; retentionHardDeleted: number; overflowHardDeleted: number }>(
+      const result = await invoke<{ hardDeleted: number; overflowSoftDeleted: number }>(
         "cleanup_clip_records",
         { retentionDays: state.settings.softDeletedRetentionDays, maxActiveItems: state.settings.maxStoredItems },
       );
       await refreshDataStats();
       const message = tr("settings.data.cleaned", {
-        count: result.hardDeleted,
-        retention: result.retentionHardDeleted,
-        overflow: result.overflowHardDeleted,
+        hardDeleted: result.hardDeleted,
+        trashed: result.overflowSoftDeleted,
       });
       setDataActionStatus({ message, state: "good" });
       setState((prev) => ({ ...prev, status: message }));

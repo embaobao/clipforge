@@ -12,8 +12,7 @@ export const CLEANUP_STARTUP_DELAY_MS = 60_000;
 
 type CleanupClipPayload = {
   hardDeleted: number;
-  retentionHardDeleted: number;
-  overflowHardDeleted: number;
+  overflowSoftDeleted: number;
   ranAt: number;
 };
 
@@ -49,7 +48,7 @@ export function useCleanupScheduler({ isSettingsWindow, settings }: CleanupSched
         maxActiveItems: settings.maxStoredItems,
       })
         .then((payload) => {
-          if (payload.hardDeleted > 0) {
+          if (payload.hardDeleted > 0 || payload.overflowSoftDeleted > 0) {
             logAppError("info", "Cleanup completed", payload);
           }
         })

@@ -230,3 +230,24 @@
 | `file-image-clipboard-support`（82/83） | 监听去重、采集类型配置 | 不碰 |
 | `clipboard-interaction-repair`（0/10，11-05 新建） | 详情页/多选八项 | 与监听无关，不重叠 |
 | `codebase-modularity-refactor`（25/31） | Phase 6 lib.rs window/log/tray 拆分未完成 | **不纳入本提案**（盟哥本轮问及，已单独答复） |
+
+## 10. 2026-11-24 追加设计：容量硬删与采集阻塞
+
+### 10.1 证据
+
+- 日志：143 次 `detected change` 对应 143 次 `recorded`，`capture failed` 0 次；单次采集耗时 min 331 / p50 502 / max 807 ms。
+- 实库：2026-11-20 18:22:58 `Cleanup completed` 之前创建的行恰好 500 条 = `maxStoredItems`；最早非收藏行 `last_seen_at` 为 11-16，50 条收藏行早至 07-14。
+- 代码：`watcher.rs` 轮询回调内联执行 `capture_clip_payload`（osascript 500 ms 预算 + 来源图标 + 入库）；`clipboard-rs` 的 macOS 120 ms 轮询循环串行回调，没有队列。`cleanup_clip_records` 超限走物理删除。
+
+### 10.2 设计
+
+| 问题 | 设计 | 不变的约束 |
+|---|---|---|
+| 容量超限硬删 | `clipboard::cleanup::run_clip_cleanup` 单事务：先硬删过期回收站行，再把超出上限的最旧非收藏、未置顶行写 `deleted_at` 移入回收站，最后同步清理全文索引；命令返回 `{ hard_deleted, overflow_soft_deleted, ran_at }` | 过期回收站硬删语义不变；豁免行多于上限时不裁剪；schema 不变 |
+| 采集阻塞轮询线程 | 回调内只读板 + 计算指纹，构造 `CaptureJob` 投递到 `sync_channel(64)`；`clipforge-capture-worker` 单线程串行执行设置过滤 → `capture_clip_payload` → emit；投递失败（满或关闭）退回内联采集并限流告警 | 指纹去重算法、抑制/暂停判定、emit 载荷、入库路径均不变；队列满时不丢任务 |
+
+### 10.3 风险与回滚
+
+- 顺序：单工作线程串行处理，任务按入队顺序入库；`detected change` 与 `recorded` 两条日志相差一个采集耗时（≤ 1 s），取证时按 `seq` 对齐，不按时间。
+- 背压：队列容量 64，溢出退回内联（等同修复前行为），不丢数据。
+- 回滚：revert 对应提交，无 schema 变更、无数据迁移。
