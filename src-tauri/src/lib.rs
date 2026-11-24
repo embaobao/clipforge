@@ -1467,6 +1467,19 @@ fn capture_clip_payload_with_options(
             ],
         )
         .map_err(|error| error.to_string())?;
+        // 被软删的行在删除时已移出全文索引（soft_delete_clip_records），复活后必须重新入索引，
+        // 否则列表里看得到、文本搜索永远搜不到。入索引失败只记日志：行已经复活，不能因此丢掉这次采集结果。
+        if let Err(error) = upsert_fts(&conn, &id) {
+            log_to_file(
+                "warn",
+                "clipboard-monitor",
+                &format!(
+                    "revived clip is missing from search index: id={}, error={}",
+                    id,
+                    error
+                ),
+            );
+        }
         let item = load_clip(&conn, &id)?;
         if let Some(application_context) = delayed_application_context {
             context_collectors::schedule_delayed_collection(id.clone(), application_context);

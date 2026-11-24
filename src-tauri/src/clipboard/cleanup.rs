@@ -183,7 +183,11 @@ mod tests {
         assert_eq!(payload.overflow_soft_deleted, 4);
         assert_eq!(payload.hard_deleted, 0);
         for trashed in ["old-a", "old-b", "new-a", "new-b"] {
-            assert_eq!(deleted_at(&conn, trashed), Some(NOW), "{trashed} must be in trash");
+            assert_eq!(
+                deleted_at(&conn, trashed),
+                Some(NOW),
+                "{trashed} must be in trash"
+            );
         }
         for spared in ["fav-old", "pinned-old"] {
             assert_eq!(deleted_at(&conn, spared), None, "{spared} must stay active");

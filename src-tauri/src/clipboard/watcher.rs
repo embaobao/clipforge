@@ -181,8 +181,9 @@ struct ClipboardMonitor<R: Runtime> {
     detected_seq: u64,
     /// 入队通道；队列满或 worker 退出时退回内联采集。
     capture_tx: SyncSender<CaptureJob>,
-    /// 内联回退只警告一次，避免每条变化都刷同一条日志。
-    inline_fallback_logged: bool,
+    /// 内联回退最近一次告警的时刻：每分钟最多告警一次，队列长期满时不刷屏，
+    /// 也不会让后出现的另一种故障（worker 退出）被首次告警吞掉。
+    inline_fallback_logged_at: Option<Instant>,
 }
 
 impl<R> ClipboardMonitor<R>
@@ -198,7 +199,7 @@ where
             last_log_time: Instant::now(),
             observe: ObserveState::new(),
             detected_seq: 0,
-            inline_fallback_logged: false,
+            inline_fallback_logged_at: None,
         }
     }
 
@@ -270,8 +271,11 @@ where
                     Ok(()) => {}
                     Err(job) => {
                         // 队列满或 worker 已退出：退回内联采集，宁可阻塞轮询也不丢这一条。
-                        if !self.inline_fallback_logged {
-                            self.inline_fallback_logged = true;
+                        let silent = self
+                            .inline_fallback_logged_at
+                            .is_some_and(|at| at.elapsed() < Duration::from_secs(60));
+                        if !silent {
+                            self.inline_fallback_logged_at = Some(Instant::now());
                             crate::log_to_file(
                                 "warn",
                                 "clipboard-monitor",

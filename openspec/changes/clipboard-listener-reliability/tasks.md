@@ -70,11 +70,13 @@
 
 > **2026-11-24 实现登记（不代勾 checkbox）**：触发 = 盟哥「现在监听剪切板总是丢数据 监听不到」。只读取证结论：**监听没有漏采**——稳定版日志 143 次 `detected change` 对应 143 次 `recorded`，`capture failed` 0 次；已发生的数据丢失来自下面两处，均已修。
 > - **容量硬删（已丢数据的直接原因）**：`cleanup_clip_records` 把超出 `maxStoredItems`（500）的最旧非收藏行**物理删除**，置顶行不豁免、不可恢复。实库证据：2026-11-20 18:22:58（日志 `Cleanup completed`）之前创建的行恰好 500 条，最早非收藏行止于 11-16，而 50 条收藏行早至 07-14。修复：超出上限的最旧行改为移入回收站（写 `deleted_at`），收藏/置顶行豁免；逻辑下沉到 `src-tauri/src/clipboard/cleanup.rs` 的 `run_clip_cleanup`，单事务；返回字段 `overflowHardDeleted` 改为 `overflowSoftDeleted`，设置页文案与定时清理调度同步。
-> - **采集内联阻塞（会丢连发复制）**：`watcher.rs` 轮询回调内联执行 osascript（500 ms 预算）+ 来源图标 + 入库，实测单次 331–807 ms（p50 502 ms）；阻塞期间 macOS 120 ms 轮询循环没有队列，两次轮询之间剪贴板变化多次时中间内容读不到。修复：回调只读板 + 算指纹并投递到容量 64 的有界队列，由单工作线程 `clipforge-capture-worker` 采集入库；队列满或工作线程退出时退回内联采集并只告警一次。去重指纹、抑制/暂停判定、emit 载荷、DB schema 均未变。
-> - 证据：`cargo test --lib` 74 passed（新增 `capture_worker.rs` 3 例：入队不等待工作线程且保持顺序、工作线程退出时退回任务、队列满时退回任务；`cleanup.rs` 3 例：超限的最旧非收藏/非置顶行进回收站、过期回收站硬删、未超限不动）。`pnpm test:unit`、`pnpm build:web` 通过。隔离数据目录（`CLIPFORGE_DATA_DIR`）实跑 debug 二进制：`detected change` 与 `watcher started` 同一毫秒（tsMs 1795514526491），`recorded … capture_ms=514` 在 515 ms 后由工作线程完成，隔离库 1 行。
+> - **采集内联阻塞（会丢连发复制）**：`watcher.rs` 轮询回调内联执行 osascript（500 ms 预算）+ 来源图标 + 入库，实测单次 331–807 ms（p50 502 ms）；阻塞期间 macOS 120 ms 轮询循环没有队列，两次轮询之间剪贴板变化多次时中间内容读不到。修复：回调只读板 + 算指纹并投递到容量 64 的有界队列，由单工作线程 `clipforge-capture-worker` 采集入库；队列满或工作线程退出时退回内联采集，告警每分钟最多一次。去重指纹、抑制/暂停判定、emit 载荷、DB schema 均未变。
+> - 证据：`cargo test --lib` 75 passed（新增 `revive_tests.rs` 1 例：回收站内容再次复制后重新可搜；`capture_worker.rs` 3 例：入队不等待工作线程且保持顺序、工作线程退出时退回任务、队列满时退回任务；`cleanup.rs` 3 例：超限的最旧非收藏/非置顶行进回收站、过期回收站硬删、未超限不动）。`pnpm test:unit`、`pnpm build:web` 通过。隔离数据目录（`CLIPFORGE_DATA_DIR`）实跑 debug 二进制：`detected change` 与 `watcher started` 同一毫秒（tsMs 1795514526491），`recorded … capture_ms=514` 在 515 ms 后由工作线程完成，隔离库 1 行。
 > - 未验证：真实连发复制（要写系统剪贴板，待盟哥放行）；正式构建部署（待盟哥点头）。回滚：revert 本次提交即可，无 schema 变更、无数据迁移。设计见 `design.md` 第 10 节。
+> - **复审补修（2026-11-24）**：跨模型复审发现——被移入回收站的行已从全文索引移除，同内容再次复制走复活分支（`status=promoted`）却不重新入索引，表现为列表可见、文本搜索永远搜不到（手动删除后再复制的存量行为相同）。修复：复活分支补 `upsert_fts`，入索引失败只记告警、不丢这次采集结果；内联回退告警改为每分钟最多一次（原来队列满告警过一次后，工作线程退出就不再告警）。回归测试 `src-tauri/src/clipboard/revive_tests.rs`：去掉修复即失败（`left: []`），带修复通过。
 
 - [ ] 7.1 实机连发复制：120 ms 间隔连发 5 条不同文本 → 日志 5 条 `detected change` 与 5 条 `recorded` 按 `seq` 一一对应、无 `capture queue unavailable`（需写系统剪贴板，**执行前需盟哥点头**） -- 证据：
 - [ ] 7.2 实机容量上限：把「历史数量上限」调小触发清理 → 超限行出现在回收站且可恢复，收藏/置顶行不动 -- 证据：
 - [ ] 7.3 正式构建部署：`pnpm tauri build` 并覆盖 `/Applications/ClipForge.app` 后重跑 7.1（**执行前需盟哥点头**） -- 证据：
 - [ ] 7.4 来源应用慢采集（P1，另行排期）：osascript 500 ms 预算约 26% 超时，624 行里 164 行无 source app；改用原生 frontmostApplication 取应用名，osascript 只异步补扩展上下文 -- 证据：
+- [ ] 7.5 实机复活搜索：回收站里的内容再次复制 → 回到历史列表，且带关键字能搜到（随 7.1 一并验证） -- 证据：
