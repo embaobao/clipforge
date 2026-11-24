@@ -1,6 +1,6 @@
 # Tasks: clipboard-search-and-tag-quality
 
-> 状态（2026-11-24）：盟哥已确认实施（Plannotator 回复「开始」）。第 2–4 节代码已完成、门禁通过；正式版尚未更新（等 5.3 的部署确认）。
+> 状态（2026-11-24）：盟哥已确认实施（Plannotator 回复「开始」）并指示直接部署。第 2–4 节代码已完成、门禁通过，22:23 已部署到正式版（提交 d00d3d4）。面板走查 2.4 / 3.4 未做（部署时屏幕锁定，不向用户会话注入按键），等 5.4 验收归档。
 > 证据栏填计数 / 命令输出 / 截图路径；未跑项保持 `[ ]` 并写明原因，不代勾。
 
 ## 1. 取证（已完成，只读）
@@ -30,11 +30,11 @@
 - [x] 4.3 新增 `clipboard/tag_cleanup.rs`：一次性移除垃圾标签与自动类型标签，写入 `metadata.tags_retired`，附单测 -- 证据：`retired_tags_keep_hand_made_tags`、`schema_upgrade_retires_tags_and_rebuilds_index` 通过
 - [x] 4.4 迁移前用生产库副本预演 -- 证据：标签 181 → 8（`fff` ×2 的正文里是色值，一并移除；其余 8 条：聚合 2、token 2、fish、Github-token、AI、无用）；`tags_retired` 158 行 173 条 = 181 − 8
 - [x] 4.5 `#` 下拉按出现次数排序，同数按字典序 -- 证据：`src/clipboard/clip-search.ts:168`；未附单测（原因同 3.2），随 3.4 走查
-- [ ] 4.6 前端缺省值补测：未显式设置时，首次保存后的 `settings.json5` 里 `builtinTagRules` 不含显式 `true`（`settings-model.ts` 依赖运行时，现有纯函数门禁编译不了） -- 证据：未做，待部署后在正式环境读配置文件核验
+- [x] 4.6 前端缺省值补测：未显式设置时，首次保存后的 `settings.json5` 里 `builtinTagRules` 不含显式 `true`（`settings-model.ts` 依赖运行时，现有纯函数门禁编译不了） -- 证据：部署后 `settings.json5` 无 `builtinTagRules` 键（缺省生效）；用正式版二进制在隔离数据目录采集含链接文本，行上 tags=[周报]（无「链接」）
 
 ## 5. 验证与收尾
 
 - [x] 5.1 门禁：`pnpm build:web`、`pnpm test:unit`、`cd src-tauri && cargo check`、`cargo test --lib`、`openspec validate --all --strict` -- 证据：`✓ built in 4.28s`；`pnpm test:unit` 全部通过（文件行数、界面边界、MCP 分发 41 个工具、索引 98 个路径）；`Finished dev profile in 3.85s`；`84 passed; 0 failed`；`Totals: 43 passed, 0 failed (43 items)`
 - [x] 5.2 `docs/BUSINESS_INDEX.md` 同步搜索行、标签行、剪贴板引擎行，`pnpm locate --check-index` 通过 -- 证据：`[check-index] docs/BUSINESS_INDEX.md 引用的 98 个路径全部存在`
-- [ ] 5.3 `pnpm tauri build` 并部署到 /Applications（需盟哥点头；首次启动会一次性重建全文索引并清理标签） -- 证据：未跑，等盟哥确认
+- [x] 5.3 `pnpm tauri build` 并部署到 /Applications（需盟哥点头；首次启动会一次性重建全文索引并清理标签） -- 证据：盟哥回复「直接部署」；d00d3d4 构建 57s、签名校验通过；启动日志 `[schema-upgrade] schema upgraded 2 -> 3: retired tags rows=158, tags=173, reindexed=669`；正式库 user_version=3、fts rows=669=active；回滚备份 `/Users/embaobao/workspace/idea/clipforge/.work/ship/clipforge-before-deploy2-20261124-2222.sqlite`
 - [ ] 5.4 盟哥验收后归档 -- 证据：
