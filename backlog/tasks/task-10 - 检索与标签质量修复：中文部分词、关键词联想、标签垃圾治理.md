@@ -1,0 +1,30 @@
+---
+id: TASK-10
+title: 检索与标签质量修复：中文部分词、关键词联想、标签垃圾治理
+status: To Do
+assignee: []
+created_date: '2026-11-24 10:25'
+labels: []
+dependencies: []
+references:
+  - openspec/changes/clipboard-search-and-tag-quality/proposal.md
+priority: medium
+type: enhancement
+ordinal: 10000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+2026-11-24 用户反馈「检索很鸡肋 不会自动提示」「标签全是垃圾」。实测：汉字两字部分词在真实库上 0/183 命中（全文索引把整段汉字当成一个词）；输入普通文本没有任何提示；标签列 181 条里有 14 条是 #编号/色值/会议号之类的垃圾，157 条是自动打的「链接」「Markdown」类型标签。提案已提交 a3dcae4，等用户审阅通过后再实施，提案里的默认值变更（类型标签默认关闭）需要用户确认。
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 中文两字部分词（如「平台」在「插件化平台启动接线」中）能在主列表搜到，标点两侧不被当成同一个词
+- [ ] #2 英文输入 4 字母前缀能匹配以它开头的单词
+- [ ] #3 输入普通文本时下拉出现关键词联想（最多 6 条，含拼音），↑/↓/Enter 可选；@ 与 # 命令行为不变
+- [ ] #4 #数字、色值片段、会议号不再作为自动标签入库；链接与 Markdown 类型标签默认不再写入标签列
+- [ ] #5 存量垃圾标签一次性清理，被移除的标签记录在 metadata.tags_retired 可恢复；手打标签不受影响
+- [ ] #6 pnpm test:unit、pnpm build:web、cargo check、openspec validate --all --strict 通过
+<!-- AC:END -->
