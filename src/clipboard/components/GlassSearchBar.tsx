@@ -1,6 +1,6 @@
 /** 快速面板搜索栏：44px 玻璃搜索输入 + 激活过滤标签 + @/# 自动补全浮层（floating-ui portal）。 */
 import { Search, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { autoUpdate, flip, FloatingPortal, offset as floatingOffset, shift, useFloating } from "@floating-ui/react";
 import type { TranslationKey } from "../../i18n";
@@ -40,6 +40,9 @@ export function GlassSearchBar({
   suggestions,
   tr,
 }: GlassSearchBarProps) {
+  // 输入法组字期间输入框里是拼音字母，这时不弹下拉：否则每打一个汉字都会先闪一下候选，组字结束再变一次。
+  const [composing, setComposing] = useState(false);
+  const visibleSuggestions = composing ? [] : suggestions;
   return (
     <div className="flex w-full min-w-0 flex-col">
       <div className="flex h-11 min-w-0 items-center gap-3 px-3">
@@ -48,6 +51,8 @@ export function GlassSearchBar({
           aria-label={tr("main.search.aria")}
           autoComplete="off"
           className="h-full w-full min-w-0 bg-transparent text-[15px] text-foreground outline-none placeholder:text-muted-foreground"
+          onCompositionEnd={() => setComposing(false)}
+          onCompositionStart={() => setComposing(true)}
           onBlur={onBlur}
           onChange={(event) => onChange(event.currentTarget.value)}
           onFocus={onFocus}
@@ -84,14 +89,14 @@ export function GlassSearchBar({
           ))}
         </div>
       ) : null}
-      {suggestions.length ? (
+      {visibleSuggestions.length ? (
         <SearchAutocomplete
           activeIndex={activeSuggestionIndex}
           inputRef={inputRef}
           onApplySuggestion={onApplySuggestion}
           onSelectIndex={onSelectSuggestionIndex}
           parsedSearchCommand={parsedSearchCommand}
-          suggestions={suggestions}
+          suggestions={visibleSuggestions}
           tr={tr}
         />
       ) : null}
