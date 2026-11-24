@@ -1,10 +1,10 @@
 ---
 id: TASK-10
 title: 检索与标签质量修复：中文部分词、关键词联想、标签垃圾治理
-status: To Do
+status: In Progress
 assignee: []
 created_date: '2026-11-24 10:25'
-updated_date: '2026-11-24 11:06'
+updated_date: '2026-11-24 12:33'
 labels: []
 dependencies: []
 references:
@@ -29,3 +29,9 @@ ordinal: 10000
 - [ ] #5 pnpm test:unit、pnpm build:web、cargo check、openspec validate --all --strict 通过
 - [ ] #6 中文两字部分词（如「平台」在「插件化平台启动接线」中）能在主列表搜到；中文标签（如「聚合」）也能被全文搜索命中
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24：第 2–4 节代码已完成并提交（1de51e9、5ea9075、b9f23ca），门禁全过；正式版尚未更新，等盟哥定部署时机；面板走查因屏幕锁定未做。
+<!-- SECTION:NOTES:END -->
