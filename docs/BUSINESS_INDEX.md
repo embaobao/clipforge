@@ -2,7 +2,7 @@
 
 > 目标：Agent / 新人在 30 秒内定位「某个业务改哪里」。
 > 符号级定位用 `pnpm locate <关键词>`（支持中文，如 `pnpm locate 写回`、`pnpm locate 快捷键`）；本表维护「业务域 → 入口文件」。
-> 维护义务见 AGENTS.md「业务索引与快速定位」；索引防腐校验：`pnpm locate --check-index`（已挂入 `pnpm test:unit`）。
+> 维护义务见 AGENTS.md「业务索引与快速定位」；索引防腐校验：`pnpm locate --check-index`（已挂入 `pnpm test:unit`）。完整机器可校验映射见 `docs/AGENT_MAP.md`：新增/删除文件、command、工具、测试脚本或文档后跑 `pnpm docs:map`。
 
 ## 1. 窗口与 Surface
 

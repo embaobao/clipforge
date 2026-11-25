@@ -1,7 +1,5 @@
-// 单文件 ≤500 行门禁（codebase-modularity-refactor）
-// - 豁免清单内文件超 target 只 warn（提示还债，不阻断）
-// - 豁免清单外文件超 500 行 fail
-// 豁免清单：scripts/file-size-exemptions.json
+// 单文件行数门禁：非豁免文件 ≤500；豁免目标放宽到 800，超过 800 只提醒还债、不阻断。
+// 配置：scripts/file-size-exemptions.json（`limit` / `exemptLimit` / 每文件 `target`）。
 import fs from "node:fs";
 import path from "node:path";
 
@@ -9,6 +7,7 @@ const root = process.cwd();
 const configPath = path.join(root, "scripts/file-size-exemptions.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const LIMIT = config.limit ?? 500;
+const EXEMPT_LIMIT = config.exemptLimit ?? 800;
 const exemptMap = new Map(
   (config.exempt ?? []).map((entry) => [entry.path.replace(/\\/g, "/"), entry]),
 );
@@ -43,8 +42,9 @@ for (const { root: subRoot, exts } of SOURCE_ROOTS) {
     const lines = fs.readFileSync(file, "utf8").split("\n").length;
     const exempt = exemptMap.get(rel);
     if (exempt) {
-      if (lines > exempt.target) {
-        warnings.push(`${rel}: ${lines} 行 (豁免，目标 ${exempt.target}，track=${exempt.track})`);
+      const target = exempt.target ?? EXEMPT_LIMIT;
+      if (lines > target) {
+        warnings.push(`${rel}: ${lines} 行 (豁免，目标 ${target}，track=${exempt.track})`);
       }
     } else if (lines > LIMIT) {
       failures.push(`${rel}: ${lines} 行 > ${LIMIT}`);
@@ -64,6 +64,6 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `File size verification passed (limit=${LIMIT}, 豁免 ${exemptMap.size} 个文件, ${warnings.length} 个还债提醒)`,
+    `File size verification passed (limit=${LIMIT}, exemptTarget=${EXEMPT_LIMIT}, 豁免 ${exemptMap.size} 个文件, ${warnings.length} 个还债提醒)`,
   );
 }

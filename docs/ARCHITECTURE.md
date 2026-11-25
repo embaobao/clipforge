@@ -1,272 +1,93 @@
 # 架构说明
 
-ClipForge 采用 **统一服务层 + 内置 MCP 常驻** 架构，分为四层：前端交互层、Tauri IPC 层、Service 层、数据与平台层。
+> 事实来源：当前源码与 [AGENT_MAP.md](./AGENT_MAP.md)（由 CodeGraph 生成并校验）。早期文档中的 `ClipboardService` / `WindowService` / `LogService` 类式 API 与 10 条 MCP 工具是历史规划，已不存在；本文按当前实现重写。
 
-当前 OpenSpec 主规范已经吸收：
+## 1. 进程与入口
 
-- `openspec/specs/agent-runtime/spec.md`
-- `openspec/specs/search-filters/spec.md`
+| 入口 | 作用 | 代码 |
+|---|---|---|
+| 主应用 `clipforge` | Tauri 主进程，面板 / 设置 / 引导窗口，全局快捷键与托盘 | `src-tauri/src/lib.rs`、`src-tauri/tauri.conf.json` |
+| MCP sidecar `clipforge --mcp` | stdio JSON-RPC，供外部 Agent 调用 41 条工具 | `src-tauri/src/mcp/` |
+| Web 开发入口 | 浏览器 mock 桥，不是生产入口 | `src/services/tauri-web-mock.ts` |
 
-历史完成提案统一保存在 `openspec/changes/archive/`，active change 的优先级和接手顺序见 `docs/PROPOSAL_ROADMAP.md`。
+前端是 React + TypeScript + Vite；Tauri command 通过 `src/services/clipboard.ts` 等封装 invoke。业务数据仍由 Rust command 和 SQLite 驱动，Zustand 只承载跨组件 UI 状态。
 
-```text
-┌─────────────────────────────────────────────────────────┐
-│                   React UI (前端交互层)                  │
-│  ┌─────────────┬─────────────┬─────────────────────┐   │
-│  │ 快速面板    │ 设置窗口     │ 虚拟列表 / 搜索      │   │
-│  └──────┬──────┴──────┬──────┴──────────┬──────────┘   │
-└─────────┼─────────────┼─────────────────┼──────────────┘
-          │             │                 │
-          ▼             ▼                 ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Tauri IPC 层                           │
-│  ┌───────────────────────┬─────────────────────────┐   │
-│  │  tauri::command       │  In-Process MCP Server   │   │
-│  │  (前端 invoke)        │  (JSON-RPC 进程内调用)    │   │
-│  └───────────┬───────────┴─────────────┬───────────┘   │
-└──────────────┼─────────────────────────┼───────────────┘
-               │                         │
-               ▼                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              Service Layer (统一服务层)                  │
-│  ┌─────────────┬─────────────┬─────────────────────┐   │
-│  │Clipboard    │   Window    │    Log / Settings   │   │
-│  │Service      │   Service   │    Service          │   │
-│  ├─ capture()  │ ├─ show()   │ ├─ append()         │   │
-│  ├─ search()   │ ├─ hide()   │ ├─ query()          │   │
-│  ├─ copy()     │ ├─ position │ └─ cleanup()        │   │
-│  ├─ update()   │ └─ ...      │                     │   │
-│  ├─ delete()   │             │                     │   │
-│  └─ ...        │             │                     │   │
-│  └─────────────┴─────────────┴─────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-          │             │                 │
-          ▼             ▼                 ▼
-┌─────────────────────────────────────────────────────────┐
-│              数据与平台层                                │
-│  ┌─────────────┬─────────────┬─────────────────────┐   │
-│  │ SQLite      │ NSPanel     │ 系统能力             │   │
-│  │ (WAL+FTS5)  │ (macOS)     │ • 剪贴板 API        │   │
-│  │             │ WebviewWin  │ • 全局快捷键        │   │
-│  │             │ (Windows)   │ • Accessibility     │   │
-│  └─────────────┴─────────────┴─────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-```
+| Surface | HTML 入口 | 前端根 | 主要目录 |
+|---|---|---|---|
+| 快速面板（主交互） | `index.html` | `src/main.tsx` → `src/App.tsx` | `src/clipboard/` |
+| 详情工作区 | `index.html`（内部路由） | `src/routes/workspace-router.tsx` | `src/workspace/` |
+| 设置 | `settings.html` | `src/settings-main.tsx` → `src/settings.tsx` | `src/settings/` |
+| 引导 | `onboarding.html` | `src/onboarding-main.tsx` → `src/onboarding/` |
 
-## 前端
+## 2. Rust 域模块
 
-前端使用 React + TypeScript + Vite。UI 不是营销页，而是工具型应用界面，重点是：
+当前实现是「thin command 壳 + 按域拆分的 Rust 模块」，不是类式 Service Layer。
 
-- 快速面板默认高密度。
-- 主列表使用虚拟滚动，避免历史记录变大后卡顿。
-- 搜索和类型 Tag 直接作用于主列表。
-- 设置窗口与快速面板分离，避免设置表单影响快捷唤起性能。
+| 域 | 入口 / 核心文件 | 职责 |
+|---|---|---|
+| command 注册 | `src-tauri/src/lib.rs` | setup、`generate_handler!`、窗口 / 面板 / 托盘 / 日志胶水；超长豁免文件，用 `pnpm locate <命令名>` 定位 |
+| 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听；`capture_worker.rs` 有界队列与工作线程；`ingest.rs` 入库；`read.rs` / `write.rs` 读取与写回；`storage.rs` 清理与回收站；`detect.rs` 与 `payload.rs` 检测/载荷；`search_index.rs` 汉字逐字 FTS 与 v3 升级重建；`tag_cleanup.rs` 话题标签校验 |
+| 设置服务 | `src-tauri/src/settings_service/` | 统一设置协议、原子写、写锁、redaction、快捷键与托盘同步、MCP 分发 |
+| Agent / pi SDK | `src-tauri/src/agent/` | provider 探测 / 健康检查 / 模型清单、run 状态机、事件流、上下文与 prompt 组装 |
+| MCP 运行时 | `src-tauri/src/mcp/` | `specs.rs` 定义 41 工具，`dispatch*.rs` 分发，`context.rs` 上下文快照，`envelope.rs` 响应封装 |
+| OCR | `src-tauri/src/ocr/` | 系统 Vision 内置引擎 + 端点探测 / 提取 / 缓存 |
+| 上下文采集 | `src-tauri/src/context_collectors.rs`、`context_collector_runtime.rs`、`context_collector_system.rs`、`application_context.rs` | Agent 上下文收集、前台应用信息聚合 |
 
-Zustand 只用于跨组件 UI 状态，例如当前预览项、关闭动画状态。业务数据仍由 Tauri command 和本地数据库驱动。
+`src-tauri/src/lib.rs` 仍是超长豁免文件；拆分计划见 `openspec/changes/codebase-modularity-refactor/`。新增模块时要同步更新 `docs/BUSINESS_INDEX.md` 与 `docs/AGENT_MAP.md`。
 
-## Service Layer（统一服务层）
+## 3. MCP 边界
 
-Service Layer 是业务逻辑的唯一实现位置，Tauri command 和 MCP handler 都调用同一套服务：
+- 工具规格：`src-tauri/src/mcp/specs.rs`，41 条固定工具；新增或删除工具必须同步更新 dispatch 与 golden 测试。
+- 分发：`mcp/dispatch.rs` 及按域拆出的 `dispatch_write.rs`、`dispatch_merge.rs`、`dispatch_agent_editor.rs`。
+- 响应信封：成功结果含 `traceId`、`businessChain`、`permissionDecision`；失败结果含 `error.data.hint`（见 `mcp/envelope.rs`）。
+- 能力边界：只读工具不需要逐次确认；写库按工具声明要求授权；内容写回与危险操作保持逐次确认。
+- 与 Tauri command 共用 Rust 域能力，但不共用 UI 状态；宿主自有工具不计入前端 L2 同源重复实现计数。
 
-### ClipboardService
+## 4. 数据层
 
-| 方法 | 功能 | 参数 | 返回 |
-|------|------|------|------|
-| `capture` | 采集剪贴板内容入库 | `content: &str`, `source_label: Option<&str>` | `Result<ClipItem>` |
-| `search` | 搜索剪贴板历史 | `query: &str`, `bucket: Option<&str>`, `limit: i64` | `Result<Vec<ClipItem>>` |
-| `copy` | 写回剪贴板 | `id: &str` | `Result<()>` |
-| `update` | 更新条目属性 | `id: &str`, `updates: ClipUpdate` | `Result<ClipItem>` |
-| `delete` | 软删除条目 | `ids: &[String]` | `Result<()>` |
+- SQLite：`WAL` + `synchronous=NORMAL`，FTS5；schema `user_version = 3`。
+- 剪贴板库升级到 v3 时重建全文索引：汉字按单字切分，查询侧同规则并给末词加前缀匹配；English 保持 unicode61 分片。
+- `clips` 表是主数据；软删除进回收站，超数量上限移入回收站而不是硬删；定期清理只硬删过期回收站。
+- 标签：合法 `#话题` 才自动入库；类型标签默认不写标签列，按 `kind` 过滤；存量垃圾标签在 v3 升级时移除并记入 `metadata.tags_retired`。
+- 采集去重按 `content_hash`；命中软删除条目走 promote（复活并重新入全文索引）。
 
-### WindowService
+## 5. 前端交互与热路径
 
-| 方法 | 功能 | 参数 | 返回 |
-|------|------|------|------|
-| `show_panel` | 显示面板并定位 | `strategy: PositionStrategy`, `source: &str` | `Result<()>` |
-| `hide_panel` | 隐藏面板并保存位置 | - | `Result<()>` |
-| `toggle_panel` | 切换面板显示状态 | `source: &str` | `Result<()>` |
-| `position_panel` | 仅定位面板 | `strategy: PositionStrategy` | `Result<()>` |
+- 主列表使用虚拟滚动；搜索 / 类型 / 收藏过滤直接作用于主列表。
+- 搜索请求走 `src/clipboard/clip-search.ts` 构建，Rust 侧 `search_clip_records` 按 `last_seen_at DESC` 返回；`@` 命令、`#` 标签与关键词联想在 `src/search-query.ts`、`src/clipboard/keyword-suggestions.ts`。
+- 关键词索引按最近历史惰性构建；拼音开关来自设置。下拉键盘处理在 `src/clipboard/use-panel-keyboard.ts`，输入法组字期间不弹出候选。
+- 面板打开前同步预采集，避免首帧旧列表；采集工作线程有界队列满时回退内联并记录限频告警。
+- 失焦 60ms 后检查 `PANEL_PINNED`，未固定才走原生淡出隐藏；淡出入口有幂等守卫与代际号，防止快捷键与失焦互相抢占。
+- `pnpm test:perf-panel` 的 show/hide 端到端阈值是 180ms；该探针依赖 CGEvent 全局热键，锁屏时必然超时。
 
-### LogService
+## 6. 面板定位
 
-| 方法 | 功能 | 参数 | 返回 |
-|------|------|------|------|
-| `append` | 写入日志 | `level: &str`, `module: &str`, `message: &str` | `Result<()>` |
-| `query` | 查询日志 | `text: Option<&str>`, `level: Option<&str>`, `limit: i64` | `Result<Vec<LogEntry>>` |
-| `cleanup` | 清理日志（超过 10MB） | - | `Result<String>` |
+所有定位计算统一在全局逻辑点空间（主屏左上原点），避免 Retina / 混合 DPI 偏移：
 
-### SettingsService（规划中）
+- 光标：macOS 用 `CGEvent.location()` 取逻辑坐标。
+- 选屏：`monitor_for_logical_point` 用工作区逻辑边界命中，不以 `current_monitor()` 回退（面板隐藏时会指向上次所在屏）。
+- `open_panel` 同步定位后显示；显示后不再用焦点框位置异步覆盖定位（见 `focus-prefetch-idle-removal` 提案）。
+- 焦点框位置只在粘贴目标快照 `snapshot_paste_target_bounds` 中按需读取，写独立 `PASTE_TARGET_BOUNDS_CACHE`；`focused_input_bounds` 命令仅为兼容面保留。
+- `positionStrategy` 设置项不参与当前后端策略选择；`FocusInput` 分支保留仅为枚举兼容。
 
-SettingsService 是设置控制面的单一服务入口，供设置窗口、Agent 配置区和 MCP 设置工具复用。第一阶段只进入控制面，不迁移主面板热路径。
+## 7. 控制面与预算
 
-| 方法 | 功能 | 参数 | 返回 |
-|------|------|------|------|
-| `get` | 读取设置文档，可按需包含 schema | `include_schema: bool` | `Result<SettingsDocument>` |
-| `patch` | 局部更新设置 | `SettingsPatchRequest` | `Result<SettingsWriteResult>` |
-| `replace` | 全量替换设置，必须确认 | `SettingsReplaceRequest` | `Result<SettingsWriteResult>` |
-| `reset` | 按 scope 重置设置，必须确认 | `SettingsResetRequest` | `Result<SettingsWriteResult>` |
-| `agent_providers` | 读取 redacted provider 列表 | - | `Result<Vec<AgentProvider>>` |
-| `agent_check` | 按需检测 provider 可用性 | `provider_id: &str` | `Result<AgentProviderCheck>` |
-| `agent_models` | 按需拉取模型列表 | `provider_id: &str` | `Result<AgentModelList>` |
+- 控制面：设置窗口、Agent provider 配置、MCP 设置工具、schema / revision / redaction / provider check / model list。
+- 热路径：全局快捷键、面板显隐与定位、采集监听、虚拟列表滚动与选中、复制 / 粘贴写回、当前面板搜索过滤。
+- 热路径禁止同步等待 schema、MCP、provider check 或 models。
+- 主面板交互预算：show/hide 端到端 ≤180ms；首屏列表不做阻塞式上下文采集，扩展上下文走后台线程。
 
-统一的是 Rust domain service、JSON schema、revision、redaction、错误码、事件和写入策略；不是强制所有调用方共用同一个传输层。
+## 8. 配置与日志
 
-## MCP 服务（应用托管 + stdio）
+- 用户配置写入系统用户目录的 JSON5；设置合并对缺键逐项回落默认值，写入有 revision 与原子替换。
+- 日志写入本地文件并自动清理；用 `pnpm locate` 查日志相关 command 与滚动策略。
+- 设置页展示配置与数据库路径；所有用户可改项通过字段目录与运行时规格收敛。
 
-当前实现以 `clipforge --mcp` stdio server 为稳定外部入口。应用启动时会自动托管一个 MCP 子进程用于状态检测和应用内展示；外部 MCP Client 仍按 MCP 规范启动自己的 stdio server 进程。
+## 9. 技术栈
 
-- **启动时机**：应用启动时自动托管；设置页可查看状态。
-- **通信方式**：MCP 子进程通过同一套 Rust 服务函数访问 SQLite、剪贴板和分析能力。
-- **传输层**：stdio。
-- **生命周期**：托管子进程随应用启动和退出；外部客户端进程由客户端管理。
-- **追溯字段**：工具调用返回 `traceId`、`source`、`businessChain`、`permissionDecision`，失败返回 `error.data.hint`。
-
-### MCP Tools
-
-| 工具名 | 对应 Service | 功能 |
-|--------|-------------|------|
-| `clipf.capture` | ClipboardService.capture | 采集剪贴板内容 |
-| `clipf.get` | ClipboardService.get | 读取单项 |
-| `clipf.list` | ClipboardService.search | 读取列表 |
-| `clipf.search` | ClipboardService.search | 搜索历史 |
-| `clipf.analyze` | ContentAnalysisService.analyze | 只分析内容 |
-| `clipf.copy` | ClipboardService.copy | 写回剪贴板 |
-| `clipf.update` | ClipboardService.update | 更新条目 |
-| `clipf.delete` | ClipboardService.delete | 删除条目 |
-| `clipf.export` | ClipboardService.export | 导出历史 |
-| `clipf.import` | ClipboardService.import | 导入历史 |
-
-SettingsService 落地后会新增 `clipf.settings.*` 和 `clipf.agent.*` 工具。MCP handler 必须调用 SettingsService，不直接写设置文件，也不能影响已有 `clipf.list`、`clipf.get`、`clipf.copy` 等剪贴板工具。
-
-## 控制面与热路径
-
-ClipForge 的低延迟体验依赖控制面和主面板热路径隔离：
-
-```text
-Control Plane
-  Settings window
-  Agent provider config
-  MCP settings tools
-  schema / validation / revision / redaction / provider check / model list
-
-Hot Path
-  global shortcut trigger
-  quick panel show/hide/position
-  clipboard listener
-  virtual list scroll/selection
-  copy/paste writeback
-  search/filter in current panel
-```
-
-第一阶段 SettingsService 只进入 Control Plane。Hot Path 继续保留现有低延迟链路，禁止在快捷键打开、滚动、选中、搜索、复制/粘贴反馈中同步等待 settings schema、MCP、provider check 或 models。
-
-可见交互预算：
-
-- 主面板打开、选中、滚动、复制/粘贴反馈：P95 <= 300ms。
-- 设置页 sidebar/tab 切换、开关和局部保存反馈：P95 <= 300ms。
-- 网络 provider check、models、updater、诊断导出等异步任务：300ms 内显示 pending/loading/error 状态，真实完成可异步返回。
-
-## 定位策略（聚合 EcoPaste/Maccy/TieZ）
-
-### 策略枚举
-
-```rust
-enum PositionStrategy {
-    TrayCenter,       // 托盘图标下方居中（tauri-plugin-positioner）
-    FollowCursor,     // 跟随鼠标光标（EcoPaste 方案）
-    Center,           // 居中当前显示器
-    WindowCenter,     // 居中当前窗口（Maccy 方案）
-    LastPosition,     // 恢复上次位置（归一化坐标，Maccy 方案）
-    FocusInput,       // 跟随焦点输入框（macOS Accessibility）；后端策略当前不可达，见下方说明
-}
-```
-
-### 多层回退机制
-
-每种策略都有完整的回退链路，确保定位始终可用：
-
-| 策略 | 回退链路 | 说明 |
-|------|----------|------|
-| TrayCenter | TrayCenter → Center → FollowCursor | 托盘定位失败时回退到屏幕居中，再回退到光标 |
-| FollowCursor | FollowCursor → Center → TrayCenter | 光标定位失败时回退到屏幕居中，再回退到托盘 |
-| Center | Center → FollowCursor → TrayCenter | 屏幕居中失败时回退到光标，再回退到托盘 |
-| WindowCenter | WindowCenter → Center → FollowCursor | 窗口居中失败时回退到屏幕居中，再回退到光标 |
-| LastPosition | LastPosition → Center → FollowCursor | 上次位置失效时回退到屏幕居中，再回退到光标 |
-| FocusInput | FocusInput → Center → TrayCenter | **当前不可达**：`get_strategy_for_source` 只返回 TrayCenter / FollowCursor / Center，设置项 `positionStrategy` 不参与后端策略选择；分支保留仅为枚举兼容 |
-
-> 现状说明（`focus-prefetch-idle-removal` 提案）：面板定位由 `open_panel` 走几何策略，显示后不再用焦点框位置异步覆盖；焦点框位置只在粘贴目标快照（`snapshot_paste_target_bounds`）中按需直调原生 AX 读取，写入独立的 `PASTE_TARGET_BOUNDS_CACHE`。已不存在后台焦点预取线程，`focused_input_bounds` 命令仅为兼容面保留、仓库内无调用方。
-
-### 策略优先级
-
-| 唤起方式 | 默认策略 |
-|----------|----------|
-| 托盘点击 | TrayCenter |
-| 快捷键 | FollowCursor |
-| 命令行 | Center |
-| 脚本调用 | WindowCenter |
-
-### 归一化坐标存储
-
-位置存储为相对于显示器的 [0,1] 比例坐标，支持跨分辨率/多显示器适配：
-
-```rust
-struct NormalizedPosition {
-    x: f64,           // 0.0 ~ 1.0
-    y: f64,           // 0.0 ~ 1.0
-    monitor_id: Option<String>,
-}
-```
-
-### 定位性能优化
-
-1. **缓存机制**：最近一次的定位结果缓存到内存，避免重复计算
-2. **异步获取**：跨进程的定位信息（如焦点输入框、前台窗口）通过后台线程获取，不阻塞主线程
-3. **快速失败**：每种策略设置超时时间，超时自动触发回退
-4. **延迟保存**：面板关闭时延迟 100ms 保存位置，避免频繁写盘
-5. **防抖机制**：快速多次唤起只执行一次定位，避免抖动（50ms 防抖窗口）
-6. **异步定位调度**：非托盘策略的定位在后台线程执行，面板先显示再异步调整位置
-
-## 数据
-
-当前数据目标：
-
-- SQLite 永久保存剪贴板历史。
-- WAL 日志模式 + FTS5 全文搜索。
-- blake3 哈希去重，重复内容只累加 `use_count`。
-- 软删除优先，按配置定期硬删除。
-- 查询使用分页 cursor，默认限制返回条数。
-- 长期目标支持 100,000 条记录仍保持快速检索。
-
-## 配置与日志
-
-用户配置映射到系统用户目录下的 JSON5 文件。日志写入本地文件（最大 10MB，自动清理），便于定位剪贴板采集、快捷键、窗口和数据库问题。
-
-设置页展示配置路径和数据库路径，后续每个配置项都应该能在 UI 中直接修改。
-
-## 技术栈
-
-- 桌面壳：Tauri v2
-- 原生能力：Rust command + Service Layer
-- 前端：React + TypeScript + Vite
-- UI：shadcn/ui 风格组件和语义 token
-- 持久化：SQLite (rusqlite) + WAL + FTS5
-- 面板：tauri-nspanel (macOS) / WebviewWindow (Windows)
-- 定位：tauri-plugin-positioner + 自研 FollowCursor
-- MCP：进程内常驻 JSON-RPC 服务
-
-## 面板定位与交互（统一逻辑点空间）
-
-所有面板定位计算统一在**全局逻辑点空间**（主屏左上原点）下进行，避免物理/逻辑混用导致 Retina/混合 DPI 偏移与错屏：
-
-- **光标**：macOS 用 `CGEvent.location()`（`cursor_logical_point`），绕开 tao `cursor_position()` 用主屏 scale 转物理、再被 `monitor_from_point`(期望逻辑) 误判屏的连锁错误。
-- **选屏**：`monitor_for_logical_point` = `monitor_from_point`(逻辑) → 自行用 work_area 逻辑边界做命中 → primary；**绝不回退 `current_monitor()`**（面板隐藏时指向上次所在屏，是多屏错位根因）。
-- **尺寸**：默认 420×488；`open_panel` 同步定位 → 显示 → 异步 AX 精修（仅当焦点屏==光标屏才覆盖）。
-
-交互模型：
-
-- **快捷键**：全局 Ctrl+V 走 `toggle_quick_panel`（可见即隐藏），保证可重复触发。
-- **点击**：点击条目 = 粘贴并关闭（`paste_clipboard_text` 已含写入+隐藏+模拟 Cmd+V）。
-- **失焦关闭**：前端 `onFocusChanged` 失焦后 180ms 隐藏（pinned 时跳过）。
-- **分组快捷键**：列表每 10 项一组，激活组由视口中心决定；`Cmd+0-9` 触发激活组内第 N 项，`Cmd+↑/↓` 切组并焦点跟随新组第一项；纯 `↑/↓` 仍逐项移动。序号 0-9 仅在激活组内显示。
-- **pin 固定**：`PANEL_PINNED` 标志位（对齐 EcoPaste）；所有自动隐藏路径（hide_panel / hide_panel_before_paste / 前端 Escape / 前端失焦）在 pinned 时跳过，面板保持在当前位置。
-- **完成提示**：`completionToast` 状态，聚合复制/删除/批量收藏后 1.2s 短时浮现。
+- 桌面壳：Tauri v2。
+- 原生能力：Rust command；macOS 面板用 `tauri-nspanel`，其他平台用 WebviewWindow。
+- 前端：React + TypeScript + Vite。
+- UI：Tailwind CSS v3 + shadcn/ui 语义 token + lucide-react；全局 token 唯一来源 `src/index.css`。
+- 持久化：SQLite（rusqlite）+ WAL + FTS5。
+- 检索：当前为本地字面检索与关键词联想；语义检索 / 向量索引尚未实现，方案决策见 Plannotator Inbox。

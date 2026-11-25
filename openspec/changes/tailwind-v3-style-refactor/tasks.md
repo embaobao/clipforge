@@ -47,7 +47,7 @@
 ## Phase 6：收尾 🟡
 
 - [ ] 视觉走查通过后，本提案按 openspec 流程归档
-- [ ] `docs/HANDOFF.md` 移除样式相关待办，保留视觉契约指向 `docs/DESIGN_SYSTEM.md`
+- [x] 历史交接记录已移除，样式契约见 `docs/DESIGN_SYSTEM.md`（原 HANDOFF 样式待办已 moot）
 
 ## 注意事项
 

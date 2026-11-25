@@ -80,7 +80,7 @@ panel-list-perf 只改动 `src-tauri/src/lib.rs` 的 `search_clip_records`/`load
 - contracts.ts（746 行）拆为 4 个域契约模块 + barrel。
 - 豁免清单 7 → 3：剩 App.tsx（2355）/ settings.tsx（1566）/ lib.rs（14284）。
 - 全程 file-size 门禁通过；verify 脚本断言随拆分同步迁移（断言语义不变）。
-- 剩余：App.tsx 写回域 + UI JSX、settings.tsx section 切片、lib.rs 三域拆分（方案见 docs/HANDOFF.md）。
+- 剩余：App.tsx 写回域 + UI JSX、settings.tsx section 切片、lib.rs 三域拆分（方案见 `openspec/changes/codebase-modularity-refactor/execution-plan.md`）。
 
 ### 状态记录（2026-07-16）
 

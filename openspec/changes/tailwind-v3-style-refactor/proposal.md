@@ -8,7 +8,7 @@ P1。产品主线回归「打造好一个剪贴板」后，视觉层是从「能
 
 ## 背景
 
-2026-09 早期计划是「契约 v2 八件交付物」（`tokens.css` 单源、`App.css` 冻结、Tailwind 仅限 shadcn 组件层、零 DOM 改动）。该契约已被用户决策**取代**：按 `docs/Kimi_Agent_设计系统草图.zip` 设计稿，将 ClipForge 全量迁移到 Tailwind CSS v3 + shadcn/ui（new-york / zinc / CSS variables），视觉契约固化为 `docs/DESIGN_SYSTEM.md`。
+2026-09 早期计划是「契约 v2 八件交付物」（`tokens.css` 单源、`App.css` 冻结、Tailwind 仅限 shadcn 组件层、零 DOM 改动）。该契约已被用户决策**取代**：历史设计输入（草图已移除），视觉契约以 `docs/DESIGN_SYSTEM.md` 为准，将 ClipForge 全量迁移到 Tailwind CSS v3 + shadcn/ui（new-york / zinc / CSS variables）。
 
 旧 CSS 架构的问题：
 

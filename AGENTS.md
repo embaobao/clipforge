@@ -100,6 +100,7 @@ pnpm test:perf-panel -- --sandbox # 测沙箱实例（快捷键自动读该实�
 - 符号级定位用 `pnpm locate <关键词>`（`scripts/locate.mjs`，零依赖）：扫文件路径、TS/Rust 导出符号、`#[tauri::command]` 命令名、中文注释；支持多关键词 OR（如 `pnpm locate 写回 writeback`）。无命中时先换词再查索引表。
 - 索引维护义务：新增/移动/重命名模块、Surface、Tauri command、校验脚本时，必须同步更新 `docs/BUSINESS_INDEX.md` 对应行；索引以「域」为行，不逐文件罗列，一个域多文件时入口写最常改的文件、其余写目录。
 - 索引防腐：`pnpm locate --check-index` 校验索引反引号内引用的路径真实存在，已挂入 `pnpm test:unit` 末尾，索引引用失效会导致门禁失败。
+- 完整映射用 `docs/AGENT_MAP.md`（由 `scripts/agent-map.mjs` 从 CodeGraph + 源码生成，覆盖源文件、Tauri command、MCP 工具、测试、门禁与文档登记）；新增/删除文件、command、工具、测试脚本或文档后跑 `pnpm docs:map`，`pnpm docs:map:check` 已挂入 `pnpm test:unit`，无需 CodeGraph CLI 即可校验。
 - 上文「必须有中文注释」规范是 locate 的数据源：新公共能力文件头缺一句中文文档注释，定位能力即对该文件失效。
 
 <!-- BACKLOG.MD GUIDELINES START -->

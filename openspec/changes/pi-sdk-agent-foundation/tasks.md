@@ -53,7 +53,7 @@
 - [ ] CLIPFORGE_DISABLE_CAPTURE=1 冒烟（双实例隔离开关回归）
 - [ ] 盟哥视觉/功能验收（L1 分析条交互与视觉走查）
 - [ ] L2 助手承载面形态评估结论（做/不做/以何形态；候选 A 详情页侧栏 / B 独立面板窗口 / C 仅 MCP 暴露,见 proposal「产品能力落位」节;pi-web 仅作交互参考不嵌入）写入本 tasks,并同步总纲 W3 行
-- [x] docs/HANDOFF.md 与 PROPOSAL_ROADMAP.md 收官更新 --2026-10-09:HANDOFF 增 4c+(L2/L3 收官)与 2026-10-09 会话增量节;ROADMAP 增当日增量注记与 W3 行 24/26 对账
+- [x] docs/HANDOFF.md 与 PROPOSAL_ROADMAP.md 收官更新 --历史交接记录已移除，结论以 `docs/BUSINESS_INDEX.md` / `docs/AGENT_MAP.md` / OpenSpec 提案为准（原 2026-10-09 会话增量已并入 ROADMAP）
 
 ## 注意事项
 
