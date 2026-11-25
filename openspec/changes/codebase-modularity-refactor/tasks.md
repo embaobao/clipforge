@@ -1,6 +1,7 @@
 # 任务：代码可维护性地基重构
 
 > 原则见 [design.md](./design.md)。每个切片必须保持行为不变，且 `pnpm build` + `cargo check` + 全部 verify 脚本通过才算完成。
+> 执行计划（2026-11-25，债账 + 按 TDD 切片的顺序）：[execution-plan.md](./execution-plan.md)。每片先写失败断言再平移代码，收账时只勾实测通过的项。
 
 ## Phase 1：规范与门禁
 
