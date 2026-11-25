@@ -45,13 +45,13 @@
 
 - [x] settings.tsx 局部抽组件：SettingsShell/SettingsStatusPanel/SettingsCodeTabs/SettingsFieldRow/controls 等已抽至 src/settings/（服务 settings-interface-redesign，2026-09 完成）
 - [~] ~~agent-panel.tsx 拆 parts~~：agent-panel.tsx/agent-chat-page.tsx 已随旧 Agent 面板整体删除（2026-09 AI 运行时重构），任务作废
-- [ ] App.tsx 按 surface 拆——2026-09-10 完成 4051 → 1334 行（-67%）：10 hooks + 8 子组件 + 3 域模块 + UI store；剩余 1334 行为状态粘合层，进一步压缩需状态 store 化（架构改动，待盟哥拍板）
+- [x] App.tsx 按 surface 拆——2026-11-25 收账：1643 → 785 行；搜索/唤起/路由/回收站/聚合导出与写回复制按域抽成 hooks/components；`pnpm test:unit`、`pnpm build:web` 通过。
 - [x] 每个抽出的文件 ≤500 行（全部新文件 ≤498 行，file-size 门禁全程通过）
-- [ ] App.tsx 剩余切片（2026-09-10 盟哥授权全量推进，当前 1692 行）：
-  - [ ] 写回域接线：useClipWriteback（已建文件未接线）——注：verify-runtime-boundaries 当前并无 updateClip 终点锚，若接线时需要静态断言应新增（而非“同步改”）
-  - [ ] 写回域深链：copyClip/copyText/pasteClip/captureStandardTextClip/updateClipContent/openClipTarget → use-clip-writeback.ts 二批
-  - [ ] search 域：handleSearchChange/applySearchSuggestion/closeSearchIfEmpty/removeSearchFilter 等
-  - [ ] UI JSX：TopCommandBar/ModeBar/列表参数组装/Overlay 区块切展示组件
+- [x] App.tsx 剩余切片（2026-11-25 全部完成，提交 `8b8a8e5`、`46b62ff`）：
+- [x] 写回域接线/深链：`use-clip-writeback.ts` 499 → 249，新增 `use-clip-copy-paste.ts` 390；A→B 单向依赖与 `updateClip` / `updateClipContent` 终点锚入 `verify-runtime-boundaries.mjs`。
+- [x] search 域：`use-panel-search.ts` 213、`use-search-snapshot-query.ts` 92；`verify-keyword-suggestions.mjs` 通过。
+- [x] UI JSX：`panel-top-bar.tsx`、`panel-bottom-bars.tsx`、三个 route 组件、`panel-error-boundary.tsx`；`verify-surface-boundaries.mjs` 通过。
+- [x] 未引入全局 store；state/ref 保留在 App.tsx，通过 props 传递（盟哥已放宽上限至 800，S6 取消）。
 
 ### Phase 5.x：panel-list-perf 接缝注记（2026-10-10）
 
@@ -65,7 +65,7 @@ W1 性能修复 `panel-list-perf` 与本阶段重构存在文件重叠，需按�
 
 ## Phase 6：收尾
 
-- [ ] lib.rs window/log/tray 模块化，lib.rs 收敛到 setup + handler 注册
+- [~] lib.rs window/log/tray 模块化（S2/S3 完成）：9787 → 8350；窗口、日志、托盘、诊断分别迁入 `window/`、`log_service.rs`、`tray.rs`、`diagnostics.rs`；剩余 command 收尾属 S7。
 - [ ] 豁免清单逐步清空（每拆完一个文件就从清单移除）——已 7 → 3（workspace-panels/contracts/agent-panel×2 已清，剩 App.tsx/settings.tsx/lib.rs）
 - [ ] 文件大小门禁对全部源文件 fail-mode 生效
 - [ ] `pnpm build` + `cargo check` + `cargo fmt --check` + 全部 verify 脚本通过
@@ -90,3 +90,9 @@ panel-list-perf 只改动 `src-tauri/src/lib.rs` 的 `search_clip_records`/`load
 - 已复跑 `node scripts/verify-agent-panel.mjs`、`pnpm test:unit`、`pnpm exec tsc --noEmit`、`pnpm openspec validate codebase-modularity-refactor --strict`、`pnpm openspec validate clipboard-agent-panel --strict`：均通过。
 - 这只是针对当前 top-nav 漂移的最小 verifier 修正，`verify-agent-panel.mjs` 仍大量依赖源码子串，未完成迁移到 data-marker / 导出符号，因此 Phase 2 迁移任务不勾选。
 - 治理拆分仍按“功能触碰时顺手推进”执行；本轮不启动 lib.rs / App.tsx / settings.tsx 大拆分。
+### 状态记录（2026-11-25，TDD 切片 S1–S5 收账）
+
+- 红→绿证据：S1 `verify-settings-surface` 先失败后通过；S2/S3 `scripts/verify-runtime-boundaries.mjs`、`scripts/verify-log-tray-boundaries.mjs` 先加导出符号断言再平移；S4 `updateClip` / `updateClipContent` 终点锚先失败后通过；S5 `verify-surface-boundaries.mjs` 新增 marker 断言。每片复审结论均为「可合入」，should-fix 已修。
+- 行数：`settings.tsx` 830 → 542、`lib.rs` 9787 → 8350、`App.tsx` 1643 → 785；豁免目标 800，settings/App 达标，lib.rs 仍超标 350 行。
+- 门禁（提交 46b62ff 后实测）：`pnpm build:web` exit 0；`pnpm test:unit` exit 0（18 步、108 索引路径、41 MCP 工具、322 source files）；`cargo check` exit 0；`cargo test --lib` 86 passed；`openspec validate --all --strict` 43 passed。
+- 未完成：S7（lib.rs ≤800、豁免清单 3 → 0、普通文件 500 硬失败）；面板走查需解锁且空闲 ≥45 s；`cargo fmt --check` 仍有两处历史 diff（`clipboard/watcher.rs:287`、`clipboard/write_tests.rs:1`），非本轮引入。

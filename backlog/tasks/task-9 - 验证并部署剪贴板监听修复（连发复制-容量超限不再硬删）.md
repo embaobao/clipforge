@@ -1,9 +1,10 @@
 ---
 id: TASK-9
 title: 验证并部署剪贴板监听修复（连发复制 + 容量超限不再硬删）
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-24 10:24'
+updated_date: '2026-11-25 07:07'
 labels: []
 dependencies: []
 references:
@@ -21,8 +22,20 @@ ordinal: 9000
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 实机连发复制 5 条不同内容（间隔约 120ms）后 5 条全部出现在历史列表（需用户同意写系统剪贴板）
-- [ ] #2 历史数量超过上限时，最旧的非收藏、未置顶条目出现在回收站而不是被物理删除；收藏与置顶不被移入
-- [ ] #3 pnpm tauri build 通过并部署到 /Applications/ClipForge.app，旧实例全部退出后新实例在跑（需用户同意覆盖正式版）
-- [ ] #4 openspec/changes/clipboard-listener-reliability/tasks.md 第 7 节按实际结果登记
+- [x] #1 实机连发复制 5 条不同内容（间隔约 120ms）后 5 条全部出现在历史列表（需用户同意写系统剪贴板）
+- [x] #2 历史数量超过上限时，最旧的非收藏、未置顶条目出现在回收站而不是被物理删除；收藏与置顶不被移入
+- [x] #3 pnpm tauri build 通过并部署到 /Applications/ClipForge.app，旧实例全部退出后新实例在跑（需用户同意覆盖正式版）
+- [x] #4 openspec/changes/clipboard-listener-reliability/tasks.md 第 7 节按实际结果登记
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-11-24 19:24 已部署 7d23154；隔离数据目录用正式版二进制连发 5/5 且顺序正确，旧构建同场景 2/5；cleanup 单测覆盖超限移入回收站；tasks.md 第 7 节已登记。
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+监听修复已部署并验证：采集移出轮询线程、容量超限改为移入回收站；实机隔离数据目录连发 5/5，门禁全绿。
+<!-- SECTION:FINAL_SUMMARY:END -->
