@@ -19,7 +19,7 @@
 ## 3. 关键词联想（前端）
 
 - [x] 3.1 新增 `src/clipboard/keyword-suggestions.ts`：候选提取（2–4 字词频）、频次门槛、碎片剪枝、停用词、拼音，无依赖，附单测 -- 证据：`node scripts/verify-keyword-suggestions.mjs` 通过，已挂入 `pnpm test:unit`；生产库副本 666 条建索引 29.1 ms，得 702 个汉字词 / 735 个英文词，单次输入 0.0–0.4 ms
-- [x] 3.2 `buildSearchSuggestions` 对普通文字返回关键词候选（≤6 条，`kind: "keyword"`）；`@`、`#` 路径不变；`src/search-query.ts` 的 `getSearchSuggestionToken`、`getSearchSuggestionAliases` 为 `kind: "keyword"` 补分支（`matchesSearchSuggestionToken` 只走 `@` 路径，不接触 keyword） -- 证据：候选形状与上限见 3.1 的单测；`buildSearchSuggestions` 依赖 React 侧类型链无法单独编译，未附单测；`pnpm build:web` 通过
+- [x] 3.2 `buildSearchSuggestions` 对普通文字返回关键词候选（≤6 条，`kind: "keyword"`）；`@`、`#` 路径不变；`src/search-query.ts` 的 `getSearchSuggestionToken`、`getSearchSuggestionAliases` 为 `kind: "keyword"` 补分支（`matchesSearchSuggestionToken` 只走 `@` 路径，不接触 keyword） -- 证据：候选形状与上限见 3.1 的单测；`buildSearchSuggestions` 带 React 侧类型链、无法单独编译，门禁脚本 `scripts/verify-keyword-suggestions.mjs` 改用 Vite 按项目配置加载真实模块后断言（无索引不提示、「台」→ 平台、「会」→ 会议纪要、输入已是常用词不提示、`@收` → 收藏、`#` → 甲 丙 乙、`#甲` → 标签项、拼音开关）；`pnpm build:web` 通过
 - [x] 3.3 选中候选后替换当前输入并发起搜索，复用 ↑/↓/Enter 处理；输入本身已是常用词时不出现候选，回车仍是粘贴 -- 证据：`src/App.tsx` `applySearchSuggestion` 的 keyword 分支 + 惰性索引；`pnpm build:web` 通过
 - [ ] 3.4 沙箱走查（解锁状态）：输入「会」「方」「re」出现候选；中英文混输无闪烁、列表不跳动 -- 证据：未跑，屏幕锁定无法走查
 
@@ -29,7 +29,7 @@
 - [x] 4.2 `builtinTagRules.link` / `markdown` 默认值改为关闭，前后端同改：Rust 缺省值（`lib.rs:5098`）、`src/settings/settings-model.ts:263`、`src/settings/sections/AgentUpdateTagSections.tsx:354`、`360` 的 `?? true` 改 `?? false`；显式设置优先；前端 `retagClips` 不再给无标签条目补类型标签 -- 证据：`builtin_tag_rules_default_to_topic_only` 断言读到 `(false, false, true)`；前端单测见 4.6
 - [x] 4.3 新增 `clipboard/tag_cleanup.rs`：一次性移除垃圾标签与自动类型标签，写入 `metadata.tags_retired`，附单测 -- 证据：`retired_tags_keep_hand_made_tags`、`schema_upgrade_retires_tags_and_rebuilds_index` 通过
 - [x] 4.4 迁移前用生产库副本预演 -- 证据：标签 181 → 8（`fff` ×2 的正文里是色值，一并移除；其余 8 条：聚合 2、token 2、fish、Github-token、AI、无用）；`tags_retired` 158 行 173 条 = 181 − 8
-- [x] 4.5 `#` 下拉按出现次数排序，同数按字典序 -- 证据：`src/clipboard/clip-search.ts:168`；未附单测（原因同 3.2），随 3.4 走查
+- [x] 4.5 `#` 下拉按出现次数排序，同数按字典序 -- 证据：`src/clipboard/clip-search.ts:168`；门禁脚本断言 `#` → `["甲","丙","乙"]`、已删除条目不计数（加载方式见 3.2）
 - [x] 4.6 前端缺省值补测：未显式设置时，首次保存后的 `settings.json5` 里 `builtinTagRules` 不含显式 `true`（`settings-model.ts` 依赖运行时，现有纯函数门禁编译不了） -- 证据：部署后 `settings.json5` 无 `builtinTagRules` 键（缺省生效）；用正式版二进制在隔离数据目录采集含链接文本，行上 tags=[周报]（无「链接」）
 
 ## 5. 验证与收尾
