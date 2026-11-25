@@ -159,6 +159,7 @@ fn cache_miss_returns_none_for_unknown_key() {
 
 #[test]
 fn cached_payload_is_returned_with_zero_elapsed() {
+    let _guard = cache_guard();
     let key = cache::cache_key("http://127.0.0.1:8491", "cache-roundtrip-test-hash");
     cache::store_cached(key.clone(), &sample("识别文本"));
     let hit = cache::get_cached(&key).expect("应命中缓存");
@@ -291,6 +292,7 @@ fn stub_4xx_returns_endpoint_error() {
 #[test]
 fn cache_hit_skips_image_read() {
     let _guard = data_dir_lock();
+    let _cache_guard = cache_guard();
     let root = std::env::temp_dir().join(format!("clipforge-ocr-hit-{}", std::process::id()));
     let missing = root.join("deleted-image.png");
     image_row(&root, "clip_cache_hit", "cache-hit-unique-hash", &missing);
@@ -326,4 +328,18 @@ fn ocr_extract_inner_prefers_builtin_engine() {
     assert!(payload.text.contains("ClipForge"), "{payload:?}");
     assert_eq!(payload.endpoint, "builtin://apple-vision");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// 回归：显式声明中文语种后，真实 Vision 必须识别中文样张，不再输出乱码。
+#[cfg(target_os = "macos")]
+#[test]
+fn builtin_vision_recognizes_chinese_sample() {
+    let fixture = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/ocr/fixtures/ocr-cn-sample.png"
+    ));
+    let text = builtin::recognize_image(fixture.to_str().expect("fixture path"))
+        .expect("中文样张识别应成功");
+    assert!(text.contains("剪贴板"), "{text}");
+    assert!(text.contains("ClipForge"), "{text}");
 }

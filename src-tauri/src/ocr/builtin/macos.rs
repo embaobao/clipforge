@@ -9,7 +9,7 @@ use std::ffi::CStr;
 use tauri_nspanel::objc2::msg_send;
 use tauri_nspanel::objc2::rc::{Allocated, Retained};
 use tauri_nspanel::objc2::runtime::{AnyClass, AnyObject};
-use tauri_nspanel::objc2_foundation::{NSArray, NSDictionary, NSString, NSURL};
+use tauri_nspanel::objc2_foundation::{NSArray, NSDictionary, NSMutableArray, NSString, NSURL};
 
 #[link(name = "Vision", kind = "framework")]
 extern "C" {}
@@ -33,6 +33,13 @@ pub(crate) fn recognize_image(image_file: &str) -> Result<String, String> {
     // 关闭语言纠正：剪贴板内容常是代码/命令行，自动纠正会篡改原文。
     let _: () = unsafe { msg_send![&*request, setUsesLanguageCorrection: false] };
     let _: () = unsafe { msg_send![&*request, setRecognitionLevel: 0isize] };
+    // 必须显式声明识别语种：默认英文模型会把中文截图识别成乱码（见ocr-cn-sample 回归）。
+    let zh = NSString::from_str("zh-Hans");
+    let en = NSString::from_str("en-US");
+    let languages = NSMutableArray::<NSString>::new();
+    languages.addObject(&zh);
+    languages.addObject(&en);
+    let _: () = unsafe { msg_send![&*request, setRecognitionLanguages: &*languages] };
 
     let path = NSString::from_str(image_file);
     let url = NSURL::fileURLWithPath(&path);

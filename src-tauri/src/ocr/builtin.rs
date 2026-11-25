@@ -13,8 +13,8 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::recognize_image;
 
-/// 内置引擎标识：缓存键与载荷 `model` 字段共用，换引擎必须换键避免陈旧结果。
-pub(super) const BUILTIN_ENGINE: &str = "apple-vision-v1";
+/// 内置引擎标识：缓存键按引擎隔离；v2 增加 zh-Hans/en-US 识别语种，避免复用乱码缓存。
+pub(super) const BUILTIN_ENGINE: &str = "apple-vision-v2";
 
 /// 非 macOS 平台的内置 OCR 兜底：返回稳定错误码，由上层回落到本地端点路径。
 #[cfg(not(target_os = "macos"))]

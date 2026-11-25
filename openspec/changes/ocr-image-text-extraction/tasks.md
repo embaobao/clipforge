@@ -58,8 +58,9 @@
 ## Phase 6：macOS 内置 Vision OCR（2026-11-20，用户决策更新）
 
 - [x] 6.1 `src-tauri/src/ocr/builtin.rs` + `builtin/macos.rs`：系统 Vision 动态 FFI（`VNRecognizeTextRequest` / `VNImageRequestHandler`），关闭语言纠正，单图 8MB 上限沿用；同步调用放 `spawn_blocking`，错误码 `OCR_BUILTIN_UNAVAILABLE` / `OCR_BUILTIN_FAILED` / `OCR_BUILTIN_NO_TEXT` 全部入白名单
-- [x] 6.2 `extract::ocr_extract_inner` 优先内置引擎，失败回落本地端点；缓存键按引擎隔离（`apple-vision-v1`），前端契约 `invoke("ocr_extract")` 不变；新增 `ocr_builtin_available` command 并在 `lib.rs` 注册
+- [x] 6.2 `extract::ocr_extract_inner` 优先内置引擎，失败回落本地端点；缓存键按引擎隔离（最初 `apple-vision-v1`，中文语种修复升为 v2，见 6.7），前端契约 `invoke("ocr_extract")` 不变；新增 `ocr_builtin_available` command 并在 `lib.rs` 注册
 - [x] 6.3 设置页 `OcrEndpointCard` 在 macOS 只显示「系统内置 OCR 已启用」，不再要求用户配置端点；其他平台保留端点发现/手填；中英文案与错误修复指引同步
 - [x] 6.4 回归：`cargo test --lib ocr` 20 passed（新增固定样张 Vision 识别断言），`pnpm test:unit` 14 码一致性 + 脱敏 + i18n 全绿，`pnpm build:web` / `cargo check --lib` 全绿
 - [x] 6.5 实机验证：重建并用 `ClipForge Dev` 自签部署 `/Applications/ClipForge.app`（pid 79427）；`cargo test --lib ocr` 中 `builtin_vision_recognizes_sample_text` 对 `src-tauri/src/ocr/fixtures/ocr-sample.png` 调真实 Apple Vision 返回 `ClipForge`/`2026`；浏览器面板 harness 实测 Tab 在历史 9↔收藏 2 间切换、Shift+Tab 反向，且顶栏选中态随之变化。完整 `pnpm build` 与 `pnpm tauri build --bundles app` 通过；GUI 右键 OCR 因 WKWebView 无 accessible row 未做自动点击，留人工验收。
 - [x] 6.6 修复用户反馈的 `错误码：UNKNOWN`：根因是 `use-ocr-extract.ts` 把 OCR 调用、`navigator.clipboard.writeText`、入库放在同一 try，复制/入库异常被误报为 OCR 失败。拆分为 OCR 调用独立捕获；入库后优先用原生 `write_clipboard_item` 写剪贴板，失败才回落浏览器 API；新增 `main.toast.ocrCopyFailed` 等中英文案避免误分类。`parseOcrErrorCode` 兼容包装错误但仍只返回白名单码；新增 `ocr_extract_inner_prefers_builtin_engine` 回归验证完整 Rust 路径。`pnpm test:unit`、`pnpm build:web`、`cargo test --lib ocr`（21 passed）通过，重建并自签部署 `/Applications/ClipForge.app`（pid 29250）待用户复测。
+- [x] 6.7 修复中文截图识别乱码：根因是 `VNRecognizeTextRequest` 默认英文语种模型；`builtin/macos.rs` 显式设置 `zh-Hans,en-US`，`BUILTIN_ENGINE` 升 v2 隔离旧缓存。新增真实 Vision 回归 `builtin_vision_recognizes_chinese_sample` 与中文样张 `src-tauri/src/ocr/fixtures/ocr-cn-sample.png`，断言「剪贴板」「ClipForge」；改动经 spec 与 standards 双审，未跟踪样张随本次提交登记，避免其他 checkout 测试失败。
