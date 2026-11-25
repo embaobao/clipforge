@@ -3,8 +3,9 @@ import path from "node:path";
 
 const root = process.cwd();
 const appPath = path.join(root, "src/App.tsx");
-// 详情页溢出菜单已拆分至独立文件（插件动作失败边界在其中）。
+// 详情页溢出菜单与面板错误边界已拆分至独立文件（插件动作失败边界在其中）。
 const overflowMenuPath = path.join(root, "src/workspace/components/DetailOverflowMenu.tsx");
+const panelBoundaryPath = path.join(root, "src/components/panel-error-boundary.tsx");
 const shortcutSectionPath = path.join(root, "src/settings/sections/ShortcutLanguageSection.tsx");
 const displayPanelSectionPath = path.join(root, "src/settings/sections/DisplayPanelSection.tsx");
 const settingsPath = path.join(root, "src/settings.tsx");
@@ -31,7 +32,8 @@ function sliceBetween(source, start, end) {
 }
 
 const app = read(appPath);
-const overflowMenu = read(overflowMenuPath);
+ const overflowMenu = read(overflowMenuPath);
+const panelBoundary = read(panelBoundaryPath);
 const settings = read(settingsPath);
 const settingsActions = read(settingsActionsPath);
 // S1 动作切片后 update/accessibility/reset 动作落在 settings-actions.ts;
@@ -43,10 +45,10 @@ const displayPanelSection = read(displayPanelSectionPath);
 const settingsCatalog = read(settingsCatalogPath);
 const zhLocale = read(zhLocalePath);
 
-assert(app.includes("class PanelContentBoundary"), "Panel content boundary is missing");
-assert(app.includes("<PanelContentBoundary") && app.includes("resetKey={`workspace:"), "Workspace router is not wrapped in the panel boundary");
+assert(panelBoundary.includes("class PanelContentBoundary"), "Panel content boundary is missing");
+ assert(app.includes("<PanelContentBoundary") && app.includes("resetKey={`workspace:"), "Workspace router is not wrapped in the panel boundary");
 
-const primaryAction = sliceBetween(app, "async function runPrimaryOpenAction", "async function deleteClips");
+const primaryAction = sliceBetween(app, "async function runPrimaryOpenAction", "const showSearchBar =");
 assert(primaryAction.includes("try {"), "Primary plugin action has no failure boundary");
 assert(primaryAction.includes("resolvePrimaryPluginAction"), "Primary plugin action resolver is not covered");
 assert(primaryAction.includes('logAppError("warn", "quick-action: plugin action failed"'), "Primary plugin action failure is not logged");
@@ -115,7 +117,33 @@ for (const command of [
 ]) {
     assert(handlerSlice.includes(command), `generate_handler is missing registration: ${command}`);
 }
+// S4 写回域拆分：复制/粘贴动作切至 use-clip-copy-paste.ts，use-clip-writeback.ts 降为 facade（updateClip/updateClipContent + 抑制状态），App.tsx 不再自带 pasteText。
+const copyPastePath = path.join(root, "src/clipboard/use-clip-copy-paste.ts");
+const writebackPath = path.join(root, "src/clipboard/use-clip-writeback.ts");
+const copyPaste = read(copyPastePath);
+const writeback = read(writebackPath);
 
+for (const symbol of [
+    "export function useClipCopyPaste",
+    "async function pasteText",
+    "async function copyClip",
+    "async function copyText",
+    "async function pasteClip",
+    "async function captureStandardTextClip",
+]) {
+    assert(copyPaste.includes(symbol), `use-clip-copy-paste.ts lost symbol: ${symbol}`);
+}
+for (const symbol of [
+    "async function updateClipContent",
+    "lastSeenClipboard",
+    "useClipCopyPaste",
+]) {
+    assert(writeback.includes(symbol), `use-clip-writeback.ts facade lost symbol: ${symbol}`);
+}
+assert(!/function\s+pasteText|const\s+pasteText\s*=/.test(app), "App.tsx still holds the pasteText implementation");
+assert(!app.includes("waitForPasteTriggerRelease"), "App.tsx still waits for paste trigger release");
+assert(!app.match(/import\s*\{[^}]*\bpasteClipboard\b[^}]*\}/), "App.tsx still value-imports pasteClipboard");
+assert(!copyPaste.includes('from "./use-clip-writeback"'), "use-clip-copy-paste.ts must not import the facade (A→B one-way)");
 if (!process.exitCode) {
   console.log("Runtime boundary verification passed");
 }

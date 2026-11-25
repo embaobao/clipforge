@@ -6,7 +6,7 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -16,8 +16,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{
-    menu::{Menu, MenuItemBuilder},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 #[cfg(desktop)]
@@ -35,11 +33,18 @@ mod mcp;
 mod ocr;
 mod plugin_runtime;
 mod settings_service;
+mod log_service;
+mod tray;
 mod window;
+pub(crate) use log_service::{
+    debug_logs_enabled_cached, log_path, log_to_file, read_log_cleanup_settings,
+    cleanup_logs_if_needed,
+};
 pub(crate) use window::toggle_quick_panel;
+pub(crate) use tray::{build_tray_menu, log_runtime_identity, TRAY_ID};
 use window::{
     focus_context_snapshot, hide_panel_before_paste, is_panel_pinned, is_phantom_blur, open_panel,
-    reclaim_panel_key_after_phantom_blur, show_quick_panel, PANEL_PINNED,
+    reclaim_panel_key_after_phantom_blur, PANEL_PINNED,
 };
 
 use agent::{
@@ -49,7 +54,7 @@ use agent::{
 };
 pub use mcp::run_mcp_stdio;
 use mcp::{
-    get_mcp_status, mcp_tool_names, start_mcp_server, start_mcp_server_with_reason, stop_mcp_server,
+    get_mcp_status, start_mcp_server, start_mcp_server_with_reason, stop_mcp_server,
 };
 
 use application_context::{capture as capture_application_snapshot, SourceAppInfo};
@@ -509,37 +514,6 @@ struct AccessibilityDiagnosticsPayload {
 struct DeleteClipPayload {
     deleted_ids: Vec<String>,
     deleted_at: i64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AppLogEntryPayload {
-    ts_ms: i64,
-    level: String,
-    message: String,
-    context: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct QueryAppLogPayload {
-    path: String,
-    items: Vec<AppLogEntryPayload>,
-    limit: i64,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LogStatsPayload {
-    path: String,
-    size_bytes: u64,
-    line_count: u64,
-    oldest_ts_ms: i64,
-    max_size_mb: u32,
-    keep_ratio: f64,
-    retention_days: u32,
-    auto_cleanup: bool,
-    interval_min: u64,
 }
 
 #[derive(Serialize)]
@@ -1672,18 +1646,6 @@ pub(crate) fn apply_capture_settings(
     }
 }
 
-pub(crate) fn log_to_file(level: &str, module: &str, message: &str) {
-    // 非阻塞：只把格式化好的日志行投递给后台写线程，绝不在调用线程（往往是 IPC / 粘贴 /
-    // 唤起热路径）上做 fs::OpenOptions + write_all。show/hide/copy/paste 每次都产生若干条
-    // 日志，同步落盘是整体「停顿感」的主要来源之一。
-    if !should_write_app_log(level, module, message) {
-        return;
-    }
-    if let Ok(line) = build_log_line(level, &format!("[{}] {}", module, message), "") {
-        log_writer_send(line);
-    }
-}
-
 /// 为剪贴板热路径中的系统命令提供有界等待；超时只影响可选上下文，不阻断主记录流程。
 #[cfg(target_os = "macos")]
 fn run_system_command_with_timeout(
@@ -1738,335 +1700,11 @@ fn run_system_command_with_timeout(
     }
 }
 
-fn log_environment_snapshot(module: &str) {
-    let settings_path_text = settings_path()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let database_path_text = database_path()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let log_path_text = log_path()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let exe = std::env::current_exe()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let bundle_path = current_app_bundle_path()
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let accessibility = check_accessibility_permission_platform()
-        .map(|payload| payload.status)
-        .unwrap_or_else(|_| "unknown".to_string());
-    let diagnostics = get_accessibility_diagnostics_platform().ok();
-    let (panel_width, panel_height) = resolve_panel_dims();
-    let snapshot = json!({
-        "event": "environment_snapshot",
-        "appVersion": APP_VERSION,
-        "bundleIdentifier": APP_BUNDLE_IDENTIFIER,
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "family": std::env::consts::FAMILY,
-        "uname": command_output_optional("uname", &["-a"]),
-        "macos": command_output_optional("sw_vers", &[]),
-        "webkit": webkit_environment_snapshot(),
-        "currentExe": exe,
-        "bundlePath": bundle_path,
-        "settingsPath": settings_path_text,
-        "databasePath": database_path_text,
-        "logPath": log_path_text,
-        "accessibility": accessibility,
-        "signatureIdentifier": diagnostics.as_ref().map(|value| value.code_signature_identifier.clone()).unwrap_or_default(),
-        "signatureKind": diagnostics.as_ref().map(|value| value.signature_kind.clone()).unwrap_or_default(),
-        "cdHash": diagnostics.as_ref().map(|value| value.cd_hash.clone()).unwrap_or_default(),
-        "tccRecordCount": diagnostics.as_ref().map(|value| value.tcc_records.len()).unwrap_or(0),
-        "mcpTools": mcp_tool_names(),
-        "panel": {
-            "width": panel_width,
-            "height": panel_height,
-            "positionStrategy": read_user_settings()
-                .ok()
-                .and_then(|settings| settings.settings.get("positionStrategy").and_then(Value::as_str).map(ToString::to_string))
-                .unwrap_or_else(|| "followCursor".to_string())
-        }
-    });
-    log_to_file("info", module, &snapshot.to_string());
-}
-
-/// 构造一条 JSON 日志行（含时间戳）。非阻塞 log_to_file 与同步的 append_app_log 命令共用。
-fn build_log_line(level: &str, message: &str, context: &str) -> Result<String, String> {
-    let timestamp_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis() as i64;
-    let entry = json!({
-        "tsMs": timestamp_ms,
-        "level": normalize_log_level(level),
-        "message": message,
-        "context": context,
-    });
-    Ok(format!(
-        "{}\n",
-        serde_json::to_string(&entry).map_err(|error| error.to_string())?
-    ))
-}
-
-/// 后台日志写线程的发送端（OnceLock + Mutex，因为 mpsc::Sender 不是 Sync）。
-/// 首次发送时 spawn 一个专用线程，批量异步落盘，把所有文件 I/O 移出热路径。
-static LOG_WRITER_TX: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<String>>> =
-    std::sync::OnceLock::new();
-static DEBUG_LOGS_ENABLED_CACHE: std::sync::OnceLock<std::sync::Mutex<Option<(Instant, bool)>>> =
-    std::sync::OnceLock::new();
-
-fn debug_logs_enabled_cached() -> bool {
-    let cache = DEBUG_LOGS_ENABLED_CACHE.get_or_init(|| std::sync::Mutex::new(None));
-    let Ok(mut cached) = cache.lock() else {
-        return false;
-    };
-    let now = Instant::now();
-    if let Some((checked_at, enabled)) = *cached {
-        if now.duration_since(checked_at) < Duration::from_secs(5) {
-            return enabled;
-        }
-    }
-    let enabled = read_user_settings()
-        .ok()
-        .and_then(|settings| {
-            settings
-                .settings
-                .get("debugLogsEnabled")
-                .and_then(Value::as_bool)
-        })
-        .unwrap_or(false);
-    *cached = Some((now, enabled));
-    enabled
-}
-
-fn is_verbose_info_log(module: &str, message: &str) -> bool {
-    matches!(
-        module,
-        "clipboard-monitor"
-            | "panel-focus"
-            | "panel-open-perf"
-            | "panel-pin"
-            | "panel-position"
-            | "panel-toggle"
-            | "paste-focus"
-            | "shortcut"
-    ) || message == "clipboard-promote: refreshed full list"
-        || message == "keyboard-detail"
-        || message.starts_with("panel-keyboard:")
-        || message.starts_with("panel-pin:")
-        || message.starts_with("paste-ui:")
-}
-
-fn should_write_app_log(level: &str, module: &str, message: &str) -> bool {
-    let normalized_level = normalize_log_level(level);
-    if normalized_level == "debug" {
-        return debug_logs_enabled_cached();
-    }
-    if normalized_level == "info" && is_verbose_info_log(module, message) {
-        return debug_logs_enabled_cached();
-    }
-    true
-}
-
-fn log_writer_send(line: String) {
-    let mutex = LOG_WRITER_TX.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        thread::spawn(move || {
-            let mut buffer: Vec<String> = Vec::with_capacity(64);
-            while let Ok(pending) = rx.recv() {
-                buffer.push(pending);
-                // 抽干当前已就绪的行，批量写一次，减少 open/write 系统调用次数。
-                while buffer.len() < 256 {
-                    match rx.try_recv() {
-                        Ok(more) => buffer.push(more),
-                        Err(_) => break,
-                    }
-                }
-                let path = match log_path() {
-                    Ok(path) => path,
-                    Err(_) => {
-                        buffer.clear();
-                        continue;
-                    }
-                };
-                if let Some(parent) = path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
-                    let mut joined = String::with_capacity(buffer.iter().map(|s| s.len()).sum());
-                    for piece in buffer.drain(..) {
-                        joined.push_str(&piece);
-                    }
-                    let _ = file.write_all(joined.as_bytes());
-                }
-                buffer.clear();
-            }
-        });
-        std::sync::Mutex::new(tx)
-    });
-    if let Ok(sender) = mutex.lock() {
-        let _ = sender.send(line);
-    }
-}
-
-fn cleanup_logs_if_needed() {
-    let result = cleanup_app_logs();
-    if let Err(e) = result {
-        eprintln!("[LOG] cleanup failed: {}", e);
-    }
-}
-
-/// 日志清理的可配置项（从用户设置读取，缺失用默认）。
-struct LogCleanupSettings {
-    /// 触发清理的体积阈值（MB）。0 = 不按体积清理（仅按保留天数）。
-    max_size_mb: u32,
-    /// 体积超阈值时保留最新条目的比例（0.1~0.95）。
-    keep_ratio: f64,
-    /// 最大日志行数。0 = 不按行数清理。
-    max_lines: usize,
-    /// 按天数清理：丢弃超过 N 天的条目。0 = 不按天数清理。
-    retention_days: u32,
-    /// error/warn 日志保留天数。
-    error_retention_days: u32,
-    /// info/debug 等详情日志保留天数。
-    detail_retention_days: u32,
-    /// 后台是否自动周期清理（false = 仅手动「立即清理」）。
-    auto_cleanup: bool,
-    /// 自动清理检查间隔（分钟）。
-    interval_min: u64,
-}
-
-fn read_log_cleanup_settings() -> LogCleanupSettings {
-    let mut s = LogCleanupSettings {
-        max_size_mb: 10,
-        keep_ratio: 0.6,
-        retention_days: 0,
-        max_lines: 20_000,
-        error_retention_days: 7,
-        detail_retention_days: 3,
-        auto_cleanup: true,
-        interval_min: 1440,
-    };
-    if let Ok(settings) = read_user_settings() {
-        let v = &settings.settings;
-        if let Some(n) = v.get("logMaxSizeMb").and_then(Value::as_u64) {
-            s.max_size_mb = (n as u32).clamp(1, 1024);
-        }
-        if let Some(n) = v.get("logKeepRatio").and_then(Value::as_f64) {
-            s.keep_ratio = n.clamp(0.1, 0.95);
-        }
-        if let Some(n) = v.get("logMaxLines").and_then(Value::as_u64) {
-            s.max_lines = (n as usize).clamp(1_000, 1_000_000);
-        }
-        if let Some(n) = v.get("logRetentionDays").and_then(Value::as_u64) {
-            s.retention_days = n as u32;
-        }
-        if let Some(n) = v.get("logErrorRetentionDays").and_then(Value::as_u64) {
-            s.error_retention_days = (n as u32).clamp(1, 365);
-        }
-        if let Some(n) = v.get("logDetailRetentionDays").and_then(Value::as_u64) {
-            s.detail_retention_days = (n as u32).clamp(1, 365);
-        }
-        if let Some(b) = v.get("logAutoCleanup").and_then(Value::as_bool) {
-            s.auto_cleanup = b;
-        }
-        if let Some(n) = v.get("logCleanupIntervalMin").and_then(Value::as_u64) {
-            s.interval_min = n.clamp(60, 1440);
-        }
-    }
-    s
-}
+pub(crate) use diagnostics::log_environment_snapshot;
 
 #[tauri::command]
 fn cleanup_app_logs() -> Result<String, String> {
-    let cfg = read_log_cleanup_settings();
-    let path = log_path()?;
-    if !path.exists() {
-        return Ok("log file does not exist".to_string());
-    }
-
-    let file_size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
-    let max_size_bytes = (cfg.max_size_mb as u64) * 1024 * 1024;
-
-    let mut entries: Vec<(i64, String, String)> = Vec::new();
-    let file = fs::File::open(&path).map_err(|e| e.to_string())?;
-    for line in BufReader::new(file).lines().map_while(Result::ok) {
-        if let Some(entry) = parse_log_line(&line) {
-            entries.push((entry.ts_ms, entry.level, line));
-        }
-    }
-    let original_lines = entries.len();
-
-    // 1) 按日志级别裁剪：错误/警告 7 天，普通详情 3 天。
-    let now_ms = now_millis().unwrap_or(0);
-    let detail_cutoff = now_ms - (cfg.detail_retention_days as i64) * 86_400_000;
-    let error_cutoff = now_ms - (cfg.error_retention_days as i64) * 86_400_000;
-    entries.retain(|(ts, level, _)| {
-        if level == "error" || level == "warn" {
-            *ts >= error_cutoff
-        } else {
-            *ts >= detail_cutoff
-        }
-    });
-
-    // 兼容旧配置：如果用户显式配置了更短的全局保留天数，继续收紧。
-    if cfg.retention_days > 0 {
-        let cutoff = now_ms - (cfg.retention_days as i64) * 86_400_000;
-        entries.retain(|(ts, _, _)| *ts >= cutoff);
-    }
-
-    // 2) 体积超阈值（max_size_mb > 0 且超出）：保留最新 keep_ratio（至少 100 行）
-    let size_over = cfg.max_size_mb > 0 && file_size > max_size_bytes;
-    if size_over {
-        entries.sort_by(|a, b| b.0.cmp(&a.0)); // 最新在前
-        let keep = (entries.len() as f64 * cfg.keep_ratio).max(100.0) as usize;
-        entries.truncate(keep);
-    }
-
-    // 3) 行数超阈值：保留最新 max_lines 行。
-    let line_over = cfg.max_lines > 0 && entries.len() > cfg.max_lines;
-    if line_over {
-        entries.sort_by(|a, b| b.0.cmp(&a.0)); // 最新在前
-        entries.truncate(cfg.max_lines);
-    }
-
-    let dropped = original_lines.saturating_sub(entries.len());
-    if dropped == 0 {
-        return Ok(format!(
-            "log size {} bytes, {} lines, no cleanup needed (max={}MB maxLines={} errorRetentionDays={} detailRetentionDays={})",
-            file_size,
-            original_lines,
-            cfg.max_size_mb,
-            cfg.max_lines,
-            cfg.error_retention_days,
-            cfg.detail_retention_days
-        ));
-    }
-
-    // 回写：恢复时间顺序（旧→新）保持追加顺序
-    if size_over || line_over {
-        entries.reverse();
-    }
-    let mut file = fs::File::create(&path).map_err(|e| e.to_string())?;
-    for (_, _, line) in &entries {
-        writeln!(file, "{}", line).map_err(|e| e.to_string())?;
-    }
-    let new_size = fs::metadata(&path).map_err(|e| e.to_string())?.len();
-
-    Ok(format!(
-        "log cleaned: {} -> {} bytes, {} -> {} lines (maxSize={}MB keepRatio={} maxLines={} errorRetentionDays={} detailRetentionDays={})",
-        file_size,
-        new_size,
-        original_lines,
-        entries.len(),
-        cfg.max_size_mb,
-        cfg.keep_ratio,
-        cfg.max_lines,
-        cfg.error_retention_days,
-        cfg.detail_retention_days
-    ))
+    log_service::cleanup_app_logs_impl()
 }
 
 /// 调试模式指标快照（按需采集，无后台线程）：内存/数据/日志健康度/uptime。
@@ -2077,36 +1715,8 @@ fn diagnostics_get_metrics() -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn get_log_stats() -> Result<LogStatsPayload, String> {
-    let path = log_path()?;
-    let mut size_bytes: u64 = 0;
-    let mut line_count: u64 = 0;
-    let mut oldest_ts_ms: i64 = 0;
-    if path.exists() {
-        size_bytes = fs::metadata(&path).map_err(|e| e.to_string())?.len();
-        if let Ok(file) = fs::File::open(&path) {
-            for line in BufReader::new(file).lines().map_while(Result::ok) {
-                line_count += 1;
-                if let Some(entry) = parse_log_line(&line) {
-                    if oldest_ts_ms == 0 || entry.ts_ms < oldest_ts_ms {
-                        oldest_ts_ms = entry.ts_ms;
-                    }
-                }
-            }
-        }
-    }
-    let cfg = read_log_cleanup_settings();
-    Ok(LogStatsPayload {
-        path: path.to_string_lossy().to_string(),
-        size_bytes,
-        line_count,
-        oldest_ts_ms,
-        max_size_mb: cfg.max_size_mb,
-        keep_ratio: cfg.keep_ratio,
-        retention_days: cfg.retention_days,
-        auto_cleanup: cfg.auto_cleanup,
-        interval_min: cfg.interval_min,
-    })
+fn get_log_stats() -> Result<log_service::LogStatsPayload, String> {
+    log_service::get_log_stats_impl()
 }
 
 #[tauri::command]
@@ -3410,37 +3020,16 @@ fn append_app_log(
     append_app_log_impl(level, message, context)
 }
 
-/// append_app_log 的跨模块入口：#[tauri::command] 对 pub(crate) 函数会
-/// `#[macro_export]` 提升隐藏宏到 crate 根，与根内文本定义冲突（E0255），
-/// 故命令保持私有、window 模块走本 helper（行为与字符串不变）。
-pub(crate) fn append_app_log_impl(
+fn append_app_log_impl(
     level: String,
     message: String,
     context: Option<String>,
 ) -> Result<String, String> {
-    // 这是前端可调用的命令（设置页日志查看/清理用到），保持同步语义并返回路径。
-    // 内部高频日志走 log_to_file（非阻塞后台线程，见 log_writer_send）。
-    if !should_write_app_log(&level, "", &message) {
-        return Ok(log_path()?.to_string_lossy().to_string());
-    }
-    let line = build_log_line(&level, &message, &context.unwrap_or_default())?;
-    let path = log_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|error| error.to_string())?;
-    file.write_all(line.as_bytes())
-        .map_err(|error| error.to_string())?;
-    Ok(path.to_string_lossy().to_string())
+    log_service::append_app_log_impl(level, message, context)
 }
-
 #[tauri::command]
 fn get_app_log_path() -> Result<String, String> {
-    Ok(log_path()?.to_string_lossy().to_string())
+    log_service::get_app_log_path_impl()
 }
 
 #[tauri::command]
@@ -3448,40 +3037,8 @@ fn query_app_logs(
     text: Option<String>,
     level: Option<String>,
     limit: Option<i64>,
-) -> Result<QueryAppLogPayload, String> {
-    let path = log_path()?;
-    let limit = limit.unwrap_or(120).clamp(20, 500);
-    let normalized_text = text.unwrap_or_default().trim().to_lowercase();
-    let normalized_level = level.unwrap_or_default().trim().to_lowercase();
-    let mut items = Vec::new();
-
-    if path.exists() {
-        let file = fs::File::open(&path).map_err(|error| error.to_string())?;
-        for line in BufReader::new(file).lines().map_while(Result::ok) {
-            let Some(entry) = parse_log_line(&line) else {
-                continue;
-            };
-            if !normalized_level.is_empty() && entry.level != normalized_level {
-                continue;
-            }
-            if !normalized_text.is_empty() {
-                let haystack =
-                    format!("{} {} {}", entry.level, entry.message, entry.context).to_lowercase();
-                if !haystack.contains(&normalized_text) {
-                    continue;
-                }
-            }
-            items.push(entry);
-        }
-    }
-
-    items.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
-    items.truncate(limit as usize);
-    Ok(QueryAppLogPayload {
-        path: path.to_string_lossy().to_string(),
-        items,
-        limit,
-    })
+) -> Result<log_service::QueryAppLogPayload, String> {
+    log_service::query_app_logs_impl(text, level, limit)
 }
 
 fn command_output_optional(program: &str, args: &[&str]) -> String {
@@ -3540,7 +3097,7 @@ fn export_diagnostics_bundle<R: tauri::Runtime>(
     let panel = app
         .get_webview_window("main")
         .map(|window| window::panel_trigger_payload(&window, "diagnostics-export", "current", ""));
-    let logs = query_app_logs(None, None, Some(300)).unwrap_or(QueryAppLogPayload {
+    let logs = query_app_logs(None, None, Some(300)).unwrap_or(log_service::QueryAppLogPayload {
         path: log_path()
             .map(|path| path.to_string_lossy().to_string())
             .unwrap_or_default(),
@@ -4656,46 +4213,6 @@ fn tcc_auth_label(value: i64) -> &'static str {
     }
 }
 
-fn normalize_log_level(value: &str) -> String {
-    match value.trim().to_lowercase().as_str() {
-        "debug" => "debug".to_string(),
-        "info" => "info".to_string(),
-        "warn" | "warning" => "warn".to_string(),
-        "error" => "error".to_string(),
-        _ => "info".to_string(),
-    }
-}
-
-fn parse_log_line(line: &str) -> Option<AppLogEntryPayload> {
-    let value = serde_json::from_str::<Value>(line).ok()?;
-    let level = value
-        .get("level")
-        .and_then(Value::as_str)
-        .map(normalize_log_level)
-        .unwrap_or_else(|| "info".to_string());
-    let message = value
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let context = value
-        .get("context")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let ts_ms = value
-        .get("tsMs")
-        .and_then(Value::as_i64)
-        .or_else(|| value.get("ts").and_then(Value::as_i64).map(|ts| ts * 1000))
-        .unwrap_or_default();
-    Some(AppLogEntryPayload {
-        ts_ms,
-        level,
-        message,
-        context,
-    })
-}
-
 fn settings_path() -> Result<PathBuf, String> {
     // 数据目录隔离（测试/开发专用）：设置 CLIPFORGE_DATA_DIR 后，设置、数据库、日志、
     // 图片缓存等全部数据都写到该目录，用于 tauri dev 并行验证真实交互而不触碰正式数据。
@@ -4734,12 +4251,6 @@ fn settings_path() -> Result<PathBuf, String> {
     }
 }
 
-fn log_path() -> Result<PathBuf, String> {
-    Ok(settings_path()?
-        .parent()
-        .ok_or_else(|| "settings parent is not available".to_string())?
-        .join("clipforge.jsonl"))
-}
 
 fn accessibility_prompt_marker_path() -> Result<PathBuf, String> {
     Ok(settings_path()?
@@ -5781,76 +5292,6 @@ fn simulate_platform_paste() -> Result<String, String> {
     Err("No supported paste simulator found. Install wtype or xdotool.".to_string())
 }
 
-/// 托盘菜单 id（用于切换监听状态后通过 app.tray_by_id 重建菜单刷新文案）。
-const TRAY_ID: &str = "main-tray";
-
-#[cfg(target_os = "macos")]
-fn log_runtime_identity() {
-    match get_accessibility_diagnostics_platform() {
-        Ok(diagnostics) => {
-            let tcc_summary = diagnostics
-                .tcc_records
-                .iter()
-                .map(|record| {
-                    format!(
-                        "{}:{}:{}:{}",
-                        record.database, record.client, record.auth_label, record.csreq_summary
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("|");
-            log_to_file(
-                "info",
-                "startup",
-                &format!(
-                    "runtime identity bundleId={} signatureId={} signatureKind={} cdHash={} trusted={} appPath={} tccRecords={} tccError={}",
-                    diagnostics.expected_bundle_identifier,
-                    diagnostics.code_signature_identifier,
-                    diagnostics.signature_kind,
-                    diagnostics.cd_hash,
-                    diagnostics.trusted,
-                    diagnostics.app_bundle_path,
-                    tcc_summary,
-                    diagnostics.tcc_query_error.unwrap_or_default()
-                ),
-            );
-        }
-        Err(error) => log_to_file(
-            "warn",
-            "startup",
-            &format!("runtime identity diagnostics failed: {}", error),
-        ),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn log_runtime_identity() {}
-
-/// 构建托盘右键菜单。监听开关的文案随 LISTEN_PAUSED 当前状态变化，
-/// 因此切换后调用方需 set_menu 重建以刷新显示。
-fn build_tray_menu<R: tauri::Runtime, M: Manager<R>>(manager: &M) -> Result<Menu<R>, String> {
-    let open_quick = MenuItemBuilder::with_id("open_quick", native_tr("tray.openQuick"))
-        .accelerator(&current_global_shortcut_value())
-        .build(manager)
-        .map_err(|e| e.to_string())?;
-    let preferences = MenuItemBuilder::with_id("preferences", native_tr("tray.preferences"))
-        .build(manager)
-        .map_err(|e| e.to_string())?;
-    let listen_label = if is_listen_paused() {
-        native_tr("tray.resumeListening")
-    } else {
-        native_tr("tray.pauseListening")
-    };
-    let toggle_listen = MenuItemBuilder::with_id("toggle_listen", listen_label)
-        .build(manager)
-        .map_err(|e| e.to_string())?;
-    let quit = MenuItemBuilder::with_id("quit", native_tr("tray.quit"))
-        .build(manager)
-        .map_err(|e| e.to_string())?;
-    Menu::with_items(manager, &[&open_quick, &preferences, &toggle_listen, &quit])
-        .map_err(|e| e.to_string())
-}
-
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
         configure_quick_panel_window(&window);
@@ -5887,64 +5328,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             &format!("auto start MCP server failed: {}", error),
         );
     }
-    let menu = build_tray_menu(app)?;
-    let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("ClipForge")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open_quick" => show_quick_panel(app, "tray"),
-            "preferences" => {
-                if let Err(e) = window::open_settings_window(app.clone()) {
-                    log_to_file("warn", "tray", &format!("open settings failed: {}", e));
-                }
-            }
-            "toggle_listen" => {
-                let next_paused = !is_listen_paused();
-                set_listen_paused(next_paused);
-                log_to_file(
-                    "info",
-                    "clipboard-monitor",
-                    if next_paused {
-                        "listen paused (toggle from tray)"
-                    } else {
-                        "listen resumed (toggle from tray)"
-                    },
-                );
-                if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                    match build_tray_menu(app) {
-                        Ok(new_menu) => {
-                            if let Err(e) = tray.set_menu(Some(new_menu)) {
-                                log_to_file("warn", "tray", &format!("set_menu failed: {}", e));
-                            }
-                        }
-                        Err(e) => {
-                            log_to_file("warn", "tray", &format!("rebuild menu failed: {}", e))
-                        }
-                    }
-                }
-            }
-            "quit" => {
-                cleanup_agent_children();
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_quick_panel(tray.app_handle(), "tray");
-            }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        tray_builder = tray_builder.icon(icon.clone());
-    }
-    tray_builder.build(app)?;
+    tray::setup_tray(app)?;
 
     // 启动时从持久化设置恢复面板固定状态，保证 Rust 静态与前端 settings 一致：
     // 否则重启后前端读到 panelPinned=true（黑按钮）但 Rust PANEL_PINNED 仍为 false，

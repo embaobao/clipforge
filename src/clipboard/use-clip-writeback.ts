@@ -1,20 +1,17 @@
-/** 剪贴板写回域 hook · 首批（从 App.tsx 切出）：已复制标记、条目字段更新、选中项导出文本文件、聚合复制。
- *  边界：完整写回链（copyClip/copyText/pasteClip/updateClipContent 等）仍在主体，后续批次按域迁入。 */
-import { useCallback, useRef } from "react";
+/** 剪贴板写回域 facade（S4 拆分后）：复制/粘贴动作在 use-clip-copy-paste.ts（B），
+ *  本文件保留 updateClip/updateClipContent、导出/收藏/打开目标等写回操作，
+ *  并以 useClipWriteback 对外维持原 API 面（App.tsx 不感知拆分）。
+ *  依赖方向：A → B 单向，B 禁止 import 本文件。 */
+import { useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, ClipItem } from "../App";
-import { isCaptureClipPayload, type CaptureClipPayload } from "./use-clipboard-list";
 import { toast } from "sonner";
 import type { TranslationKey } from "../i18n";
-import { waitForPasteTriggerRelease, logAppError } from "./panel-shared";
-import { startPerfSpan } from "../performance-smoke";
-import { extractHashTags, normalizeTagList, truncateText } from "./clip-model";
+import { logAppError } from "./panel-shared";
+import { normalizeTagList } from "./clip-model";
 import { ocrExtractAndCopy as ocrExtract } from "./use-ocr-extract";
-import { pasteClipboard, writeClipboard, type PasteMode } from "../services/clipboard";
-
 import { invalidateViewClipCache } from "./use-clip-cache-invalidation";
-import { formatAggregate } from "./clipboard-domain";
-import { useAggregateFormat } from "./use-aggregate-format";
+import { useClipCopyPaste } from "./use-clip-copy-paste";
 
 type ExportTextFilesPayload = {
   directory: string;
@@ -42,7 +39,7 @@ export type ClipWritebackOptions = {
   openUrl: (url: string) => Promise<void>;
 };
 
-/** 写回域首批操作：markClipCopied（复制后的乐观标记）、updateClip（字段更新写库+本地同步）、exportSelectedTextFiles。 */
+/** 写回域 facade：组合 B 的复制/粘贴动作与本文件的字段更新/导出/收藏/打开操作。 */
 export function useClipWriteback({
   setClips,
   clipsRef,
@@ -62,49 +59,34 @@ export function useClipWriteback({
   openPath,
   openUrl,
 }: ClipWritebackOptions) {
-  /** 聚合拼接格式：ref 供异步复制链路读最新值，state 驱动聚合工作区菜单。 */
-  const { format: aggregateFormat, setFormat: setAggregateFormat, formatRef: aggregateFormatRef } = useAggregateFormat();
-
-  /** 命令回包归一化后合并回列表:按 id 原地替换并同步 clipsRef。
-   *  写回族(copyClip/pasteText/pasteClip/聚合复制)共用同一回写形态,抽出来避免
-   *  六处复制粘贴;失败由调用方 try/catch 承接。 */
-  function applyNormalizedToClips(payload: Partial<ClipItem>) {
-    const normalized = normalizeClip(payload, settingsRef.current);
-    if (normalized) {
-      invalidateViewClipCache();
-      setClips((current) => {
-        const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-        clipsRef.current = next;
-        return next;
-      });
-    }
-    return normalized;
-  }
-
-  /** 复制成功后的乐观 UI：置最新复制 id、选中、copyCount+1，1.4s 后清除高亮。
-   *  useCallback：依赖全为 setter/ref（pasteClip 与 ClipboardRow memo 依赖引用稳定）。 */
-  const markClipCopied = useCallback(function markClipCopied(item: ClipItem, status: string) {
-    const now = Date.now();
-    setLastCopiedId(item.id);
-    setNativeStatus(status);
-    setSelectedId(item.id);
-    invalidateViewClipCache();
-    setClips((current) => {
-      const base = current.find((clip) => clip.id === item.id) ?? item;
-      const updated = {
-        ...base,
-        copyCount: base.copyCount + 1,
-        lastCopiedAt: now,
-        updatedAt: now,
-      };
-      const next = current
-        .map((clip) => (clip.id === item.id ? updated : clip))
-        .slice(0, settingsRef.current.maxStoredItems);
-      clipsRef.current = next;
-      return next;
-    });
-    window.setTimeout(() => setLastCopiedId(null), 1400);
-  }, [setLastCopiedId, setNativeStatus, setSelectedId, setClips, clipsRef, settingsRef]);
+  const {
+    markClipCopied,
+    captureStandardTextClip,
+    copyClip,
+    copyText,
+    pasteClip,
+    pasteText,
+    copySelectedClips,
+    aggregateFormat,
+    setAggregateFormat,
+    applyNormalizedToClips,
+  } = useClipCopyPaste({
+    setClips,
+    clipsRef,
+    settingsRef,
+    setLastCopiedId,
+    setNativeStatus,
+    setSelectedId,
+    tr,
+    formatNativeError,
+    normalizeClip,
+    lastSeenClipboard,
+    selectedId,
+    setIsPanelEntering,
+    setSelectedIds,
+    setMultiSelectMode,
+    setMultiPreviewOpen,
+  });
 
   /** 条目字段更新（bucket/favorite/tags，tags 供 AI 建议标签应用）：写库（失败仅记日志）
    *  + 本地乐观同步（setClips 按 id map，不重排列表）。useCallback：依赖全为 setter/ref
@@ -174,61 +156,6 @@ export function useClipWriteback({
         ? tr("main.toast.favoritedCount", { count: items.length })
         : tr("main.toast.unfavoritedCount", { count: items.length }),
     );
-  }
-
-  async function copySelectedClips(items: ClipItem[]) {
-    if (!items.length) {
-      setNativeStatus(tr("main.status.selectBeforeAggregate"));
-      return;
-    }
-    // 与聚合工作区预览共用 formatAggregate 与同一格式配置：复制结果即预览。
-    const text = formatAggregate(items, aggregateFormatRef.current);
-    try {
-      const aggregate = await captureStandardTextClip(
-        text,
-        "ui:multi-select-aggregate",
-        { itemIds: items.map((item) => item.id), itemCount: items.length },
-        [tr("main.tag.aggregate")],
-      );
-      const payload = await writeClipboard<ClipItem>({
-        id: aggregate.id,
-        pasteMode: "rich",
-        source: "ui:multi-select-aggregate",
-      });
-      applyNormalizedToClips(payload);
-      lastSeenClipboard.current = text.trim();
-      setNativeStatus(tr("main.status.aggregateCopied", { count: items.length }));
-    } catch {
-      await navigator.clipboard.writeText(text);
-      setNativeStatus(tr("main.status.aggregateCopiedBrowser", { count: items.length }));
-    }
-    toast.success(tr("main.toast.aggregateCopied", { count: items.length }));
-    const now = Date.now();
-    setLastCopiedId(items[0]?.id ?? null);
-    items.forEach((item) => {
-      invoke("update_clip_record", { input: { id: item.id, copied: true } }).catch((error) =>
-        logAppError("warn", "Update aggregated copied state failed", String(error)),
-      );
-    });
-    invalidateViewClipCache();
-    setClips((current) => {
-      const next = current.map((clip) =>
-        items.some((item) => item.id === clip.id)
-          ? {
-              ...clip,
-              copyCount: clip.copyCount + 1,
-              lastCopiedAt: now,
-              updatedAt: now,
-            }
-          : clip,
-      );
-      clipsRef.current = next;
-      return next;
-    });
-    window.setTimeout(() => setLastCopiedId(null), 1400);
-    setSelectedIds(new Set());
-    setMultiSelectMode(false);
-    setMultiPreviewOpen(false);
   }
 
   async function openClipTarget(item: ClipItem, targetUrlOverride?: string) {
@@ -302,75 +229,16 @@ export function useClipWriteback({
     return normalized;
   }
 
-  // pasteClip 的日志用到 selectedId；经 ref 读取（与 clipsRef 同惯例）使回调依赖
-  // 全部为 setter/ref/tr——引用稳定是 App 行回调与 ClipboardRow memo 的前提。
-  // 位置约束：hook 的 return 在函数体中部，const 必须先于 return（function 声明才有提升）。
-  const selectedIdRef = useRef(selectedId);
-  selectedIdRef.current = selectedId;
-  const pasteClip = useCallback(async function pasteClip(item: ClipItem, source = "unknown") {
-    const finishPastePerf = startPerfSpan("quick.paste", { source });
-    let perfStatus = "ok";
-    setIsPanelEntering(false);
-    lastSeenClipboard.current = item.content.trim();
-    markClipCopied(item, tr("main.status.pastingToApp"));
-    const releaseWaitMs = await waitForPasteTriggerRelease(source);
-    if (releaseWaitMs > 0) {
-      logAppError("info", "paste-ui: shortcut release settled", {
-        id: item.id,
-        source,
-        releaseWaitMs,
-      });
-    }
-    logAppError("info", "paste-ui: invoke start", {
-      id: item.id,
-      source,
-      kind: item.kind,
-      chars: item.content.length,
-      selectedId: selectedIdRef.current,
-    });
-    try {
-      const payload = await pasteClipboard<ClipItem>({ id: item.id, pasteMode: "rich", source });
-      const normalized = normalizeClip(payload, settingsRef.current);
-      // 粘贴后面板已被 Rust 隐藏（hide_panel_before_paste 不发 hide-quick-panel），
-      // 这里显式复位 is-entering，否则下次唤起不会淡入。
-      setIsPanelEntering(false);
-      if (normalized) {
-        setClips((current) => {
-          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-          clipsRef.current = next;
-          return next;
-        });
-      }
-      setNativeStatus(tr("main.status.pastedToApp"));
-      logAppError("info", "paste-ui: invoke success", { id: item.id, source });
-    } catch (error) {
-      perfStatus = "fallback-copy";
-      logAppError("warn", "Paste clip failed", String(error));
-      try {
-        const payload = await writeClipboard<ClipItem>({
-          id: item.id,
-          pasteMode: "rich",
-          source: `${source}:fallback-copy`,
-        });
-        applyNormalizedToClips(payload);
-      } catch {
-        await navigator.clipboard.writeText(item.content);
-      }
-      setNativeStatus(formatNativeError(error));
-    } finally {
-      finishPastePerf({ status: perfStatus });
-    }
-  }, [setIsPanelEntering, lastSeenClipboard, markClipCopied, tr, setClips, clipsRef, settingsRef, setNativeStatus, formatNativeError]);
-
   return {
     markClipCopied,
     captureStandardTextClip,
     copyClip,
     ocrExtractAndCopy: (item: ClipItem) => ocrExtract(item, { captureStandardTextClip, setNativeStatus, tr }), // 实现在 use-ocr-extract.ts(门禁拆分), 此处仅绑定依赖
     copyText,
+    pasteClip,
+    pasteText,
     updateClip,
     exportSelectedTextFiles,
-    pasteClip,
     favoriteSelectedClips,
     copySelectedClips,
     openClipTarget,
@@ -378,122 +246,4 @@ export function useClipWriteback({
     updateClipContent,
     aggregateFormat, setAggregateFormat, // 聚合格式（TASK-6-A）：state 驱动菜单，ref 供异步复制链路读最新值
   };
-
-  /** 复制条目到剪贴板（rich/plain/filesAsPaths 三种模式）。
-   *  从 App.tsx 迁入（modularity 写回域接线）：乐观标记 + Rust writeClipboard +
-   *   失败回落浏览器剪贴板 + toast 反馈；依赖全部来自 hook 入参。 */
-  async function copyClip(item: ClipItem, pasteMode: PasteMode = "rich") {
-    const finishCopyPerf = startPerfSpan("quick.copy", { source: "ui", pasteMode });
-    let perfStatus = "ok";
-    const optimisticStatus =
-      pasteMode === "plain"
-        ? tr("main.status.copiedPlain")
-        : pasteMode === "filesAsPaths"
-          ? tr("main.status.copiedFilePaths")
-          : tr("main.status.copiedRich");
-    lastSeenClipboard.current = item.content.trim();
-    markClipCopied(item, optimisticStatus);
-    try {
-      const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode, source: "ui" });
-      applyNormalizedToClips(payload);
-    } catch {
-      perfStatus = "fallback";
-      await navigator.clipboard.writeText(item.content);
-      setNativeStatus(tr("main.status.copiedBrowser"));
-    } finally {
-      toast.success("已复制到剪贴板", { description: truncateText(item.plainText || item.content, 42) });
-      finishCopyPerf({ status: perfStatus });
-    }
-  }
-
-  async function captureStandardTextClip(
-    text: string,
-    source: string,
-    context: Record<string, unknown> = {},
-    extraTags: string[] = [],
-  ) {
-    const payload = await invoke<CaptureClipPayload>("capture_clip_record", {
-      content: text,
-      sourceLabel: source,
-      observedAt: Date.now(),
-    });
-    if (!isCaptureClipPayload(payload)) throw new Error("Invalid capture_clip_record payload");
-    let normalized = normalizeClip(payload.item, settingsRef.current);
-    if (!normalized) {
-      throw new Error("capture returned an empty item");
-    }
-
-    const inferredTags = /(^|[\s:_-])(ai|agent|mcp|assistant)([\s:_-]|$)/i.test(source)
-      ? ["AI"]
-      : [];
-    const nextTags = normalizeTagList([
-      ...normalized.tags,
-      ...extractHashTags(text),
-      ...extraTags,
-      ...inferredTags,
-    ]);
-    const metadata = {
-      ...normalized.metadata,
-      // OCR 等来源要求顶层 sourceImageId 可检索；其余上下文仍保留在 clipforgeContext。
-      ...(typeof context.sourceImageId === "string"
-        ? { sourceImageId: context.sourceImageId }
-        : {}),
-      clipforgeContext: {
-        source,
-        ...context,
-      },
-    };
-    if (
-      nextTags.join("\n").toLowerCase() !== normalized.tags.join("\n").toLowerCase() ||
-      Object.keys(context).length > 0
-    ) {
-      const updated = await invoke<Partial<ClipItem>>("update_clip_record", {
-        input: { id: normalized.id, tags: nextTags, metadata },
-      });
-      normalized = normalizeClip(updated, settingsRef.current) ?? { ...normalized, tags: nextTags, metadata };
-    }
-
-    setClips((current) => {
-      const existing = current.some((clip) => clip.id === normalized.id);
-      const next = existing
-        ? current.map((clip) => (clip.id === normalized.id ? normalized : clip))
-        : [normalized, ...current].slice(0, settingsRef.current.maxStoredItems);
-      clipsRef.current = next;
-      return next;
-    });
-    return normalized;
-  }
-
-  async function copyText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
-    const finishCopyPerf = startPerfSpan("quick.copy", { source });
-    let perfStatus = "ok";
-    logAppError("info", "copy-text: invoke start", {
-      source,
-      chars: text.length,
-      selectedId,
-      ...context,
-    });
-    try {
-      const item = await captureStandardTextClip(text, source, context);
-      const payload = await writeClipboard<ClipItem>({ id: item.id, pasteMode: "rich", source });
-      applyNormalizedToClips(payload);
-      lastSeenClipboard.current = text.trim();
-      setNativeStatus(tr("main.status.copiedCodeSystem"));
-      toast.success(tr("main.toast.copied"));
-      logAppError("info", "copy-text: invoke success", {
-        source,
-        chars: text.length,
-        ...context,
-      });
-    } catch (error) {
-      perfStatus = "fallback";
-      logAppError("warn", "Copy text failed", { source, error: String(error), ...context });
-      await navigator.clipboard.writeText(text);
-      setNativeStatus(tr("main.status.copiedCodeBrowser"));
-      toast.success(tr("main.toast.copied"));
-    } finally {
-      finishCopyPerf({ status: perfStatus });
-    }
-  }
 }
-

@@ -295,3 +295,58 @@ pub fn collect_metrics() -> Value {
         "debugLogsEnabled": crate::debug_logs_enabled_cached(),
     })
 }
+
+/// 启动/按需环境快照（S3 切片从 lib.rs 平移）。
+pub(crate) fn log_environment_snapshot(module: &str) {
+    let settings_path_text = crate::settings_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let database_path_text = crate::database_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let log_path_text = crate::log_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let exe = std::env::current_exe()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let bundle_path = crate::current_app_bundle_path()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let accessibility = crate::check_accessibility_permission_platform()
+        .map(|payload| payload.status)
+        .unwrap_or_else(|_| "unknown".to_string());
+    let diagnostics = crate::get_accessibility_diagnostics_platform().ok();
+    let (panel_width, panel_height) = crate::resolve_panel_dims();
+    let snapshot = json!({
+        "event": "environment_snapshot",
+        "appVersion": crate::APP_VERSION,
+        "bundleIdentifier": crate::APP_BUNDLE_IDENTIFIER,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "family": std::env::consts::FAMILY,
+        "uname": crate::command_output_optional("uname", &["-a"]),
+        "macos": crate::command_output_optional("sw_vers", &[]),
+        "webkit": crate::webkit_environment_snapshot(),
+        "currentExe": exe,
+        "bundlePath": bundle_path,
+        "settingsPath": settings_path_text,
+        "databasePath": database_path_text,
+        "logPath": log_path_text,
+        "accessibility": accessibility,
+        "signatureIdentifier": diagnostics.as_ref().map(|value| value.code_signature_identifier.clone()).unwrap_or_default(),
+        "signatureKind": diagnostics.as_ref().map(|value| value.signature_kind.clone()).unwrap_or_default(),
+        "cdHash": diagnostics.as_ref().map(|value| value.cd_hash.clone()).unwrap_or_default(),
+        "tccRecordCount": diagnostics.as_ref().map(|value| value.tcc_records.len()).unwrap_or(0),
+        "mcpTools": crate::mcp::mcp_tool_names(),
+        "panel": {
+            "width": panel_width,
+            "height": panel_height,
+            "positionStrategy": crate::settings_service::read_user_settings()
+                .ok()
+                .and_then(|settings| settings.settings.get("positionStrategy").and_then(Value::as_str).map(ToString::to_string))
+                .unwrap_or_else(|| "followCursor".to_string())
+        }
+    });
+    crate::log_to_file("info", module, &snapshot.to_string());
+}

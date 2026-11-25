@@ -1,41 +1,14 @@
-import { Clipboard, Copy, ExternalLink, FileJson } from "lucide-react";
-import { PanelStatusFeedback } from "./clipboard/components/PanelStatusFeedback";
-import { TopToolbar } from "./clipboard/components/TopToolbar";
-import { checkAnimFreeze } from "./clipboard/anim-freeze-guard";
-import { QuickCommandMenu } from "./clipboard/components/QuickCommandMenu";
-import { MultiSelectBottomBar } from "./clipboard/components/MultiSelectBottomBar";
-import { SurfaceFade } from "./components/surface-fade";
-import { getShortcutModLabel, formatAggregate, getFilePathsFromClip } from "./clipboard/clipboard-domain";
-import { buildClipboardTable } from "./clipboard/csv-export";
-import {
-  buildCsvFileExportPlan,
-  buildSplitExportRequest,
-  planSplitExport,
-  projectExportSources,
-  summarizeExportOutcome,
-  type ExportItemOutcome,
-  type ExportSourceClip,
-} from "./clipboard/csv-file-export";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
-import type { ErrorInfo, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   formatCommandError,
   resolveAppLocale,
   t,
-  type AppLanguagePreference,
   type TranslationKey,
 } from "./i18n";
-import { pasteClipboard, type FilePathStatus } from "./services/clipboard";
+import type { FilePathStatus } from "./services/clipboard";
 import { resolvePrimaryPluginAction } from "./plugin-actions";
-import {
-  getSearchSuggestionToken,
-  normalizeTagName,
-  parseSearchCommand,
-  type SearchSuggestion,
-} from "./search-query";
 import {
   WorkspaceRouterProvider,
   navigateWorkspaceAggregate,
@@ -43,47 +16,42 @@ import {
   navigateWorkspaceList,
 } from "./routes/workspace-router";
 import { useWorkspaceStore } from "./stores/workspace-store";
-import { ClipDetailWorkspace, MultiAggregateWorkspace } from "./workspace/workspace-panels";
-import { toDetailAgentProviders } from "./workspace/components/workspace-detail-shared";
-import { mergeAiProvenance, parseTagProvenance } from "./workspace/components/detail/tag-provenance";
-import { updateClipTagsOnly } from "./clipboard/tag-only-writeback";
-import { GlassSearchBar } from "./clipboard/components/GlassSearchBar";
-import { QuickPastePanel } from "./clipboard/components/QuickPastePanel";
-import { TrashPanel } from "./clipboard/components/TrashPanel";
-import { createWindowDragHandler, isTauriRuntime, logAppError, useDebouncedValue, waitForPasteTriggerRelease } from "./clipboard/panel-shared";
+import { SurfaceFade } from "./components/surface-fade";
+import { AppErrorBoundary, PanelContentBoundary, type ErrorBoundaryCopy } from "./components/panel-error-boundary";
+import { getShortcutModLabel, formatAggregate } from "./clipboard/clipboard-domain";
 import { usePanelEnvironmentEffects } from "./clipboard/use-panel-environment";
 import { usePanelBlurHide } from "./clipboard/use-panel-blur-hide";
 import { usePanelBootstrap } from "./clipboard/use-panel-bootstrap";
 import { useFilePathStatuses } from "./clipboard/use-file-path-statuses";
 import { usePanelWindowListeners } from "./clipboard/use-panel-blur-hide";
 import { useCleanupScheduler } from "./clipboard/use-cleanup-scheduler";
-import { isQueryClipPayload, useClipboardList, type QueryClipPayload } from "./clipboard/use-clipboard-list";
+import { useClipboardList } from "./clipboard/use-clipboard-list";
 import { useSettingsSync } from "./clipboard/use-settings-sync";
 import { useClipWriteback } from "./clipboard/use-clip-writeback";
-import { invalidateViewClipCache } from "./clipboard/use-clip-cache-invalidation";
-import { peekViewClipEntry, saveViewScrollTop, setViewClipEntry } from "./clipboard/view-clip-cache";
+import { useClipTrash } from "./clipboard/use-clip-trash";
+import { usePanelSearch } from "./clipboard/use-panel-search";
+import { usePanelShow } from "./clipboard/use-panel-show";
+import { useSearchSnapshotQuery } from "./clipboard/use-search-snapshot-query";
+import { PanelTopBar } from "./clipboard/components/panel-top-bar";
+import { PanelBottomBars } from "./clipboard/components/panel-bottom-bars";
+import { ClipboardListRoute } from "./clipboard/components/clipboard-list-route";
+import { ClipDetailRoute } from "./clipboard/components/clip-detail-route";
+import { AggregateRoute } from "./clipboard/components/aggregate-route";
+import { saveViewScrollTop } from "./clipboard/view-clip-cache";
 import { usePanelKeyboard } from "./clipboard/use-panel-keyboard";
 import { loadLocalSettings, mergeSettings, retagClips } from "./clipboard/panel-settings";
 import { usePanelUiStore } from "./clipboard/panel-shared";
-import { buildBaseSearchSuggestions, buildSearchClipsRequest, buildSearchSuggestions, getKeywordSource, isFavoriteView, getBucketForView, matchesSavedSearch, matchesSearchTerm, removeSearchFilterToken, type SearchClipsRequest } from "./clipboard/clip-search";
-import { buildKeywordIndex, type KeywordIndex } from "./clipboard/keyword-suggestions";
+import { isTauriRuntime, logAppError } from "./clipboard/panel-shared";
+import { buildSearchClipsRequest, isFavoriteView, getBucketForView, matchesSavedSearch, matchesSearchTerm, type SearchClipsRequest } from "./clipboard/clip-search";
 import {
+  canOpenClipTarget,
   createClip,
   normalizeClip,
-  type ContentDisplayMode,
   type PanelArrowKey,
-  type PanelDensity,
   type PanelSurface,
-  type TagMode,
   type ViewKey,
 } from "./clipboard/clip-model";
-import {
-  extractUrls,
-  normalizeTagList,
-  type ClipItem,
-  type ClipTypeFilter,
-  canOpenClipTarget,
-} from "./clipboard/clip-model";
+import type { ClipItem } from "./clipboard/clip-model";
 
 export { extractHashTags, normalizeTagList } from "./clipboard/clip-model";
 export type {
@@ -95,134 +63,10 @@ export type {
   ViewKey,
 } from "./clipboard/clip-model";
 
-import { startPerfSpan } from "./performance-smoke";
 
-export type TagRule = {
-  id: string;
-  label: string;
-  query: string;
-};
+import type { AppSettings } from "./clipboard/app-settings";
 
-export type AppSettings = {
-  language: AppLanguagePreference;
-  panelDensity: PanelDensity;
-  quickItemLimit: number;
-  maxStoredItems: number;
-  clipboardPollMs: number;
-  tagMode: TagMode;
-  tagRules: TagRule[];
-  contentDisplayMode: ContentDisplayMode;
-  showSourceBadges: boolean;
-  enableMarkdownPreview: boolean;
-  fuzzySearchEnabled: boolean;
-  pinyinSearchEnabled: boolean;
-  globalShortcut: string;
-  copyPreviewEnabled: boolean;
-  cleanupEnabled: boolean;
-  cleanupIntervalHours: number;
-  softDeletedRetentionDays: number;
-  panelBackgroundOpacity: number;
-  enableScrollCollapse: boolean;
-  panelPinned: boolean;
-  panelWidth: number;
-  panelHeight: number;
-  onboardingCompleted: boolean;
-  onboardingShownAt?: number | null;
-  launchAtLogin: boolean;
-  logMaxSizeMb: number;
-  logKeepRatio: number;
-  logMaxLines: number;
-  logRetentionDays: number;
-  logAutoCleanup: boolean;
-  logCleanupIntervalMin: number;
-  debugLogsEnabled: boolean;
-  captureTextEnabled: boolean;
-  captureHtmlEnabled: boolean;
-  captureRtfEnabled: boolean;
-  captureImageEnabled: boolean;
-  captureFileEnabled: boolean;
-  captureSensitiveEnabled: boolean;
-  captureApplicationContext: boolean;
-  imageMaxSizeMb: number;
-  textMaxSizeMb: number;
-  /** Agent provider 配置（legacy 顶层 agentProviders[] 与新结构 agent.providers[]；主窗只读展示用）。 */
-  agentProviders?: Array<Record<string, unknown>>;
-  agent?: { providers?: Array<Record<string, unknown>> };
-};
-
-type ErrorBoundaryCopy = {
-  toastMessage: string;
-  recoverLabel: string;
-  panelTitle: string;
-  panelMessage: string;
-};
-
-class AppErrorBoundary extends Component<{ children: ReactNode; copy: Pick<ErrorBoundaryCopy, "toastMessage" | "recoverLabel"> }, { errorMessage: string | null; resetKey: number }> {
-  state = { errorMessage: null, resetKey: 0 };
-
-  static getDerivedStateFromError(error: Error) {
-    return { errorMessage: error.message };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    logAppError("error", error.message, info.componentStack);
-  }
-
-  render() {
-    return (
-      <>
-        <div key={this.state.resetKey}>{this.props.children}</div>
-        {this.state.errorMessage ? (
-          <div className="runtime-error-toast" role="status">
-            <Clipboard size={16} />
-            <span>{this.props.copy.toastMessage}</span>
-            <button
-              className="text-button"
-              onClick={() => this.setState((state) => ({ errorMessage: null, resetKey: state.resetKey + 1 }))}
-              type="button"
-            >
-              {this.props.copy.recoverLabel}
-            </button>
-          </div>
-        ) : null}
-      </>
-    );
-  }
-}
-
-class PanelContentBoundary extends Component<
-  { children: ReactNode; copy: Pick<ErrorBoundaryCopy, "panelTitle" | "panelMessage">; resetKey: string },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  componentDidUpdate(previous: { resetKey: string }) {
-    if (previous.resetKey !== this.props.resetKey && this.state.hasError) {
-      this.setState({ hasError: false });
-    }
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    logAppError("error", `Panel content failed: ${error.message}`, info.componentStack);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-          <Clipboard size={22} />
-          <strong className="text-[13px] font-medium">{this.props.copy.panelTitle}</strong>
-          <span className="text-[12px] text-muted-foreground">{this.props.copy.panelMessage}</span>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+export type { AppSettings, TagRule } from "./clipboard/app-settings";
 
 function ClipForgeApp() {
   const isSettingsWindow = useMemo(
@@ -241,10 +85,6 @@ function ClipForgeApp() {
   const tr = useCallback((key: TranslationKey, params?: Record<string, string | number>) => t(locale, key, params), [locale]);
   const formatNativeError = useCallback((error: unknown) => formatCommandError(tr, error), [tr]);
   const [clips, setClips] = useState<ClipItem[]>([]);
-  const [query, setQuery] = useState("");
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [activeTypeFilter, setActiveTypeFilter] = useState<ClipTypeFilter>("all");
-  const [filterFavorite, setFilterFavorite] = useState(false);
   const [activeView, setActiveView] = useState<ViewKey>("history");
   const [activeSurface, setActiveSurface] = useState<PanelSurface>("clipboard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -276,7 +116,6 @@ function ClipForgeApp() {
   }, []);
   const [isMultiPreviewOpen, setMultiPreviewOpen] = useState(false);
   const [quickPreviewOpen, setQuickPreviewOpen] = useState(false);
-  const [isSearchActive, setSearchActive] = useState(() => !isTauriRuntime());
   const [nativeStatus, setNativeStatus] = useState(() => t(initialLocale, "main.status.clipboardReady"));
   const [filePathStatuses, setFilePathStatuses] = useState<Record<string, FilePathStatus>>({});
 
@@ -291,7 +130,6 @@ function ClipForgeApp() {
   const [restoreScroll, setRestoreScroll] = useState<{ top: number; token: string } | null>(null);
   const restoreScrollTokenRef = useRef(0);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const debouncedQuery = useDebouncedValue(query, 120);
   usePanelEnvironmentEffects({ activeView, setNativeStatus, tr });
   const clipsRef = useRef<ClipItem[]>(clips);
   const searchRequestRef = useRef<SearchClipsRequest>({ bucket: "all", limit: 200 });
@@ -310,7 +148,6 @@ function ClipForgeApp() {
   });
   const captureInFlightRef = useRef(false);
   const lastSeenClipboard = useRef("");
-  const searchRef = useRef<HTMLInputElement | null>(null);
   const scrollAccelRef = useRef<number | null>(null);
   const panelFocusGraceUntilRef = useRef(0);
   const blurHideInFlightRef = useRef(false);
@@ -382,66 +219,55 @@ function ClipForgeApp() {
     setPanelClosing,
   });
 
-  const showQuickPanel = useCallback(
-    async (reason: "shortcut" | "tray") => {
-      const finishPanelOpenPerf = startPerfSpan("panel.open", { reason });
-      blurHideInFlightRef.current = false;
-      // 唤起后只在极短窗口内忽略失焦（吸收 show_and_make_key 引发的一瞬 blur→focus 抖动）。
-      // 原值 2400ms 太长：唤起提速后，用户在 2.4s 内点别的窗口，那次 blur 被吞掉、之后不再有
-      // blur，面板就不再自动隐藏。400ms 足以覆盖抖动，又不至于吞掉真实的「点开别处」失焦。
-      panelFocusGraceUntilRef.current = Date.now() + 400;
-      panelShowStartedAtRef.current = Date.now();
-      focusRetryTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-      focusRetryTimersRef.current = [];
-      setActiveView("history");
-      setActiveSurface("clipboard");
-      setSelectedIds(new Set());
-      setMultiSelectMode(false);
-      setQuery("");
-      setActiveTag(null);
-      setActiveTypeFilter("all");
-      setFilterFavorite(false);
-      setSearchActive(true);
-      setIsPanelEntering(true);
-      // 唤起时复检动画冻结：用户激活 app 后时间轴可能已解冻，摘守卫恢复动效；仍冻结则继续压制。
-      checkAnimFreeze();
-      // 动画退出保险：后台 app 的 WKWebView 可能冻结 CSS 动画时间轴（面板停在 from{opacity:0}）。
-      // 500ms 后无条件摘掉 panel-in，让面板回到天然可见态——时间轴正常时动画已播完
-      // （时长见 --motion-panel-in），冻结时也能保证面板可见；隐藏路径已会复位 entering，不影响下次唤起重播。
-      window.setTimeout(() => setIsPanelEntering(false), 500);
-      // 非激活面板不能依赖第一下普通字符来“唤醒”搜索；打开后立即渲染并聚焦输入框。
-      [0, 80, 180].forEach((delay) => {
-        const timer = window.setTimeout(() => {
-          if (document.activeElement !== searchRef.current) {
-            searchRef.current?.focus();
-          }
-          if (delay === 180) {
-            finishPanelOpenPerf({
-              searchActive: true,
-              searchFocused: document.activeElement === searchRef.current,
-            });
-            logAppError("info", "panel-keyboard: search focus settle", {
-              active: document.activeElement === searchRef.current,
-              reason,
-              openReadyMs: Date.now() - panelShowStartedAtRef.current,
-            });
-          }
-        }, delay);
-        focusRetryTimersRef.current.push(timer);
-      });
-      setNativeStatus(reason === "tray" ? tr("main.status.panelFocusedTray") : tr("main.status.panelFocusedShortcut"));
-      // 唤起即合并最新 1 条：快速复制后立刻唤起时，Rust 侧已在显示前同步入库（open_panel
-      // 预采集），这里立刻把它并进列表，首帧即最终态。不能等 +300ms 的 manual 采集——
-      // 那会让首行在用户手指落下后才突然变化（用户反馈「每次唤起后第一条改变」）。
-      void mergeTopClip();
-      // 后台监听线程每 100ms 已在采集，这里只是兜底；延后到 300ms，避免与「唤起后立即输入」
-      // 抢主线程——setClips 触发的重渲染会吞掉最初几个按键，造成「面板出来后要等一下才能打字」。
-      window.setTimeout(() => {
-        void captureClipboard("manual");
-      }, 300);
-    },
-    [captureClipboard, tr],
-  );
+  const search = usePanelSearch({ clips, settings, tr, navigateWorkspaceList });
+  const {
+    query,
+    setQuery,
+    activeTag,
+    setActiveTag,
+    activeTypeFilter,
+    setActiveTypeFilter,
+    filterFavorite,
+    setFilterFavorite,
+    isSearchActive,
+    setSearchActive,
+    activeSuggestionIndex,
+    setActiveSuggestionIndex,
+    searchRef,
+    parsedSearchCommand,
+    effectiveQuery,
+    effectiveTypeFilters,
+    effectiveFilterFavorite,
+    effectiveActiveTags,
+    searchSuggestions,
+    activeSearchSummary,
+    applySearchSuggestion,
+    focusSearch,
+    clearClipboardFilters,
+    searchByTag,
+  } = search;
+
+  const showQuickPanel = usePanelShow({
+    tr,
+    mergeTopClip,
+    captureClipboard,
+    searchRef,
+    blurHideInFlightRef,
+    panelFocusGraceUntilRef,
+    panelShowStartedAtRef,
+    focusRetryTimersRef,
+    setActiveView,
+    setActiveSurface,
+    setSelectedIds,
+    setMultiSelectMode,
+    setQuery,
+    setActiveTag,
+    setActiveTypeFilter,
+    setFilterFavorite,
+    setSearchActive,
+    setIsPanelEntering,
+    setNativeStatus,
+  });
 
   usePanelWindowListeners({
     enabled: !isSettingsWindow,
@@ -455,30 +281,6 @@ function ClipForgeApp() {
     settings,
   });
 
-  const handleWindowDrag = createWindowDragHandler();
-
-  const baseSearchSuggestions = useMemo(
-    () => buildBaseSearchSuggestions(clips, settings, tr),
-    [clips, settings.tagRules, tr],
-  );
-
-  const parsedSearchCommand = useMemo(
-    () => parseSearchCommand(debouncedQuery, baseSearchSuggestions),
-    [baseSearchSuggestions, debouncedQuery],
-  );
-
-  const effectiveQuery = parsedSearchCommand.handled ? parsedSearchCommand.queryText : debouncedQuery;
-  // 必须稳定引用：filteredClips 的 memo 依赖它们,裸新建数组会让每次 App 重渲都重算过滤。
-  // row-in epoch 已改为按 id 序列摘要判定「数据变化帧」(见 row-animation.ts),引用抖动不再重放动画。
-  const effectiveTypeFilters = useMemo(
-    () => (activeTypeFilter !== "all" ? [activeTypeFilter] : parsedSearchCommand.ast.types),
-    [activeTypeFilter, parsedSearchCommand.ast],
-  );
-  const effectiveFilterFavorite = filterFavorite || parsedSearchCommand.filterFavorite;
-  const effectiveActiveTags = useMemo(
-    () => normalizeTagList([...(activeTag ? [activeTag] : []), ...parsedSearchCommand.ast.tags]),
-    [activeTag, parsedSearchCommand.ast],
-  );
   const searchRequest = useMemo(
     () =>
       buildSearchClipsRequest({
@@ -502,66 +304,21 @@ function ClipForgeApp() {
     searchRequestRef.current = searchRequest;
   }, [searchRequestKey, searchRequest]);
 
-  useEffect(() => {
-    if (isSettingsWindow) return;
-    let cancelled = false;
-    const request = JSON.parse(searchRequestKey) as SearchClipsRequest;
-    searchRequestRef.current = request;
-    // SWR(panel-list-perf):先回放缓存快照——命中即零 IPC,列表/游标/选中/滚动一次到位,
-    // 消除切视图时「在途期间旧数据被新视图过滤成空态」的闪烁;随后后台拉新校验。
-    const cached = peekViewClipEntry(searchRequestKey);
-    if (cached) {
-      clipsRef.current = cached.items;
-      setClips(cached.items);
-      setNextCursor(cached.nextCursor);
-      setSelectedId(
-        cached.selectedId && cached.items.some((item) => item.id === cached.selectedId)
-          ? cached.selectedId
-          : (cached.items[0]?.id ?? null),
-      );
-    } else {
-      // 未命中(首次进视图/写操作已失效):游标先清零,防止旧视图游标冒充新视图的 hasMore。
-      setNextCursor(null);
-    }
-    // 每次视图切换都驱动一次滚动恢复:命中用快照 scrollTop,未命中回顶。
-    restoreScrollTokenRef.current += 1;
-    setRestoreScroll({ top: cached?.scrollTop ?? 0, token: String(restoreScrollTokenRef.current) });
-    invoke<QueryClipPayload>("search_clip_records", { input: request })
-      .then((payload) => {
-        if (cancelled) return;
-        if (!isQueryClipPayload(payload)) throw new Error("Invalid search_clip_records payload");
-        const items = payload.items
-          .map((item) => normalizeClip(item, settingsRef.current))
-          .filter((item): item is ClipItem => Boolean(item));
-        // 快照守卫:服务端首条与当前列表首条一致(id+hash)时跳过 setClips——
-        // 同时保住快照里已分页加载的条数(整表替换会被 limit 截断回 200)。
-        const head = clipsRef.current[0];
-        if (!head || head.id !== items[0]?.id || head.contentHash !== items[0]?.contentHash) {
-          clipsRef.current = items;
-          setClips(items);
-        }
-        setNextCursor(payload.nextCursor ?? null);
-        setSelectedId((current) =>
-          current && items.some((item) => item.id === current) ? current : (items[0]?.id ?? null),
-        );
-        // 回写快照:items 取 clipsRef(守卫跳过时保留分页态);scrollTop 沿用快照对象的最新值。
-        setViewClipEntry(searchRequestKey, {
-          items: clipsRef.current,
-          nextCursor: payload.nextCursor ?? null,
-          scrollTop: cached?.scrollTop ?? 0,
-          selectedId: selectedIdRef.current,
-        });
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          logAppError("warn", "Search clip records failed", String(error));
-          setNativeStatus(tr("main.status.searchFailed"));
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isSettingsWindow, searchRequestKey, tr]);
+  useSearchSnapshotQuery({
+    isSettingsWindow,
+    searchRequestKey,
+    settingsRef,
+    clipsRef,
+    selectedIdRef,
+    searchRequestRef,
+    setClips,
+    setSelectedId,
+    setNextCursor,
+    setRestoreScroll,
+    restoreScrollTokenRef,
+    setNativeStatus,
+    tr,
+  });
 
   const filteredClips = useMemo(() => {
     const bucket = getBucketForView(activeView);
@@ -602,15 +359,6 @@ function ClipForgeApp() {
   ]);
   filteredClipsRef.current = filteredClips;
 
-  const activeSearchSummary = useMemo(() => {
-    const parts = [
-      ...parsedSearchCommand.ast.labels,
-      ...parsedSearchCommand.ast.invalidTokens,
-      effectiveQuery.trim() ? `text:${effectiveQuery.trim()}` : "",
-    ].filter(Boolean);
-    return parts.length ? tr("main.search.activeSummary", { filters: parts.join(" · ") }) : null;
-  }, [effectiveQuery, parsedSearchCommand.ast.invalidTokens, parsedSearchCommand.ast.labels, tr]);
-
   const selectedClip = useMemo(() => {
     if (selectedId) {
       const found = clips.find((item) => item.id === selectedId);
@@ -637,52 +385,6 @@ function ClipForgeApp() {
       return next.size === current.size ? current : next;
     });
   }, [filteredClips]);
-
-  // 关键词索引按历史惰性构建：没人输入普通文字就不建；历史列表换了，下次用到时重建。
-  const keywordIndexFor = useMemo(() => {
-    let index: KeywordIndex | null = null;
-    return () => (index ??= buildKeywordIndex(clips.filter((clip) => !clip.deletedAt).map(getKeywordSource)));
-  }, [clips]);
-  const searchSuggestions = useMemo(
-    () =>
-      buildSearchSuggestions(clips, query, baseSearchSuggestions, {
-        keywordIndex: keywordIndexFor,
-        pinyinEnabled: settings.pinyinSearchEnabled,
-      }),
-    [baseSearchSuggestions, clips, keywordIndexFor, query, settings.pinyinSearchEnabled],
-  );
-
-  // autocomplete 下拉的高亮项索引；建议列表变化（输入/过滤）时重置到首项，使 Enter 默认应用第一项。
-  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
-  useEffect(() => {
-    setActiveSuggestionIndex(0);
-  }, [searchSuggestions]);
-
-  const focusSearch = useCallback(() => {
-    setSearchActive(true);
-    window.setTimeout(() => searchRef.current?.focus(), 0);
-  }, []);
-
-  const handleSearchChange = useCallback((value: string) => {
-    setQuery(value);
-    const token = value.trimStart();
-    if (!token.startsWith("@") && !token.startsWith("#")) {
-      setActiveTag(null);
-      setFilterFavorite(false);
-      setActiveTypeFilter("all");
-    }
-  }, []);
-
-  const closeSearchIfEmpty = useCallback(() => {
-    if (!query.trim()) setSearchActive(false);
-  }, [query]);
-
-  const clearClipboardFilters = useCallback(() => {
-    setQuery("");
-    setActiveTag(null);
-    setFilterFavorite(false);
-    setActiveTypeFilter("all");
-  }, []);
 
   const switchClipboardView = useCallback((view: ViewKey) => {
     setActiveSurface("clipboard");
@@ -755,70 +457,7 @@ function ClipForgeApp() {
     }
   }, [isMultiPreviewOpen, movePanelSelection, multiSelectMode, selectedClip, workspaceRoute.name]);
 
-  function replaceTrailingSearchToken(current: string, nextToken: string) {
-    if (!current.trim()) return `${nextToken} `;
-    if (!/(^|\s)[@#][^\s]*$/.test(current)) return `${nextToken} `;
-    return current.replace(/(^|\s)[@#][^\s]*$/, `$1${nextToken} `);
-  }
-
-  function applySearchSuggestion(suggestion: SearchSuggestion) {
-    // 关键词联想只把输入末尾那一段补成完整的词（与 @/# 候选同一口径），前面的词和过滤条件都保留。
-    if (suggestion.kind === "keyword") {
-      setQuery(query.replace(/\S+\s*$/, `${suggestion.label} `));
-      setSearchActive(true);
-      window.setTimeout(() => searchRef.current?.focus(), 0);
-      return;
-    }
-    setActiveTag(null);
-    setFilterFavorite(false);
-    setActiveTypeFilter("all");
-    const nextToken =
-      suggestion.kind === "all"
-        ? ""
-        : suggestion.kind === "saved"
-          ? `#${suggestion.tag}`
-          : getSearchSuggestionToken(suggestion);
-    if (suggestion.kind === "all") {
-      setQuery("");
-    } else {
-      setQuery((current) => replaceTrailingSearchToken(current, nextToken));
-    }
-    setSearchActive(true);
-    window.setTimeout(() => searchRef.current?.focus(), 0);
-  }
-
-  const removeSearchFilter = (label: string) => {
-    setQuery((current) => removeSearchFilterToken(current, label));
-    setActiveTag((current) => (current && label.toLowerCase() === `#${current.toLowerCase()}` ? null : current));
-    setFilterFavorite((current) => (label === "@favorite" || label === "@收藏" ? false : current));
-    setActiveTypeFilter((current) => {
-      if (current === "all") return current;
-      const currentToken = getSearchSuggestionToken({
-        id: current,
-        label: current,
-        hint: "",
-        kind: "type",
-        typeFilter: current,
-      });
-      return label.toLowerCase() === `type:${current}` || label === currentToken ? "all" : current;
-    });
-    setSearchActive(true);
-    window.setTimeout(() => searchRef.current?.focus(), 0);
-  };
-
-  const searchByTag = (tag: string) => {
-    const normalized = normalizeTagName(tag);
-    if (!normalized) return;
-    setQuery(`#${normalized} `);
-    setActiveTag(null);
-    setFilterFavorite(false);
-    setActiveTypeFilter("all");
-    setSearchActive(true);
-    void navigateWorkspaceList();
-    window.setTimeout(() => searchRef.current?.focus(), 0);
-  };
-
-  const { captureStandardTextClip, copyClip, ocrExtractAndCopy, copyText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent, aggregateFormat, setAggregateFormat } = useClipWriteback({
+  const { copyClip, ocrExtractAndCopy, copyText, pasteText, updateClip, exportSelectedTextFiles, pasteClip, favoriteSelectedClips, copySelectedClips, openClipTarget, openSystemPath, updateClipContent, aggregateFormat, setAggregateFormat } = useClipWriteback({
     setClips,
     clipsRef,
     settingsRef,
@@ -840,6 +479,20 @@ function ClipForgeApp() {
 
   // 聚合预览与 copySelectedClips 共用 formatAggregate + 同一份格式配置：预览即复制结果。
   const aggregatePreview = useMemo(() => formatAggregate(selectedInList, aggregateFormat), [selectedInList, aggregateFormat]);
+
+  const { deleteClips, restoreClips, hardDeleteClips, emptyTrash } = useClipTrash({
+    clips,
+    filteredClips,
+    selectedId,
+    clipsRef,
+    setClips,
+    setSelectedId,
+    setSelectedIds,
+    setMultiSelectMode,
+    setNativeStatus,
+    tr,
+    formatNativeError,
+  });
 
   const togglePanelPinned = useCallback(() => {
     // 事务链：先改 Rust 权威源 PANEL_PINNED，确认成功才落前端 state（随后经设置同步写盘）。
@@ -923,54 +576,6 @@ function ClipForgeApp() {
     setActiveSuggestionIndex,
   });
 
-  async function pasteText(text: string, source = "unknown", context: Record<string, unknown> = {}) {
-    const finishPastePerf = startPerfSpan("quick.paste", { source });
-    let perfStatus = "ok";
-    const releaseWaitMs = await waitForPasteTriggerRelease(source);
-    if (releaseWaitMs > 0) {
-      logAppError("info", "paste-text: shortcut release settled", {
-        source,
-        releaseWaitMs,
-        ...context,
-      });
-    }
-    logAppError("info", "paste-text: invoke start", {
-      source,
-      chars: text.length,
-      selectedId,
-      ...context,
-    });
-    try {
-      const item = await captureStandardTextClip(text, source, context);
-      const payload = await pasteClipboard<ClipItem>({ id: item.id, pasteMode: "rich", source });
-      const normalized = normalizeClip(payload, settingsRef.current);
-      if (normalized) {
-        setClips((current) => {
-          const next = current.map((clip) => (clip.id === normalized.id ? normalized : clip));
-          clipsRef.current = next;
-          return next;
-        });
-      }
-      setIsPanelEntering(false);
-      lastSeenClipboard.current = text.trim();
-      setNativeStatus(tr("main.status.pastedCode"));
-      toast.success(tr("main.toast.pastedCode"));
-      logAppError("info", "paste-text: invoke success", {
-        source,
-        chars: text.length,
-        ...context,
-      });
-    } catch (error) {
-      perfStatus = "fallback-copy";
-      logAppError("warn", "Paste text failed", { source, error: String(error), ...context });
-      await copyText(text, `${source}:fallback-copy`, context);
-      setNativeStatus(tr("main.status.pasteCodeFallback"));
-    } finally {
-      finishPastePerf({ status: perfStatus });
-    }
-  }
-
-
   async function runPrimaryOpenAction(item: ClipItem, source: "shortcut" | "keyboard" | "click" | "context-menu" | "detail") {
     try {
       setSelectedId(item.id);
@@ -1006,100 +611,6 @@ function ClipForgeApp() {
     }
   }
 
-
-  async function deleteClips(ids: string[]) {
-    const now = Date.now();
-    // 删除后锚定到「被删项当前位置的下一项」；若已是最后一项则锚定上一项；都没有则不锚定。
-    // 旧实现一律 setSelectedId(null)，导致 selectedClip 回退到 filteredClips[0] = 第一条。
-    const deleteIndex = filteredClips.findIndex((item) => ids.includes(item.id));
-    const remaining = filteredClips.filter((item) => !ids.includes(item.id));
-    const nextSelectedId =
-      deleteIndex >= 0 && remaining.length > 0
-        ? (remaining[Math.min(deleteIndex, remaining.length - 1)]?.id ?? null)
-        : null;
-    const shouldReselect = selectedId != null && ids.includes(selectedId);
-    try {
-      await invoke("soft_delete_clip_records", { ids });
-      setNativeStatus(tr("main.status.movedToTrash", { count: ids.length }));
-      toast.success(tr("main.toast.deletedCount", { count: ids.length }));
-    } catch (error) {
-      logAppError("warn", "Soft delete failed", String(error));
-      setNativeStatus(formatNativeError(error));
-      return;
-    }
-    // 软删除后保留在 clips 中以支持垃圾箱视图，仅设置 deletedAt 标记；
-    // 快照里没有这层标记(拍摄于删除前),不清缓存会在切回时复活已删条目。
-    invalidateViewClipCache();
-    setClips((current) => {
-      const next = current.map((item) => (ids.includes(item.id) ? { ...item, deletedAt: now } : item));
-      clipsRef.current = next;
-      return next;
-    });
-    setSelectedIds(new Set());
-    setMultiSelectMode(false);
-    if (shouldReselect) setSelectedId(nextSelectedId);
-  }
-
-  async function restoreClips(ids: string[]) {
-    try {
-      await invoke("restore_clip_records", { ids });
-      setNativeStatus(tr("main.status.restoredCount", { count: ids.length }));
-    } catch (error) {
-      logAppError("warn", "Restore failed", String(error));
-      setNativeStatus(formatNativeError(error));
-      return;
-    }
-    invalidateViewClipCache();
-    setClips((current) => {
-      const next = current.map((item) =>
-        ids.includes(item.id) ? { ...item, deletedAt: null, bucket: "history" as const } : item,
-      );
-      clipsRef.current = next;
-      return next;
-    });
-    setSelectedIds(new Set());
-    setMultiSelectMode(false);
-  }
-
-  async function hardDeleteClips(ids: string[]) {
-    const deleteIndex = filteredClips.findIndex((item) => ids.includes(item.id));
-    const remaining = filteredClips.filter((item) => !ids.includes(item.id));
-    const nextSelectedId =
-      deleteIndex >= 0 && remaining.length > 0
-        ? (remaining[Math.min(deleteIndex, remaining.length - 1)]?.id ?? null)
-        : null;
-    const shouldReselect = selectedId != null && ids.includes(selectedId);
-    try {
-      await invoke("hard_delete_clip_records", { ids });
-      setNativeStatus(tr("main.status.hardDeletedCount", { count: ids.length }));
-    } catch (error) {
-      logAppError("warn", "Hard delete failed", String(error));
-      setNativeStatus(formatNativeError(error));
-      return;
-    }
-    invalidateViewClipCache();
-    setClips((current) => {
-      const next = current.filter((item) => !ids.includes(item.id));
-      clipsRef.current = next;
-      return next;
-    });
-    setSelectedIds(new Set());
-    setMultiSelectMode(false);
-    if (shouldReselect) setSelectedId(nextSelectedId);
-  }
-
-  async function emptyTrash() {
-    const trashIds = clips.filter((item) => item.deletedAt).map((item) => item.id);
-    if (!trashIds.length) {
-      setNativeStatus(tr("main.status.trashEmpty"));
-      return;
-    }
-    if (!window.confirm(tr("main.confirm.emptyTrash", { count: trashIds.length }))) {
-      return;
-    }
-    await hardDeleteClips(trashIds);
-  }
-
   const showSearchBar = activeSurface === "clipboard" && workspaceRoute.name === "list";
   const shouldRenderSearchBar = showSearchBar && (isSearchActive || Boolean(query));
 
@@ -1117,40 +628,12 @@ function ClipForgeApp() {
       ref={shellRef}
     >
       {workspaceRoute.name !== "detail" && (
-        <TopToolbar
+        <PanelTopBar
           activeView={activeView}
-          onDrag={handleWindowDrag}
-          onOpenSettings={() => {
-            invoke("open_settings_window").catch((error) =>
-              logAppError("warn", "Open settings window failed", String(error)),
-            );
-          }}
+          showSearchBar={shouldRenderSearchBar}
+          search={search}
           onPanelArrowKey={handlePanelArrowNavigation}
           onViewChange={switchClipboardView}
-          searchBar={shouldRenderSearchBar ? (
-            <GlassSearchBar
-              activeFilterLabels={parsedSearchCommand.ast.labels}
-              inputRef={searchRef}
-              onApplySuggestion={applySearchSuggestion}
-              activeSuggestionIndex={activeSuggestionIndex}
-              onSelectSuggestionIndex={setActiveSuggestionIndex}
-              onBlur={closeSearchIfEmpty}
-              onChange={handleSearchChange}
-              onClear={() => {
-                setQuery("");
-                setActiveTag(null);
-                setFilterFavorite(false);
-                setActiveTypeFilter("all");
-                searchRef.current?.focus();
-              }}
-              onFocus={focusSearch}
-              onRemoveFilter={removeSearchFilter}
-              parsedSearchCommand={parsedSearchCommand}
-              query={query}
-              suggestions={searchSuggestions}
-              tr={tr}
-            />
-          ) : null}
           tr={tr}
         />
       )}
@@ -1170,409 +653,94 @@ function ClipForgeApp() {
               backToList: tr("main.workspace.backToList"),
               retry: tr("main.workspace.retry"),
             }}
-            renderList={() =>
-              activeView === "trash" ? (
-                <TrashPanel
-                  key={`trash:${activeView}`}
-                  activeId={selectedClip?.id ?? null}
-                  autoScroll={keyboardNavigating}
-                  clips={filteredClips}
-                  emptySummary={activeSearchSummary}
-                  onEmptyTrash={emptyTrash}
-                  hasMore={Boolean(nextCursor)}
-                  isLoadingMore={isLoadingMore}
-                  multiSelectMode={multiSelectMode}
-                  onDeleteSelected={() => hardDeleteClips(selectedInList.map((item) => item.id))}
-                  onHardDelete={(item) => hardDeleteClips([item.id])}
-                  onLoadMore={loadMoreClips}
-                  onScrollTopChange={handleListScrollTop}
-                  onPointerActive={() => setKeyboardNavigating(false)}
-                  onRestore={(item) => restoreClips([item.id])}
-                  onRestoreSelected={() => restoreClips(selectedInList.map((item) => item.id))}
-                  restoreScroll={restoreScroll}
-                  onSelect={(item) => {
-                    setSelectedId(item.id);
-                  }}
-                  onStartMultiSelect={(id) => {
-                    setMultiSelectMode(true);
-                    setMultiPreviewOpen(false);
-                    setSelectedIds(new Set([id]));
-                  }}
-                  onToggleSelected={(id) =>
-                    setSelectedIds((current) => {
-                      const next = new Set(current);
-                      if (next.has(id)) next.delete(id);
-                      else next.add(id);
-                      return next;
-                    })
-                  }
-                  selectedIds={selectedIds}
-                  settings={settings}
-                  tr={tr}
-                />
-              ) : (
-                <QuickPastePanel
-                  activeId={selectedClip?.id ?? null}
-                  autoScroll={keyboardNavigating}
-                  clips={filteredClips}
-                  copiedId={lastCopiedId}
-                  emptySummary={activeSearchSummary}
-                  filePathStatuses={filePathStatuses}
-                  hasMore={Boolean(nextCursor)}
-                  isLoadingMore={isLoadingMore}
-                  limit={settings.quickItemLimit}
-                  multiSelectMode={multiSelectMode}
-                  selectedIds={selectedIds}
-                  density={settings.panelDensity}
-                  onCreateSnippet={() => toast.info("新建片段功能开发中")}
-                  onPaste={pasteClip}
-                  onFavorite={handleRowFavorite}
-                  onFavoriteSelected={() => {
-                    void favoriteSelectedClips(selectedInList);
-                  }}
-                  onLoadMore={loadMoreClips}
-                  onScrollTopChange={handleListScrollTop}
-                  restoreScroll={restoreScroll}
-                  onOpen={(item) => {
-                    void runPrimaryOpenAction(item, "click");
-                  }}
-                  onOpenAggregate={() => {
-                    setMultiPreviewOpen(true);
-                    setMultiSelectMode(false);
-                    void navigateWorkspaceAggregate();
-                  }}
-                  onPointerActive={() => setKeyboardNavigating(false)}
-                  onCopySelected={() => {
-                    void copySelectedClips(selectedInList);
-                  }}
-                  onCopyMode={(item, mode) => {
-                    void copyClip(item, mode);
-                  }}
-                  onOcrExtract={(item) => {
-                    void ocrExtractAndCopy(item);
-                  }}
-                  onDelete={(item) => {
-                    void deleteClips([item.id]);
-                  }}
-                  onDeleteSelected={() => {
-                    void deleteClips(selectedInList.map((item) => item.id));
-                  }}
-                  onSelect={handleRowSelect}
-                  onStartMultiSelect={handleRowStartMultiSelect}
-                  onToggleSelected={handleRowToggleSelected}
-                  onClearSelection={() => {
-                    setSelectedIds(new Set());
-                    setMultiSelectMode(false);
-                    setMultiPreviewOpen(false);
-                    void navigateWorkspaceList();
-                  }}
-                  activeGroupStart={activeGroupStart}
-                  onActiveGroupChange={handleActiveGroupChange}
-                  groupScrollTarget={groupScrollTarget}
-                  quickPreviewOpen={quickPreviewOpen}
-                  onToggleQuickPreview={() => setQuickPreviewOpen((open) => !open)}
-                  tr={tr}
-                />
-              )
-            }
-            renderDetail={(clipId) => {
-              const clip = clips.find((item) => item.id === clipId) ?? selectedClip;
-              const detailItems = filteredClips;
-              const detailIndex = clip ? detailItems.findIndex((item) => item.id === clip.id) : -1;
-              const previousClip = detailIndex > 0 ? detailItems[detailIndex - 1] : null;
-              const nextClip = detailIndex >= 0 && detailIndex < detailItems.length - 1 ? detailItems[detailIndex + 1] : null;
-              const navigateDetailClip = (item: ClipItem | null) => {
-                if (!item) return;
-                setSelectedId(item.id);
-                void navigateWorkspaceDetail(item.id);
-              };
-              return (
-                <ClipDetailWorkspace
-                  clip={clip}
-                  filePathStatuses={filePathStatuses}
-                  links={clip ? extractUrls(clip.content) : []}
-                  tr={tr}
-                  onBack={() => {
-                    void navigateWorkspaceList();
-                  }}
-                  onCopy={copyClip}
-                  onCopyPlain={(item) => copyClip(item, "plain")}
-                  onCopyText={copyText}
-                  onOcrExtract={(clip) => {
-                    void ocrExtractAndCopy(clip);
-                  }}
-                  onOpen={openClipTarget}
-                  onOpenPath={openSystemPath}
-                  onPasteText={pasteText}
-                  onPrevious={previousClip ? () => navigateDetailClip(previousClip) : undefined}
-                  onNext={nextClip ? () => navigateDetailClip(nextClip) : undefined}
-                  onSearchTag={searchByTag}
-                  onUpdateContent={updateClipContent}
-                  onUpdateTags={async (item, tags) =>
-                    // 标签独立写回：不带 content，Rust 侧不重建正文与 representations（提案 §24）。
-                    updateClipTagsOnly(item, tags, {
-                      setClips,
-                      clipsRef,
-                      settingsRef,
-                      normalizeClip,
-                      setNativeStatus,
-                      tr,
-                    })
-                  }
-                  onApplyTags={(clipId, tags) => {
-                    // AI 建议标签应用：merge 语义写入，新增 tag 在 provenance 标 ai（详情页提案 §5.3）。
-                    const source = clipsRef.current.find((item) => item.id === clipId);
-                    const previous = source ? parseTagProvenance(source) : {};
-                    const added = tags.filter((tag) => !(source?.tags ?? []).includes(tag));
-                    updateClip(clipId, {
-                      tags,
-                      metadata: {
-                        ...(source?.metadata ?? {}),
-                        tags_provenance: mergeAiProvenance(previous, added, "pi"),
-                      },
-                    });
-                  }}
-                  agentProviders={toDetailAgentProviders(
-                    settings.agent?.providers ?? settings.agentProviders,
-                  )}
-                  quickActions={[
-                    ...(clip && canOpenClipTarget(clip)
-                      ? [
-                          {
-                            id: "open-target",
-                            label: clip.analysis.attachment?.targetType === "path" ? tr("main.detailAction.openResource") : tr("main.detailAction.openLink"),
-                            icon: <ExternalLink size={13} />,
-                            onSelect: () => {
-                              void openClipTarget(clip);
-                            },
-                          },
-                        ]
-                      : []),
-                    ...(clip
-                      ? [
-                          {
-                            id: "copy",
-                            label: tr("main.detailAction.copyContent"),
-                            icon: <Copy size={13} />,
-                            onSelect: () => {
-                              void copyClip(clip);
-                            },
-                          },
-                          {
-                            id: "parse",
-                            label: tr("main.detailAction.parse"),
-                            icon: <FileJson size={13} />,
-                            onSelect: () => {
-                              setNativeStatus(tr("main.status.parsePluginReserved"));
-                            },
-                          },
-                        ]
-                      : []),
-                  ]}
-                />
-              );
-            }}
-            renderAggregate={() => (
-              <MultiAggregateWorkspace
-                aggregatePreview={aggregatePreview}
-                items={selectedInList}
-                format={aggregateFormat}
+            renderList={() => (
+              <ClipboardListRoute
+                activeView={activeView}
+                selectedClip={selectedClip}
+                keyboardNavigating={keyboardNavigating}
+                filteredClips={filteredClips}
+                selectedInList={selectedInList}
+                activeSearchSummary={activeSearchSummary}
+                nextCursor={nextCursor}
+                isLoadingMore={isLoadingMore}
+                multiSelectMode={multiSelectMode}
+                selectedIds={selectedIds}
+                settings={settings}
+                lastCopiedId={lastCopiedId}
+                filePathStatuses={filePathStatuses}
+                restoreScroll={restoreScroll}
+                activeGroupStart={activeGroupStart}
+                groupScrollTarget={groupScrollTarget}
+                quickPreviewOpen={quickPreviewOpen}
+                writeback={{ pasteClip, favoriteSelectedClips, copySelectedClips, copyClip, ocrExtractAndCopy }}
+                emptyTrash={emptyTrash}
+                hardDeleteClips={hardDeleteClips}
+                restoreClips={restoreClips}
+                deleteClips={deleteClips}
+                loadMoreClips={loadMoreClips}
+                onListScrollTop={handleListScrollTop}
+                onRunPrimaryOpenAction={runPrimaryOpenAction}
+                onRowFavorite={handleRowFavorite}
+                onRowSelect={handleRowSelect}
+                onRowStartMultiSelect={handleRowStartMultiSelect}
+                onRowToggleSelected={handleRowToggleSelected}
+                onActiveGroupChange={handleActiveGroupChange}
+                navigateWorkspaceList={navigateWorkspaceList}
+                navigateWorkspaceAggregate={navigateWorkspaceAggregate}
+                setSelectedId={setSelectedId}
+                setSelectedIds={setSelectedIds}
+                setMultiSelectMode={setMultiSelectMode}
+                setMultiPreviewOpen={setMultiPreviewOpen}
+                setKeyboardNavigating={setKeyboardNavigating}
+                setQuickPreviewOpen={setQuickPreviewOpen}
                 tr={tr}
-                onFormatChange={setAggregateFormat}
-                onBack={() => {
-                  setMultiPreviewOpen(false);
-                  setMultiSelectMode(selectedInList.length > 0);
-                  void navigateWorkspaceList();
-                }}
-                onCopy={() => {
-                  void copySelectedClips(selectedInList).then(() => navigateWorkspaceList());
-                }}
-                onCopyItem={(clip) => copyClip(clip)}
-                onExportTextFiles={() => exportSelectedTextFiles(selectedInList)}
-                onExportTable={() => {
-                  // 复制表格走 TSV 粘贴路径：空白折叠防串列 + 表格公式注入防护（clipboard-interaction-repair 第 5 项）。
-                  const table = buildClipboardTable(selectedInList.map((item) => ({
-                    title: item.analysis.title || "",
-                    kind: item.payloadKind,
-                    content: item.content,
-                  })));
-                  void navigator.clipboard.writeText(table);
-                  setNativeStatus(tr("main.status.exportedTsv"));
-                }}
-                onExportCsvFile={async () => {
-                  // 导出 CSV 文件（clipboard-interaction-repair 第 5 项）：正文经 RFC 4180 转义与
-                  // 公式注入防护后交给 Rust 独占写盘；缺失原始文件在状态栏明确报告，不静默跳过。
-                  const clips: ExportSourceClip[] = selectedInList.map((item) => ({
-                    id: item.id,
-                    title: item.analysis.title || item.analysis.sourceName || item.payloadKind,
-                    kind: item.payloadKind,
-                    content: item.content,
-                    filePath:
-                      item.payloadKind === "file"
-                        ? getFilePathsFromClip(item)[0] ?? null
-                        : item.payloadKind === "image"
-                          ? item.imageFile ?? null
-                          : null,
-                  }));
-                  const sources = projectExportSources(clips, filePathStatuses);
-                  if (!sources.length) {
-                    setNativeStatus(tr("main.status.exportCsvEmpty"));
-                    return;
-                  }
-                  const plan = buildCsvFileExportPlan(
-                    sources,
-                    [
-                      tr("main.aggregate.csvHeaderTitle"),
-                      tr("main.aggregate.csvHeaderKind"),
-                      tr("main.aggregate.csvHeaderContent"),
-                    ],
-                    tr("main.aggregate.csvUntitled"),
-                  );
-                  const split = planSplitExport(sources);
-                  try {
-                    const result = await invoke<{ directory: string; path: string; count: number }>(
-                      "export_clip_csv_file",
-                      { input: { content: plan.content, rowCount: plan.rowCount } },
-                    );
-                    const outcomes: ExportItemOutcome[] = [
-                      ...split.textItems.map((item) => ({ id: item.id, outcome: "success" as const })),
-                      ...split.otherItems.map((item) => ({ id: item.id, outcome: "success" as const })),
-                      ...split.fileItems.map((item) => ({ id: item.id, outcome: "success" as const })),
-                      ...split.missingItems.map((item) => ({
-                        id: item.id,
-                        outcome: "missing" as const,
-                        reasonCode: "CLIP_CSV_SOURCE_MISSING",
-                      })),
-                    ];
-                    const summary = summarizeExportOutcome(outcomes);
-                    setNativeStatus(
-                      summary.partial
-                        ? tr("main.status.exportedCsvPartial", {
-                            count: result.count,
-                            path: result.path,
-                            missing: summary.missing,
-                          })
-                        : tr("main.status.exportedCsvFile", { count: result.count, path: result.path }),
-                    );
-                  } catch (error) {
-                    logAppError("warn", "Export CSV file failed", String(error));
-                    setNativeStatus(formatNativeError(error));
-                  }
-                }}
-                onExportSplitFiles={async () => {
-                  // 按类型分割导出（clipboard-interaction-repair 第 5 项）：CSV 清单与原始文件复制
-                  // 落在同一独立目录；写盘前复核路径，逐项 outcome 明确报告缺失与部分失败。
-                  const clips: ExportSourceClip[] = selectedInList.map((item) => ({
-                    id: item.id,
-                    title: item.analysis.title || item.analysis.sourceName || item.payloadKind,
-                    kind: item.payloadKind,
-                    content: item.content,
-                    filePath:
-                      item.payloadKind === "file"
-                        ? getFilePathsFromClip(item)[0] ?? null
-                        : item.payloadKind === "image"
-                          ? item.imageFile ?? null
-                          : null,
-                  }));
-                  const sources = projectExportSources(clips, filePathStatuses);
-                  if (!sources.length) {
-                    setNativeStatus(tr("main.status.exportCsvEmpty"));
-                    return;
-                  }
-                  try {
-                    // 列表状态是加载时的快照；导出时文件可能已移动或删除，写盘前复核一次。
-                    const paths = [
-                      ...new Set(
-                        sources.flatMap((item) => (item.filePath?.trim() ? [item.filePath] : [])),
-                      ),
-                    ];
-                    const checks = paths.length
-                      ? await invoke<
-                          { path: string; exists: boolean; isFile: boolean; isDir: boolean }[]
-                        >("check_file_paths", { paths })
-                      : [];
-                    const availability: Record<string, boolean> = {};
-                    for (const check of checks) {
-                      availability[check.path] = check.exists && check.isFile;
-                    }
-                    const request = buildSplitExportRequest(
-                      sources,
-                      [
-                        tr("main.aggregate.csvHeaderTitle"),
-                        tr("main.aggregate.csvHeaderKind"),
-                        tr("main.aggregate.csvHeaderContent"),
-                      ],
-                      tr("main.aggregate.csvUntitled"),
-                      availability,
-                    );
-                    type SplitOutcome = {
-                      id: string;
-                      status: "success" | "missing" | "failed";
-                      reasonCode?: string;
-                      detail?: string;
-                    };
-                    const result = await invoke<{
-                      directory: string;
-                      csvPath?: string;
-                      csvRowCount: number;
-                      outcomes: SplitOutcome[];
-                    }>("export_clip_split_files", {
-                      input: {
-                        csvContent: request.csvContent,
-                        csvRowCount: request.csvRowCount,
-                        files: request.files,
-                      },
-                    });
-                    // 文本 / 其他类进 CSV 清单即成功；原始文件复制结果由 Rust 逐项返回；
-                    // 复核后判缺失的条目由前端补 missing，保证报告覆盖全部条目。
-                    const outcomes: ExportItemOutcome[] = [
-                      ...request.split.textItems.map((item) => ({ id: item.id, outcome: "success" as const })),
-                      ...request.split.otherItems.map((item) => ({ id: item.id, outcome: "success" as const })),
-                      ...result.outcomes.map((item) => ({
-                        id: item.id,
-                        outcome: item.status,
-                        reasonCode: item.reasonCode,
-                      })),
-                      ...request.split.missingItems.map((item) => ({
-                        id: item.id,
-                        outcome: "missing" as const,
-                        reasonCode: "CLIP_SPLIT_SOURCE_MISSING",
-                      })),
-                    ];
-                    const summary = summarizeExportOutcome(outcomes);
-                    const reasonLabels: Partial<Record<string, TranslationKey>> = {
-                      CLIP_SPLIT_SOURCE_MISSING: "main.error.command.CLIP_SPLIT_SOURCE_MISSING",
-                      CLIP_SPLIT_COPY_FAILED: "main.error.command.CLIP_SPLIT_COPY_FAILED",
-                    };
-                    const reasons = summary.reasonCodes
-                      .map((code) => {
-                        const key = reasonLabels[code];
-                        return key ? tr(key) : code;
-                      })
-                      .join(tr("main.status.exportReasonSeparator"));
-                    setNativeStatus(
-                      summary.partial
-                        ? tr("main.status.exportedSplitPartial", {
-                            succeeded: summary.succeeded,
-                            failed: summary.failed,
-                            missing: summary.missing,
-                            directory: result.directory,
-                          }) + (reasons ? tr("main.status.exportSplitReasons", { reasons }) : "")
-                        : tr("main.status.exportedSplitFiles", {
-                            count: result.csvRowCount,
-                            directory: result.directory,
-                            files: result.outcomes.filter((item) => item.status === "success").length,
-                          }),
-                    );
-                  } catch (error) {
-                    logAppError("warn", "Split export by type failed", String(error));
-                    setNativeStatus(formatNativeError(error));
-                  }
-                }}
-                onOpenItem={(clip) => {
-                  setSelectedId(clip.id);
-                  void navigateWorkspaceDetail(clip.id);
-                }}
+              />
+            )}
+            renderDetail={(clipId) => (
+              <ClipDetailRoute
+                clipId={clipId}
+                clips={clips}
+                selectedClip={selectedClip}
+                filteredClips={filteredClips}
+                filePathStatuses={filePathStatuses}
+                settings={settings}
+                settingsRef={settingsRef}
+                clipsRef={clipsRef}
+                setClips={setClips}
+                setNativeStatus={setNativeStatus}
+                setSelectedId={setSelectedId}
+                navigateWorkspaceList={navigateWorkspaceList}
+                navigateWorkspaceDetail={navigateWorkspaceDetail}
+                copyClip={copyClip}
+                copyText={copyText}
+                pasteText={pasteText}
+                ocrExtractAndCopy={ocrExtractAndCopy}
+                openClipTarget={openClipTarget}
+                openSystemPath={openSystemPath}
+                searchByTag={searchByTag}
+                updateClip={updateClip}
+                updateClipContent={updateClipContent}
+                tr={tr}
+              />
+            )}
+            renderAggregate={() => (
+              <AggregateRoute
+                selectedInList={selectedInList}
+                aggregatePreview={aggregatePreview}
+                aggregateFormat={aggregateFormat}
+                filePathStatuses={filePathStatuses}
+                copySelectedClips={copySelectedClips}
+                copyClip={copyClip}
+                exportSelectedTextFiles={exportSelectedTextFiles}
+                setAggregateFormat={setAggregateFormat}
+                setMultiPreviewOpen={setMultiPreviewOpen}
+                setMultiSelectMode={setMultiSelectMode}
+                setSelectedId={setSelectedId}
+                navigateWorkspaceList={navigateWorkspaceList}
+                navigateWorkspaceDetail={navigateWorkspaceDetail}
+                setNativeStatus={setNativeStatus}
+                tr={tr}
+                formatNativeError={formatNativeError}
               />
             )}
           />
@@ -1581,46 +749,20 @@ function ClipForgeApp() {
       </section>
 
       {workspaceRoute.name === "list" ? (
-        <>
-          {/* 多选底栏常驻渲染（visible 控制显隐/过渡），退出多选时与
-              PanelStatusFeedback 短暂并存（约 100ms 淡出），可接受。 */}
-          <MultiSelectBottomBar
-            count={selectedInList.length}
-            tr={tr}
-            variant={activeView === "trash" ? "trash" : "default"}
-            visible={multiSelectMode}
-          />
-          {!multiSelectMode ? (
-            <PanelStatusFeedback
-              commandMenu={
-                <QuickCommandMenu
-                  mod={modLabel}
-                  onCopyMode={(item, mode) => {
-                    void copyClip(item, mode);
-                  }}
-                  onDelete={(item) => {
-                    void deleteClips([item.id]);
-                  }}
-                  onFavorite={(item) => updateClip(item.id, { favorite: !item.favorite })}
-                  onCreateSnippet={() => toast.info("新建片段功能开发中")}
-                  onTogglePanelPinned={togglePanelPinned}
-                  selectedItem={selectedClip}
-                >
-                  <button
-                    className="mono flex cursor-pointer items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
-                    type="button"
-                  >
-                    <span>{filteredClips.length} 条</span>
-                    <span>·</span>
-                    <span>⌘K 全部操作</span>
-                  </button>
-                </QuickCommandMenu>
-              }
-              status={nativeStatus}
-              tr={tr}
-            />
-          ) : null}
-        </>
+        <PanelBottomBars
+          activeView={activeView}
+          multiSelectMode={multiSelectMode}
+          selectedInList={selectedInList}
+          selectedClip={selectedClip}
+          filteredCount={filteredClips.length}
+          nativeStatus={nativeStatus}
+          modLabel={modLabel}
+          copyClip={copyClip}
+          deleteClips={deleteClips}
+          updateClip={updateClip}
+          onTogglePanelPinned={togglePanelPinned}
+          tr={tr}
+        />
       ) : null}
     </main>
   );

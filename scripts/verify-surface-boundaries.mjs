@@ -58,6 +58,46 @@ function checkMarkers() {
     workspaceDetail.includes('data-surface="workspace"'),
     "详情页 src/workspace/components/ClipDetailWorkspace.tsx 缺少 data-surface=\"workspace\" marker",
   );
+
+// 2) S5 拆分契约：搜索域与面板区块必须落在独立模块，App.tsx 只做接线。
+function checkS5Split() {
+  const app = read(files.app);
+  const splitFiles = [
+    "src/clipboard/use-panel-search.ts",
+    "src/clipboard/components/panel-top-bar.tsx",
+    "src/clipboard/components/panel-bottom-bars.tsx",
+    "src/clipboard/components/clipboard-list-route.tsx",
+    "src/clipboard/components/clip-detail-route.tsx",
+    "src/clipboard/components/aggregate-route.tsx",
+    "src/clipboard/use-aggregate-export.ts",
+    "src/clipboard/use-clip-trash.ts",
+    "src/clipboard/use-panel-show.ts",
+    "src/clipboard/use-search-snapshot-query.ts",
+    "src/clipboard/app-settings.ts",
+    "src/components/panel-error-boundary.tsx",
+  ];
+  for (const rel of splitFiles) {
+    assert(fs.existsSync(path.join(root, rel)), `S5 拆分文件缺失: ${rel}`);
+  }
+  if (process.exitCode) return;
+  for (const rel of splitFiles) {
+    const content = read(rel);
+    assert(
+      !content.includes('data-surface="clipboard"'),
+      `${rel} 出现第二处 data-surface="clipboard" marker（marker 只允许 App.tsx 主面板一根）`,
+    );
+  }
+  assert(app.includes("<PanelTopBar"), "App.tsx 未接线 <PanelTopBar");
+  assert(app.includes("<PanelBottomBars"), "App.tsx 未接线 <PanelBottomBars");
+  assert(app.includes("<ClipboardListRoute"), "App.tsx 未接线 <ClipboardListRoute");
+  assert(app.includes("usePanelSearch("), "App.tsx 未接线 usePanelSearch(");
+  assert(
+    !app.includes("buildBaseSearchSuggestions(") && !app.includes("buildSearchSuggestions("),
+    "App.tsx 仍直接调用 buildBaseSearchSuggestions/buildSearchSuggestions（应经 use-panel-search）",
+  );
+}
+
+checkS5Split();
 }
 
 checkMarkers();
