@@ -6,10 +6,10 @@
 
 ## 快照
 
-- CodeGraph 已索引文件: 300
-- CodeGraph 节点: 5937
-- CodeGraph 边: 12948
-- 受管源码 / 配置文件: 322
+- CodeGraph 已索引文件: 302
+- CodeGraph 节点: 6004
+- CodeGraph 边: 13078
+- 受管源码 / 配置文件: 324
 - Tauri commands: 90
 - MCP tools: 41
 - 测试与门禁脚本: 13
@@ -18,7 +18,7 @@
 
 ## 路由表（来自 BUSINESS_INDEX.md）
 
-- 索引摘要: fc6989b59a62
+- 索引摘要: 39a25f24cdc9
 
 | Surface | 窗口 label | HTML 入口 | 前端根 | 布局外壳 / 标题栏 | 主要目录 |
 | 快速面板（主交互） | `main` | `index.html` | `src/main.tsx` → `src/App.tsx` | `src/clipboard/components/TopToolbar.tsx`（自绘 chrome + 拖拽区） | `src/clipboard/` |
@@ -35,7 +35,8 @@
 | 搜索 | `src/clipboard/clip-search.ts`、`src/search-query.ts`、`src/clipboard/keyword-suggestions.ts`、`src/clipboard/use-panel-search.ts`、`src/clipboard/use-search-snapshot-query.ts`、`src/clipboard/components/GlassSearchBar.tsx`、`scripts/verify-keyword-suggestions.mjs` | 搜索请求构建、`@`/`#` 查询语法（`#` 按出现次数排序）、关键词联想（汉字前缀 / 英文前缀 / 拼音，无依赖纯模块，惰性建索引）、S5 搜索状态/下拉/快照查询 hook |
 | 复制回写 | `src/clipboard/use-clip-writeback.ts`、`src/clipboard/use-clip-copy-paste.ts`、`src/services/clipboard.ts` | 粘贴写回抑制，避免回环采集；`use-clip-copy-paste` 承载复制/粘贴动作，`use-clip-writeback` 保留更新与抑制门面 |
 | 聚合拼接格式 | `src/clipboard/clipboard-domain.ts`、`src/clipboard/use-aggregate-format.ts`、`src/clipboard/aggregate-format-storage.ts`、`src/workspace/components/AggregateFormatMenu.tsx` | 多选聚合的分隔符/编号/顺序，复制与预览共用 formatAggregate |
-| 多选表格 / CSV 导出 | `src/clipboard/csv-export.ts`、`src/clipboard/csv-file-export.ts`、`src/clipboard/use-aggregate-export.ts`、`src/workspace/components/MultiAggregateWorkspace.tsx`、`src-tauri/src/lib.rs`（`export_clip_csv_file`、`export_clip_split_files`） | 纯函数：RFC 4180 单元格转义（逗号/引号/换行）、表格公式注入防护（`= + - @` 前缀）、TSV 复制表格（空白折叠，保留粘贴兼容）与 CSV 文件内容（BOM+CRLF）构建；`csv-file-export.ts` 负责条目投影、按类型分割（文本进 CSV / 图片文件按原始路径复制 / 缺失项单列）、写盘前路径复核与部分失败结构化报告；`use-aggregate-export.ts` 的 `onExportTable` 走 TSV 复制路径、`onExportCsvFile` 写 CSV 清单、`onExportSplitFiles` 先 `check_file_paths` 复核再调 Rust 写盘（CSV 清单 + 原始文件复制落在同一时间戳独立目录，`create_new` 不覆盖、文件名过滤防路径穿越、逐项 success/missing/failed outcome）；错误码与失败原因脱敏。实机落盘与部分失败触发路径待沙箱走查 |
+| 多选表格 / CSV 导出 | `src/clipboard/csv-export.ts`、`src/clipboard/csv-file-export.ts`、`src/clipboard/use-aggregate-export.ts`、`src/workspace/components/MultiAggregateWorkspace.tsx`、`src-tauri/src/lib.rs`（`export_clip_csv_file`、`export_clip_split_files`） | 纯函数：RFC 4180 单元格转义（逗号/引号/换行）、表格公式注入防护（`= + - @` 前缀）、TSV 复制表格（空白折叠，保留粘贴兼容）与 CSV 文件内容（BOM+CRLF）构建；`csv-file-export.ts` 负责条目投影、按类型分割（文本进 CSV / 图片文件按原始路径复制 / 缺失项单列）、写盘前路径复核与部分失败结构化报告；`use-aggregate-export.ts` 的 `exportTable` 走 TSV 复制路径、`exportCsvFile` 写 CSV 清单、`exportSplitFiles` 先 `check_file_paths` 复核再调 Rust 写盘（CSV 清单 + 原始文件复制落在同一时间戳独立目录，`create_new` 不覆盖、文件名过滤防路径穿越、逐项 success/missing/failed outcome）；错误码与失败原因脱敏。实机落盘与部分失败触发路径待沙箱走查 |
+| 多选交互 / 收藏详情可发现性 | `scripts/verify-multi-select-interaction.mjs`、`scripts/verify-favorites-detail.mjs`、`src/clipboard/use-panel-keyboard.ts`、`src/clipboard/components/QuickPastePanel.tsx`、`src/clipboard/components/ClipboardRowActions.tsx` | 静态门禁覆盖空格多选与 Cmd+A/C/X editable 守卫、Tab/Escape/`/` 分支、右键菜单按 `contextMenu.item` 绑定、选中剪除、CSV 写盘前 `buildCheckedSources` 复核；收藏等视图统一走 QuickPastePanel，行内详情按钮 + 右键详情入口齐备，标签写回不含 `content`。两者已挂入 `pnpm test:unit` |
 | 行视觉 / 动画 | `src/clipboard/row-animation.ts`、`src/clipboard/anim-freeze-guard.ts` | 行入场动画、WKWebView 动画冻结守卫 |
 | 快速预览 | `src/clipboard/components/QuickPreviewCard.tsx`、`src/clipboard/components/ClipboardContentPreview.tsx` | hover 预览卡（规格见 DESIGN_SYSTEM 7.3） |
 | 多选 / 回收站 | `src/clipboard/components/MultiSelectBottomBar.tsx`、`src/clipboard/components/TrashPanel.tsx` | 批量删除、回收站视图 |
@@ -89,7 +90,7 @@
 | 粘贴后出现重复条目 | `src/clipboard/use-clip-writeback.ts` 写回抑制窗口 |
 | 文案缺失 / 中英不对齐 | `src/i18n/locales/` + `pnpm check:i18n` |
 
-## 源码文件清单（322）
+## 源码文件清单（324）
 
 | 文件 | 语言 | CodeGraph 节点 | 代表符号 |
 | --- | --- | ---: | --- |
@@ -128,6 +129,7 @@
 | `scripts/verify-browse-tag-input.mjs` | JavaScript | 24 | `root` `outDir` `read` `mod` `guard` |
 | `scripts/verify-detail-leave-guard.mjs` | JavaScript | 19 | `root` `outDir` `read` `mod` `base` |
 | `scripts/verify-editor-agent-bridge.mjs` | JavaScript | 19 | `root` `workspacePath` `mdEditorPath` `rustPath` `read` |
+| `scripts/verify-favorites-detail.mjs` | JavaScript | 15 | `root` `read` `failures` `ok` `src` |
 | `scripts/verify-file-size-gate.mjs` | JavaScript | 13 | `root` `gate` `sandbox` `writeLines` `run` |
 | `scripts/verify-file-size.mjs` | JavaScript | 18 | `root` `configPath` `config` `LIMIT` `EXEMPT_LIMIT` |
 | `scripts/verify-focus-prefetch.mjs` | JavaScript | 15 | `ROOT` `RUST_SRC` `REMOVED` `KEPT` `collectRustFiles` |
@@ -137,6 +139,7 @@
 | `scripts/verify-log-tray-boundaries.mjs` | JavaScript | 14 | `root` `libRsPath` `logServicePath` `trayPath` `read` |
 | `scripts/verify-mcp-dispatch.mjs` | JavaScript | 10 | `root` `specs` `declared` `unique` `dispatchSources` |
 | `scripts/verify-motion-tokens.mjs` | JavaScript | 10 | `roots` `tsxFiles` `walk` `violations` `lines` |
+| `scripts/verify-multi-select-interaction.mjs` | JavaScript | 23 | `failures` `check` `read` `kb` `spaceBranch` |
 | `scripts/verify-ocr-error-guidance.mjs` | JavaScript | 25 | `root` `outDir` `mod` `rustDir` `rustSources` |
 | `scripts/verify-onboarding-surface.mjs` | JavaScript | 7 | `root` `read` `assert` `app` |
 | `scripts/verify-runtime-boundaries.mjs` | JavaScript | 43 | `root` `appPath` `overflowMenuPath` `panelBoundaryPath` `shortcutSectionPath` |
@@ -183,7 +186,7 @@
 | `src-tauri/src/context_collectors/external.rs` | Rust | 15 | `run_external_collector` `load_external_collectors` `load_manifest` `validate_manifest` `resolve_executable` |
 | `src-tauri/src/context_collectors/tests.rs` | Rust | 6 | `contract_describes_external_execution_boundary` `matcher_requires_declared_application_selector` `output_validation_reports_missing_contract_fields` |
 | `src-tauri/src/diagnostics.rs` | Rust | 25 | `STARTED_AT` `TaskVmInfo` `TASK_VM_INFO_STRUCT_BYTES` `_` `TASK_VM_INFO_COUNT_WORDS` |
-| `src-tauri/src/lib.rs` | Rust | 368 | `command_error` `is_command_error` `preserve_command_error` `kAXTrustedCheckOptionPrompt` `AXIsProcessTrusted` |
+| `src-tauri/src/lib.rs` | Rust | 373 | `command_error` `is_command_error` `preserve_command_error` `kAXTrustedCheckOptionPrompt` `AXIsProcessTrusted` |
 | `src-tauri/src/log_service.rs` | Rust | 30 | `AppLogEntryPayload` `QueryAppLogPayload` `LogStatsPayload` `log_to_file` `build_log_line` |
 | `src-tauri/src/main.rs` | Rust | 2 | `main` |
 | `src-tauri/src/mcp/context.rs` | Rust | 17 | `capture_context_url` `mcp_context_reference` `mcp_context_snapshot` `test_clip` `context_snapshot_covers_source_link_markdown_file_and_long_text` |
@@ -232,20 +235,20 @@
 | `src/clipboard/components/ClipContextMenu.tsx` | TSX | 31 | `ClipContextMenuProps` `menuItem` `menuShortcut` `ClipContextMenu` `run` |
 | `src/clipboard/components/ClipboardContentPreview.tsx` | TSX | 11 | `ClipboardContentPreviewProps` `rtfCache` `getRelativeTimeFormat` `formatRelativeTime` `ClipRowThumb` |
 | `src/clipboard/components/ClipboardEmptyState.tsx` | TSX | 7 | `ClipboardEmptyStateVariant` `ClipboardEmptyStateProps` `ClipboardEmptyState` |
-| `src/clipboard/components/ClipboardRow.tsx` | TSX | 15 | `ClipboardRowProps` `KindIcon` `ClipboardRow` |
-| `src/clipboard/components/ClipboardRowActions.tsx` | TSX | 9 | `ClipboardRowActionsProps` `actionButton` `ClipboardRowActions` |
+| `src/clipboard/components/ClipboardRow.tsx` | TSX | 33 | `ClipboardRowProps` `KindIcon` `ClipboardRow` |
+| `src/clipboard/components/ClipboardRowActions.tsx` | TSX | 17 | `ClipboardRowActionsProps` `actionButton` `ClipboardRowActions` |
 | `src/clipboard/components/GlassSearchBar.tsx` | TSX | 32 | `GlassSearchBarProps` `onApplySuggestion` `onBlur` `onChange` `onClear` |
 | `src/clipboard/components/MultiSelectBottomBar.tsx` | TSX | 5 | `MultiSelectBottomBarProps` `MultiSelectBottomBar` |
 | `src/clipboard/components/PanelStatusFeedback.tsx` | TSX | 10 | `windowDrag` `PanelStatusFeedbackProps` `PanelStatusFeedback` |
 | `src/clipboard/components/QuickCommandMenu.tsx` | TSX | 10 | `QuickCommandMenuProps` `menuItem` `menuShortcut` `QuickCommandMenu` |
-| `src/clipboard/components/QuickPastePanel.tsx` | TSX | 57 | `pinPlaceholder` `QuickPastePanelProps` `onFavorite` `onFavoriteSelected` `onLoadMore` |
+| `src/clipboard/components/QuickPastePanel.tsx` | TSX | 55 | `QuickPastePanelProps` `onFavorite` `onFavoriteSelected` `onLoadMore` `onScrollTopChange` |
 | `src/clipboard/components/QuickPreviewCard.tsx` | TSX | 15 | `QuickPreviewCardProps` `kindIcon` `formatTime` `QuickPreviewCard` |
 | `src/clipboard/components/TopToolbar.tsx` | TSX | 23 | `PanelArrowKey` `TopToolbarProps` `iconButtonBase` `ToolbarIconButton` `TopToolbar` |
 | `src/clipboard/components/TrashContextMenu.tsx` | TSX | 9 | `TrashContextMenuProps` `menuItem` `menuShortcut` `TrashContextMenu` |
 | `src/clipboard/components/TrashPanel.tsx` | TSX | 36 | `TrashPanelProps` `onEmptyTrash` `onDeleteSelected` `onHardDelete` `onLoadMore` |
 | `src/clipboard/components/TrashRow.tsx` | TSX | 11 | `TrashRowProps` `actionButton` `formatRelativeTime` `TrashRow` |
 | `src/clipboard/components/VirtualList.tsx` | TSX | 31 | `ROW_HEIGHT` `OVERSCAN` `RowAnimationContext` `ListScrollingContext` `VirtualListProps` |
-| `src/clipboard/components/aggregate-route.tsx` | TSX | 9 | `AggregateRoute` |
+| `src/clipboard/components/aggregate-route.tsx` | TSX | 8 | `AggregateRoute` |
 | `src/clipboard/components/clip-detail-route.tsx` | TSX | 14 | `ClipDetailRoute` `navigateDetailClip` |
 | `src/clipboard/components/clipboard-list-route.tsx` | TSX | 17 | `PanelWritebackHandlers` `pasteClip` `favoriteSelectedClips` `copySelectedClips` `copyClip` |
 | `src/clipboard/components/panel-bottom-bars.tsx` | TSX | 8 | `PanelBottomBars` |
@@ -259,7 +262,7 @@
 | `src/clipboard/panel-shared.ts` | TypeScript | 18 | `logAppError` `waitForPasteTriggerRelease` `finish` `onKeyUp` `useDebouncedValue` |
 | `src/clipboard/row-animation.ts` | TypeScript | 7 | `RowAnimEpochState` `initialRowAnimEpoch` `clipsDigest` `advanceRowAnimEpoch` |
 | `src/clipboard/tag-only-writeback.ts` | TypeScript | 14 | `TagOnlyWritebackDeps` `normalizeClip` `setNativeStatus` `tr` `updateClipTagsOnly` |
-| `src/clipboard/use-aggregate-export.ts` | TypeScript | 14 | `useAggregateExport` `buildExportSources` `exportTable` `exportCsvFile` `exportSplitFiles` |
+| `src/clipboard/use-aggregate-export.ts` | TypeScript | 15 | `useAggregateExport` `recheckExportPaths` `buildCheckedSources` `buildExportSources` `exportTable` |
 | `src/clipboard/use-aggregate-format.ts` | TypeScript | 5 | `useAggregateFormat` |
 | `src/clipboard/use-cleanup-scheduler.ts` | TypeScript | 17 | `MAX_BROWSER_TIMER_DELAY_MS` `CLEANUP_STARTUP_DELAY_MS` `CleanupClipPayload` `CleanupSchedulerOptions` `useCleanupScheduler` |
 | `src/clipboard/use-clip-cache-invalidation.ts` | TypeScript | 3 | `invalidateViewClipCache` |
@@ -587,7 +590,7 @@
 - `src-tauri/src/context_collector_runtime.rs` — 1 个 test
 - `src-tauri/src/context_collectors.rs` — 0 个 test
 - `src-tauri/src/diagnostics.rs` — 2 个 test
-- `src-tauri/src/lib.rs` — 1 个 test
+- `src-tauri/src/lib.rs` — 4 个 test
 - `src-tauri/src/mcp/context.rs` — 1 个 test
 - `src-tauri/src/mcp/dispatch_merge.rs` — 7 个 test
 - `src-tauri/src/mcp/mod.rs` — 3 个 test

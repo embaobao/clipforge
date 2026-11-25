@@ -29,10 +29,8 @@ export interface ClipboardRowProps {
   onStartMultiSelect: (id: string) => void;
   onOpenContextMenu: (event: MouseEvent<HTMLElement>, item: ClipItem) => void;
   onFavorite: (item: ClipItem) => void;
-  /** 占位：固定到顶部。 */
-  onPin?: (item: ClipItem) => void;
-  /** 保留兼容性，视觉层不再使用。 */
-  onOpen?: (item: ClipItem) => void;
+  /** 打开详情页（收藏视图等非默认入口也需要可发现入口）。 */
+  onOpenDetail: (item: ClipItem) => void;
   tr: TrFunction;
 }
 
@@ -73,8 +71,7 @@ export const ClipboardRow = memo(function ClipboardRow({
   onStartMultiSelect,
   onOpenContextMenu,
   onFavorite,
-  onPin,
-  onOpen: _onOpen,
+  onOpenDetail,
   tr,
 }: ClipboardRowProps) {
   const fileMissing = isFileClipMissing(item, filePathStatuses);
@@ -153,7 +150,7 @@ export const ClipboardRow = memo(function ClipboardRow({
         item={item}
         onFavorite={onFavorite}
         onOpenContextMenu={onOpenContextMenu}
-        onPin={onPin}
+        onOpenDetail={onOpenDetail}
         tr={tr}
       />
     </article>

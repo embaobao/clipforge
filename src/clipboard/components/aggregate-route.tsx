@@ -1,7 +1,7 @@
 // 聚合路由渲染体（S5 从 App.tsx 迁出）：MultiAggregateWorkspace + 导出 handler 绑定。
 // 不携带 data-surface marker——marker 只允许 App.tsx 主面板一根。
 import type { TranslationKey } from "../../i18n";
-import type { FilePathStatus } from "../../services/clipboard";
+
 import type { ClipItem } from "../clip-model";
 import type { AggregateFormatOptions } from "../clipboard-domain";
 import { MultiAggregateWorkspace } from "../../workspace/workspace-panels";
@@ -12,7 +12,7 @@ export function AggregateRoute(options: {
   selectedInList: ClipItem[];
   aggregatePreview: string;
   aggregateFormat: AggregateFormatOptions;
-  filePathStatuses: Record<string, FilePathStatus>;
+
   copySelectedClips: (items: ClipItem[]) => Promise<void>;
   copyClip: (item: ClipItem, pasteMode?: PasteMode) => Promise<void>;
   exportSelectedTextFiles: (items: ClipItem[]) => void | Promise<void>;
@@ -29,7 +29,7 @@ export function AggregateRoute(options: {
   const o = options;
   const { exportTable, exportCsvFile, exportSplitFiles } = useAggregateExport({
     selectedInList: o.selectedInList,
-    filePathStatuses: o.filePathStatuses,
+
     setNativeStatus: o.setNativeStatus,
     tr: o.tr,
     formatNativeError: o.formatNativeError,

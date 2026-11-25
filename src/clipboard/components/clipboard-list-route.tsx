@@ -44,7 +44,6 @@ export function ClipboardListRoute(options: {
   deleteClips: (ids: string[]) => Promise<void>;
   loadMoreClips: () => void;
   onListScrollTop: (top: number) => void;
-  onRunPrimaryOpenAction: (item: ClipItem, source: "shortcut" | "keyboard" | "click" | "context-menu" | "detail") => void;
   onRowFavorite: (item: ClipItem) => void;
   onRowSelect: (item: ClipItem) => void;
   onRowStartMultiSelect: (id: string) => void;
@@ -125,9 +124,7 @@ export function ClipboardListRoute(options: {
       onLoadMore={o.loadMoreClips}
       onScrollTopChange={o.onListScrollTop}
       restoreScroll={o.restoreScroll}
-      onOpen={(item) => {
-        void o.onRunPrimaryOpenAction(item, "click");
-      }}
+
       onOpenAggregate={() => {
         o.setMultiPreviewOpen(true);
         o.setMultiSelectMode(false);

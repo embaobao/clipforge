@@ -1,7 +1,7 @@
 /** 快速粘贴主列表面板：ClipboardRow 虚拟列表 + 空格预览卡 + 右键菜单与多选动作。 */
 import { useCallback, useState } from "react";
 import type { MouseEvent } from "react";
-import { toast } from "sonner";
+
 import type { ClipItem, PanelDensity } from "../../App";
 import type { PasteMode } from "../../clipboard/clip-model";
 import type { FilePathStatus } from "../../services/clipboard";
@@ -14,8 +14,7 @@ import { ClipboardRow } from "./ClipboardRow";
 import { QuickPreviewCard } from "./QuickPreviewCard";
 import { VirtualList } from "./VirtualList";
 
-/** 行「固定到顶部」占位：模块级保证引用稳定（ClipboardRow memo 依赖 props 引用比较）。 */
-const pinPlaceholder = () => toast.info("固定到顶部功能开发中");
+
 
 export type QuickPastePanelProps = {
   activeId: string | null;
@@ -32,7 +31,7 @@ export type QuickPastePanelProps = {
   onLoadMore: () => void;
   onScrollTopChange?: (scrollTop: number) => void;
   restoreScroll?: { top: number; token: string } | null;
-  onOpen: (item: ClipItem) => void;
+
   onOpenAggregate: () => void;
   onPointerActive: () => void;
   onPaste: (item: ClipItem, source?: string) => void;
@@ -72,7 +71,7 @@ export function QuickPastePanel({
   onLoadMore,
   onScrollTopChange,
   restoreScroll,
-  onOpen,
+
   onOpenAggregate,
   onPointerActive,
   onPaste,
@@ -164,10 +163,11 @@ export function QuickPastePanel({
               key={item.id}
               multiSelectMode={multiSelectMode}
               onFavorite={onFavorite}
-              onOpen={onOpen}
+              onOpenDetail={(item) => {
+                void navigateWorkspaceDetail(item.id);
+              }}
               onOpenContextMenu={openContextMenu}
               onPaste={onPaste}
-              onPin={pinPlaceholder}
               onSelect={onSelect}
               onStartMultiSelect={onStartMultiSelect}
               onToggleSelected={onToggleSelected}

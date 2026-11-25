@@ -1,9 +1,9 @@
 // 聚合导出域（S5 从 App.tsx 迁出）：TSV 复制、CSV 文件导出、按类型分割导出。
 import { invoke } from "@tauri-apps/api/core";
 import type { TranslationKey } from "../i18n";
-import type { FilePathStatus } from "../services/clipboard";
-import type { ClipItem } from "./clip-model";
+import { checkFilePaths } from "../services/clipboard";
 import { getFilePathsFromClip } from "./clipboard-domain";
+import type { ClipItem } from "./clip-model";
 import { buildClipboardTable } from "./csv-export";
 import {
   buildCsvFileExportPlan,
@@ -13,17 +13,31 @@ import {
   summarizeExportOutcome,
   type ExportItemOutcome,
   type ExportSourceClip,
+  type ExportSourceItem,
+  type FilePathStatusMap,
 } from "./csv-file-export";
 import { logAppError } from "./panel-shared";
 
 export function useAggregateExport(options: {
   selectedInList: ClipItem[];
-  filePathStatuses: Record<string, FilePathStatus>;
   setNativeStatus: (status: string) => void;
   tr: (key: TranslationKey, params?: Record<string, string | number>) => string;
   formatNativeError: (error: unknown) => string;
 }) {
-  const { selectedInList, filePathStatuses, setNativeStatus, tr, formatNativeError } = options;
+  const { selectedInList, setNativeStatus, tr, formatNativeError } = options;
+
+  /** 写盘前复核原始文件路径，避免用列表加载时的陈旧快照判定缺失。 */
+  async function recheckExportPaths(sources: ExportSourceClip[]): Promise<FilePathStatusMap> {
+    const paths = [...new Set(sources.flatMap((item) => (item.filePath?.trim() ? [item.filePath] : [])))];
+    const checks = paths.length ? await checkFilePaths(paths) : [];
+    return Object.fromEntries(checks.map((check) => [check.path, check]));
+  }
+
+  /** 构建导出源并即时复核路径，调用方拿到的 pathAvailable 始终来自本次写盘前检查。 */
+  async function buildCheckedSources(): Promise<ExportSourceItem[]> {
+    const sources = buildExportSources();
+    return projectExportSources(sources, await recheckExportPaths(sources));
+  }
 
   function buildExportSources(): ExportSourceClip[] {
     return selectedInList.map((item) => ({
@@ -54,22 +68,22 @@ export function useAggregateExport(options: {
   async function exportCsvFile() {
     // 导出 CSV 文件（clipboard-interaction-repair 第 5 项）：正文经 RFC 4180 转义与
     // 公式注入防护后交给 Rust 独占写盘；缺失原始文件在状态栏明确报告，不静默跳过。
-    const sources = projectExportSources(buildExportSources(), filePathStatuses);
-    if (!sources.length) {
-      setNativeStatus(tr("main.status.exportCsvEmpty"));
-      return;
-    }
-    const plan = buildCsvFileExportPlan(
-      sources,
-      [
-        tr("main.aggregate.csvHeaderTitle"),
-        tr("main.aggregate.csvHeaderKind"),
-        tr("main.aggregate.csvHeaderContent"),
-      ],
-      tr("main.aggregate.csvUntitled"),
-    );
-    const split = planSplitExport(sources);
     try {
+      const sources = await buildCheckedSources();
+      if (!sources.length) {
+        setNativeStatus(tr("main.status.exportCsvEmpty"));
+        return;
+      }
+      const plan = buildCsvFileExportPlan(
+        sources,
+        [
+          tr("main.aggregate.csvHeaderTitle"),
+          tr("main.aggregate.csvHeaderKind"),
+          tr("main.aggregate.csvHeaderContent"),
+        ],
+        tr("main.aggregate.csvUntitled"),
+      );
+      const split = planSplitExport(sources);
       const result = await invoke<{ directory: string; path: string; count: number }>(
         "export_clip_csv_file",
         { input: { content: plan.content, rowCount: plan.rowCount } },
@@ -103,27 +117,17 @@ export function useAggregateExport(options: {
   async function exportSplitFiles() {
     // 按类型分割导出（clipboard-interaction-repair 第 5 项）：CSV 清单与原始文件复制
     // 落在同一独立目录；写盘前复核路径，逐项 outcome 明确报告缺失与部分失败。
-    const sources = projectExportSources(buildExportSources(), filePathStatuses);
-    if (!sources.length) {
-      setNativeStatus(tr("main.status.exportCsvEmpty"));
-      return;
-    }
     try {
-      // 列表状态是加载时的快照；导出时文件可能已移动或删除，写盘前复核一次。
-      const paths = [
-        ...new Set(
-          sources.flatMap((item) => (item.filePath?.trim() ? [item.filePath] : [])),
-        ),
-      ];
-      const checks = paths.length
-        ? await invoke<
-            { path: string; exists: boolean; isFile: boolean; isDir: boolean }[]
-          >("check_file_paths", { paths })
-        : [];
-      const availability: Record<string, boolean> = {};
-      for (const check of checks) {
-        availability[check.path] = check.exists && check.isFile;
+      const sources = await buildCheckedSources();
+      if (!sources.length) {
+        setNativeStatus(tr("main.status.exportCsvEmpty"));
+        return;
       }
+      const availability: Record<string, boolean> = {};
+      for (const source of sources) {
+        if (source.filePath) availability[source.filePath] = source.pathAvailable === true;
+      }
+
       const request = buildSplitExportRequest(
         sources,
         [

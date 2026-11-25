@@ -2084,22 +2084,31 @@ fn update_clip_record(input: UpdateClipInput) -> Result<ClipItemPayload, String>
         let payload_kind = detection.payload_kind;
         let primary_format = primary_format_from_payload(&payload_kind).to_string();
         let hash = content_hash(&primary_format, content.as_bytes());
-        let available_formats = vec![primary_format.clone()];
+        let existing: Option<(String, String)> = conn
+            .query_row(
+                "SELECT tags, representations_json FROM clips WHERE id = ?1 AND deleted_at IS NULL",
+                params![input.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
+        // 编辑正文只替换新主格式对应的表示，HTML/RTF 等未编辑格式必须原样保留。
+        let representations = merge_edited_representations(
+            existing.as_ref().map(|(_, raw)| raw.clone()),
+            &content,
+            &payload_kind,
+        );
+        let available_formats = representations
+            .iter()
+            .map(|repr| repr.format.clone())
+            .collect::<Vec<_>>();
         let available_formats_json = json_string(&available_formats)?;
-        let representations = build_representations(&content, &payload_kind);
         let representations_json = json_string(&representations)?;
         let tags = if let Some(tags) = input.tags.clone() {
             normalize_tags(tags)
         } else {
-            let existing: Option<String> = conn
-                .query_row(
-                    "SELECT tags FROM clips WHERE id = ?1 AND deleted_at IS NULL",
-                    params![input.id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(|error| command_error("CLIP_UPDATE_FAILED", error.to_string()))?;
             existing
+                .map(|(tags, _)| tags)
                 .unwrap_or_default()
                 .split(',')
                 .map(ToString::to_string)
@@ -4473,6 +4482,36 @@ fn build_representations(content: &str, payload_kind: &str) -> Vec<ClipboardRepr
         hash: Some(hash),
         preferred: true,
     }]
+}
+
+/// 编辑正文时合并表示：只替换新主格式，保留原条目的其他格式。
+/// `existing_raw` 无法解析时退化为仅新建主表示，不覆盖原库内容。
+fn merge_edited_representations(
+    existing_raw: Option<String>,
+    content: &str,
+    payload_kind: &str,
+) -> Vec<ClipboardRepresentationPayload> {
+    let edited = build_representations(content, payload_kind)
+        .into_iter()
+        .next()
+        .expect("build_representations 总是返回主表示");
+    let primary_format = edited.format.clone();
+    let mut merged = existing_raw
+        .and_then(|raw| serde_json::from_str::<Vec<ClipboardRepresentationPayload>>(&raw).ok())
+        .unwrap_or_default();
+    let mut replaced = false;
+    for representation in &mut merged {
+        if representation.format == primary_format {
+            *representation = edited.clone();
+            replaced = true;
+        } else {
+            representation.preferred = false;
+        }
+    }
+    if !replaced {
+        merged.insert(0, edited);
+    }
+    merged
 }
 
 fn json_string<T: Serialize>(value: &T) -> Result<String, String> {
@@ -8346,5 +8385,84 @@ mod hard_delete_image_cleanup_tests {
         assert_eq!(left, 0, "row should be gone after hard delete");
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod edit_representation_tests {
+    use super::*;
+
+    fn old_representations() -> String {
+        let reps = vec![
+            ClipboardRepresentationPayload {
+                format: "text/html".to_string(),
+                storage: "inline".to_string(),
+                content: Some("<b>old</b>".to_string()),
+                file_name: None,
+                size: Some(9),
+                hash: Some("html-hash".to_string()),
+                preferred: true,
+            },
+            ClipboardRepresentationPayload {
+                format: "text/plain".to_string(),
+                storage: "inline".to_string(),
+                content: Some("old".to_string()),
+                file_name: None,
+                size: Some(3),
+                hash: Some("plain-hash".to_string()),
+                preferred: false,
+            },
+        ];
+        json_string(&reps).expect("serialize old representations")
+    }
+
+    #[test]
+    fn editing_text_replaces_plain_and_keeps_html() {
+        let merged = merge_edited_representations(Some(old_representations()), "new", "text");
+        assert_eq!(merged.len(), 2);
+        let plain = merged
+            .iter()
+            .find(|repr| repr.format == "text/plain")
+            .expect("plain representation");
+        assert_eq!(plain.content.as_deref(), Some("new"));
+        assert!(plain.preferred);
+        let html = merged
+            .iter()
+            .find(|repr| repr.format == "text/html")
+            .expect("html representation");
+        assert_eq!(html.content.as_deref(), Some("<b>old</b>"));
+        assert!(!html.preferred);
+    }
+
+    #[test]
+    fn editing_html_replaces_html_and_keeps_plain() {
+        let merged = merge_edited_representations(
+            Some(old_representations()),
+            "<i>new</i>",
+            "html",
+        );
+        assert_eq!(merged.len(), 2);
+        assert_eq!(
+            merged
+                .iter()
+                .find(|repr| repr.format == "text/html")
+                .and_then(|repr| repr.content.as_deref()),
+            Some("<i>new</i>")
+        );
+        assert_eq!(
+            merged
+                .iter()
+                .find(|repr| repr.format == "text/plain")
+                .and_then(|repr| repr.content.as_deref()),
+            Some("old")
+        );
+    }
+
+    #[test]
+    fn editing_without_existing_representations_starts_fresh() {
+        let merged = merge_edited_representations(None, "new", "text");
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].format, "text/plain");
+        assert_eq!(merged[0].content.as_deref(), Some("new"));
     }
 }

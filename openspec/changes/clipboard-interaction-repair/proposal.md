@@ -4,7 +4,7 @@
 
 2026-11-05 验收发现详情编辑入口、富文本、导航、错误反馈、多选、收藏详情和标签交互存在问题。先保护剪贴板内容与快速粘贴，再按统一交互修复。方案已与用户逐项确认。
 
-> **实现状态（2026-11-09 对账登记）**：八项修复的代码已在工作区落地，涉及 `src/App.tsx`（筛选后收敛选区、TSV 复制、CSV 文件导出、按类型分割导出）、`src/clipboard/csv-export.ts`、`csv-file-export.ts`、`tag-only-writeback.ts`、`ocr-error-guidance.ts`、`src/workspace/components/detail/` 下六个新模块、`src/clipboard/use-panel-keyboard.ts`，以及 `src-tauri/src/lib.rs` 新增 `export_clip_csv_file` / `export_clip_split_files` 两个 command 与对应门禁脚本。**全部改动未提交、10 个 checkbox 均未勾选**（按项目「不代勾」铁律由人工验收后勾选）。2026-11-09 已跑通 `pnpm build:web`、`pnpm test:unit`（含 5 个新增 verify 脚本）、`cargo check`；尚未跑 `pnpm build`（重签发布产物，需单独授权）、沙箱实机八项走查与 `pnpm tauri dev`，这些仍是未验证项。本提案改到 W1 实机矩阵共用的 `App.tsx` / `use-panel-keyboard.ts` / `lib.rs`，**实机验收必须在这些改动形成可回滚基线之后执行**。
+> **实现状态（2026-11-25 对账登记）**：八项修复的代码已在工作区落地；10 个 checkbox 仍未勾选（按项目「不代勾」铁律由人工验收后勾选）。2026-11-25 补齐此前未闭合的缺口：详情正文编辑不再把标签写回伪造成内容更新（`updateClipContent` 改为 `updateClipTagsOnly`）；收藏等视图统一走 `QuickPastePanel`，行内 + 右键详情入口对小屏与收藏视图均可见；多选空格/Cmd+A/C/X/Tab/Escape/`/` 与右键菜单按 `contextMenu.item` 绑定；CSV 与按类型分割导出统一在写盘前经 `buildCheckedSources` → `checkFilePaths` 复核，不再依赖列表加载时的陈旧状态。新增 `scripts/verify-multi-select-interaction.mjs`、`scripts/verify-favorites-detail.mjs` 并挂入 `pnpm test:unit`。已跑 `pnpm build:web`、`pnpm test:unit`、`cd src-tauri && cargo check`、`openspec validate --all --strict`；`pnpm build`（重签发布产物）、`pnpm tauri dev` 与沙箱实机八项走查仍未验证。
 
 ## 现状、期望与验收
 

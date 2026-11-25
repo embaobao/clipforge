@@ -1,7 +1,7 @@
 // 主面板历史行右侧动作（design-spec 视觉层重构）
-// 默认显示序号 / 选中态显示 ⏎ / 复制反馈显示 ✓ 已复制 / 悬停显示收藏/固定/更多。
+// 默认显示序号 / 选中态显示 ⏎ / 复制反馈显示 ✓ 已复制 / 悬停显示收藏/详情/更多。
 import type { MouseEvent } from "react";
-import { Check, Heart, MoreHorizontal, Pin } from "lucide-react";
+import { Check, FileJson, Heart, MoreHorizontal } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { ClipItem } from "../../App";
@@ -17,8 +17,8 @@ export interface ClipboardRowActionsProps {
   isCopied: boolean;
   /** 切换收藏。 */
   onFavorite: (item: ClipItem) => void;
-  /** 固定到顶部（占位，待业务层实现）。 */
-  onPin?: (item: ClipItem) => void;
+  /** 打开详情页（收藏等视图也必须可发现）。 */
+  onOpenDetail: (item: ClipItem) => void;
   /** 打开右键菜单。 */
   onOpenContextMenu: (event: MouseEvent<HTMLElement>, item: ClipItem) => void;
   tr: TrFunction;
@@ -34,7 +34,7 @@ export function ClipboardRowActions({
   isSelected,
   isCopied,
   onFavorite,
-  onPin,
+  onOpenDetail,
   onOpenContextMenu,
   tr,
 }: ClipboardRowActionsProps) {
@@ -69,16 +69,17 @@ export function ClipboardRowActions({
               <Heart size={13} className={cn(item.favorite && "fill-current")} />
             </button>
             <button
-              aria-label="固定到顶部"
+              aria-label={tr("main.context.detail")}
               className={actionButton}
+              data-dev-probe="row-detail"
               onClick={(event) => {
                 event.stopPropagation();
-                onPin?.(item);
+                onOpenDetail(item);
               }}
-              title="固定到顶部"
+              title={tr("main.context.detail")}
               type="button"
             >
-              <Pin size={13} />
+              <FileJson size={13} />
             </button>
             <button
               aria-label={tr("main.context.clipMenu")}

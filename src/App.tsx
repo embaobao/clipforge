@@ -679,7 +679,6 @@ function ClipForgeApp() {
                 deleteClips={deleteClips}
                 loadMoreClips={loadMoreClips}
                 onListScrollTop={handleListScrollTop}
-                onRunPrimaryOpenAction={runPrimaryOpenAction}
                 onRowFavorite={handleRowFavorite}
                 onRowSelect={handleRowSelect}
                 onRowStartMultiSelect={handleRowStartMultiSelect}
@@ -728,7 +727,7 @@ function ClipForgeApp() {
                 selectedInList={selectedInList}
                 aggregatePreview={aggregatePreview}
                 aggregateFormat={aggregateFormat}
-                filePathStatuses={filePathStatuses}
+
                 copySelectedClips={copySelectedClips}
                 copyClip={copyClip}
                 exportSelectedTextFiles={exportSelectedTextFiles}
