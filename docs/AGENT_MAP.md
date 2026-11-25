@@ -6,19 +6,19 @@
 
 ## 快照
 
-- CodeGraph 已索引文件: 281
-- CodeGraph 节点: 5676
-- CodeGraph 边: 12465
-- 受管源码 / 配置文件: 303
+- CodeGraph 已索引文件: 284
+- CodeGraph 节点: 5741
+- CodeGraph 边: 12551
+- 受管源码 / 配置文件: 306
 - Tauri commands: 90
 - MCP tools: 41
 - 测试与门禁脚本: 13
-- Rust 测试文件: 26
+- Rust 测试文件: 27
 - 文档登记: 25
 
 ## 路由表（来自 BUSINESS_INDEX.md）
 
-- 索引摘要: 8f5b3e913a8e
+- 索引摘要: eb1aef4f7cf8
 
 | Surface | 窗口 label | HTML 入口 | 前端根 | 布局外壳 / 标题栏 | 主要目录 |
 | 快速面板（主交互） | `main` | `index.html` | `src/main.tsx` → `src/App.tsx` | `src/clipboard/components/TopToolbar.tsx`（自绘 chrome + 拖拽区） | `src/clipboard/` |
@@ -58,7 +58,8 @@
 | 通用 hooks | `src/hooks/` | mobile / auto-height / controlled-state / data-state |
 | 性能探针 | `src/performance-smoke.ts`、`src/frontend-diagnostics.ts` | recordNextFramePerf、诊断快照 |
 | 域 | 文件 | 说明 |
-| command 主体 | `src-tauri/src/lib.rs` | 剪贴板/面板命令 + 托盘 + 窗口管理；设置命令下沉 `settings_service/`、Agent 命令下沉 `agent/`、MCP 命令下沉 `mcp/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
+| command 主体 | `src-tauri/src/lib.rs` | 剪贴板/采集命令 + 托盘 + 窗口注册/编排；设置命令下沉 `settings_service/`、Agent 命令下沉 `agent/`、MCP 命令下沉 `mcp/`、面板/窗口命令下沉 `window/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
+| 面板/窗口域 | `src-tauri/src/window/` | 快速面板显隐/固定/触发热路径：`mod.rs` 面板命令壳（open/hide/show/toggle_quick_panel、pin/聚焦/触发状态命令、panel_trigger_payload 诊断导出）、`position.rs` 原生行为层（NSPanel 淡出 PANEL_FADE_*、浮窗显示、幻影 blur 自愈、粘贴前隐藏）；lib.rs 只保留 `mod window` 与 generate_handler! 注册 |
 | Agent 域 | `src-tauri/src/agent/` | `agent_*` 命令与 provider 探测/健康检查/模型清单：`mod.rs` 门面（payload 结构体 + 命令薄壳）、`provider.rs` 探测/预览（redaction/keyRef）、`pi.rs` pi 运行时 provider 解析（key 只在调用时解出）、`check.rs` 健康检查、`context.rs` 上下文/prompt 组装、`events.rs` 事件/输出流、`run.rs` run 状态机、`runs.rs` run 存储 + 私有写锁 |
 | MCP 运行时 | `src-tauri/src/mcp/` | `--mcp` stdio JSON-RPC 与 41 工具：`mod.rs` 运行时门面（run_mcp_stdio + 状态命令）、`specs.rs` 工具规格表、`dispatch.rs` 路由壳、`dispatch_write.rs` 写库臂、`dispatch_merge.rs` clipboard.merge 只读拼接臂、`dispatch_agent_editor.rs` skill/plugin/agent/editor 臂、`context.rs` 上下文快照、`envelope.rs` 响应封装 |
 | 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听、`capture_worker.rs` 采集队列与工作线程、`cleanup.rs` 保留策略清理（超限移入回收站）、`search_index.rs` 全文索引（汉字逐字切分写入与查询，库升级到 v3 时重建索引）、`tag_cleanup.rs` 话题标签校验与存量清理、`ingest.rs` 入库、`read.rs` 读取、`write.rs` 写回、`storage.rs` 存储、`detect.rs` 检测、`payload.rs` 载荷 |
@@ -81,12 +82,12 @@
 | 窗口 chrome 异常（双标题栏 / 无法拖拽 / 圆角错） | `src-tauri/tauri.conf.json` 窗口块 + 对应 Shell 根类名；页面内禁止绘制假红绿灯（见 DESIGN_SYSTEM 7.2） |
 | 内容重复渲染 | 搜索同条件的两个渲染点（如旧内联块与新 section 组件并存） |
 | 快捷键无响应 | `src-tauri/src/settings_service/commands.rs` 快捷键注册 + `src/clipboard/use-panel-keyboard.ts` effect deps |
-| 设置不保存 / 不刷新 | `src-tauri/src/settings_service/commands.rs` 写入链 + `src/settings.tsx` `updateSettings` + `settings_changed` 事件 |
+| 设置不保存 / 不刷新 | `src-tauri/src/settings_service/commands.rs` 写入链 + `src/settings/settings-actions.ts` `updateSettings` + `settings_changed` 事件 |
 | 列表跳动 / 动画异常 | `src/clipboard/row-animation.ts`、`src/clipboard/anim-freeze-guard.ts`、`src/clipboard/components/VirtualList.tsx` |
 | 粘贴后出现重复条目 | `src/clipboard/use-clip-writeback.ts` 写回抑制窗口 |
 | 文案缺失 / 中英不对齐 | `src/i18n/locales/` + `pnpm check:i18n` |
 
-## 源码文件清单（303）
+## 源码文件清单（306）
 
 | 文件 | 语言 | CodeGraph 节点 | 代表符号 |
 | --- | --- | ---: | --- |
@@ -119,7 +120,7 @@
 | `scripts/memory-baseline.mjs` | JavaScript | 24 | `TARGET_BUNDLE` `STABLE_DATA` `DEV_DATA` `run` `parseArgs` |
 | `scripts/perf-panel-probe.py` | Python | 28 | `VK_MAP` `app_pid` `read_shortcut` `shortcut_to_vk` `panel_window_id` |
 | `scripts/perf-smoke.mjs` | JavaScript | 23 | `root` `rustPath` `settingsTsPath` `appPath` `settingsWindowPath` |
-| `scripts/run-unit-checks.mjs` | JavaScript | 65 | `root` `outDir` `search` `smart` `actions` |
+| `scripts/run-unit-checks.mjs` | JavaScript | 68 | `root` `outDir` `search` `snippetsModule` `smart` |
 | `scripts/scan-hardcoded-copy.mjs` | JavaScript | 14 | `root` `strict` `includeDirs` `skipPathParts` `skipLinePatterns` |
 | `scripts/sign-release-artifacts.mjs` | JavaScript | 18 | `root` `releaseDir` `packageJson` `version` `productName` |
 | `scripts/verify-browse-tag-input.mjs` | JavaScript | 24 | `root` `outDir` `read` `mod` `guard` |
@@ -135,8 +136,8 @@
 | `scripts/verify-motion-tokens.mjs` | JavaScript | 10 | `roots` `tsxFiles` `walk` `violations` `lines` |
 | `scripts/verify-ocr-error-guidance.mjs` | JavaScript | 25 | `root` `outDir` `mod` `rustDir` `rustSources` |
 | `scripts/verify-onboarding-surface.mjs` | JavaScript | 7 | `root` `read` `assert` `app` |
-| `scripts/verify-runtime-boundaries.mjs` | JavaScript | 25 | `root` `appPath` `overflowMenuPath` `shortcutSectionPath` `displayPanelSectionPath` |
-| `scripts/verify-settings-surface.mjs` | JavaScript | 27 | `root` `files` `read` `compact` `assert` |
+| `scripts/verify-runtime-boundaries.mjs` | JavaScript | 37 | `root` `appPath` `overflowMenuPath` `shortcutSectionPath` `displayPanelSectionPath` |
+| `scripts/verify-settings-surface.mjs` | JavaScript | 28 | `root` `files` `read` `compact` `assert` |
 | `scripts/verify-settings-visual.mjs` | JavaScript | 11 | `ROOT` `ARTIFACT_DIR` `DEV_URL` `VIEWPORT` `waitForServer` |
 | `scripts/verify-surface-boundaries.mjs` | JavaScript | 8 | `root` `files` `read` `assert` `checkMarkers` |
 | `scripts/verify-tag-only-save.mjs` | JavaScript | 16 | `root` `outDir` `mod` `previous` `merged` |
@@ -179,9 +180,9 @@
 | `src-tauri/src/context_collectors/external.rs` | Rust | 15 | `run_external_collector` `load_external_collectors` `load_manifest` `validate_manifest` `resolve_executable` |
 | `src-tauri/src/context_collectors/tests.rs` | Rust | 6 | `contract_describes_external_execution_boundary` `matcher_requires_declared_application_selector` `output_validation_reports_missing_contract_fields` |
 | `src-tauri/src/diagnostics.rs` | Rust | 24 | `STARTED_AT` `TaskVmInfo` `TASK_VM_INFO_STRUCT_BYTES` `_` `TASK_VM_INFO_COUNT_WORDS` |
-| `src-tauri/src/lib.rs` | Rust | 425 | `command_error` `is_command_error` `preserve_command_error` `kAXTrustedCheckOptionPrompt` `AXIsProcessTrusted` |
+| `src-tauri/src/lib.rs` | Rust | 387 | `command_error` `is_command_error` `preserve_command_error` `kAXTrustedCheckOptionPrompt` `AXIsProcessTrusted` |
 | `src-tauri/src/main.rs` | Rust | 2 | `main` |
-| `src-tauri/src/mcp/context.rs` | Rust | 16 | `capture_context_url` `mcp_context_reference` `mcp_context_snapshot` `test_clip` `context_snapshot_covers_source_link_markdown_file_and_long_text` |
+| `src-tauri/src/mcp/context.rs` | Rust | 17 | `capture_context_url` `mcp_context_reference` `mcp_context_snapshot` `test_clip` `context_snapshot_covers_source_link_markdown_file_and_long_text` |
 | `src-tauri/src/mcp/dispatch.rs` | Rust | 17 | `call_mcp_tool` `dispatch_capture` `dispatch_context_get` `dispatch_context_compose` `dispatch_clipf_list` |
 | `src-tauri/src/mcp/dispatch_agent_editor.rs` | Rust | 17 | `dispatch_skill_list` `dispatch_skill_save_draft` `dispatch_skill_run` `dispatch_plugin_list` `dispatch_plugin_call` |
 | `src-tauri/src/mcp/dispatch_merge.rs` | Rust | 27 | `MergeOrder` `MergeOptions` `MergeOutcome` `from_args` `unescape_separator` |
@@ -205,6 +206,8 @@
 | `src-tauri/src/settings_service/mcp.rs` | Rust | 13 | `mcp_settings_error` `mcp_settings_patch` `mcp_settings_replace` `mcp_settings_reset` `call_settings_agent_tool` |
 | `src-tauri/src/settings_service/mod.rs` | Rust | 31 | `UserSettingsPayload` `read_user_settings` `get_clipforge_settings` `settings_revision` `redact_settings_value` |
 | `src-tauri/src/settings_service/write.rs` | Rust | 27 | `revision_conflict_message_is_stable` `patch_merge_and_changed_paths_are_stable` `redacted_provider_api_key_placeholder_is_restored_on_write` `read_path_redacts_agent_provider_api_keys_both_shapes` `SETTINGS_WRITE_LOCK` |
+| `src-tauri/src/window/mod.rs` | Rust | 32 | `set_panel_mode` `open_settings_window` `open_settings_window_with_section` `open_onboarding_window` `focused_input_bounds` |
+| `src-tauri/src/window/position.rs` | Rust | 26 | `hide_panel_before_paste` `PANEL_LAST_SHOWN_MS` `PANEL_LAST_RECLAIM_MS` `is_phantom_blur` `CGEventSourceSecondsSinceLastEventType` |
 | `src-tauri/tauri.conf.json` | JSON | 0 | — |
 | `src/App.tsx` | TSX | 143 | `TagRule` `AppSettings` `ErrorBoundaryCopy` `AppErrorBoundary` `getDerivedStateFromError` |
 | `src/agent/pi/agent.ts` | TypeScript | 13 | `ClipForgeAgentOptions` `DEFAULT_SYSTEM_PROMPT` `resolveAgentModel` `createClipForgeAgent` |
@@ -322,7 +325,7 @@
 | `src/services/tauri-web-mock-store.ts` | TypeScript | 41 | `MockRecord` `DB_KEY` `SETTINGS_KEY` `PINNED_KEY` `loadDb` |
 | `src/services/tauri-web-mock.ts` | TypeScript | 4 | `mockInvoke` `install` |
 | `src/settings-main.tsx` | TSX | 10 | `root` `locale` |
-| `src/settings.tsx` | TSX | 67 | `UpdateCheckState` `safeInvokeUpdateCheck` `SettingsApp` `toggleNavCollapsed` `tr` |
+| `src/settings.tsx` | TSX | 42 | `UpdateCheckState` `safeInvokeUpdateCheck` `SettingsApp` `toggleNavCollapsed` `tr` |
 | `src/settings/components/LogsDataTables.tsx` | TSX | 42 | `LogsDataTablesProps` `tr` `AppLogEntry` `QueryAppLogPayload` `ClipRowPayload` |
 | `src/settings/components/OcrEndpointCard.tsx` | TSX | 19 | `OcrEndpointCandidate` `OcrEndpointCardProps` `tr` `onEndpointChange` `OcrEndpointCard` |
 | `src/settings/components/OnboardingEntryCard.tsx` | TSX | 7 | `OnboardingEntryCardAccessibility` `OnboardingEntryCardProps` `OnboardingEntryCard` |
@@ -343,6 +346,7 @@
 | `src/settings/sections/CaptureStorageSections.tsx` | TSX | 43 | `CaptureContentSectionProps` `tr` `updateSettings` `renderTabs` `CaptureContentSection` |
 | `src/settings/sections/DisplayPanelSection.tsx` | TSX | 16 | `DisplayPanelSectionProps` `tr` `updateSettings` `testFloatingPanel` `refreshPanelStatus` |
 | `src/settings/sections/ShortcutLanguageSection.tsx` | TSX | 26 | `ShortcutLanguageSectionProps` `tr` `updateSettings` `setRecording` `openAccessibilitySettings` |
+| `src/settings/settings-actions.ts` | TypeScript | 53 | `SettingsPatchResult` `Translator` `SettingsActionsContext` `useSettingsActions` `updateSettings` |
 | `src/settings/settings-code-snippets.ts` | TypeScript | 4 | `buildMcpServerConfigJson` `buildAgentProviderTemplateText` `buildJsonRpcExamples` |
 | `src/settings/settings-field-catalog.ts` | TypeScript | 16 | `SettingFieldType` `SettingsSectionId` `SettingsTabId` `SettingFieldConfig` `SETTINGS_INFORMATION_ARCHITECTURE` |
 | `src/settings/settings-log.ts` | TypeScript | 4 | `SettingsLogEvent` `logSettingsEvent` |
@@ -463,21 +467,21 @@
 - `cleanup_app_logs` — `src-tauri/src/lib.rs`
 - `get_log_stats` — `src-tauri/src/lib.rs`
 - `export_diagnostics_bundle` — `src-tauri/src/lib.rs`
-- `set_panel_mode` — `src-tauri/src/lib.rs`
-- `open_settings_window` — `src-tauri/src/lib.rs`
-- `open_settings_window_with_section` — `src-tauri/src/lib.rs`
-- `open_onboarding_window` — `src-tauri/src/lib.rs`
+- `window::set_panel_mode` — `src-tauri/src/lib.rs`
+- `window::open_settings_window` — `src-tauri/src/lib.rs`
+- `window::open_settings_window_with_section` — `src-tauri/src/lib.rs`
+- `window::open_onboarding_window` — `src-tauri/src/lib.rs`
 - `get_launch_at_login` — `src-tauri/src/lib.rs`
 - `set_launch_at_login` — `src-tauri/src/lib.rs`
-- `show_quick_panel_command` — `src-tauri/src/lib.rs`
-- `hide_quick_panel_command` — `src-tauri/src/lib.rs`
-- `toggle_quick_panel_command` — `src-tauri/src/lib.rs`
-- `set_panel_pinned_command` — `src-tauri/src/lib.rs`
-- `is_panel_pinned_command` — `src-tauri/src/lib.rs`
-- `focus_quick_panel_command` — `src-tauri/src/lib.rs`
-- `release_focus_command` — `src-tauri/src/lib.rs`
-- `get_panel_trigger_status` — `src-tauri/src/lib.rs`
-- `focused_input_bounds` — `src-tauri/src/lib.rs`
+- `window::show_quick_panel_command` — `src-tauri/src/lib.rs`
+- `window::hide_quick_panel_command` — `src-tauri/src/lib.rs`
+- `window::toggle_quick_panel_command` — `src-tauri/src/lib.rs`
+- `window::set_panel_pinned_command` — `src-tauri/src/lib.rs`
+- `window::is_panel_pinned_command` — `src-tauri/src/lib.rs`
+- `window::focus_quick_panel_command` — `src-tauri/src/lib.rs`
+- `window::release_focus_command` — `src-tauri/src/lib.rs`
+- `window::get_panel_trigger_status` — `src-tauri/src/lib.rs`
+- `window::focused_input_bounds` — `src-tauri/src/lib.rs`
 - `check_accessibility_permission` — `src-tauri/src/lib.rs`
 - `open_accessibility_settings` — `src-tauri/src/lib.rs`
 - `request_accessibility_permission` — `src-tauri/src/lib.rs`
@@ -547,7 +551,7 @@
 - `build:mac-release` — `package.json`
 - `test:perf-panel` — `package.json`
 
-## Rust 测试文件（26）
+## Rust 测试文件（27）
 
 - `src-tauri/src/agent/check.rs` — 2 个 test
 - `src-tauri/src/agent/pi.rs` — 2 个 test
@@ -575,6 +579,7 @@
 - `src-tauri/src/plugin_runtime/spike.rs` — 0 个 test
 - `src-tauri/src/settings_service/mcp.rs` — 1 个 test
 - `src-tauri/src/settings_service/write.rs` — 4 个 test
+- `src-tauri/src/window/mod.rs` — 2 个 test
 
 ## 文档登记（25）
 

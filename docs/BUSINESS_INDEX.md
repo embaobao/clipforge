@@ -58,7 +58,8 @@
 
 | 域 | 文件 | 说明 |
 | --- | --- | --- |
-| command 主体 | `src-tauri/src/lib.rs` | 剪贴板/面板命令 + 托盘 + 窗口管理；设置命令下沉 `settings_service/`、Agent 命令下沉 `agent/`、MCP 命令下沉 `mcp/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
+| command 主体 | `src-tauri/src/lib.rs` | 剪贴板/采集命令 + 托盘 + 窗口注册/编排；设置命令下沉 `settings_service/`、Agent 命令下沉 `agent/`、MCP 命令下沉 `mcp/`、面板/窗口命令下沉 `window/`；超长豁免文件，用 `pnpm locate <命令名或中文>` 定位具体命令 |
+| 面板/窗口域 | `src-tauri/src/window/` | 快速面板显隐/固定/触发热路径：`mod.rs` 面板命令壳（open/hide/show/toggle_quick_panel、pin/聚焦/触发状态命令、panel_trigger_payload 诊断导出）、`position.rs` 原生行为层（NSPanel 淡出 PANEL_FADE_*、浮窗显示、幻影 blur 自愈、粘贴前隐藏）；lib.rs 只保留 `mod window` 与 generate_handler! 注册 |
 | Agent 域 | `src-tauri/src/agent/` | `agent_*` 命令与 provider 探测/健康检查/模型清单：`mod.rs` 门面（payload 结构体 + 命令薄壳）、`provider.rs` 探测/预览（redaction/keyRef）、`pi.rs` pi 运行时 provider 解析（key 只在调用时解出）、`check.rs` 健康检查、`context.rs` 上下文/prompt 组装、`events.rs` 事件/输出流、`run.rs` run 状态机、`runs.rs` run 存储 + 私有写锁 |
 | MCP 运行时 | `src-tauri/src/mcp/` | `--mcp` stdio JSON-RPC 与 41 工具：`mod.rs` 运行时门面（run_mcp_stdio + 状态命令）、`specs.rs` 工具规格表、`dispatch.rs` 路由壳、`dispatch_write.rs` 写库臂、`dispatch_merge.rs` clipboard.merge 只读拼接臂、`dispatch_agent_editor.rs` skill/plugin/agent/editor 臂、`context.rs` 上下文快照、`envelope.rs` 响应封装 |
 | 剪贴板引擎 | `src-tauri/src/clipboard/` | `watcher.rs` 采集监听、`capture_worker.rs` 采集队列与工作线程、`cleanup.rs` 保留策略清理（超限移入回收站）、`search_index.rs` 全文索引（汉字逐字切分写入与查询，库升级到 v3 时重建索引）、`tag_cleanup.rs` 话题标签校验与存量清理、`ingest.rs` 入库、`read.rs` 读取、`write.rs` 写回、`storage.rs` 存储、`detect.rs` 检测、`payload.rs` 载荷 |
@@ -89,7 +90,7 @@
 | 窗口 chrome 异常（双标题栏 / 无法拖拽 / 圆角错） | `src-tauri/tauri.conf.json` 窗口块 + 对应 Shell 根类名；页面内禁止绘制假红绿灯（见 DESIGN_SYSTEM 7.2） |
 | 内容重复渲染 | 搜索同条件的两个渲染点（如旧内联块与新 section 组件并存） |
 | 快捷键无响应 | `src-tauri/src/settings_service/commands.rs` 快捷键注册 + `src/clipboard/use-panel-keyboard.ts` effect deps |
-| 设置不保存 / 不刷新 | `src-tauri/src/settings_service/commands.rs` 写入链 + `src/settings.tsx` `updateSettings` + `settings_changed` 事件 |
+| 设置不保存 / 不刷新 | `src-tauri/src/settings_service/commands.rs` 写入链 + `src/settings/settings-actions.ts` `updateSettings` + `settings_changed` 事件 |
 | 列表跳动 / 动画异常 | `src/clipboard/row-animation.ts`、`src/clipboard/anim-freeze-guard.ts`、`src/clipboard/components/VirtualList.tsx` |
 | 粘贴后出现重复条目 | `src/clipboard/use-clip-writeback.ts` 写回抑制窗口 |
 | 文案缺失 / 中英不对齐 | `src/i18n/locales/` + `pnpm check:i18n` |

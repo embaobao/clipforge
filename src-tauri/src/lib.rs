@@ -26,7 +26,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 mod agent;
 mod application_context;
-mod clipboard;
+pub(crate) mod clipboard;
 mod context_collector_runtime;
 mod context_collector_system;
 mod context_collectors;
@@ -35,6 +35,12 @@ mod mcp;
 mod ocr;
 mod plugin_runtime;
 mod settings_service;
+mod window;
+pub(crate) use window::toggle_quick_panel;
+use window::{
+    focus_context_snapshot, hide_panel_before_paste, is_panel_pinned, is_phantom_blur, open_panel,
+    reclaim_panel_key_after_phantom_blur, show_quick_panel, PANEL_PINNED,
+};
 
 use agent::{
     agent_cancel_run, agent_check_provider, agent_detect, agent_get_config, agent_get_run,
@@ -82,7 +88,7 @@ fn preserve_command_error(default_code: &str, error: String) -> String {
 
 #[cfg(target_os = "macos")]
 use tauri_nspanel::objc2_app_kit::{
-    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSResponder,
+    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy,
     NSRunningApplication, NSWindow as AppKitNSWindow,
 };
 #[cfg(target_os = "macos")]
@@ -152,8 +158,8 @@ extern "C" {
     fn CFRelease(cf: *mut std::os::raw::c_void);
 }
 
-const QUICK_PANEL_WIDTH: f64 = 420.0;
-const MANAGEMENT_PANEL_WIDTH: f64 = 760.0;
+pub(crate) const QUICK_PANEL_WIDTH: f64 = 420.0;
+pub(crate) const MANAGEMENT_PANEL_WIDTH: f64 = 760.0;
 const QUICK_PANEL_DEFAULT_HEIGHT: f64 = 400.0; // 默认 420×400（约 0-8 九项 + 顶部/底部操作区）
 const QUICK_PANEL_FALLBACK_HEIGHT: f64 = 400.0;
 const QUICK_PANEL_MIN_HEIGHT: f64 = 320.0;
@@ -164,7 +170,7 @@ const APP_BUNDLE_IDENTIFIER: &str = "app.clipforge.desktop";
 
 /// 从用户设置解析面板宽高（默认 420×400；宽 320-600，高 300-1000；0/非法用默认）。
 /// 高度 0 或缺失 = 自适应默认（约 0-8 九项）。
-fn resolve_panel_dims() -> (f64, f64) {
+pub(crate) fn resolve_panel_dims() -> (f64, f64) {
     let (mut width, mut height) = (QUICK_PANEL_WIDTH, QUICK_PANEL_DEFAULT_HEIGHT);
     if let Ok(settings) = read_user_settings() {
         if let Some(value) = settings.settings.get("panelWidth").and_then(Value::as_f64) {
@@ -435,7 +441,7 @@ struct BuildInfoPayload {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct FocusedInputBoundsPayload {
+pub(crate) struct FocusedInputBoundsPayload {
     x: f64,
     y: f64,
     width: f64,
@@ -463,7 +469,7 @@ struct NativeBounds {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AccessibilityPermissionPayload {
+pub(crate) struct AccessibilityPermissionPayload {
     status: String,
     can_read_focused_input: bool,
     message: String,
@@ -567,7 +573,7 @@ struct FilePathStatusPayload {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PanelTriggerPayload {
+pub(crate) struct PanelTriggerPayload {
     visible: bool,
     focused: bool,
     x: f64,
@@ -970,7 +976,7 @@ fn save_editor_draft(input: SaveEditorDraftInput) -> Result<ClipItemPayload, Str
 }
 
 /// 记录一次设置操作的耗时，超 300ms 写 app log（B6：300ms 性能预算可观测）。
-fn log_panel_open_step(reason: &str, step: &str, started: Instant, last: &mut Instant) {
+pub(crate) fn log_panel_open_step(reason: &str, step: &str, started: Instant, last: &mut Instant) {
     let now = Instant::now();
     let step_ms = now.duration_since(*last).as_millis();
     let total_ms = now.duration_since(started).as_millis();
@@ -1384,7 +1390,7 @@ fn capture_clip_payload(
 /// osascript（本机实测单次 >1s、预算 500ms），只适合后台线程；唤起热路径（open_panel
 /// 显示前补采）必须传 false 跳过，缺失的 source_app 元数据由轮询线程 ≤100ms 后的全量
 /// 采集补齐（同 content_hash 幂等 UPDATE，不产生重复行）。
-fn capture_clip_payload_with_options(
+pub(crate) fn capture_clip_payload_with_options(
     payload: clipboard::StandardClipboardPayload,
     source_label: Option<String>,
     observed_at: i64,
@@ -1583,7 +1589,7 @@ fn clipboard_payload_fingerprint(payload: &clipboard::StandardClipboardPayload) 
     }
 }
 
-fn apply_capture_settings(
+pub(crate) fn apply_capture_settings(
     payload: clipboard::StandardClipboardPayload,
 ) -> Result<Option<clipboard::StandardClipboardPayload>, String> {
     let settings = read_user_settings()
@@ -1666,7 +1672,7 @@ fn apply_capture_settings(
     }
 }
 
-fn log_to_file(level: &str, module: &str, message: &str) {
+pub(crate) fn log_to_file(level: &str, module: &str, message: &str) {
     // 非阻塞：只把格式化好的日志行投递给后台写线程，绝不在调用线程（往往是 IPC / 粘贴 /
     // 唤起热路径）上做 fs::OpenOptions + write_all。show/hide/copy/paste 每次都产生若干条
     // 日志，同步落盘是整体「停顿感」的主要来源之一。
@@ -2910,19 +2916,6 @@ fn import_clip_records(items: Vec<ImportClipInput>) -> Result<ImportClipPayload,
     import_items(&conn, items).map_err(|error| preserve_command_error("CLIP_IMPORT_FAILED", error))
 }
 
-#[tauri::command]
-fn set_panel_mode<R: tauri::Runtime>(
-    window: tauri::WebviewWindow<R>,
-    mode: String,
-) -> Result<(), String> {
-    let width = if mode == "management" {
-        MANAGEMENT_PANEL_WIDTH
-    } else {
-        QUICK_PANEL_WIDTH
-    };
-    configure_panel_window(&window, width);
-    Ok(())
-}
 
 fn settings_window_path(section: Option<&str>) -> Result<&'static str, String> {
     match section {
@@ -3029,7 +3022,7 @@ fn focus_settings_window_native<R: tauri::Runtime>(window: &tauri::WebviewWindow
 #[cfg(not(target_os = "macos"))]
 fn focus_settings_window_native<R: tauri::Runtime>(_window: &tauri::WebviewWindow<R>) {}
 
-fn open_settings_window_internal<R: tauri::Runtime>(
+pub(crate) fn open_settings_window_internal<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     section: Option<&str>,
 ) -> Result<(), String> {
@@ -3112,22 +3105,8 @@ fn open_settings_window_internal<R: tauri::Runtime>(
     Ok(())
 }
 
-/// 打开设置窗口的普通入口：保持进入 `settings.html`，不携带初始分类参数。
-#[tauri::command]
-fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    open_settings_window_internal(app, None)
-}
 
-/// 打开设置窗口并进入指定分类；分类使用白名单，避免前端传入任意 URL。
-#[tauri::command]
-fn open_settings_window_with_section<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    section: String,
-) -> Result<(), String> {
-    open_settings_window_internal(app, Some(section.as_str()))
-}
-
-fn open_onboarding_window_internal<R: tauri::Runtime>(
+pub(crate) fn open_onboarding_window_internal<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     source: &str,
 ) -> Result<(), String> {
@@ -3186,11 +3165,6 @@ fn open_onboarding_window_internal<R: tauri::Runtime>(
         &format!("created onboarding window source={source}"),
     );
     Ok(())
-}
-
-#[tauri::command]
-fn open_onboarding_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    open_onboarding_window_internal(app, "manual")
 }
 
 fn maybe_open_onboarding_on_startup<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
@@ -3433,6 +3407,17 @@ fn append_app_log(
     message: String,
     context: Option<String>,
 ) -> Result<String, String> {
+    append_app_log_impl(level, message, context)
+}
+
+/// append_app_log 的跨模块入口：#[tauri::command] 对 pub(crate) 函数会
+/// `#[macro_export]` 提升隐藏宏到 crate 根，与根内文本定义冲突（E0255），
+/// 故命令保持私有、window 模块走本 helper（行为与字符串不变）。
+pub(crate) fn append_app_log_impl(
+    level: String,
+    message: String,
+    context: Option<String>,
+) -> Result<String, String> {
     // 这是前端可调用的命令（设置页日志查看/清理用到），保持同步语义并返回路径。
     // 内部高频日志走 log_to_file（非阻塞后台线程，见 log_writer_send）。
     if !should_write_app_log(&level, "", &message) {
@@ -3554,7 +3539,7 @@ fn export_diagnostics_bundle<R: tauri::Runtime>(
 
     let panel = app
         .get_webview_window("main")
-        .map(|window| panel_trigger_payload(&window, "diagnostics-export", "current", ""));
+        .map(|window| window::panel_trigger_payload(&window, "diagnostics-export", "current", ""));
     let logs = query_app_logs(None, None, Some(300)).unwrap_or(QueryAppLogPayload {
         path: log_path()
             .map(|path| path.to_string_lossy().to_string())
@@ -3638,92 +3623,6 @@ fn export_diagnostics_bundle<R: tauri::Runtime>(
     })
 }
 
-/// 焦点输入框位置命令（兼容面，仓库内无调用方）。
-/// 做什么：按需返回当前系统焦点输入框坐标，读不到时退化为全 0 的 fallback。
-/// 边界：后台周期性预热已移除（见 focus-prefetch-idle-removal 提案）；本命令自身
-/// 仍保留 600ms 短缓存，未命中时现场调原生 AX 查询。保留注册仅为仓库外调用方与回滚契约，
-/// 面板定位与粘贴目标快照均不依赖本命令。
-#[tauri::command]
-fn focused_input_bounds() -> Result<FocusedInputBoundsPayload, String> {
-    focused_input_bounds_platform().or_else(|_| {
-        Ok(FocusedInputBoundsPayload {
-            x: 0.0,
-            y: 0.0,
-            width: 0.0,
-            height: 0.0,
-            source: "fallback".to_string(),
-        })
-    })
-}
-
-#[tauri::command]
-fn show_quick_panel_command<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    source: Option<String>,
-) -> Result<PanelTriggerPayload, String> {
-    open_panel(&app, source.as_deref().unwrap_or("command"))
-}
-
-#[tauri::command]
-fn hide_quick_panel_command<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<PanelTriggerPayload, String> {
-    hide_panel(&app, "command")
-}
-
-#[tauri::command]
-fn toggle_quick_panel_command<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    source: Option<String>,
-) -> Result<PanelTriggerPayload, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window is not available".to_string())?;
-    // 可见性口径与全局快捷键 toggle_quick_panel 一致（panel_visible_to_user）：
-    // 淡出在途按「已隐藏」处理走 show，取消淡出而非二次 hide。
-    if panel_visible_to_user(&window) {
-        hide_panel(&app, source.as_deref().unwrap_or("toggle"))
-    } else {
-        open_panel(&app, source.as_deref().unwrap_or("toggle"))
-    }
-}
-
-#[tauri::command]
-fn focus_quick_panel_command<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<PanelTriggerPayload, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window is not available".to_string())?;
-    show_panel_window(&app, &window);
-    Ok(panel_trigger_payload(&window, "focus", "manual-focus", ""))
-}
-
-#[tauri::command]
-fn release_focus_command<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<PanelTriggerPayload, String> {
-    hide_panel_before_paste(&app);
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window is not available".to_string())?;
-    Ok(panel_trigger_payload(
-        &window,
-        "release-focus",
-        "hidden",
-        "",
-    ))
-}
-
-#[tauri::command]
-fn get_panel_trigger_status<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<PanelTriggerPayload, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window is not available".to_string())?;
-    Ok(panel_trigger_payload(&window, "status", "current", ""))
-}
 
 #[tauri::command]
 fn check_accessibility_permission() -> Result<AccessibilityPermissionPayload, String> {
@@ -3753,7 +3652,7 @@ fn reset_accessibility_permission() -> Result<AccessibilityPermissionPayload, St
 /// macOS 焦点框位置查询：先读 600ms 短缓存，未命中才走原生 AX 查询。
 /// 边界：不再有后台预热线程周期性刷新缓存；缓存只由本命令的调用写入。
 #[cfg(target_os = "macos")]
-fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> {
+pub(crate) fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> {
     if let Ok(cache) = focus_bounds_cache().lock() {
         if cache.valid {
             if let Ok(now) = now_millis() {
@@ -3793,7 +3692,7 @@ fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> 
 }
 
 #[cfg(target_os = "macos")]
-fn snapshot_paste_target_bounds(reason: &str, fallback_point: Option<(f64, f64)>) {
+pub(crate) fn snapshot_paste_target_bounds(reason: &str, fallback_point: Option<(f64, f64)>) {
     let target_app = frontmost_app_identity();
     if let Some((_, bundle_id)) = &target_app {
         if let Ok(mut slot) = paste_target_app_bundle_cache().lock() {
@@ -3897,7 +3796,7 @@ fn snapshot_paste_target_bounds(reason: &str, fallback_point: Option<(f64, f64)>
 }
 
 #[cfg(not(target_os = "macos"))]
-fn snapshot_paste_target_bounds(_reason: &str, _fallback_point: Option<(f64, f64)>) {}
+pub(crate) fn snapshot_paste_target_bounds(_reason: &str, _fallback_point: Option<(f64, f64)>) {}
 
 #[cfg(target_os = "macos")]
 fn restore_paste_target_focus() -> String {
@@ -3932,7 +3831,7 @@ fn restore_paste_target_focus() -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn frontmost_app_identity_including_self() -> Option<(String, String)> {
+pub(crate) fn frontmost_app_identity_including_self() -> Option<(String, String)> {
     // 原生 NSRunningApplication.frontmostApplication：无 TCC 授权依赖、亚毫秒返回。
     // 旧实现 fork osascript 查 System Events，本机单次 >1s 且 500ms 预算内必超时，
     // 导致粘贴目标 bundle 缓存长期为空、粘贴前无法激活目标 App（内容落不进输入框）。
@@ -4018,7 +3917,7 @@ fn click_paste_target_bounds(_cache: &CachedFocusBounds) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> {
+pub(crate) fn focused_input_bounds_platform() -> Result<FocusedInputBoundsPayload, String> {
     Err("focused input bounds unavailable on this platform".to_string())
 }
 
@@ -4190,7 +4089,7 @@ fn native_focused_input_bounds() -> Result<NativeBounds, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn check_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
+pub(crate) fn check_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
     let trusted = unsafe { AXIsProcessTrusted() != 0 };
     if trusted {
         Ok(AccessibilityPermissionPayload {
@@ -4210,7 +4109,7 @@ fn check_accessibility_permission_platform() -> Result<AccessibilityPermissionPa
 }
 
 #[cfg(not(target_os = "macos"))]
-fn check_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
+pub(crate) fn check_accessibility_permission_platform() -> Result<AccessibilityPermissionPayload, String> {
     Ok(AccessibilityPermissionPayload {
         status: "unsupported".to_string(),
         can_read_focused_input: false,
@@ -4365,7 +4264,7 @@ fn reset_accessibility_permission_platform() -> Result<AccessibilityPermissionPa
 }
 
 #[cfg(target_os = "macos")]
-fn maybe_prompt_accessibility_on_first_panel<R: tauri::Runtime>(
+pub(crate) fn maybe_prompt_accessibility_on_first_panel<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     reason: &str,
 ) {
@@ -4501,7 +4400,7 @@ fn maybe_prompt_accessibility_on_first_panel<R: tauri::Runtime>(
 }
 
 #[cfg(not(target_os = "macos"))]
-fn maybe_prompt_accessibility_on_first_panel<R: tauri::Runtime>(
+pub(crate) fn maybe_prompt_accessibility_on_first_panel<R: tauri::Runtime>(
     _app: &tauri::AppHandle<R>,
     _reason: &str,
 ) {
@@ -5156,7 +5055,7 @@ fn detect_payload_kind(content: &str) -> String {
     clipboard::detect_text(content).payload_kind
 }
 
-fn now_millis() -> Result<i64, String> {
+pub(crate) fn now_millis() -> Result<i64, String> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
@@ -5517,7 +5416,7 @@ fn suppress_writeback_for(duration: Duration) {
     });
 }
 
-fn should_skip_writeback() -> bool {
+pub(crate) fn should_skip_writeback() -> bool {
     WRITEBACK_SUPPRESS.load(Ordering::SeqCst)
 }
 
@@ -5751,74 +5650,6 @@ fn paste_settle_delay_ms(source: &str) -> u64 {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if is_panel_pinned() {
-        log_to_file(
-            "info",
-            "paste",
-            "hide before paste skipped because panel is pinned",
-        );
-        return;
-    }
-    if let Ok(panel) = app.get_webview_panel("main") {
-        log_to_file(
-            "debug",
-            "paste",
-            &format!(
-                "hide panel before paste: visibleBefore={}",
-                panel.is_visible()
-            ),
-        );
-        panel.resign_key_window();
-        panel.hide();
-        log_to_file(
-            "debug",
-            "paste",
-            &format!(
-                "hide panel before paste: visibleAfter={}",
-                panel.is_visible()
-            ),
-        );
-        return;
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        log_to_file(
-            "debug",
-            "paste",
-            &format!(
-                "hide window before paste fallback: visibleBefore={} focusedBefore={}",
-                window.is_visible().unwrap_or(false),
-                window.is_focused().unwrap_or(false)
-            ),
-        );
-        let _ = window.hide();
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn hide_panel_before_paste<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if is_panel_pinned() {
-        log_to_file(
-            "info",
-            "paste",
-            "hide before paste skipped because panel is pinned",
-        );
-        return;
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        log_to_file(
-            "debug",
-            "paste",
-            &format!(
-                "hide window before paste: visibleBefore={} focusedBefore={}",
-                window.is_visible().unwrap_or(false),
-                window.is_focused().unwrap_or(false)
-            ),
-        );
-        let _ = window.hide();
-    }
-}
 
 #[cfg(target_os = "macos")]
 fn simulate_platform_paste() -> Result<String, String> {
@@ -6064,7 +5895,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_quick" => show_quick_panel(app, "tray"),
             "preferences" => {
-                if let Err(e) = open_settings_window(app.clone()) {
+                if let Err(e) = window::open_settings_window(app.clone()) {
                     log_to_file("warn", "tray", &format!("open settings failed: {}", e));
                 }
             }
@@ -6173,7 +6004,7 @@ fn schedule_dev_window_trigger<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 | "settings:code-tabs"
                 | "settings:tooltip"
                 | "settings:interactions" => {
-                    open_settings_window(app_for_main.clone())
+                    window::open_settings_window(app_for_main.clone())
                 }
                 // dev 沙箱内存检查入口：直达诊断 tab（settings_window_path 已支持该 section）。
                 "settings:diagnostics" => {
@@ -8150,21 +7981,21 @@ pub fn run() {
             cleanup_app_logs,
             get_log_stats,
             export_diagnostics_bundle,
-            set_panel_mode,
-            open_settings_window,
-            open_settings_window_with_section,
-            open_onboarding_window,
+            window::set_panel_mode,
+            window::open_settings_window,
+            window::open_settings_window_with_section,
+            window::open_onboarding_window,
             get_launch_at_login,
             set_launch_at_login,
-            show_quick_panel_command,
-            hide_quick_panel_command,
-            toggle_quick_panel_command,
-            set_panel_pinned_command,
-            is_panel_pinned_command,
-            focus_quick_panel_command,
-            release_focus_command,
-            get_panel_trigger_status,
-            focused_input_bounds,
+            window::show_quick_panel_command,
+            window::hide_quick_panel_command,
+            window::toggle_quick_panel_command,
+            window::set_panel_pinned_command,
+            window::is_panel_pinned_command,
+            window::focus_quick_panel_command,
+            window::release_focus_command,
+            window::get_panel_trigger_status,
+            window::focused_input_bounds,
             check_accessibility_permission,
             open_accessibility_settings,
             request_accessibility_permission,
@@ -8186,337 +8017,12 @@ pub fn run() {
         });
 }
 
-fn open_panel<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    reason: &str,
-) -> Result<PanelTriggerPayload, String> {
-    let panel_started = Instant::now();
-    let mut panel_last_step = panel_started;
-    // 唤起前同步补采一次剪贴板：快速复制后立刻唤起时，100ms 轮询尚未采到新条目，
-    // 面板首帧先显示旧列表，300ms 后前端 manual 补采才把新条目顶到首行——列表在
-    // 手指落下后才跳动（用户反馈「每次唤起后界面刷新、第一条改变」）。提前到显示前
-    // 采集，首帧即最终态。capture_clip_payload 按 content_hash 幂等（重复调用仅
-    // promote 同一行），轮询线程稍后重采不会产生重复条目。文本读板 ~1ms、图片数十 ms，
-    // 在唤起热路径可接受。
-    if !is_listen_paused() && !should_skip_writeback() {
-        if let Ok(Some(raw_payload)) = clipboard::read_clipboard_payload() {
-            if let Ok(Some(payload)) = apply_capture_settings(raw_payload) {
-                let now = now_millis().unwrap_or(0);
-                if let Err(error) = capture_clip_payload_with_options(
-                    payload,
-                    Some("Clipboard".to_string()),
-                    now,
-                    false,
-                ) {
-                    log_to_file(
-                        "debug",
-                        "panel-open-perf",
-                        &format!("open_panel: pre-show capture skipped: {}", error),
-                    );
-                }
-            }
-        }
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        maybe_prompt_accessibility_on_first_panel(app, reason);
-        log_panel_open_step(
-            reason,
-            "first-permission-dispatch",
-            panel_started,
-            &mut panel_last_step,
-        );
-        let strategy = get_strategy_for_source(reason);
-        let strategy_clone = strategy.clone();
-        log_panel_open_step(
-            reason,
-            "resolve-strategy",
-            panel_started,
-            &mut panel_last_step,
-        );
-
-        // 入口诊断：来源 -> 策略，以及【逻辑点】光标与其所在屏。配合下游各 position_* 的结果日志，
-        // 可完整复现一次唤起的定位决策链（用于排查「出现在错误的屏/位置」）。
-        let (cx, cy) = cursor_logical_point(&window).unwrap_or((-1.0, -1.0));
-        let cursor_monitor = monitor_for_logical_point(&window, cx, cy)
-            .map(|m| get_monitor_id(&m))
-            .unwrap_or_default();
-        log_panel_open_step(
-            reason,
-            "cursor-monitor",
-            panel_started,
-            &mut panel_last_step,
-        );
-        let acc = check_accessibility_permission_platform()
-            .map(|a| a.status)
-            .unwrap_or_default();
-        log_panel_open_step(
-            reason,
-            "accessibility-status",
-            panel_started,
-            &mut panel_last_step,
-        );
-        log_to_file(
-            "debug",
-            "panel-position",
-            &format!(
-            "open_panel: source={} strategy={:?} cursor=({},{}) cursor_monitor={} accessibility={}",
-                reason, strategy, cx, cy, cursor_monitor, acc
-            ),
-        );
-        // 粘贴目标快照只用于「粘贴时 activate 目标 App」所需的 bundle id 与焦点框位置，
-        // 实现走 NSWorkspace.frontmostApplication + 原生 AX 直查（不 fork osascript）。放到
-        // 后台线程执行，避免在唤起热路径上阻塞——用户从面板出现到选中条目通常 >100ms，足够缓存就绪。
-        {
-            let reason_owned = reason.to_string();
-            let fallback = if cx >= 0.0 && cy >= 0.0 {
-                Some((cx, cy))
-            } else {
-                None
-            };
-            thread::spawn(move || {
-                snapshot_paste_target_bounds(&reason_owned, fallback);
-            });
-        }
-
-        // 宽高可由用户设置覆盖（默认 420×488）。
-        let (panel_width, panel_h) = resolve_panel_dims();
-        // 1. 计算面板高度（基于当前显示器工作区）
-        let panel_height = panel_position(&window, panel_width, panel_h)
-            .map(|(_, _, h)| h)
-            .unwrap_or(panel_h);
-        let _ = window.set_size(LogicalSize::new(panel_width, panel_height));
-        log_panel_open_step(
-            reason,
-            "size-and-height",
-            panel_started,
-            &mut panel_last_step,
-        );
-
-        // 2. 同步应用定位策略（单次定位，不重复）
-        let position_source: String =
-            match apply_position_strategy(&window, strategy, panel_width, panel_height) {
-                Some((x, y)) => {
-                    set_panel_position(&window, x, y);
-                    format!("sync-{:?}", strategy_clone)
-                }
-                None => {
-                    // 策略失败时用 fallback 居中
-                    if let Some((fx, fy, _)) = panel_position(&window, panel_width, panel_height) {
-                        set_panel_position(&window, fx, fy);
-                    }
-                    format!("fallback-{:?}", strategy_clone)
-                }
-            };
-        log_panel_open_step(reason, "position", panel_started, &mut panel_last_step);
-
-        // 3. 显示窗口
-        show_panel_window(app, &window);
-        log_panel_open_step(reason, "show-window", panel_started, &mut panel_last_step);
-        let _ = window.emit("clipforge://show-quick-panel", reason);
-        log_panel_open_step(reason, "emit-show", panel_started, &mut panel_last_step);
-
-        // 不再在显示后用焦点输入框位置【覆盖】定位：那条 osascript 异步路径会在面板已可见时
-        // 再次 set_panel_position，造成「先出现在光标处、再跳到输入框处」的可见跳动（用户反映像
-        // bug 一样闪烁）。按需求：触发那一刻位置确定即可（上面的同步 apply_position_strategy），
-        // 显示之后不再移动面板，消除闪烁。
-
-        let payload = panel_trigger_payload(
-            &window,
-            reason,
-            &position_source,
-            &format!("{:?}", strategy_clone),
-        );
-        log_panel_open_step(reason, "payload", panel_started, &mut panel_last_step);
-        Ok(payload)
-    } else {
-        Err("main window is not available".to_string())
-    }
-}
-
-fn hide_panel<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    reason: &str,
-) -> Result<PanelTriggerPayload, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window is not available".to_string())?;
-
-    // 固定(pin)语义只拦「自动隐藏」：失焦隐藏(前端 is_panel_pinned_command 门控)与
-    // 粘贴前隐藏(hide_panel_before_paste 自查)各自已按 pin 放行;此处若一刀切拦截,
-    // 全局快捷键 toggle / Esc / 显式 hide 命令在 pin 态下全部失效,面板将无法收起。
-    save_panel_position(&window);
-
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(panel) = app.get_webview_panel("main") {
-            hide_panel_with_native_fade(&app, &panel);
-        } else {
-            let _ = window.hide();
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window.hide();
-    }
-    let _ = window.emit("clipforge://hide-quick-panel", reason);
-    Ok(panel_trigger_payload(&window, reason, "hidden", ""))
-}
-
-fn show_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
-    if let Err(error) = open_panel(app, reason) {
-        let _ = append_app_log(
-            "warn".to_string(),
-            "Open quick panel failed".to_string(),
-            Some(error),
-        );
-    }
-}
-
-/// 切换面板可见性。快捷键用这个而非 show_quick_panel：
-/// 面板已可见时再按快捷键应当【隐藏】（toggle），否则面板常驻可见、再按 show 是 no-op，
-/// 主观上表现为「快捷键只生效一次」。
-fn toggle_quick_panel<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    // 「可见」必须是用户感知可见:原生淡出在途(160ms 窗口期)的窗口 is_visible 仍为 true,
-    // 但对用户已等同隐藏;此时按快捷键意图是「唤起」,必须走 show 分支取消淡出,
-    // 否则误判成第二次 hide,面板被彻底藏没(隐形面板 bug 根因)。
-    // 口径与 toggle_quick_panel_command 共用 panel_visible_to_user，不再各写各的。
-    let visible = panel_visible_to_user(&window);
-    let focused = window.is_focused().unwrap_or(false);
-    let panel_visible = app
-        .get_webview_panel("main")
-        .ok()
-        .map(|panel| panel.is_visible())
-        .unwrap_or(false);
-    // 诊断「需要按两下才触发」：记录每次 toggle 的决策依据（show/hide）与当时的可见/聚焦状态。
-    // 若用户反映第一次按下没反应，看这条日志即可判断是走了 hide 分支（可见性误判）还是
-    // show 分支后焦点没进来（非激活 NSPanel 的 key-window 问题）。
-    log_to_file(
-        "info",
-        "panel-toggle",
-        &format!(
-            "toggle reason={} decision={} windowVisible={} windowFocused={} panelVisible={}",
-            reason,
-            if visible { "hide" } else { "show" },
-            visible,
-            focused,
-            panel_visible
-        ),
-    );
-    if visible {
-        let _ = hide_panel(app, reason);
-    } else {
-        show_quick_panel(app, reason);
-    }
-}
-
-/// 面板「固定」状态：true 时失焦/外部点击不自动隐藏（参考 EcoPaste CLIPBOARD_WINDOW_PINNED）。
-static PANEL_PINNED: AtomicBool = AtomicBool::new(false);
-
-/// 最近一次面板 show 的毫秒时间戳（UNIX epoch）：幻影 blur 自愈的时间窗判定基准。
-/// 只在 macOS show_floating_window_by_label 成功路径写入；0 表示从未 show 或已重置。
-#[cfg(target_os = "macos")]
-static PANEL_LAST_SHOWN_MS: AtomicI64 = AtomicI64::new(0);
-
-/// 最近一次幻影 blur 自愈（夺回 key）的毫秒时间戳：同一轮自愈引发的连环 blur
-/// （resign_key 波纹会触发多次 focusChanged）只自愈一次，避免与后台 app 反复争抢。
-#[cfg(target_os = "macos")]
-static PANEL_LAST_RECLAIM_MS: AtomicI64 = AtomicI64::new(0);
-
-fn is_panel_pinned() -> bool {
-    PANEL_PINNED.load(Ordering::Relaxed)
-}
-
-/// 幻影 blur 判定：面板 show 后短时间内、且系统层无任何用户输入（键/鼠/滚轮）时发生的
-/// 失焦，几乎都是后台 App 自激活（agent 终端、剪贴板管理器等周期性 activate 自己）抢走
-/// key——面板对用户仍应可见可用，此时自动夺回 key 而不是淡出隐藏。用户真实操作
-/// （点击面板外、Cmd-Tab、点其他窗口）会留下 CGEventSource 输入时间戳，照常隐藏。
-/// 返回 Some(true)=判定为幻影 blur（可自愈）；Some(false)=用户输入触发的真 blur；None=无法判定（保守走隐藏）。
-#[cfg(target_os = "macos")]
-fn is_phantom_blur(now_ms: i64) -> Option<bool> {
-    // core-graphics crate 未导出该 C 函数，按现有 AX extern 风格直接声明；
-    // CoreGraphics 框架已被 AppKit 链接，无需额外链接参数。
-    // eventType 传 -1（kCGAnyInputEventType）统计任意输入类型。
-    #[link(name = "CoreGraphics", kind = "framework")]
-    extern "C" {
-        fn CGEventSourceSecondsSinceLastEventType(state_id: i32, event_type: i32) -> f64;
-    }
-    // 0.35s 内有过物理输入即视为用户引发的失焦;show 后 3s 内的静默失焦按幻影处理。
-    // 3s 依据实测:后台 app 自激活型幻影 blur 落在 show 后 0.57s-4s 区间,
-    // 1.2s 太窄会漏掉;用户操作型失焦(点击/Cmd-Tab)都会在 0.35s 内留下输入事件,不会误判。
-    const USER_INPUT_WINDOW_S: f64 = 0.35;
-    const PHANTOM_WINDOW_MS: i64 = 3000;
-    let since_input = unsafe {
-        CGEventSourceSecondsSinceLastEventType(
-            0, /* kCGEventSourceStateCombinedSessionState */
-            -1,
-        )
-    };
-    if !since_input.is_finite() {
-        return None;
-    }
-    let shown = PANEL_LAST_SHOWN_MS.load(Ordering::Relaxed);
-    let since_show_ms = if shown > 0 { now_ms - shown } else { i64::MAX };
-    Some(since_show_ms <= PHANTOM_WINDOW_MS && since_input >= USER_INPUT_WINDOW_S)
-}
-
-/// 幻影 blur 自愈:后台 app 无用户输入抢走 key 时,夺回 key 让面板继续可用。
-/// 必须走完整 show 抢占(而非裸 make_key_window):递增代际号取消在途淡出、
-/// 复位 alpha=1——否则面板夺回 key 后仍会继续淡没(用户看到「失焦后面板透明消失」)。
-/// 去重:RECLAIM 后 800ms 内的连环 blur 直接忽略(resign 波纹会触发多次 focusChanged)。
-#[cfg(target_os = "macos")]
-fn reclaim_panel_key_after_phantom_blur<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    _window: &tauri::Window<R>,
-    now_ms: i64,
-) -> bool {
-    let last_reclaim = PANEL_LAST_RECLAIM_MS.load(Ordering::Relaxed);
-    if last_reclaim > 0 && now_ms - last_reclaim < 800 {
-        return false;
-    }
-    let Some(webview) = app.get_webview_window("main") else {
-        return false;
-    };
-    PANEL_LAST_RECLAIM_MS.store(now_ms, Ordering::Relaxed);
-    // 完整抢占:代际号+1 使在途淡出的收尾弃权,alpha 复位 1,order_front + make_key。
-    show_floating_window_by_label(app, "main", &webview);
-    // 同步通知前端把本次 blur 当宽限事件忽略:前端 blur→60ms→hide 链路会在 60ms 后
-    // 发起一次真淡出,把刚夺回的面板又藏掉(夺回先行到达,前端收到 focus-guard 后
-    // 再收到 blur 时处于宽限窗内,直接 return)。
-    let _ = app.emit("clipforge://panel-focus-guard", now_ms);
-    log_to_file(
-        "info",
-        "panel-focus",
-        "phantom blur reclaim: background app stole key without user input, re-keyed panel via show preemption",
-    );
-    true
-}
-
-#[tauri::command]
-fn set_panel_pinned_command(pinned: bool) -> Result<bool, String> {
-    PANEL_PINNED.store(pinned, Ordering::Relaxed);
-    log_to_file(
-        "info",
-        "panel-pin",
-        &format!("set pinned = {} (stay-in-place)", pinned),
-    );
-    Ok(pinned)
-}
-
-/// 权威查询固定状态（对齐 EcoPaste should_auto_hide：隐藏决策统一以 Rust 标志为准，
-/// 避免前端 settingsRef 与 Rust PANEL_PINNED 不同步导致固定后仍被前端 appWindow.hide() 误关）。
-#[tauri::command]
-fn is_panel_pinned_command() -> bool {
-    is_panel_pinned()
-}
 
 /// 剪贴板「监听暂停」标志：true 时后台监听线程跳过采集（对齐 EcoPaste 托盘暂停监听）。
 /// 仅影响读取入库；写回抑制、粘贴模拟、面板交互不受影响。进程内状态，重启重置。
 static LISTEN_PAUSED: AtomicBool = AtomicBool::new(false);
 
-fn is_listen_paused() -> bool {
+pub(crate) fn is_listen_paused() -> bool {
     LISTEN_PAUSED.load(Ordering::Relaxed)
 }
 
@@ -8524,47 +8030,13 @@ fn set_listen_paused(paused: bool) -> bool {
     LISTEN_PAUSED.store(paused, Ordering::Relaxed);
     paused
 }
-
-fn panel_trigger_payload<R: tauri::Runtime>(
-    window: &tauri::WebviewWindow<R>,
-    source: &str,
-    position_source: &str,
-    focused_input_source: &str,
-) -> PanelTriggerPayload {
-    let position = window.outer_position().ok();
-    let size = window.outer_size().ok();
-    let accessibility =
-        check_accessibility_permission_platform().unwrap_or(AccessibilityPermissionPayload {
-            status: "unsupported".to_string(),
-            can_read_focused_input: false,
-            message: "accessibility status unavailable".to_string(),
-        });
-    PanelTriggerPayload {
-        visible: window.is_visible().unwrap_or(false),
-        focused: window.is_focused().unwrap_or(false),
-        x: position.as_ref().map(|value| value.x as f64).unwrap_or(0.0),
-        y: position.as_ref().map(|value| value.y as f64).unwrap_or(0.0),
-        width: size.as_ref().map(|value| value.width as f64).unwrap_or(0.0),
-        height: size
-            .as_ref()
-            .map(|value| value.height as f64)
-            .unwrap_or(0.0),
-        source: source.to_string(),
-        position_source: position_source.to_string(),
-        focused_input_source: focused_input_source.to_string(),
-        used_focused_input: position_source.starts_with("focused-input"),
-        accessibility_status: accessibility.status,
-        message: accessibility.message,
-    }
-}
-
 #[cfg(target_os = "macos")]
-fn set_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, x: f64, y: f64) {
+pub(crate) fn set_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, x: f64, y: f64) {
     let _ = window.set_position(LogicalPosition::new(x, y));
 }
 
 #[cfg(not(target_os = "macos"))]
-fn set_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, x: f64, y: f64) {
+pub(crate) fn set_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, x: f64, y: f64) {
     let _ = window.set_position(LogicalPosition::new(x, y));
 }
 
@@ -8632,39 +8104,7 @@ fn configure_quick_panel_window<R: tauri::Runtime>(window: &tauri::WebviewWindow
     configure_platform_quick_panel(window);
 }
 
-/// 焦点诊断快照:失焦瞬间的 keyWindow 归属与前台 app 身份,一次性拼成短串。
-/// 仅诊断路径调用,不参与业务逻辑;拿不到主线程/panel 时逐项降级为占位符。
-#[cfg(target_os = "macos")]
-fn focus_context_snapshot<R: tauri::Runtime>(window: &tauri::Window<R>) -> String {
-    use tauri_nspanel::objc2::msg_send;
-    use tauri_nspanel::objc2_app_kit::{NSApplication, NSWindow};
-    use tauri_nspanel::objc2_foundation::MainThreadMarker;
-
-    let key_desc = if MainThreadMarker::new().is_some() {
-        let app = NSApplication::sharedApplication(MainThreadMarker::new().unwrap());
-        let key: Option<tauri_nspanel::objc2::rc::Retained<NSWindow>> =
-            unsafe { msg_send![&*app, keyWindow] };
-        match key {
-            Some(key_window) => format!("keyWindow=ptr:{:?}", &*key_window as *const NSWindow),
-            None => "keyWindow=nil".to_string(),
-        }
-    } else {
-        "keyWindow=nonmain".to_string()
-    };
-    let front = frontmost_app_identity_including_self()
-        .map(|(name, bundle)| format!("front={name}|{bundle}"))
-        .unwrap_or_else(|| "front=nil".to_string());
-    let visible = window.is_visible().unwrap_or(false);
-    let focused = window.is_focused().unwrap_or(false);
-    format!("{key_desc} {front} winVisible={visible} winFocused={focused}")
-}
-
-#[cfg(not(target_os = "macos"))]
-fn focus_context_snapshot<R: tauri::Runtime>(_window: &tauri::Window<R>) -> String {
-    String::new()
-}
-
-fn configure_panel_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, panel_width: f64) {
+pub(crate) fn configure_panel_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, panel_width: f64) {
     let mut panel_height = QUICK_PANEL_FALLBACK_HEIGHT;
     if let Some((x, y, height)) = panel_position(window, panel_width, panel_height) {
         panel_height = height;
@@ -8754,263 +8194,11 @@ fn sync_nonactivating_panel_focus_tag<R: tauri::Runtime>(panel: &Arc<dyn tauri_n
 }
 
 #[cfg(target_os = "macos")]
-fn show_panel_window<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    window: &tauri::WebviewWindow<R>,
-) {
-    show_floating_window_by_label(app, "main", window);
-}
-
-/// 通用浮窗显示：把指定 label 的窗口设为 NSPanel status-level 浮动面板并置于最前。
-/// 剪贴板主面板等浮窗共用同一「悬浮于其他应用之上」能力，按 label 泛化。
-/// 失焦/切换收起的原生淡出：走 NSWindow animator 的 alphaValue 代理动画,
-/// 插值由 WindowServer 合成路径执行,不触发 WKWebView 重绘(backdrop-filter 的
-/// material 层在 CSS opacity 动画下每帧强制重新栅格化,是自动收起卡顿的根源)。
-/// 动画结束后 resign_key + hide,并把 alpha 复位为 1(下次唤起天然满透明度)。
-/// 边界:主线程标记拿不到时退回瞬切,功能不回退;动画途中面板被再次唤起时,
-/// show 路径会先 set_alpha_value(1.0) 抹掉中间态,不会停在半透明。
-
-/// 面板原生淡出在途标志:hide 发起淡出时置位,show 抢占或收尾完成时复位。
-/// toggle/失焦链据此判定「用户感知可见性」:淡出中的面板对用户等同不可见,
-/// 此时再按快捷键必须走 show(取消淡出),否则误判成 hide 会把面板藏没。
-static PANEL_FADE_ACTIVE: AtomicBool = AtomicBool::new(false);
-
-/// 面板淡出代际号:每次发起新淡出或 show 抢占时递增;
-/// 迟到的轮询/收尾闭包校验代际号不匹配即弃权,防止旧 hide 链干扰新状态。
-static PANEL_FADE_GENERATION: AtomicI64 = AtomicI64::new(0);
-
-fn next_fade_generation() -> i64 {
-    PANEL_FADE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
-}
-
-fn is_panel_fading() -> bool {
-    PANEL_FADE_ACTIVE.load(Ordering::SeqCst)
-}
-
-/// 面板「用户感知可见」的唯一口径：窗口可见，且没有原生淡出在途。
-/// 淡出（约 160ms）在途的窗口 is_visible 仍为 true，但对用户已等同隐藏，
-/// 此时 toggle 意图是「唤起」（show 分支会取消淡出）；若误判成 hide，
-/// 面板会被彻底藏没（隐形面板 bug）。全局快捷键 toggle_quick_panel 与
-/// 前端/托盘显式 toggle（toggle_quick_panel_command）必须共用本判定，避免两套口径。
-fn panel_visible_to_user<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> bool {
-    window.is_visible().unwrap_or(false) && !is_panel_fading()
-}
-
-#[cfg(target_os = "macos")]
-fn hide_panel_with_native_fade<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    panel: &std::sync::Arc<dyn tauri_nspanel::Panel<R>>,
-) {
-    use tauri_nspanel::objc2::runtime::AnyObject;
-    use tauri_nspanel::objc2_app_kit::NSAnimationContext;
-    use tauri_nspanel::objc2_foundation::MainThreadMarker;
-
-    // AppKit 未在主线程的极端场景退回瞬切,保证隐藏语义不变。
-    if MainThreadMarker::new().is_none() {
-        panel.resign_key_window();
-        panel.hide();
-        return;
-    }
-    // 幂等守卫:淡出已在途时再次进入(快捷键 hide 后前端 blur 路径 60ms 的迟到重入、
-    // resign_key 引发的连环 blur 重试)直接弃权,不重启动画。旧行为:每次重入都
-    // animator setAlphaValue 重启 160ms 淡出 + resign_key 又触发一次 blur → 前端
-    // 60ms 后再次 invoke → 单次隐藏被拖成 6 段 ~62ms 的锯齿渐隐(用户感知「不丝滑」)。
-    // 边界:show 抢占路径已把 PANEL_FADE_ACTIVE 复位为 false,之后的 hide 会正常发起新淡出。
-    if PANEL_FADE_ACTIVE.load(Ordering::SeqCst) {
-        return;
-    }
-    if !panel.is_visible() {
-        panel.set_alpha_value(1.0);
-        return;
-    }
-    // 抢占语义:置位「淡出在途」并递增代际号,旧淡出的轮询/收尾闭包校验失败自动弃权。
-    PANEL_FADE_ACTIVE.store(true, Ordering::SeqCst);
-    let generation = next_fade_generation();
-    panel.resign_key_window();
-    let app = app.clone();
-    let panel_for_cb = panel.clone();
-    // 动画时长 110ms：工具类软件隐藏端到端必须 ≤180ms。旧实现 160ms 动画 +
-    // 后台线程 1ms 轮询 alphaValue 检测完成，实测检测不稳定多次落入 400ms
-    // 兜底超时（端到端 440ms+，用户实测「隐藏很慢」）。
-    const FADE_MS: u64 = 110;
-    // 收尾延时 = 动画时长 + 25ms 余量（animator 提交到 WindowServer 合成有间隔）。
-    // 用确定性定时替代轮询：定时线程只 sleep 后回主线程，不碰 AppKit 属性，
-    // 也不受主线程繁忙影响；代际号校验保证 show 抢占时安全弃权。
-    // 收尾延迟:alpha 动画 110ms + 8ms 合成器提交余量。animationBehavior=none 后
-    // orderOut 是同步 unmap,无系统淡出可撞车;25ms 旧余量纯增加列表滞留时间。
-    const FINISH_DELAY_MS: u64 = FADE_MS + 8;
-    let app_for_dispatch = app.clone();
-    let _ = app_for_dispatch.run_on_main_thread(move || {
-        let fade_started = std::time::Instant::now();
-        unsafe {
-            let raw_panel = panel_for_cb.as_panel();
-            // animator 代理:返回 NSWindow 的 animator 对象(NSAnimatablePropertyContainer),
-            // 对其 setAlphaValue 即生成原生隐式动画;时长由外层 NSAnimationContext.duration 控制。
-            let animator: *mut AnyObject = tauri_nspanel::objc2::msg_send![raw_panel, animator];
-            if animator.is_null() {
-                // 极端场景 animator 不可用:瞬切收尾,并解除在途标志(否则后续 hide 全被守卫挡住)。
-                panel_for_cb.hide();
-                panel_for_cb.set_alpha_value(1.0);
-                PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
-                return;
-            }
-            let ctx = NSAnimationContext::currentContext();
-            ctx.setDuration(FADE_MS as f64 / 1000.0);
-            let _: () = tauri_nspanel::objc2::msg_send![animator, setAlphaValue: 0.0f64];
-        }
-        // 收尾:定时线程睡满 FINISH_DELAY_MS 后回主线程 hide。
-        // 注意:NSWindow.orderOut/hide 属于主线程 AppKit 调用,禁止在定时线程直呼。
-        let app_for_schedule = app.clone();
-        let panel_for_finish = panel_for_cb.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(FINISH_DELAY_MS));
-            let app_for_closure = app_for_schedule.clone();
-            let _ = app_for_schedule.run_on_main_thread(move || {
-                // 主线程串行点上再校验一次:排队期间可能已被 show 抢占(代际号变化)或面板已隐藏。
-                if PANEL_FADE_GENERATION.load(Ordering::SeqCst) != generation
-                    || !panel_for_finish.is_visible()
-                {
-                    return; // 已被 show/新淡出接管
-                }
-                panel_for_finish.hide();
-                // alpha 复位推迟到下个 runloop tick:orderOut 同一 runloop tick 内
-                // setAlphaValue(1.0) 会让带动画行为的窗口以 alpha=1 复活回闪
-                // (Kimi 评审指出的机制);behavior=none 后保险仍保留。
-                let panel_for_alpha = panel_for_finish.clone();
-                let _ = app_for_closure.run_on_main_thread(move || {
-                    panel_for_alpha.set_alpha_value(1.0);
-                });
-                PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
-                let _ = app_for_closure.emit("clipforge://panel-fade-finished", "hide");
-                log_to_file(
-                    "debug",
-                    "panel-fade",
-                    &format!(
-                        "fade hidden +{}ms (fade={}ms)",
-                        fade_started.elapsed().as_millis(),
-                        FADE_MS
-                    ),
-                );
-            });
-        });
-    });
-}
-
-#[cfg(target_os = "macos")]
-fn show_floating_window_by_label<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    label: &str,
-    window: &tauri::WebviewWindow<R>,
-) {
-    if let Ok(panel) = app.get_webview_panel(label) {
-        // show 即抢占:递增淡出代际号使在途淡出全部失效,并清掉在途标志,
-        // 防止旧 hide 链在唤起后把面板藏掉或把 alpha 拉回 0(隐形面板 bug)。
-        next_fade_generation();
-        PANEL_FADE_ACTIVE.store(false, Ordering::SeqCst);
-        // 幻影 blur 自愈基准:记录本次 show 时刻,1.2s 内的静默失焦才走自愈判定。
-        if let Ok(now) = now_millis() {
-            PANEL_LAST_SHOWN_MS.store(now, Ordering::Relaxed);
-        }
-        // 原生淡出可能在中途被唤起打断:以 0 时长 animator 复位满透明度。
-        // 必须走 animator 而非裸 set_alpha_value:在途的 110ms alpha 动画不会因模型值
-        // 改变而停止(CA 动画按自身时间线跑完),裸赋值会让面板先淡没再瞬现(闪烁);
-        // 0 时长 animator 赋值替换同 key 的在途动画,presentation 立即回到 1——
-        // 这就是「动画随时可被硬需求打断」在 AppKit 侧的落点。
-        unsafe {
-            use tauri_nspanel::objc2::runtime::AnyObject;
-            use tauri_nspanel::objc2_app_kit::NSAnimationContext;
-            let raw_panel = panel.as_panel();
-            let animator: *mut AnyObject = tauri_nspanel::objc2::msg_send![raw_panel, animator];
-            if !animator.is_null() {
-                NSAnimationContext::beginGrouping();
-                let ctx = NSAnimationContext::currentContext();
-                ctx.setDuration(0.0);
-                let _: () = tauri_nspanel::objc2::msg_send![animator, setAlphaValue: 1.0f64];
-                NSAnimationContext::endGrouping();
-            } else {
-                panel.set_alpha_value(1.0);
-            }
-        }
-        panel.set_level(quick_panel_level());
-        panel.order_front_regardless();
-        panel.show_and_make_key();
-        // 二次唤起时 NSPanel 已 resign_key，show_and_make_key 后再补一次 webview 级
-        // set_focus，确保键盘事件能进面板（修复「第二次触发不聚焦、快捷键不生效」）。
-        let _ = window.set_focus();
-        focus_webview_for_input(window);
-        log_to_file(
-            "info",
-            "panel-focus",
-            &format!(
-                "show floating window {}: panelVisible={} windowVisible={} focused={} canBecomeKey={} hidesOnDeactivate={}",
-                label,
-                panel.is_visible(),
-                window.is_visible().unwrap_or(false),
-                window.is_focused().unwrap_or(false),
-                panel.can_become_key_window(),
-                panel.hides_on_deactivate()
-            ),
-        );
-    } else {
-        let _ = window.show();
-        let _ = window.set_focus();
-        log_to_file(
-            "warn",
-            "panel-focus",
-            &format!(
-                "show floating window {} fallback window path: visible={} focused={}",
-                label,
-                window.is_visible().unwrap_or(false),
-                window.is_focused().unwrap_or(false)
-            ),
-        );
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn focus_webview_for_input<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
-    if let Err(error) = window.with_webview(|webview| unsafe {
-        let ns_window: &AppKitNSWindow = &*webview.ns_window().cast::<AppKitNSWindow>();
-        let webview_responder: &NSResponder = &*webview.inner().cast::<NSResponder>();
-        let accepted = ns_window.makeFirstResponder(Some(webview_responder));
-        log_to_file(
-            "debug",
-            "panel-focus",
-            &format!("makeFirstResponder(WKWebView) accepted={}", accepted),
-        );
-    }) {
-        log_to_file(
-            "warn",
-            "panel-focus",
-            &format!("focus WKWebView failed: {}", error),
-        );
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn quick_panel_level() -> i64 {
+pub(crate) fn quick_panel_level() -> i64 {
     PanelLevel::Status.value()
 }
 
-#[cfg(not(target_os = "macos"))]
-fn show_panel_window<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    window: &tauri::WebviewWindow<R>,
-) {
-    show_floating_window_by_label(app, "main", window);
-}
-
-#[cfg(not(target_os = "macos"))]
-fn show_floating_window_by_label<R: tauri::Runtime>(
-    _app: &tauri::AppHandle<R>,
-    _label: &str,
-    window: &tauri::WebviewWindow<R>,
-) {
-    let _ = window.show();
-    let _ = window.set_focus();
-}
-
-fn panel_position<R: tauri::Runtime>(
+pub(crate) fn panel_position<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
     panel_width: f64,
     fallback_height: f64,
@@ -9065,7 +8253,7 @@ fn mark_native_position_failure() {
     }
 }
 
-fn get_monitor_id(monitor: &tauri::Monitor) -> String {
+pub(crate) fn get_monitor_id(monitor: &tauri::Monitor) -> String {
     monitor
         .name()
         .map_or("primary".to_string(), |v| v.to_string())
@@ -9077,7 +8265,7 @@ fn get_monitor_id(monitor: &tauri::Monitor) -> String {
 /// 【主屏】scale 把逻辑点转物理、再被 `monitor_from_point`(期望逻辑点) 误判屏的连锁错误。
 /// 任一原生调用失败时，回退到 tao 的物理坐标并按主屏 scale 折算回逻辑点。
 #[cfg(target_os = "macos")]
-fn cursor_logical_point<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Option<(f64, f64)> {
+pub(crate) fn cursor_logical_point<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Option<(f64, f64)> {
     if let Ok(source) = CGEventSource::new(CGEventSourceStateID::CombinedSessionState) {
         if let Ok(event) = CGEvent::new(source) {
             let point = event.location();
@@ -9097,7 +8285,7 @@ fn cursor_logical_point<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> 
 }
 
 #[cfg(not(target_os = "macos"))]
-fn cursor_logical_point<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Option<(f64, f64)> {
+pub(crate) fn cursor_logical_point<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Option<(f64, f64)> {
     let scale = window
         .current_monitor()
         .ok()
@@ -9115,7 +8303,7 @@ fn cursor_logical_point<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> 
 /// 顺序：`monitor_from_point`(期望逻辑点) → 自行用 work_area 逻辑边界做命中测试
 /// (兜底缝隙/越界/混合 DPI 边界) → primary。
 /// 注意：绝不回退到 `current_monitor()`，面板隐藏时它指向「上次所在屏」，是多屏错位的根因。
-fn monitor_for_logical_point<R: tauri::Runtime>(
+pub(crate) fn monitor_for_logical_point<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
     x: f64,
     y: f64,
@@ -9426,7 +8614,7 @@ fn position_last_position<R: tauri::Runtime>(
     Some((final_x, final_y))
 }
 
-fn save_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+pub(crate) fn save_panel_position<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
     let Ok(position) = window.outer_position() else {
         log_to_file(
             "warn",
@@ -9624,7 +8812,7 @@ fn position_active_window_center<R: tauri::Runtime>(
     Some((x, y))
 }
 
-fn apply_position_strategy<R: tauri::Runtime>(
+pub(crate) fn apply_position_strategy<R: tauri::Runtime>(
     window: &tauri::WebviewWindow<R>,
     strategy: PanelPositionStrategy,
     panel_width: f64,
@@ -9677,15 +8865,6 @@ fn apply_position_strategy<R: tauri::Runtime>(
             panel_width,
             panel_height,
         )),
-    }
-}
-
-fn get_strategy_for_source(source: &str) -> PanelPositionStrategy {
-    match source {
-        "tray" => PanelPositionStrategy::TrayCenter,
-        "shortcut" => PanelPositionStrategy::FollowCursor,
-        "command" => PanelPositionStrategy::Center,
-        _ => PanelPositionStrategy::FollowCursor,
     }
 }
 

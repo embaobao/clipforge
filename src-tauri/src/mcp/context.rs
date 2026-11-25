@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 
 use crate::agent::compact_agent_text;
-use crate::{log_to_file, CaptureContextPayload, ClipItemPayload, PANEL_PINNED};
+use crate::{log_to_file, CaptureContextPayload, ClipItemPayload};
+use crate::window::PANEL_PINNED;
 
 pub(crate) fn capture_context_url(context: &CaptureContextPayload) -> Option<&str> {
     context

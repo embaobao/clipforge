@@ -36,11 +36,13 @@ try {
       "src/clipboard/row-animation.ts",
       "src/clipboard/csv-export.ts",
       "src/clipboard/csv-file-export.ts",
+      "src/settings/settings-code-snippets.ts",
     ],
     { cwd: root, stdio: "inherit" },
   );
 
   const search = await import(pathToFileURL(join(outDir, "search-query.js")).href);
+  const snippetsModule = await import(pathToFileURL(join(outDir, "settings/settings-code-snippets.js")).href);
   const smart = await import(pathToFileURL(join(outDir, "smart-format.js")).href);
   const actions = await import(pathToFileURL(join(outDir, "plugin-actions.js")).href);
   const suggestionsModule = await import(pathToFileURL(join(outDir, "editor/suggestions.js")).href);
@@ -488,7 +490,15 @@ try {
     });
   }
 
-  console.log("[unit] search-query, smart-format, plugin-action, editor-suggestion, editor-action, sensitive, row-animation, renderer-registry, csv-export, csv-file-export, split-export checks passed");
+  // settings-code-snippets: MCP/Agent 纯文案构造,golden 冻结。
+  const mcpJson = JSON.parse(snippetsModule.buildMcpServerConfigJson("/Applications/ClipForge.app/Contents/MacOS/clipforge --mcp"));
+  assert.equal(mcpJson.mcpServers.clipforge.command, "/Applications/ClipForge.app/Contents/MacOS/clipforge", "mcp 配置 command 应剥掉 --mcp 尾缀");
+  assert.deepEqual(mcpJson.mcpServers.clipforge.args, ["--mcp"], "mcp 配置 args 应为 [\"--mcp\"]");
+  const providers = JSON.parse(snippetsModule.buildAgentProviderTemplateText()).agent.providers;
+  assert.equal(providers.length, 2, "provider 模板应包含两个 provider");
+  assert.deepEqual(providers.map((p) => p.id), ["openai-main", "local-openai-compatible"], "provider 模板 id 应保持 openai-main/local-openai-compatible");
+  assert.ok(snippetsModule.buildJsonRpcExamples().includes("tools/call"), "JSON-RPC 示例应包含 tools/call");
+  console.log("[unit] settings-code-snippets checks passed");
 } finally {
   rmSync(outDir, { recursive: true, force: true });
 }

@@ -14,6 +14,7 @@ const files = {
   settingsShell: "src/settings/components/SettingsShell.tsx",
   codeTabs: "src/settings/components/SettingsCodeTabs.tsx",
   statusPanel: "src/settings/components/SettingsStatusPanel.tsx",
+  settingsActions: "src/settings/settings-actions.ts",
 };
 
 function read(relativePath) {
@@ -61,6 +62,7 @@ const topToolbar = read(files.topToolbar);
 const onboarding = read(files.onboarding);
 const onboardingShared = read(files.onboardingShared);
 const settings = read(files.settings);
+const settingsActions = read(files.settingsActions);
 const panelShared = read("src/clipboard/panel-shared.ts");
 const panelKeyboard = read("src/clipboard/use-panel-keyboard.ts");
 const shortcutSection = read("src/settings/sections/ShortcutLanguageSection.tsx");
@@ -134,8 +136,10 @@ include(settings, 'recordNextFramePerf("settings.section"', "settings sidebar ch
 include(settings, '<TooltipProvider delayDuration={300}>', "settings page should keep the shared tooltip provider");
 include(settings, 'data-dev-probe={`settings-section-tab:${tab}`}', "settings section tabs should stay keyboard-native");
 match(settings, /settingsService\s*\.\s*patch\s*\(/, "settings updates should keep the patch save path");
-include(settings, 'saveFeedback: { state: "pending"', "settings save should publish pending feedback");
-include(settings, 'state: "saved"', "settings save should publish saved feedback");
+// settings-actions 动作切片:保存/诊断/更新动作外移到独立 hook,宿主注入外部能力。
+include(settingsActions, "export function useSettingsActions", "settings actions hook should be exported from src/settings/settings-actions.ts");
+include(settingsActions, "saveFeedback: { state: \"pending\"", "settings save should publish pending feedback");
+include(settingsActions, 'state: "saved"', "settings save should publish saved feedback");
 include(storageSection, 'state={logActionStatus.state}', "diagnostic actions should expose a status state");
 include(storageSection, 'tooltip: tr("settings.diagnostics.exportBundle")', "diagnostics export should keep tooltip metadata");
 include(storageSection, 'tooltip: tr("settings.diagnostics.cleanupTooltip")', "diagnostics cleanup should keep tooltip metadata");
@@ -163,6 +167,10 @@ include(codeTabs, 'data-dev-probe="settings-code-tabs"', "settings code tabs sho
 include(statusPanel, "SettingsStatusPanel", "status panel should remain the diagnostic wrapper");
 include(statusPanel, "aria-label={title}", "status panel should stay accessible");
 include(statusPanel, "tooltip ? (", "status panel actions should stay tooltip-aware");
+assert(
+  settings.split("\n").length <= 800,
+  "settings.tsx should stay within the 800-line ceiling after the actions slice",
+);
 
 if (!process.exitCode) {
   console.log("Settings surface verification passed");
